@@ -132,8 +132,8 @@ carries or about the leaf step's constraints on it.
   epoch (`SpanDerivable.node_epoch`, `StampLiftStep.epoch_eq`). `ActionsDerivable.liftStep` and
   `StampDerivable.liftStep` use this to discharge the epoch hypothesis of `ActionsDerivable.lift`
   and `StampDerivable.lift` for a lift whose output anchor is on the chain. Consensus checks only
-  the published anchor. Carrying that check down through every lift of a proof tree is not
-  modelled.
+  the published anchor. [Evidence, provenance and publication](#evidence-provenance-and-publication)
+  carries that check down through every lift of a stamp trace (`StampTrace.positiveNodes`).
 - The tachygrams published in one epoch, and in two consecutive epochs, are duplicate-free
   (`Chain.Valid.nodup_epoch`, `Chain.Valid.nodup_two_epochs`).
 - Fixed operands that violate a product identity of degree `n` pass at most `2n` challenges
@@ -198,6 +198,36 @@ carries or about the leaf step's constraints on it.
   polynomials (`OpeningSemantics`). The double-spend reduction over it compiles as ordinary code
   (`doubleSpendRuntimeBreak`). Polynomials appear only in proof fields.
 
+### Evidence, provenance and publication
+
+- Evidence-tree replay returns a certified leaf or two tagged hash inputs with one output
+  (`replayOrCollision`). The model builds quaternary nodes directly. Each assembled node in the
+  protocol has four certified subtrees, so this tree set contains every real one.
+- Replayed evidence and a per-value profile check produce a checked query (`Query.oracle`). The
+  double-spend reduction then returns an anchor, source or evidence collision
+  (`doubleSpendEvidenceBreak`).
+- Each lift in a stamp trace carries its traced span. Descending from a node at the published
+  anchor gives every positive leaf a node at the stamp's epoch, or a break
+  (`StampTrace.positiveNodes`). Two verified bundles with spend leaves of one note compute a break
+  (`doubleSpendBreakOfTraces`). `stampedEvidenceBreak` reads each spendable from the payload of its
+  positive leaf and combines this with evidence replay.
+- A root of a certified bucket is published in its epoch, or the source traces compute a collision
+  (`publicationOrBreak`). Retention of matching roots alone gives only the converse.
+- `checkChain` decides `Chain.Valid` over public data (`checkChain_eq_true_iff`). Anchor membership
+  is a supplied boolean policy.
+
+### Authorization and fee pairing
+
+- A claimed note with the owner's commitment gives the owner's randomized action key, or a collision
+  in the note or payment-key hash (`ownerKeyOrCollision`). The authorizing message is consented to,
+  or the reduction returns a hash break or a valid unconsented signature under a randomized owner
+  key (`authorizedOrBreak`).
+- Two accepted responses at one nonce with different challenges give the owner key's logarithm
+  (`ownerLogOrMiss`). Equal challenges are returned as a miss.
+- Two fee leaves with one digest have one change tachygram, or the reduction returns a digest or
+  blind-hash collision, an encoding failure, or a relation among the value generators
+  (`changeEqOrBreak`).
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
@@ -240,7 +270,12 @@ choices that no theorem here discharges.
 ### Hashes and the pairing
 
 - **The pairing `R`.** Unmerge soundness depends on it. In the protocol it rests on Poseidon and on
-  the leaf proofs deriving their tachygrams from the digest preimage.
+  the leaf proofs deriving their tachygrams from the digest preimage. Fee/fee pairing is reduced to
+  computed breaks (`FeePairing.lean`). Spend/spend, output/output and spend/output pairing remain
+  hypotheses.
+- **Signatures.** The authorization results take the RedPallas verification equation as given. The
+  consent policy stands for the honest owner's signing requests in the security game. RedPallas
+  unforgeability and the probability that a Fiat-Shamir forger yields a fork are unproved.
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
@@ -264,6 +299,9 @@ compute the folds with the same epochs.
 
 Source sealing compares a bucket with the next entry anchor folded from the epoch's chronological
 publication list. That anchor and that list are inputs. `Chain.Valid` does not derive them.
+
+`checkChain` covers the public rules only. Wire parsing, signatures, the PCD verifier and anchor
+folding have separate inputs.
 
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
 `a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
