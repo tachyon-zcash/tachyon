@@ -11,9 +11,10 @@ compares a Lean step with the circuit it models. Read
 ## The model
 
 `Stamp.lean` and `ProofTree.lean` model the stamp headers and the steps that produce them. Each
-Pedersen commitment is read as the polynomial it commits to. Each `enforce_poly_product` is read as
-the identity it checks. An accepted header is one that a registered step derives from accepted
-inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
+Pedersen commitment is read as the polynomial it commits to. Each `enforce_poly_product` and
+`enforce_poly_roots` is read as the identity it checks. An accepted header is one that a registered
+step derives from accepted inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD
+knowledge soundness.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
 stated on these root multisets. A product of set polynomials is the sum of their multisets.
@@ -58,7 +59,7 @@ generated at the epoch `e` of its anchor (`ActionsDerivable.leafGenerated`,
   consensus coverage of the bundle's fee descriptor.
 
 Merge and unmerge require equal anchors. The lift steps take the lift's epoch preservation as a
-hypothesis, which [Double spends](#double-spends) discusses.
+hypothesis, which [Bundles and double spends](#bundles-and-double-spends) discusses.
 
 ### Publication
 
@@ -99,18 +100,24 @@ trace from it. That a verified stamp proof has a trace is the
 results say which leaf occurrence a covered digest comes from. They say nothing about the witness it
 carries or about the leaf step's constraints on it.
 
-### Double spends
+### Bundles and double spends
 
 - `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes
-  anchor recency and the two-epoch window from `Chain.Valid`. Both take the second spend's spendable
-  lineage as a hypothesis.
+  anchor recency and the two-epoch window from `Chain.Valid`. `no_double_spend_of_bundles` takes
+  each spend's nullifier pair from bundle verification. These three take the second spend's
+  spendable lineage as a hypothesis. `BundleVerified.no_double_spend` covers two spends in one
+  bundle.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
-  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.epoch_eq`). This supplies the epoch hypothesis
-  of `ActionsDerivable.lift` and `StampDerivable.lift` for a lift whose output anchor is on the
-  chain. Consensus checks only the published anchor. Carrying that check down through every lift of
-  a proof tree is not modelled.
+  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.epoch_eq`). `ActionsDerivable.liftStep` and
+  `StampDerivable.liftStep` use this to discharge the epoch hypothesis of `ActionsDerivable.lift`
+  and `StampDerivable.lift` for a lift whose output anchor is on the chain. Consensus checks only
+  the published anchor. Carrying that check down through every lift of a proof tree is not
+  modelled.
 - The tachygrams published in one epoch, and in two consecutive epochs, are duplicate-free
   (`Chain.Valid.nodup_epoch`, `Chain.Valid.nodup_two_epochs`).
+- Fixed operands that violate a product identity of degree `n` pass at most `2n` challenges
+  (`card_product_check_le`). A fixed accumulator of degree `n` that violates its roots identity
+  passes at most `n` challenges (`card_roots_check_le`).
 
 ## Assumptions and open boundaries
 
@@ -122,7 +129,9 @@ choices that no theorem here discharges.
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
   from registered steps on accepted inputs.
 - **Commitment binding and the random challenge.** The model reads commitments as polynomials and
-  checks as identities.
+  checks as identities. `Idealization.lean` counts the challenges that fixed violating operands
+  pass. Dividing by the field size bounds the probability for a uniform challenge drawn after the
+  operands are fixed.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
 
