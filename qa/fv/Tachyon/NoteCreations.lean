@@ -9,8 +9,8 @@ is created at epoch `e` by a bundle published at `e`, through a covered positive
 the note or whose change note it is (`Creation`). A note commitment published at `e` has such a
 creation, or a tachygram has two preimages (`creationOrCollision`).
 
-One creation pays for at most one spend: two spends whose notes' creations share a bundle and a
-leaf digest compute a break (`sharedCreationBreak`). The two creations name one note, or a tachygram
+One creation pays for at most one spend: two spends whose notes' creations share a bundle position
+and a leaf digest compute a break (`sharedCreationBreak`). The two creations name one note, or a tachygram
 has two preimages. They lie in one bundle, so the two lineages start in one epoch, and
 `sameStartBreak` applies. A spend whose lineage starts at a publication of its note commitment
 therefore consumes a creation no other spend consumes, and a commitment published twice is two
@@ -72,52 +72,61 @@ def TracedBundle.toChain
     (b : TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift) : Chain.Stamp F A :=
   ⟨b.stamp.anchor, b.stamp.tachygrams, b.publication⟩
 
-/-- Note `n` created at epoch `e`: a bundle published at `e` and a covered positive leaf of its
-trace that outputs `n` or whose change note is `n`. -/
+/-- Note `n` created at epoch `e`: the position of a bundle published at `e`, and a covered
+positive leaf of its trace that outputs `n` or whose change note is `n`. -/
 structure Creation (bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift))
     (n : Note F) (e : ℕ) where
-  bundle : TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift
-  mem : bundle ∈ bundles
-  publication : bundle.publication = e
+  index : Fin bundles.length
+  publication : bundles[index].publication = e
   leaf : LeafRecord (TachygramLeaf H Opens R epoch)
-  positive : leaf ∈ bundle.trace.positive
-  covered : leaf.digest ∈
-    coveredDigests actionDigest feeDigest bundle.descs (bundle.fee :: bundle.adjunctFees)
-  anchorEpoch : epoch leaf.anchor = epoch bundle.stamp.anchor
+  positive : leaf ∈ bundles[index].trace.positive
+  covered : leaf.digest ∈ coveredDigests actionDigest feeDigest bundles[index].descs
+    (bundles[index].fee :: bundles[index].adjunctFees)
+  anchorEpoch : epoch leaf.anchor = epoch bundles[index].stamp.anchor
   creates : leaf.provenance.Creates n
 
 variable {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift)}
+
+/-- The bundle that creates the note. -/
+def Creation.bundle {n : Note F} {e : ℕ} (c : Creation bundles n e) :
+    TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift :=
+  bundles[c.index]
 
 /-- A note commitment published at epoch `e` on a chain of traced bundles has a creation at `e`,
 or a tachygram has two preimages. -/
 def creationOrCollision {n : Note F} {e : ℕ}
     (hpub : Chain.published (bundles.map TracedBundle.toChain) e (H.noteCommit n)) :
     Creation bundles n e ⊕' TachygramCollision H :=
-  match hfind : bundles.find?
+  match hfind : bundles.findFinIdx?
       (fun b => decide (b.publication = e ∧ H.noteCommit n ∈ b.stamp.tachygrams)) with
-  | some b =>
-      have hb := List.mem_of_find?_eq_some hfind
-      have hpred : b.publication = e ∧ H.noteCommit n ∈ b.stamp.tachygrams := by
-        simpa using List.find?_some hfind
-      match publishedNoteOrCollision b.verified b.trace b.actions b.anchor hpred.2 with
+  | some i =>
+      have hpred : bundles[i].publication = e ∧ H.noteCommit n ∈ bundles[i].stamp.tachygrams := by
+        simpa using (List.findFinIdx?_eq_some_iff.mp hfind).1
+      match publishedNoteOrCollision bundles[i].verified bundles[i].trace bundles[i].actions
+          bundles[i].anchor hpred.2 with
       | .inl ⟨l, hl, hcovered, hcreates⟩ =>
-          .inl ⟨b, hb, hpred.1, l, hl, hcovered, by
-            obtain ⟨_, -, -, hanchor⟩ := b.trace.spec
-            exact (hanchor l (List.mem_append_left _ hl)).trans (congrArg epoch b.anchor),
+          .inl ⟨i, hpred.1, l, hl, hcovered, by
+            obtain ⟨_, -, -, hanchor⟩ := bundles[i].trace.spec
+            exact (hanchor l (List.mem_append_left _ hl)).trans (congrArg epoch bundles[i].anchor),
             hcreates⟩
       | .inr collision => .inr collision
   | none => False.elim <| by
       obtain ⟨s, hs, hepoch, ht⟩ := hpub
       obtain ⟨b, hb, rfl⟩ := List.mem_map.mp hs
-      exact List.find?_eq_none.mp hfind b hb (by simpa [TracedBundle.toChain] using ⟨hepoch, ht⟩)
+      exact List.findFinIdx?_eq_none_iff.mp hfind b hb
+        (by simpa [TracedBundle.toChain] using ⟨hepoch, ht⟩)
 
-/-- Two creations in one bundle at one leaf digest create one note, or a tachygram has two
-preimages. -/
+/-- Two creations at one bundle position and one leaf digest create one note, or a tachygram has
+two preimages. -/
 def Creation.sameNoteOrCollision {n₁ n₂ : Note F} {e₁ e₂ : ℕ} (c₁ : Creation bundles n₁ e₁)
-    (c₂ : Creation bundles n₂ e₂) (hbundle : c₁.bundle = c₂.bundle)
+    (c₂ : Creation bundles n₂ e₂) (hindex : c₁.index = c₂.index)
     (hdigest : c₁.leaf.digest = c₂.leaf.digest) : (n₁ = n₂) ⊕' TachygramCollision H :=
   TachygramLeaf.sameCreationOrCollision c₂.leaf.provenance
-    (by rw [c₁.anchorEpoch, c₂.anchorEpoch, hbundle, hdigest]) c₁.creates c₂.creates
+    (by
+      rw [c₁.anchorEpoch, c₂.anchorEpoch, hdigest]
+      exact congrArg (fun i : Fin bundles.length => R (epoch bundles[i].stamp.anchor)
+        c₂.leaf.digest) hindex)
+    c₁.creates c₂.creates
 
 variable {C P : Type*} [MulOneClass P] [OpeningSemantics P F] [DecidableEq P] [DecidableEq C]
   [DecidableEq A] {m : Model P C A ℕ} {ValidBucket : QrBucket F A → Prop}
@@ -127,9 +136,9 @@ variable {C P : Type*} [MulOneClass P] [OpeningSemantics P F] [DecidableEq P] [D
   {p₁ p₂ start₁ start : ℕ} {δ₁ δ₂ : Δ}
 
 /-- Two verified bundles on a valid chain spend notes `n₁` and `n₂` from traced spendables, the
-first earlier in chain order. If the notes' creations at the two lineage starts share a bundle and
-a leaf digest, the pair computes a scoped collision, the oracle's break, or a tachygram with two
-preimages. -/
+first earlier in chain order. If the notes' creations at the two lineage starts share a bundle
+position and a leaf digest, the pair computes a scoped collision, the oracle's break, or a
+tachygram with two preimages. -/
 def sharedCreationBreak (oracle : ∀ b v, Query b v → Profiled.QueryComplete chain b v ⊕' Q)
     (hchain : Chain.Valid epoch acceptedAnchor chain)
     (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
@@ -145,16 +154,16 @@ def sharedCreationBreak (oracle : ∀ b v, Query b v → Profiled.QueryComplete 
     (haction₂ : SpendAction R (epoch stamp₂.anchor) (spendBind noteNf sp₂) (actionDigest δ₂))
     {n₁ n₂ : Note F} (hn₁ : sp₁.cm = H.noteCommit n₁) (hn₂ : sp₂.cm = H.noteCommit n₂)
     (c₁ : Creation bundles n₁ start₁) (c₂ : Creation bundles n₂ start)
-    (hbundle : c₁.bundle = c₂.bundle) (hdigest : c₁.leaf.digest = c₂.leaf.digest) :
+    (hindex : c₁.index = c₂.index) (hdigest : c₁.leaf.digest = c₂.leaf.digest) :
     (ScopedBreak m (node₁.openings ++ node₂.openings)
       ((t₁.anchorInput :: node₁.inputs) ++ (t₂.anchorInput :: node₂.inputs)) ⊕' Q) ⊕'
       TachygramCollision H :=
-  match c₁.sameNoteOrCollision c₂ hbundle hdigest with
+  match c₁.sameNoteOrCollision c₂ hindex hdigest with
   | .inr collision => .inr collision
   | .inl hnote =>
       .inl (sameStartBreak oracle hchain h₁ h₂ hsplit hs₂ hδ₁ hδ₂ t₁ t₂
         (by rw [hn₁, hn₂, hnote]) node₁ node₂ haction₁ haction₂
-        (c₁.publication.symm.trans ((congrArg TracedBundle.publication hbundle).trans
-          c₂.publication)))
+        (c₁.publication.symm.trans ((congrArg (fun i : Fin bundles.length =>
+          bundles[i].publication) hindex).trans c₂.publication)))
 
 end Tachyon
