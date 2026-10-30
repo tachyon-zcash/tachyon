@@ -16,6 +16,7 @@
   - [Authorization](authorization.md)
   - [Proof Tree](proof-tree.md)
   - [Aggregation](aggregation.md)
+  - [Dynamic Fee](fee.md)
 - [Network Roles]()
   - [Overview](network_roles/overview.md)
   - [Oblivious Sync Service]()
@@ -26,7 +27,6 @@
   - [Deep Dive](revisit.md)
   - [Nullifier Analysis](nf-analysis.md)
   - [GGM-based Nullifier](ggm.md)
-  - [Dynamic Fee](fee.md)
 
 ## Appendix
 
