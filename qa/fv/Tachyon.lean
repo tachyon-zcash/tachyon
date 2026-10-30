@@ -21,6 +21,7 @@ import Tachyon.RoutedSpendBinding
 import Tachyon.LineageStarts
 import Tachyon.PublishedNotes
 import Tachyon.NoteCreations
+import Tachyon.PaidCreations
 import Tachyon.Value
 import Tachyon.FeeAccounting
 import Tachyon.RemovalClosure

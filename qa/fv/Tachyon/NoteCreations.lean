@@ -21,23 +21,23 @@ namespace Tachyon
 
 open Polynomial AnchorBreaks
 
-universe u v w
+universe u v w x
 
 variable {F : Type u} {A : Type v} [Field F] [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ}
   {R : ℕ → F → Multiset F} {Δ Φ : Type w} {actionDigest : Δ → F} {feeDigest : Φ → F}
-  {H : TachygramHash F} {Lift : Stamp F A → A → Type w}
+  {H : TachygramHash F} {Opens : F → ℤ → Type x} {Lift : Stamp F A → A → Type w}
 
 omit [Field F] [DecidableEq F] in
-theorem TachygramLeaf.Creates.mem {d : F} {a : A} {n : Note F} {k : TachygramLeaf H R epoch d a}
+theorem TachygramLeaf.Creates.mem {d : F} {a : A} {n : Note F} {k : TachygramLeaf H Opens R epoch d a}
     (h : k.Creates n) : H.noteCommit n ∈ R (epoch a) d := by
   cases k with
   | spend => exact h.elim
-  | output n' hR => rw [hR, ← h]; simp
-  | fee maxFee _ change _ hR => rw [hR, ← h]; simp
+  | output n' _ hR => rw [hR, ← h]; simp
+  | fee maxFee _ change _ _ hR => rw [hR, ← h]; simp
 
 omit [Field F] [DecidableEq F] in
 theorem TachygramLeaf.Creates.unique {d : F} {a : A} {n₁ n₂ : Note F}
-    {k : TachygramLeaf H R epoch d a} (h₁ : k.Creates n₁) (h₂ : k.Creates n₂) : n₁ = n₂ := by
+    {k : TachygramLeaf H Opens R epoch d a} (h₁ : k.Creates n₁) (h₂ : k.Creates n₂) : n₁ = n₂ := by
   cases k with
   | spend => exact h₁.elim
   | output => exact h₁.symm.trans h₂
@@ -45,14 +45,14 @@ theorem TachygramLeaf.Creates.unique {d : F} {a : A} {n₁ n₂ : Note F}
 
 /-- Two leaves with one tachygram multiset create one note, or a tachygram has two preimages. -/
 def TachygramLeaf.sameCreationOrCollision {d₁ d₂ : F} {a₁ a₂ : A} {n₁ n₂ : Note F}
-    {k₁ : TachygramLeaf H R epoch d₁ a₁} (k₂ : TachygramLeaf H R epoch d₂ a₂)
+    {k₁ : TachygramLeaf H Opens R epoch d₁ a₁} (k₂ : TachygramLeaf H Opens R epoch d₂ a₂)
     (hR : R (epoch a₁) d₁ = R (epoch a₂) d₂) (h₁ : k₁.Creates n₁) (h₂ : k₂.Creates n₂) :
     (n₁ = n₂) ⊕' TachygramCollision H :=
   match k₂.createsOrCollision (n := n₁) (hR ▸ h₁.mem) with
   | .inl h₂' => .inl (h₂'.unique h₂)
   | .inr collision => .inr collision
 
-variable (IsFee epoch R actionDigest feeDigest H Lift) in
+variable (IsFee epoch R actionDigest feeDigest H Opens Lift) in
 /-- A verified bundle published at `publication`, with a stamp trace of its leaves' kinds over a
 header that covers its digests at the published anchor. -/
 structure TracedBundle where
@@ -63,30 +63,30 @@ structure TracedBundle where
   publication : ℕ
   verified : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp
   header : Stamp F A
-  trace : StampTrace IsFee epoch R (TachygramLeaf H R epoch) Lift header
+  trace : StampTrace IsFee epoch R (TachygramLeaf H Opens R epoch) Lift header
   actions : header.actions = setPoly (coveredDigests actionDigest feeDigest descs (fee :: adjunctFees))
   anchor : header.anchor = stamp.anchor
 
 /-- The bundle's stamp as included in a block. -/
 def TracedBundle.toChain
-    (b : TracedBundle IsFee epoch R actionDigest feeDigest H Lift) : Chain.Stamp F A :=
+    (b : TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift) : Chain.Stamp F A :=
   ⟨b.stamp.anchor, b.stamp.tachygrams, b.publication⟩
 
 /-- Note `n` created at epoch `e`: a bundle published at `e` and a covered positive leaf of its
 trace that outputs `n` or whose change note is `n`. -/
-structure Creation (bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Lift))
+structure Creation (bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift))
     (n : Note F) (e : ℕ) where
-  bundle : TracedBundle IsFee epoch R actionDigest feeDigest H Lift
+  bundle : TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift
   mem : bundle ∈ bundles
   publication : bundle.publication = e
-  leaf : LeafRecord (TachygramLeaf H R epoch)
+  leaf : LeafRecord (TachygramLeaf H Opens R epoch)
   positive : leaf ∈ bundle.trace.positive
   covered : leaf.digest ∈
     coveredDigests actionDigest feeDigest bundle.descs (bundle.fee :: bundle.adjunctFees)
   anchorEpoch : epoch leaf.anchor = epoch bundle.stamp.anchor
   creates : leaf.provenance.Creates n
 
-variable {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Lift)}
+variable {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift)}
 
 /-- A note commitment published at epoch `e` on a chain of traced bundles has a creation at `e`,
 or a tachygram has two preimages. -/

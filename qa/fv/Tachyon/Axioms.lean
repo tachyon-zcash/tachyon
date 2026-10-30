@@ -241,6 +241,12 @@ info: 'Tachyon.sharedCreationBreak' depends on axioms: [propext, Classical.choic
 #print axioms Tachyon.sharedCreationBreak
 
 /--
+info: 'Tachyon.Creation.debitOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.Creation.debitOrBreak
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in

@@ -10,7 +10,8 @@ Every tachygram is the output of one of three domain-separated Poseidon hashes: 
 `AnchorBreaks.Input`. The nullifier preimage is the note commitment and the epoch, with the note's
 master key folded in as in `NullifiersDerivable`.
 
-Each leaf's provenance records its kind and its note (`TachygramLeaf`): `SpendBind` over a note's
+Each leaf's provenance records its kind, its note and an opening of its value commitment
+(`TachygramLeaf`): `SpendBind` over a note's
 commitment derives a nullifier pair, `OutputBind` derives a note's commitment and pad, and `FeeFuse`
 and `FeeSeed` derive the commitment of the change note, which keeps the max fee note's `rcm`, `pk`
 and `psi` and holds `maxFee - fee`.
@@ -65,24 +66,27 @@ structure TachygramCollision (H : TachygramHash F) where
 
 /-- A leaf's kind and note. Covered by a stamp at anchor epoch `epoch a`, its tachygrams under the
 pairing `R` are a spent note's nullifier pair at some epoch `x`, an output note's commitment and pad,
-or the change note's commitment. -/
-inductive TachygramLeaf (H : TachygramHash F) (R : ℕ → F → Multiset F) (epoch : A → ℕ) (d : F)
-    (a : A) : Type u
-  | spend (n : Note F) (x : ℕ) :
+or the change note's commitment. `Opens d v` opens the value commitment behind digest `d` to the
+signed value `v`: `SpendBind` commits `+v`, `OutputBind` commits `-v`, and `FeeFuse` and `FeeSeed`
+commit `-maxFee`. -/
+inductive TachygramLeaf (H : TachygramHash F) (Opens : F → ℤ → Type w) (R : ℕ → F → Multiset F)
+    (epoch : A → ℕ) (d : F) (a : A) : Type (max u w)
+  | spend (n : Note F) (x : ℕ) : Opens d n.value →
       R (epoch a) d = {H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)} →
-        TachygramLeaf H R epoch d a
-  | output (n : Note F) :
-      R (epoch a) d = {H.noteCommit n, H.pad n} → TachygramLeaf H R epoch d a
-  | fee (maxFee : Note F) (fee change : ℕ) :
+        TachygramLeaf H Opens R epoch d a
+  | output (n : Note F) : Opens d (-n.value) →
+      R (epoch a) d = {H.noteCommit n, H.pad n} → TachygramLeaf H Opens R epoch d a
+  | fee (maxFee : Note F) (fee change : ℕ) : Opens d (-maxFee.value) →
       change + fee = maxFee.value → R (epoch a) d = {H.noteCommit (maxFee.withValue change)} →
-        TachygramLeaf H R epoch d a
+        TachygramLeaf H Opens R epoch d a
 
-variable {H : TachygramHash F} {R : ℕ → F → Multiset F} {epoch : A → ℕ}
+variable {H : TachygramHash F} {Opens : F → ℤ → Type w} {R : ℕ → F → Multiset F}
+  {epoch : A → ℕ}
 
 /-- The leaf creates note `n`: it outputs `n`, or its change note is `n`. -/
-def TachygramLeaf.Creates {d : F} {a : A} (n : Note F) : TachygramLeaf H R epoch d a → Prop
+def TachygramLeaf.Creates {d : F} {a : A} (n : Note F) : TachygramLeaf H Opens R epoch d a → Prop
   | .spend .. => False
-  | .output n' _ => n' = n
+  | .output n' .. => n' = n
   | .fee maxFee _ change .. => maxFee.withValue change = n
 
 variable [DecidableEq F]
@@ -96,25 +100,25 @@ def noteEqOrCollision (H : TachygramHash F) (n n' : Note F)
 /-- A leaf whose tachygrams hold note `n`'s commitment creates `n`, or a tachygram has two
 preimages. -/
 def TachygramLeaf.createsOrCollision {d : F} {a : A} {n : Note F}
-    (k : TachygramLeaf H R epoch d a) (hmem : H.noteCommit n ∈ R (epoch a) d) :
+    (k : TachygramLeaf H Opens R epoch d a) (hmem : H.noteCommit n ∈ R (epoch a) d) :
     k.Creates n ⊕' TachygramCollision H :=
   match k with
-  | .spend n' x hR =>
+  | .spend n' x _ hR =>
       .inr <| if hx : H.noteCommit n = H.nullifier (H.noteCommit n') x then
         ⟨.note n, .nullifier (H.noteCommit n') x, nofun, hx⟩
       else
         ⟨.note n, .nullifier (H.noteCommit n') (x + 1), nofun, by
           rw [hR] at hmem
           simpa [hx] using hmem⟩
-  | .output n' hR =>
+  | .output n' _ hR =>
       if hcm : H.noteCommit n = H.noteCommit n' then noteEqOrCollision H n n' hcm
       else .inr ⟨.note n, .pad n', nofun, by
         rw [hR] at hmem
         simpa [hcm] using hmem⟩
-  | .fee maxFee _ change _ hR =>
+  | .fee maxFee _ change _ _ hR =>
       noteEqOrCollision H n (maxFee.withValue change) (by rw [hR] at hmem; simpa using hmem)
 
-variable {IsFee : F → Prop} {Δ Φ : Type w} {actionDigest : Δ → F} {feeDigest : Φ → F}
+variable {IsFee : F → Prop} {Δ Φ : Type*} {actionDigest : Δ → F} {feeDigest : Φ → F}
   {descs : List Δ} {fee : Φ} {adjunctFees : List Φ} [Field F] {stamp : PublishedStamp F A}
 
 /-- A tachygram a verified bundle publishes belongs to one of its covered digests. -/
@@ -136,14 +140,14 @@ def BundleVerified.coveredLeaf
 /-- A verified bundle, traced with each leaf's kind, that publishes note `n`'s commitment holds a
 positive leaf at a covered digest that creates `n`, or a tachygram has two preimages. The trace's
 header need only cover the bundle's digests at the published anchor. -/
-def publishedNoteOrCollision {Lift : Stamp F A → A → Type w} {header : Stamp F A}
+def publishedNoteOrCollision {Lift : Stamp F A → A → Type*} {header : Stamp F A}
     (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp)
-    (T : StampTrace IsFee epoch R (TachygramLeaf H R epoch) Lift header)
+    (T : StampTrace IsFee epoch R (TachygramLeaf H Opens R epoch) Lift header)
     (hactions : header.actions =
       setPoly (coveredDigests actionDigest feeDigest descs (fee :: adjunctFees)))
     (hanchor : header.anchor = stamp.anchor)
     {n : Note F} (hn : H.noteCommit n ∈ stamp.tachygrams) :
-    {l : LeafRecord (TachygramLeaf H R epoch) // l ∈ T.positive ∧
+    {l : LeafRecord (TachygramLeaf H Opens R epoch) // l ∈ T.positive ∧
       l.digest ∈ coveredDigests actionDigest feeDigest descs (fee :: adjunctFees) ∧
       l.provenance.Creates n} ⊕' TachygramCollision H :=
   let ⟨d, hd, hmem⟩ := h.coveredLeaf hn
