@@ -19,6 +19,7 @@ import Tachyon.NoteValues
 import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
 import Tachyon.LineageStarts
+import Tachyon.PublishedNotes
 import Tachyon.Value
 import Tachyon.FeeAccounting
 import Tachyon.RemovalClosure

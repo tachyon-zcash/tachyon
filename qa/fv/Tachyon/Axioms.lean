@@ -223,6 +223,12 @@ info: 'Tachyon.later_start_of_no_collisions' depends on axioms: [propext, Classi
 #print axioms Tachyon.later_start_of_no_collisions
 
 /--
+info: 'Tachyon.publishedNoteOrCollision' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.publishedNoteOrCollision
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
