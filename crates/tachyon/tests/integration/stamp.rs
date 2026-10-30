@@ -1117,8 +1117,8 @@ fn lift_rejects_a_foreign_span() {
     );
 }
 
-/// A lift takes the caller's word for the covered action set, so a wrong
-/// descriptor list is caught at verification rather than at prove time.
+/// Connected input encodings reject a substituted action set during proving.
+/// Verification independently rejects a foreign descriptor for an honest lift.
 #[test]
 fn lift_rejects_wrong_digests() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1136,20 +1136,41 @@ fn lift_rejects_wrong_digests() {
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
-    let lifted = stamp
+    let rejection = stamp
+        .clone()
         .lift(
             rng,
             &BTreeSet::from([foreign]),
             &BTreeSet::from([fee_descriptor]),
+            vec![span.clone()],
+        )
+        .expect_err("the lift must bind its input action set");
+    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(message)) = rejection else {
+        panic!("unexpected rejection: {rejection:?}");
+    };
+    assert_eq!(
+        message.to_string(),
+        "input header does not match child proof"
+    );
+    let lifted = stamp
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &BTreeSet::from([fee_descriptor]),
             vec![span],
         )
-        .expect("the lift itself cannot see the wrong action set");
+        .expect("honest lift");
+    assert!(
+        lifted
+            .verify_proof(rng, [digest, fee_digest])
+            .expect("honest verification")
+    );
 
     assert!(
         !lifted
-            .verify_proof(rng, [digest, fee_digest])
+            .verify_proof(rng, [foreign.digest().expect("foreign digest"), fee_digest])
             .expect("verify"),
-        "a stamp lifted under a forged action set must not verify"
+        "an honest lifted stamp must reject a forged action set"
     );
 }
 
@@ -1257,26 +1278,33 @@ fn mismatched_merge_descriptors_fail_verification() {
         "the foreign descriptor must not be covered by the second stamp"
     );
 
-    // The merge itself does not pre-check, and the mismatch violates no step
-    // relation: proving succeeds and the compute is spent.
-    let merged = bundle_a
+    // The computed input encoding must match the actual child's proof.
+    let rejected = bundle_a
         .stamp
         .clone()
         .merge(
             rng,
             (descriptors_a.clone(), fees_a.clone()),
-            (bundle_b.stamp.clone(), foreign_descriptors, fees_b.clone()),
+            (
+                bundle_b.stamp.clone(),
+                foreign_descriptors.clone(),
+                fees_b.clone(),
+            ),
         )
-        .expect("merge performs no coverage pre-check");
-
-    // An honest verifier reconstructs the header from the true covered
-    // actions, which the mismatched proof does not attest.
-    assert!(
-        !merged
-            .verify_proof(rng, digests.clone())
-            .expect("proof system verification"),
-        "a merge fed descriptors its stamp does not attest must be disproved"
+        .expect_err("merge rejects a substituted input header");
+    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(message)) = rejected else {
+        panic!("unexpected rejection: {rejected:?}");
+    };
+    assert_eq!(
+        message.to_string(),
+        "input header does not match child proof"
     );
+    let foreign_digests = descriptors_a
+        .iter()
+        .chain(&foreign_descriptors)
+        .map(|descriptor| descriptor.digest().expect("action digest"))
+        .chain(fee_digests(fees_a.iter().chain(&fees_b).copied()))
+        .collect::<Vec<_>>();
 
     // Control: the same stamps merged under their attested descriptors
     // produce a stamp the same verifier accepts.
@@ -1288,6 +1316,11 @@ fn mismatched_merge_descriptors_fail_verification() {
             (bundle_b.stamp, descriptors_b, fees_b),
         )
         .expect("merge");
+    assert!(
+        !honest
+            .verify_proof(rng, foreign_digests)
+            .expect("foreign descriptor verification")
+    );
     assert!(
         honest
             .verify_proof(rng, digests)

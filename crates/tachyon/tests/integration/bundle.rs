@@ -10,8 +10,7 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
-use ragu::PROOF_SIZE_COMPRESSED;
-use ragu_core::pasta::Fp;
+use ragu::{PROOF_SIZE_COMPRESSED, pasta::Fp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,

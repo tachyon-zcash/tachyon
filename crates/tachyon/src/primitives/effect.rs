@@ -6,7 +6,7 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use ragu_core::pasta::{Fp, Fq};
+use ragu::pasta::{Fp, Fq};
 use udon::field::Field as _;
 
 use crate::{digest::poseidon, entropy::ActionEntropy, note, value};

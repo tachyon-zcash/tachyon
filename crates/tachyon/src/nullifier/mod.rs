@@ -1,7 +1,7 @@
 //! Nullifiers and nullifier operations.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu_core::pasta::Fp;
+use ragu::pasta::Fp;
 use rand_core::CryptoRng;
 use udon::field::{Field as _, FieldAdapter, PallasBase};
 

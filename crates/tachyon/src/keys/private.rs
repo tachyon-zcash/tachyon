@@ -295,3 +295,51 @@ impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ragu::pasta::Fq;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+
+    #[test]
+    fn canonical_randomizer_bridge_preserves_reddsa_public_bytes_and_verification() {
+        let legacy_ask = pasta_curves::Fq::from(0x1234_5678u64);
+        let legacy_alpha = pasta_curves::Fq::from(0x8765_4321u64);
+        let current_alpha = Fq::from_bytes(legacy_alpha.to_repr())
+            .expect("legacy canonical randomizer bytes decode in Udon");
+        assert_eq!(current_alpha.to_bytes(), legacy_alpha.to_repr());
+        assert!(Fq::from_bytes([0xff; 32]).is_none());
+        assert!(
+            pasta_curves::Fq::from_repr([0xff; 32])
+                .into_option()
+                .is_none()
+        );
+
+        let legacy_ask_key =
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(legacy_ask.to_repr())
+                .expect("the fixed legacy scalar is a valid RedPallas key");
+        let current_action_key =
+            SpendAuthorizingKey(legacy_ask_key).derive_action_private(&ActionRandomizer::<
+                effect::Spend,
+            >(
+                current_alpha,
+                PhantomData,
+            ));
+        let legacy_action_key = legacy_ask_key.randomize(&legacy_alpha);
+
+        let current_vk_bytes: [u8; 32] = current_action_key.derive_action_public().0.into();
+        let legacy_vk_bytes: [u8; 32] = reddsa::VerificationKey::from(&legacy_action_key).into();
+        assert_eq!(current_vk_bytes, legacy_vk_bytes);
+
+        let legacy_vk = reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(legacy_vk_bytes)
+            .expect("the unchanged compressed public key parses through reddsa");
+        let sighash = [0xa5; 32];
+        let mut rng = StdRng::seed_from_u64(0x51_47);
+        let signature = current_action_key.sign(&mut rng, &sighash);
+        legacy_vk
+            .verify(&sighash, &signature.0)
+            .expect("the migrated signing path verifies under the legacy key bytes");
+    }
+}

@@ -8,11 +8,13 @@
 
 use core::array;
 
-use ragu_core::{
+use ragu::{
     Cycle as _, PoseidonPermutation as _,
+    pasta::{EqAffine, Fp, Pasta, PoseidonFp},
+};
+use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe as _},
-    pasta::{EqAffine, Fp, Pasta, PoseidonFp},
 };
 use ragu_pcd::pasta::baked;
 use ragu_primitives::{
@@ -24,30 +26,35 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use crate::constants::EVIDENCE_TREE_ARITY;
 
-/// The wireless emulator that evaluates the real in-circuit sponge natively:
-/// witness values are always present and no wires are tracked, so absorb and
-/// squeeze compute field values without building constraints.
-type Emu = Emulator<Wireless<Always<()>, Fp>>;
-
 #[expect(
     clippy::expect_used,
     reason = "sponge squeeze cannot fail in wireless `Always` mode"
 )]
-fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
+fn squeeze(
+    emulator: &mut Emulator<Wireless<Always<()>, Fp>>,
+    sponge: &mut Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
+) -> Fp {
     let squeezed = sponge.squeeze(emulator).expect("infallible");
     *squeezed.value().take()
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
 /// zero rate, then absorbs `input`.
+#[expect(
+    clippy::type_complexity,
+    reason = "keep the real sponge driver type explicit"
+)]
 fn tagged_sponge<const L: usize>(
     domain: &[u8; 16],
     input: [Fp; L],
-) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
+) -> (
+    Emulator<Wireless<Always<()>, Fp>>,
+    Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
+) {
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
     let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
 
-    let mut emulator = Emu::execute();
+    let mut emulator = Emulator::<Wireless<Always<()>, Fp>>::execute();
     let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
         let value = if index == PoseidonFp::RATE {
             capacity
@@ -203,7 +210,7 @@ fn point_limbs(point: EqAffine) -> (Fp, Fp) {
     );
 
     let encoding = point.to_bytes();
-    let (lo, hi) = encoding.split_at(16);
+    let (lo, hi) = encoding.as_ref().split_at(16);
     (
         Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),
         Fp::from_u128(u128::from_le_bytes(hi.try_into().expect("16 bytes"))),
@@ -279,4 +286,140 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 #[must_use]
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     hash::<2>(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+    use core::{array, mem};
+
+    use ff::{Field as _, PrimeField as _};
+    use ragu_arithmetic::{Cycle as _, PoseidonPermutation as _};
+    use ragu_pasta::Pasta as LegacyPasta;
+
+    use super::*;
+
+    fn legacy_permute(
+        mut state: [pasta_curves::Fp; ragu_pasta::PoseidonFp::T],
+    ) -> [pasta_curves::Fp; ragu_pasta::PoseidonFp::T] {
+        let parameters = LegacyPasta::circuit_poseidon(LegacyPasta::baked());
+        let first_full_rounds = ragu_pasta::PoseidonFp::FULL_ROUNDS >> 1;
+        let partial_round_end = first_full_rounds + ragu_pasta::PoseidonFp::PARTIAL_ROUNDS;
+        let total_rounds = partial_round_end + first_full_rounds;
+        let mut round_constants = parameters.round_constants();
+
+        for round in 0..total_rounds {
+            let constants = round_constants
+                .next()
+                .expect("legacy Poseidon has one constant row per round");
+            for (value, constant) in state.iter_mut().zip(constants) {
+                *value += *constant;
+            }
+            let active = if round < first_full_rounds || round >= partial_round_end {
+                ragu_pasta::PoseidonFp::T
+            } else {
+                1
+            };
+            for value in state.iter_mut().take(active) {
+                let square = value.square();
+                *value = square.square() * *value;
+            }
+
+            let mut next_state = [pasta_curves::Fp::ZERO; ragu_pasta::PoseidonFp::T];
+            for (next, row) in next_state.iter_mut().zip(parameters.mds_matrix()) {
+                *next = state
+                    .iter()
+                    .zip(row)
+                    .fold(pasta_curves::Fp::ZERO, |sum, (value, coefficient)| {
+                        sum + (*value * *coefficient)
+                    });
+            }
+            state = next_state;
+        }
+        state
+    }
+
+    fn legacy_sponge_state<const L: usize>(
+        domain: &[u8; 16],
+        input: [Fp; L],
+    ) -> [pasta_curves::Fp; ragu_pasta::PoseidonFp::T] {
+        let capacity = domain
+            .iter()
+            .rev()
+            .fold(pasta_curves::Fp::ZERO, |acc, byte| {
+                acc * pasta_curves::Fp::from(256) + pasta_curves::Fp::from(u64::from(*byte))
+            });
+        let mut state = array::from_fn(|index| {
+            if index == ragu_pasta::PoseidonFp::RATE {
+                capacity
+            } else {
+                pasta_curves::Fp::ZERO
+            }
+        });
+        let mut pending = Vec::new();
+        for input_value in input {
+            if pending.len() == ragu_pasta::PoseidonFp::RATE {
+                let absorbed_values = mem::take(&mut pending);
+                for (lane, value) in state
+                    .iter_mut()
+                    .take(ragu_pasta::PoseidonFp::RATE)
+                    .zip(absorbed_values)
+                {
+                    *lane += value;
+                }
+                state = legacy_permute(state);
+            }
+            pending.push(
+                pasta_curves::Fp::from_repr(input_value.to_bytes())
+                    .into_option()
+                    .expect("canonical Udon field bytes decode in the legacy field"),
+            );
+        }
+        for (lane, pending_value) in state
+            .iter_mut()
+            .take(ragu_pasta::PoseidonFp::RATE)
+            .zip(pending)
+        {
+            *lane += pending_value;
+        }
+        legacy_permute(state)
+    }
+
+    #[test]
+    fn tagged_hash_matches_legacy_parameters_at_and_past_the_absorb_rate() {
+        let domain = *b"Tachyon-ActionDg";
+        let at_rate = [Fp::from(2), Fp::from(3), Fp::from(5), Fp::from(7)];
+        let past_rate = [
+            Fp::from(2),
+            Fp::from(3),
+            Fp::from(5),
+            Fp::from(7),
+            Fp::from(11),
+        ];
+        let [legacy_at_rate, ..] = legacy_sponge_state(&domain, at_rate);
+        let [legacy_past_rate, ..] = legacy_sponge_state(&domain, past_rate);
+
+        assert_eq!(
+            hash::<4>(&domain, at_rate).to_bytes(),
+            legacy_at_rate.to_repr()
+        );
+        assert_eq!(
+            hash::<5>(&domain, past_rate).to_bytes(),
+            legacy_past_rate.to_repr()
+        );
+    }
+
+    #[test]
+    fn nullifier_group_matches_legacy_parameters_across_successive_squeezes() {
+        let master = Fp::from(19);
+        let epoch_start = Fp::from(32);
+        let [legacy_0, legacy_1, legacy_2, legacy_3, _capacity] =
+            legacy_sponge_state(NULLIFIER_DOMAIN, [master, epoch_start]);
+        let current = nullifier_group(master, epoch_start);
+
+        assert_eq!(current[0].to_bytes(), legacy_0.to_repr());
+        assert_eq!(current[1].to_bytes(), legacy_1.to_repr());
+        assert_eq!(current[2].to_bytes(), legacy_2.to_repr());
+        assert_eq!(current[3].to_bytes(), legacy_3.to_repr());
+    }
 }

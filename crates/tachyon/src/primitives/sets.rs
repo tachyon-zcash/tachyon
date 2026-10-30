@@ -2,11 +2,11 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{
+use ragu::{
     Cycle as _, FixedGenerators as _,
     pasta::{Eq, Fp, Pasta},
 };
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pcd::pasta::baked;
 use udon::curve::{Projective as _, ProjectiveAdapter, Vesta};
 

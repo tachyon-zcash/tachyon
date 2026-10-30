@@ -360,6 +360,42 @@ mod tests {
     }
 
     #[test]
+    fn the_decomposition_keeps_an_over_capacity_interpolant_square_off_circuit() {
+        let rng = &mut StdRng::seed_from_u64(27);
+        let capacity = ProductionRank::num_coeffs();
+        let count = (capacity >> 1) + 1;
+        let shift = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let mut points = Vec::with_capacity(count);
+        while points.len() < count {
+            let root = Fp::random(|bytes| rng.fill_bytes(bytes));
+            let abscissa = root.square() - shift;
+            if !points.iter().any(|&(existing, _)| existing == abscissa) {
+                points.push((abscissa, root));
+            }
+        }
+        let interpolant_coeffs =
+            super::super::interpolate(&points).expect("distinct abscissas interpolate");
+        assert_eq!(interpolant_coeffs.len(), count);
+        assert_ne!(interpolant_coeffs.last(), Some(&Fp::ZERO));
+        let mut square = Vec::new();
+        super::super::arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs, &mut square);
+        assert_eq!(square.len(), (2 * count) - 1);
+        assert!(square.len() > capacity);
+        let (interpolant, quotient) = decomposition(&points, Fp::ONE, shift)
+            .expect("points satisfy the residue-side equation");
+        assert_eq!(dense(&interpolant).len(), count);
+        assert!(dense(&quotient).len() <= capacity);
+        let roots = multiset::encode(abscissas_of(&points));
+        for _ in 0..4 {
+            let z = Fp::random(|bytes| rng.fill_bytes(bytes));
+            assert_eq!(
+                interpolant.eval(z).square() - (z + shift),
+                roots.eval(z) * quotient.eval(z)
+            );
+        }
+    }
+
+    #[test]
     fn a_misfiled_value_has_no_decomposition() {
         let rng = &mut StdRng::seed_from_u64(31);
         let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));

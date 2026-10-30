@@ -1,66 +1,20 @@
 //! Spend nullifier-binding header and step.
 
 extern crate alloc;
-
-use alloc::{vec, vec::Vec};
-
-use ragu::{Header, Index, Step, Suffix};
-use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use ragu::{Encoded, Header, Index, Step, StepCtx, pasta::Fp};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::Bound,
+    maybe::Maybe as _,
+};
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
+pub use crate::stamp::headers::spend::SpendHeader;
 use crate::{
     constants::MAX_MONEY,
-    keys::PaymentKey,
-    note,
-    nullifier::Nullifier,
-    primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
 };
-
-/// Header binding a spend to its lineage note, epoch nullifier pair and value
-/// commitment.
-///
-/// Carries the note commitment `cm`, the lineage's nullifier and its
-/// neighbour `(nf_current, nf_next)` derived from the note's master key, the
-/// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
-/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
-/// ties its `ak` to `pk`, and produces `rk`.
-#[derive(Debug)]
-pub struct SpendHeader;
-
-impl Header for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
-    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
-    /// one epoch on; `anchor` threads the spendable lineage's pool position;
-    /// `pk` and `cv` come from the certified note.
-    type Data = (
-        note::Commitment,
-        Nullifier,
-        Nullifier,
-        Anchor,
-        PaymentKey,
-        value::Commitment,
-    );
-
-    const SUFFIX: Suffix = Suffix::new(5);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
-        (
-            vec![
-                Fp::from(cm),
-                Fp::from(nf_current),
-                Fp::from(nf_next),
-                Fp::from(anchor),
-                Fp::from(pk),
-            ],
-            Vec::new(),
-            vec![Ep::from(cv)],
-            Vec::new(),
-        )
-    }
-}
 
 /// Derives a spend's epoch nullifier pair from the note's master key, commits
 /// the note's value, and binds both to the spendable lineage.
@@ -91,55 +45,82 @@ impl Step for SpendBind {
     type Left = NoteSpendable;
     type Output = SpendHeader;
     type Right = NoteSecret;
+    type Shared = ();
     /// `(rcv,)`
     type Witness<'source> = (value::Trapdoor,);
 
     const INDEX: Index = Index::new(8);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (rcv,): Self::Witness<'source>,
-        (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
-        (secret_cm, note, mk): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(secret_cm) - Fp::from(spendable_cm),
-            "SpendBind: secret does not match note",
-        )?;
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "SpendBind: note value exceeds maximum".into(),
-            ));
-        }
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (rcv,) = witness.take();
+            let (spendable_cm, spendable_epoch_current, anchor) = left.take();
+            let (secret_cm, note, mk) = right.take();
+            enforce_zero(
+                Fp::from(secret_cm) - Fp::from(spendable_cm),
+                "SpendBind: secret does not match note",
+            )?;
+            if u64::from(note.value) > MAX_MONEY {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SpendBind: note value exceeds maximum".into(),
+                ));
+            }
 
-        // The pair needs a following epoch; the final epoch has none.
-        let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
+            // The pair needs a following epoch; the final epoch has none.
+            let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendBind: no epoch follows the spend epoch".into(),
+                )
+            })?;
+
+            // TODO: a real circuit needs a low-bit decomposition of each epoch for
+            // its group start and position; mock ragu computes both natively.
+            let nf_current = mk.derive_nullifier(spendable_epoch_current);
+            let nf_next = mk.derive_nullifier(epoch_next);
+
+            // A zero nullifier would collide with the note's own cm tachygram.
+            enforce_nonzero(
+                Fp::from(nf_current),
+                "SpendBind: current-epoch nullifier is zero",
+            )?;
+            enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
+
+            Ok((
+                (
+                    spendable_cm,
+                    nf_current,
+                    nf_next,
+                    anchor,
+                    note.pk,
+                    rcv.commit(note.value),
+                ),
+                (),
+            ))
         })?;
-
-        // TODO: a real circuit needs a low-bit decomposition of each epoch for
-        // its group start and position; mock ragu computes both natively.
-        let nf_current = mk.derive_nullifier(spendable_epoch_current);
-        let nf_next = mk.derive_nullifier(epoch_next);
-
-        // A zero nullifier would collide with the note's own cm tachygram.
-        enforce_nonzero(
-            Fp::from(nf_current),
-            "SpendBind: current-epoch nullifier is zero",
-        )?;
-        enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
-
-        Ok((
-            (
-                spendable_cm,
-                nf_current,
-                nf_next,
-                anchor,
-                note.pk,
-                rcv.commit(note.value),
-            ),
-            (),
-        ))
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }

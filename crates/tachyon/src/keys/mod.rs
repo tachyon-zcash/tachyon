@@ -95,7 +95,7 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
-    use ragu_core::pasta::Fp;
+    use ragu::pasta::Fp;
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
     use udon::field::Field as _;
 

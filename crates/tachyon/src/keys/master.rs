@@ -3,7 +3,7 @@
 use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use ragu_core::{
+use ragu::{
     PoseidonPermutation as _,
     pasta::{Fp, PoseidonFp},
 };
