@@ -37,6 +37,18 @@ info: 'Tachyon.unmerge_strips_fee' depends on axioms: [propext, Classical.choice
 #print axioms Tachyon.unmerge_strips_fee
 
 /--
+info: 'Tachyon.StampTrace.spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTrace.spec
+
+/--
+info: 'Tachyon.StampTrace.findLeaf' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTrace.findLeaf
+
+/--
 info: 'Tachyon.BundleVerified.fee_published' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
