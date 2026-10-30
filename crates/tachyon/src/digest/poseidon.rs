@@ -8,20 +8,19 @@
 
 use core::array;
 
-use ff::{Field as _, PrimeField as _};
-use group::{CurveAffine as _, GroupEncoding as _};
-use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
-use ragu_arithmetic::{Cycle as _, PoseidonPermutation as _};
 use ragu_core::{
+    Cycle as _, PoseidonPermutation as _,
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe as _},
+    pasta::{EqAffine, Fp, Pasta, PoseidonFp},
 };
-use ragu_pasta::{Pasta, PoseidonFp};
+use ragu_pcd::pasta::baked;
 use ragu_primitives::{
     Element,
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::constants::EVIDENCE_TREE_ARITY;
 
@@ -57,7 +56,7 @@ fn tagged_sponge<const L: usize>(
         };
         Element::constant(&mut emulator, value)
     }));
-    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(Pasta::baked()));
+    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(baked()));
     #[expect(
         clippy::expect_used,
         reason = "sponge absorb cannot fail in wireless `Always` mode"
@@ -90,10 +89,10 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
 /// \mathsf{fee})$.
 #[must_use]
-pub fn fee_digest(cv_max_fee: Coordinates<EpAffine>, fee: u64) -> Fp {
+pub fn fee_digest(cv_max_fee: (Fp, Fp), fee: u64) -> Fp {
     hash::<3>(
         FEE_DIGEST_DOMAIN,
-        [*cv_max_fee.x(), *cv_max_fee.y(), Fp::from(fee)],
+        [cv_max_fee.0, cv_max_fee.1, Fp::from(fee)],
     )
 }
 
@@ -101,16 +100,16 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from action fields.
 #[must_use]
-pub fn action_digest(cv: Coordinates<EpAffine>, rk: Coordinates<EpAffine>) -> Fp {
-    hash::<4>(ACTION_DIGEST_DOMAIN, [*cv.x(), *cv.y(), *rk.x(), *rk.y()])
+pub fn action_digest(cv: (Fp, Fp), rk: (Fp, Fp)) -> Fp {
+    hash::<4>(ACTION_DIGEST_DOMAIN, [cv.0, cv.1, rk.0, rk.1])
 }
 
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 #[must_use]
-pub fn payment_key(ak: Coordinates<EpAffine>, nk: Fp) -> Fp {
-    hash::<3>(PAYMENT_KEY_DOMAIN, [*ak.x(), *ak.y(), nk])
+pub fn payment_key(ak: (Fp, Fp), nk: Fp) -> Fp {
+    hash::<3>(PAYMENT_KEY_DOMAIN, [ak.0, ak.1, nk])
 }
 
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
@@ -199,7 +198,7 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 #[expect(clippy::expect_used, reason = "constant-size decomposition")]
 fn point_limbs(point: EqAffine) -> (Fp, Fp) {
     assert!(
-        !bool::from(point.is_identity()),
+        !point.is_identity(),
         "commitment must not be the identity point"
     );
 

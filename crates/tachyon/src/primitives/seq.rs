@@ -3,11 +3,16 @@ extern crate alloc;
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::{Eq, Fp};
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::Pasta;
+use ragu_core::{
+    Cycle as _,
+    pasta::{Fp, Pasta},
+};
+use ragu_pcd::pasta::baked;
+use udon::{
+    curve::{ProjectiveAdapter, Vesta},
+    field::Field as _,
+};
 
 use crate::{
     collections::{indexed_multiset, poly_mul},
@@ -17,7 +22,7 @@ use crate::{
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct NfSeqCommit(Eq);
+pub struct NfSeqCommit(ProjectiveAdapter<Vesta>);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
@@ -37,7 +42,7 @@ impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        NfSeqCommit(self.0.commit(Pasta::host_generators(baked())))
     }
 
     /// Evaluate the sequence polynomial at a given point.

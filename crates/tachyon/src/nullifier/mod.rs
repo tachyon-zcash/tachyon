@@ -1,9 +1,9 @@
 //! Nullifiers and nullifier operations.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::Fp;
+use ragu_core::pasta::Fp;
 use rand_core::CryptoRng;
+use udon::field::{Field as _, FieldAdapter, PallasBase};
 
 use crate::primitives::Tachygram;
 
@@ -22,8 +22,8 @@ pub const NF_DERIVATION_WIDTH: usize = 16;
 /// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-#[from(Fp, Tachygram)]
-#[into(Fp, Tachygram)]
+#[from(FieldAdapter<PallasBase>, Tachygram)]
+#[into(FieldAdapter<PallasBase>, Tachygram)]
 pub struct Nullifier(Tachygram);
 
 /// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
@@ -32,12 +32,12 @@ pub struct Nullifier(Tachygram);
 /// \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$, which
 /// evaluates every epoch. Delegation carries proven value windows.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Trapdoor(#[debug(skip)] Fp);
+pub struct Trapdoor(#[debug(skip)] FieldAdapter<PallasBase>);
 
 impl Trapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 

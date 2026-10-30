@@ -1,11 +1,16 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::{Eq, Fp};
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::Pasta;
+use ragu_core::{
+    Cycle as _,
+    pasta::{Fp, Pasta},
+};
+use ragu_pcd::pasta::baked;
+use udon::{
+    curve::{ProjectiveAdapter, Vesta},
+    field::{Field as _, FieldAdapter, PallasBase},
+};
 
 use crate::collections::qr;
 
@@ -22,7 +27,7 @@ use crate::collections::qr;
 ///
 /// Depth $j$ classifies at $R_j = R_0 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrDiscriminant(pub Fp);
+pub struct QrDiscriminant(pub FieldAdapter<PallasBase>);
 
 impl QrDiscriminant {
     /// The discriminant a split at `depth` classifies at.
@@ -41,7 +46,7 @@ impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrInterpolantCommit(self.0.commit(Pasta::host_generators(baked())))
     }
 
     /// Evaluate the interpolant at a given point.
@@ -53,7 +58,7 @@ impl QrInterpolantPoly {
 
 /// Pedersen commitment to a class interpolant.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrInterpolantCommit(Eq);
+pub struct QrInterpolantCommit(ProjectiveAdapter<Vesta>);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c \cdot (X + s) = q \cdot h$.
@@ -64,7 +69,7 @@ impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrQuotientCommit(self.0.commit(Pasta::host_generators(baked())))
     }
 
     /// Evaluate the quotient at a given point.
@@ -76,7 +81,7 @@ impl QrQuotientPoly {
 
 /// Pedersen commitment to a class-decomposition quotient.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrQuotientCommit(Eq);
+pub struct QrQuotientCommit(ProjectiveAdapter<Vesta>);
 
 /// A QR profile: the number of splits taken and the side taken at each.
 ///
@@ -134,7 +139,7 @@ impl QrProfile {
 /// $r^2 = s$, or `(false, r)` with $r^2 = c \cdot s$, for $s$ the shifted
 /// value.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrClassRoot(pub bool, pub Fp);
+pub struct QrClassRoot(pub bool, pub FieldAdapter<PallasBase>);
 
 impl QrClassRoot {
     /// Classify `value` at `discriminant`.

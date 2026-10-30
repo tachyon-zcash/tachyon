@@ -1,9 +1,13 @@
+use core::cmp;
+
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use ff::Field as _;
-use group::{Curve as _, Group as _};
 use lazy_static::lazy_static;
-use pasta_curves::{Eq, Fp};
+use ragu_core::pasta::{Eq, Fp};
+use udon::{
+    curve::Projective as _,
+    field::{Field as _, FieldAdapter, PallasBase},
+};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
@@ -27,8 +31,23 @@ pub enum AnchorError {
 }
 
 /// Running anchor over the consensus state.
-#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
-pub struct Anchor(pub Fp);
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Anchor(pub FieldAdapter<PallasBase>);
+
+impl Ord for Anchor {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.0
+            .as_inner()
+            .to_canonical_uint()
+            .cmp(&other.0.as_inner().to_canonical_uint())
+    }
+}
+
+impl PartialOrd for Anchor {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Anchor {
     /// Advance the anchor by absorbing one stamp and the epoch of the block
@@ -102,8 +121,8 @@ impl Default for Anchor {
 
 #[cfg(test)]
 mod tests {
-    use pasta_curves::Eq;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use ragu_core::pasta::Eq;
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{Tachygram, TachygramSetPoly};
@@ -135,7 +154,7 @@ mod tests {
 
         // The identity commitment is not a valid set
         {
-            let anchor = Anchor(Fp::random(&mut *rng));
+            let anchor = Anchor(Fp::random(|bytes| rng.fill_bytes(bytes)));
             let zero_set = TachygramSetCommit::from(Eq::identity());
 
             let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex::new(7), &zero_set)
@@ -146,7 +165,7 @@ mod tests {
 
         // An empty set commits to a constant polynomial
         {
-            let anchor = Anchor(Fp::random(&mut *rng));
+            let anchor = Anchor(Fp::random(|bytes| rng.fill_bytes(bytes)));
             let one_set = TachygramSetCommit::default();
 
             let Err(AnchorError::NextStampEmpty) = anchor.next_stamp(EpochIndex::new(1), &one_set)
@@ -160,7 +179,7 @@ mod tests {
     fn next_epoch_rejects_epoch_zero() {
         let rng = &mut StdRng::seed_from_u64(0);
 
-        let anchor = Anchor(Fp::random(rng));
+        let anchor = Anchor(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex::new(0)) else {
             panic!("should not be able to advance to epoch zero");

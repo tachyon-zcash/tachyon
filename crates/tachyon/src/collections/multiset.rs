@@ -2,9 +2,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use pasta_curves::Fp;
-use ragu_arithmetic::poly_with_roots;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::pasta::Fp;
+
+use super::arithmetic::poly_with_roots;
 
 /// Encode the provided members as roots.
 pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, ProductionRank> {

@@ -6,8 +6,8 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use ff::PrimeField as _;
-use pasta_curves::{Fp, Fq};
+use ragu_core::pasta::{Fp, Fq};
+use udon::field::Field as _;
 
 use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
 
@@ -17,7 +17,7 @@ use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
     reason = "p < q, so every Fp repr is canonical in Fq"
 )]
 fn embed(alpha: Fp) -> Fq {
-    Option::from(Fq::from_repr(alpha.to_repr())).expect("p < q")
+    Fq::from_bytes(alpha.to_bytes()).expect("p < q")
 }
 
 mod sealed {

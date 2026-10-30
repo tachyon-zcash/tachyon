@@ -3,9 +3,10 @@
 use core::marker::PhantomData;
 
 use derive_more::{Debug, From};
-use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use ff::PrimeField as _;
+use ragu_core::pasta::{Fp, Fq};
 use rand_core::CryptoRng;
+use udon::field::Field as _;
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -93,7 +94,7 @@ impl SpendingKey {
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
         // the y-sign bit (byte 31, bit 7 of the compressed encoding).
         let ak: [u8; 32] = reddsa::VerificationKey::from(
-            &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
+            &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_bytes())
                 .expect("PRF-derived ask should be a valid RedPallas scalar"),
         )
         .into();
@@ -103,7 +104,7 @@ impl SpendingKey {
 
         // Build the final key from the sign-normalized scalar.
         SpendAuthorizingKey(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_bytes())
                 .expect("sign-normalized ask should be a valid RedPallas scalar"),
         )
     }
@@ -182,12 +183,21 @@ impl SpendAuthorizingKey {
     ///
     /// Only accepts [`ActionRandomizer<Spend>`]; passing an output
     /// randomizer is a compile error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
+    /// field.
     #[must_use]
     pub fn derive_action_private(
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> ActionSigningKey<effect::Spend> {
-        ActionSigningKey(self.0.randomize(&alpha.0), PhantomData)
+        #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
+        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+            .into_option()
+            .expect("canonical randomizer encoding is a scalar");
+        ActionSigningKey(self.0.randomize(&scalar), PhantomData)
     }
 }
 
@@ -234,7 +244,7 @@ impl ActionSigningKey<effect::Output> {
     pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
         #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_bytes())
                 .expect("output randomizer should be a valid RedPallas signing key"),
             PhantomData,
         )
@@ -280,7 +290,7 @@ impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
             reason = "all Fq are valid RedPallas signing keys"
         )]
         Self(
-            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
+            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_bytes())
                 .expect("all Fq are valid RedPallas signing keys"),
         )
     }

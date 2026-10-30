@@ -23,10 +23,12 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
+use ragu_core::{
+    Cycle as _, FixedGenerators as _,
+    pasta::{Ep, Eq, Fp, Fq, Pasta},
+};
+use ragu_pcd::pasta::baked;
 
 use super::{
     delegation::NoteNullifiers,
@@ -424,7 +426,7 @@ impl Step for UnspentLift {
                 &[elapsed_seq.commit().into(), extended_seq.commit().into(), {
                     // The mock absorbs only points, so absorb `[value]·G_0`.
                     #[expect(clippy::expect_used, reason = "constant size")]
-                    let &g0 = Pasta::host_generators(Pasta::baked())
+                    let &g0 = Pasta::host_generators(baked())
                         .g()
                         .first()
                         .expect("at least one generator");

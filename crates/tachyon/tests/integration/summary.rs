@@ -5,25 +5,25 @@ extern crate alloc;
 use alloc::string::ToString as _;
 use core::array;
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::Proof;
+use ragu_core::pasta::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly,
     stamp::proof::{PROOF_SYSTEM, summary},
     witness,
 };
 
-use crate::fixtures::{PoolSim, build_summary_pcd, random_block};
+use crate::fixtures::{PoolSim, build_summary_pcd, random_block, random_fp};
 
 #[test]
 fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
-    let start = Anchor::from(Fp::random(&mut *rng));
-    let stamp_a: [Tachygram; 3] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
-    let stamp_b: [Tachygram; 2] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
+    let start = Anchor::from(random_fp(rng));
+    let stamp_a: [Tachygram; 3] = array::from_fn(|_| Tachygram::from(random_fp(rng)));
+    let stamp_b: [Tachygram; 2] = array::from_fn(|_| Tachygram::from(random_fp(rng)));
 
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
@@ -54,7 +54,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
             seeded,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("SummaryAdvance");
 
@@ -118,7 +118,7 @@ fn summary_over_an_anchor_span_matches_the_pool() {
 #[test]
 fn summary_seed_rejects_empty_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let start = Anchor::from(Fp::random(&mut *rng));
+    let start = Anchor::from(random_fp(rng));
 
     let err = PROOF_SYSTEM
         .seed(
@@ -138,10 +138,10 @@ fn summary_seed_rejects_empty_stamp() {
 fn summary_advance_rejects_wrong_accumulator() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
-    let start = Anchor::from(Fp::random(&mut *rng));
-    let stamp_a = [Tachygram::from(Fp::random(&mut *rng))];
-    let stamp_b = [Tachygram::from(Fp::random(&mut *rng))];
-    let foreign = [Tachygram::from(Fp::random(&mut *rng))];
+    let start = Anchor::from(random_fp(rng));
+    let stamp_a = [Tachygram::from(random_fp(rng))];
+    let stamp_b = [Tachygram::from(random_fp(rng))];
+    let foreign = [Tachygram::from(random_fp(rng))];
 
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
@@ -157,7 +157,7 @@ fn summary_advance_rejects_wrong_accumulator() {
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
             seeded,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -174,9 +174,9 @@ fn summary_advance_rejects_wrong_accumulator() {
 fn summary_advance_rejects_forged_extension() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
-    let start = Anchor::from(Fp::random(&mut *rng));
-    let stamp_a = [Tachygram::from(Fp::random(&mut *rng))];
-    let stamp_b = [Tachygram::from(Fp::random(&mut *rng))];
+    let start = Anchor::from(random_fp(rng));
+    let stamp_a = [Tachygram::from(random_fp(rng))];
+    let stamp_b = [Tachygram::from(random_fp(rng))];
 
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
@@ -197,7 +197,7 @@ fn summary_advance_rejects_forged_extension() {
             summary::SummaryAdvance,
             (acc, forged, stamp),
             seeded,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();

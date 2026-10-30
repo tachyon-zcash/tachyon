@@ -1,7 +1,7 @@
 use core::ops;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use pasta_curves::Fp;
+use udon::field::{FieldAdapter, PallasBase};
 
 use super::BlockHeight;
 use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
@@ -72,7 +72,7 @@ impl From<EpochIndex> for u64 {
     }
 }
 
-impl From<EpochIndex> for Fp {
+impl From<EpochIndex> for FieldAdapter<PallasBase> {
     fn from(epoch: EpochIndex) -> Self {
         Self::from(u64::from(epoch.0))
     }

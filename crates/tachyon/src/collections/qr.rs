@@ -25,14 +25,15 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::Field as _;
-use pasta_curves::Fp;
-use ragu_arithmetic as arithmetic;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::pasta::Fp;
+use udon::field::Field as _;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
-pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::from_raw([5, 0, 0, 0]);
+pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
+    "0x0000000000000000000000000000000000000000000000000000000000000005"
+));
 
 /// The class multiplier $c$ of a side: $1$ on the residue side, the quadratic
 /// non-residue otherwise.
@@ -52,12 +53,12 @@ pub(crate) const fn class_multiplier(side: bool) -> Fp {
 #[must_use]
 pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
     let shifted = value + discriminant;
-    if let Some(root) = Option::<Fp>::from(shifted.sqrt()) {
+    if let Some(root) = shifted.sqrt() {
         return (true, root);
     }
     // The character is multiplicative and n is a non-residue, so exactly
     // one of the two character branches has a root.
-    let root = Option::<Fp>::from((QUADRATIC_NON_RESIDUE * shifted).sqrt());
+    let root = (QUADRATIC_NON_RESIDUE * shifted).sqrt();
     #[expect(
         clippy::expect_used,
         reason = "one of the two character branches always has a root"
@@ -132,12 +133,12 @@ pub(crate) fn decomposition(
     };
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
         let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
-        interpolant_coeffs = arithmetic::poly_with_roots(&abscissas);
+        interpolant_coeffs = super::arithmetic::poly_with_roots(&abscissas);
     }
 
     let translate = [class * shift, class];
     let mut h_coeffs = Vec::new();
-    arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs, &mut h_coeffs);
+    super::arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs, &mut h_coeffs);
     if h_coeffs.len() < translate.len() {
         h_coeffs.resize(translate.len(), Fp::ZERO);
     }
@@ -160,17 +161,16 @@ mod tests {
 
     use core::iter;
 
-    use ff::PrimeField as _;
     use ragu_circuits::polynomials::Rank as _;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::collections::multiset;
 
     /// $(p - 1) / 2$ as `pow_vartime` limbs, computed from field constants.
     fn half_order() -> [u64; 4] {
-        let half = -Fp::ONE * Fp::TWO_INV;
-        let repr = half.to_repr();
+        let half = -Fp::ONE * Fp::TWO_INVERSE;
+        let repr = half.to_bytes();
         let mut limbs = [0u64; 4];
         for (limb, bytes) in limbs.iter_mut().zip(repr.as_ref().chunks(8)) {
             *limb = u64::from_le_bytes(bytes.try_into().unwrap());
@@ -180,7 +180,16 @@ mod tests {
 
     /// Euler-criterion quadratic character: $1$, $-1$, or $0$.
     fn chi(x: Fp) -> Fp {
-        x.pow_vartime(half_order())
+        let mut result = Fp::ONE;
+        for limb in half_order().iter().rev() {
+            for bit in (0..u64::BITS).rev() {
+                result = result.square();
+                if (limb >> bit) & 1 == 1 {
+                    result *= x;
+                }
+            }
+        }
+        result
     }
 
     #[test]
@@ -198,8 +207,8 @@ mod tests {
     fn classification_matches_the_legendre_symbol() {
         let rng = &mut StdRng::seed_from_u64(21);
         for _ in 0..64 {
-            let discriminant = Fp::random(&mut *rng);
-            let x = Fp::random(&mut *rng);
+            let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+            let x = Fp::random(|bytes| rng.fill_bytes(bytes));
             let (bit, root) = classify(x, discriminant);
             assert_eq!(bit, chi(x + discriminant) != -Fp::ONE);
             assert_eq!(root.square(), class_multiplier(bit) * (x + discriminant));
@@ -209,20 +218,20 @@ mod tests {
     #[test]
     fn the_exceptional_value_is_pinned_to_the_residue_side() {
         let rng = &mut StdRng::seed_from_u64(22);
-        let discriminant = Fp::random(&mut *rng);
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
         assert_eq!(classify(-discriminant, discriminant), (true, Fp::ZERO));
     }
 
     #[test]
     fn a_value_takes_exactly_one_side() {
         let rng = &mut StdRng::seed_from_u64(28);
-        let discriminant = Fp::random(&mut *rng);
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
         for _ in 0..32 {
-            let x = Fp::random(&mut *rng);
+            let x = Fp::random(|bytes| rng.fill_bytes(bytes));
             let (bit, root) = classify(x, discriminant);
             let opposite = class_multiplier(!bit) * (x + discriminant);
             assert!(
-                Option::<Fp>::from(opposite.sqrt()).is_none() || x == -discriminant,
+                opposite.sqrt().is_none() || x == -discriminant,
                 "a non-exceptional value classified on both sides"
             );
             assert_eq!(root.square(), class_multiplier(bit) * (x + discriminant));
@@ -232,8 +241,8 @@ mod tests {
     #[test]
     fn splits_are_exhaustive_and_disjoint() {
         let rng = &mut StdRng::seed_from_u64(30);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
             .take(64)
             .collect();
 
@@ -292,7 +301,7 @@ mod tests {
     fn the_set_encoding_is_monic() {
         let rng = &mut StdRng::seed_from_u64(33);
         for count in [0, 1, 5] {
-            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
                 .take(count)
                 .collect();
             let encoded = dense(&multiset::encode(values));
@@ -305,8 +314,8 @@ mod tests {
     fn the_decomposition_holds_on_both_sides() {
         let rng = &mut StdRng::seed_from_u64(23);
         for count in [0, 1, 2, 7] {
-            let discriminant = Fp::random(&mut *rng);
-            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+            let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
                 .take((2 * count) + 2)
                 .collect();
             let (residue, non_residue) = split(values, discriminant);
@@ -327,8 +336,8 @@ mod tests {
     #[test]
     fn the_decomposition_holds_at_the_polynomial_capacity() {
         let rng = &mut StdRng::seed_from_u64(26);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
             .take(ProductionRank::num_coeffs() - 1)
             .collect();
         let (residue, non_residue) = split(values, discriminant);
@@ -341,7 +350,7 @@ mod tests {
             // The full coefficient compare is quadratic in B; evaluation at
             // random points verifies the identity in linear time instead.
             for _ in 0..4 {
-                let z = Fp::random(&mut *rng);
+                let z = Fp::random(|bytes| rng.fill_bytes(bytes));
                 assert_eq!(
                     u.eval(z).square() - (class * (z + discriminant)),
                     q.eval(z) * h.eval(z)
@@ -353,8 +362,8 @@ mod tests {
     #[test]
     fn a_misfiled_value_has_no_decomposition() {
         let rng = &mut StdRng::seed_from_u64(31);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
             .take(16)
             .collect();
         let (mut residue, mut non_residue) = split(values, discriminant);
@@ -365,8 +374,8 @@ mod tests {
     #[test]
     fn a_repeated_value_has_no_decomposition() {
         let rng = &mut StdRng::seed_from_u64(32);
-        let discriminant = Fp::random(&mut *rng);
-        let value = Fp::random(&mut *rng);
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let value = Fp::random(|bytes| rng.fill_bytes(bytes));
         let (residue, non_residue) = split([value, value], discriminant);
         let (points, class) = if residue.is_empty() {
             (&non_residue, class_multiplier(false))
@@ -380,8 +389,8 @@ mod tests {
     #[test]
     fn an_exceptional_value_lands_residue_side_with_root_zero() {
         let rng = &mut StdRng::seed_from_u64(34);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
             .take(16)
             .chain(iter::once(-discriminant))
             .collect();
@@ -412,7 +421,7 @@ mod tests {
     #[test]
     fn an_all_zero_side_takes_the_vanishing_polynomial() {
         let rng = &mut StdRng::seed_from_u64(35);
-        let discriminant = Fp::random(&mut *rng);
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
         let points = [(-discriminant, Fp::ZERO)];
         let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
         assert_eq!(dense(&u), [discriminant, Fp::ONE]);
@@ -422,10 +431,11 @@ mod tests {
     #[test]
     fn the_decomposition_reads_as_a_profile_over_discriminants() {
         let rng = &mut StdRng::seed_from_u64(50);
-        let value = Fp::random(&mut *rng);
-        let discriminants: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take(9)
-            .collect();
+        let value = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let discriminants: Vec<Fp> =
+            iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
+                .take(9)
+                .collect();
         let mut residue = Vec::new();
         let mut non_residue = Vec::new();
         for &discriminant in &discriminants {

@@ -23,11 +23,13 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ff::Field as _;
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
+use ragu_core::{
+    Cycle as _, FixedGenerators as _,
+    pasta::{Ep, Eq, Fp, Fq, Pasta},
+};
+use ragu_pcd::pasta::baked;
+use udon::field::Field as _;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -492,7 +494,7 @@ impl Step for QrSideDescend {
             {
                 // The mock absorbs only points, so absorb `[R]·G_0`.
                 #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
+                let &g0 = Pasta::host_generators(baked())
                     .g()
                     .first()
                     .expect("at least one generator");
@@ -679,7 +681,7 @@ pub(super) fn enforce_value_profile(
             "QR profile: exceptional discriminant claimed the non-residue class",
         )?;
 
-        let selected_fp = Fp::from(selected);
+        let selected_fp = Fp::from(u64::from(selected));
         depth_acc += selected_fp;
         index_acc += selected_fp * position_fp;
         bits_acc += selected_fp * (bits_acc + side_fp);
@@ -804,7 +806,7 @@ impl Step for QrUnspentInit {
         let z = ctx.derive_challenge(&[sequence_commit.into(), {
             // The mock absorbs only points, so absorb `[value]·G_0`.
             #[expect(clippy::expect_used, reason = "constant size")]
-            let &g0 = Pasta::host_generators(Pasta::baked())
+            let &g0 = Pasta::host_generators(baked())
                 .g()
                 .first()
                 .expect("at least one generator");
