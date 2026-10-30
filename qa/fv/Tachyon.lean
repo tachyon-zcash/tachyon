@@ -23,6 +23,7 @@ import Tachyon.PublishedNotes
 import Tachyon.NoteCreations
 import Tachyon.PaidCreations
 import Tachyon.SpendCreations
+import Tachyon.BundleSpendCreations
 import Tachyon.Value
 import Tachyon.FeeAccounting
 import Tachyon.RemovalClosure
