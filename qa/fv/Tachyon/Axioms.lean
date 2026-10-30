@@ -271,6 +271,12 @@ info: 'Tachyon.TracedBundle.accountingOrBreak' depends on axioms: [propext, Clas
 #print axioms Tachyon.TracedBundle.accountingOrBreak
 
 /--
+info: 'Tachyon.spendsUnsharedOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.spendsUnsharedOrBreak
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
