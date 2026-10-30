@@ -18,7 +18,7 @@ open AnchorBreaks
 
 universe w
 
-variable {F A : Type*} [Field F] [DecidableEq F] {H : TachygramHash F} {Opens : F → ℤ → Type*}
+variable {F A : Type*} [Field F] [DecidableEq F] {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type*}
   {R : ℕ → F → Multiset F} {epoch : A → ℕ}
 
 /-- Two notes with one nullifier are equal, or the nullifier has two preimages. -/

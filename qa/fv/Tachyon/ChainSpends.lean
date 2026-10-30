@@ -35,7 +35,7 @@ variable {F C A P : Type*} [Field F] [DecidableEq F] [Monoid P] [OpeningSemantic
   [DecidableEq P] [DecidableEq C] [DecidableEq A] {m : Model P C A ℕ}
   {ValidBucket : QrBucket F A → Prop} {Query : QrBucket F A → F → Type*} {nf : F → ℕ → F}
   {IsFee : F → Prop} {epoch : A → ℕ} {R : ℕ → F → Multiset F} {Δ Φ : Type w}
-  {actionDigest : Δ → F} {feeDigest : Φ → F} {H : TachygramHash F} {Opens : F → ℤ → Type*}
+  {actionDigest : Δ → F} {feeDigest : Φ → F} {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type*}
   {Lift : Stamp F A → A → Type w}
   {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift)}
 

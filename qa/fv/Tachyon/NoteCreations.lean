@@ -25,7 +25,7 @@ universe u v w x
 
 variable {F : Type u} {A : Type v} [Field F] [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ}
   {R : ℕ → F → Multiset F} {Δ Φ : Type w} {actionDigest : Δ → F} {feeDigest : Φ → F}
-  {H : TachygramHash F} {Opens : F → ℤ → Type x} {Lift : Stamp F A → A → Type w}
+  {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type x} {Lift : Stamp F A → A → Type w}
 
 omit [Field F] [DecidableEq F] in
 theorem TachygramLeaf.Creates.mem {d : F} {a : A} {n : Note F} {k : TachygramLeaf H Opens R epoch d a}

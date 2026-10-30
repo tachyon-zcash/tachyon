@@ -8,7 +8,8 @@ Consensus computes each covered digest from its descriptor: an action digest has
 (`Tachyon-ActionDg`) and a fee digest hashes `(cvMax, fee)` (`Tachyon-FeeDg`). `DigestInput` tags
 each preimage with its domain. A leaf's value opening is a tagged preimage of its digest whose value
 commitment opens to the leaf's signed value (`DigestOpening`): `+v` for a spend, `-v` for an output,
-and `-maxFee` for a fee.
+and `-maxFee` for a fee. A fee leaf's preimage carries the fee it digests; an action leaf's
+preimage is an action preimage.
 
 A leaf that creates note `n` debits at least `n`'s value: an output debits `v`, and a fee leaf debits
 `maxFee = change + fee`, where `n` is the change note (`TachygramLeaf.Creates.debit`). The descriptor
@@ -34,6 +35,11 @@ def DigestInput.commitment : DigestInput G Rk → G
   | .action cv _ => cv
   | .fee cvMax _ => cvMax
 
+/-- The fee a fee preimage carries; an action preimage carries none. -/
+def DigestInput.feeAmount : DigestInput G Rk → Option ℕ
+  | .action .. => none
+  | .fee _ amount => some amount
+
 /-- The action and fee digest hashes, with no injectivity assumptions. -/
 structure TaggedDigest (G Rk F : Type*) where
   action : G → Rk → F
@@ -53,14 +59,17 @@ structure TaggedDigestCollision (Hd : TaggedDigest G Rk F) where
 variable [Field K] [AddCommGroup G] [Module K G]
 
 variable (K) in
-/-- A tagged preimage of digest `d` whose value commitment opens to the signed value `v`. -/
-structure DigestOpening (Hd : TaggedDigest G Rk F) (V W : G) (d : F) (v : ℤ) where
+/-- A tagged preimage of digest `d` carrying fee `f`, whose value commitment opens to the signed
+value `v`. -/
+structure DigestOpening (Hd : TaggedDigest G Rk F) (V W : G) (d : F) (v : ℤ) (f : Option ℕ) where
   input : DigestInput G Rk
   rcv : K
   digest : Hd.eval input = d
+  amount : input.feeAmount = f
   opens : input.commitment = valueCommit V W (v : K) rcv
 
-variable {H : TachygramHash F} {Opens : F → ℤ → Type x} {R : ℕ → F → Multiset F} {epoch : A → ℕ}
+variable {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type x} {R : ℕ → F → Multiset F}
+  {epoch : A → ℕ}
 
 /-- The signed value a leaf's value commitment opens to. -/
 def TachygramLeaf.signedValue {d : F} {a : A} : TachygramLeaf H Opens R epoch d a → ℤ
@@ -68,9 +77,15 @@ def TachygramLeaf.signedValue {d : F} {a : A} : TachygramLeaf H Opens R epoch d 
   | .output n .. => -n.value
   | .fee maxFee .. => -maxFee.value
 
+/-- The fee a leaf's digest preimage carries: none for an action leaf. -/
+def TachygramLeaf.feeAmount {d : F} {a : A} : TachygramLeaf H Opens R epoch d a → Option ℕ
+  | .spend .. => none
+  | .output .. => none
+  | .fee _ amount .. => some amount
+
 /-- The leaf's value opening. -/
 def TachygramLeaf.opening {d : F} {a : A} :
-    (k : TachygramLeaf H Opens R epoch d a) → Opens d k.signedValue
+    (k : TachygramLeaf H Opens R epoch d a) → Opens d k.signedValue k.feeAmount
   | .spend _ _ o .. => o
   | .output _ o .. => o
   | .fee _ _ _ o .. => o

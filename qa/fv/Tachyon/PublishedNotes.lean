@@ -69,22 +69,23 @@ structure TachygramCollision (H : TachygramHash F) where
 
 /-- A leaf's kind and note. Covered by a stamp at anchor epoch `epoch a`, its tachygrams under the
 pairing `R` are a spent note's nullifier pair at some epoch `x`, an output note's commitment and pad,
-or the change note's commitment. `Opens d v` opens the value commitment behind digest `d` to the
-signed value `v`: `SpendBind` commits `+v`, `OutputBind` commits `-v`, and `FeeFuse` and `FeeSeed`
-commit `-maxFee`. Each step checks its note value against `maxMoney`. -/
-inductive TachygramLeaf (H : TachygramHash F) (Opens : F → ℤ → Type w) (R : ℕ → F → Multiset F)
-    (epoch : A → ℕ) (d : F) (a : A) : Type (max u w)
-  | spend (n : Note F) (x : ℕ) : Opens d n.value →
+or the change note's commitment. `Opens d v f` opens the value commitment behind digest `d` to the
+signed value `v`, through an action preimage when `f` is `none` and a fee preimage carrying fee `f`
+otherwise: `SpendBind` commits `+v`, `OutputBind` commits `-v`, and `FeeFuse` and `FeeSeed` commit
+`-maxFee` under the fee they digest. Each step checks its note value against `maxMoney`. -/
+inductive TachygramLeaf (H : TachygramHash F) (Opens : F → ℤ → Option ℕ → Type w)
+    (R : ℕ → F → Multiset F) (epoch : A → ℕ) (d : F) (a : A) : Type (max u w)
+  | spend (n : Note F) (x : ℕ) : Opens d n.value none →
       R (epoch a) d = {H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)} →
         n.value ≤ maxMoney → TachygramLeaf H Opens R epoch d a
-  | output (n : Note F) : Opens d (-n.value) →
+  | output (n : Note F) : Opens d (-n.value) none →
       R (epoch a) d = {H.noteCommit n, H.pad n} → n.value ≤ maxMoney →
         TachygramLeaf H Opens R epoch d a
-  | fee (maxFee : Note F) (fee change : ℕ) : Opens d (-maxFee.value) →
+  | fee (maxFee : Note F) (fee change : ℕ) : Opens d (-maxFee.value) (some fee) →
       change + fee = maxFee.value → R (epoch a) d = {H.noteCommit (maxFee.withValue change)} →
         maxFee.value ≤ maxMoney → TachygramLeaf H Opens R epoch d a
 
-variable {H : TachygramHash F} {Opens : F → ℤ → Type w} {R : ℕ → F → Multiset F}
+variable {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type w} {R : ℕ → F → Multiset F}
   {epoch : A → ℕ}
 
 /-- The leaf creates note `n`: it outputs `n`, or its change note is `n`. -/

@@ -107,7 +107,7 @@ def SpendableTrace.startPublishedOrBreak {start : ℕ} {sp : NoteSpendable F A} 
 
 variable [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ} {R : ℕ → F → Multiset F}
   {Δ Φ : Type w} {actionDigest : Δ → F} {feeDigest : Φ → F} {H : TachygramHash F}
-  {Opens : F → ℤ → Type*} {Lift : Stamp F A → A → Type w}
+  {Opens : F → ℤ → Option ℕ → Type*} {Lift : Stamp F A → A → Type w}
   {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift)}
 
 /-- The note behind a lineage on a chain of traced bundles has a creation at the lineage's start,

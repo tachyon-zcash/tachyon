@@ -54,7 +54,7 @@ def sameBundleSpendBreak
           exact Multiset.disjoint_left.mp hdisjoint (Multiset.mem_cons_self _ _)
             (Multiset.mem_cons_self _ _)
 
-variable {chain : List (Chain.Stamp F A)} {H : TachygramHash F} {Opens : F → ℤ → Type*}
+variable {chain : List (Chain.Stamp F A)} {H : TachygramHash F} {Opens : F → ℤ → Option ℕ → Type*}
   {Lift : Stamp F A → A → Type w}
   {bundles : List (TracedBundle IsFee epoch R actionDigest feeDigest H Opens Lift)}
 
