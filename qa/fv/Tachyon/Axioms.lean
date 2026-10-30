@@ -277,6 +277,12 @@ info: 'Tachyon.spendsUnsharedOrBreak' depends on axioms: [propext, Classical.cho
 #print axioms Tachyon.spendsUnsharedOrBreak
 
 /--
+info: 'Tachyon.ChainSpend.creditOrCollision' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.ChainSpend.creditOrCollision
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
