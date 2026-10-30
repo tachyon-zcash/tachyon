@@ -119,6 +119,32 @@ carries or about the leaf step's constraints on it.
   (`card_product_check_le`). A fixed accumulator of degree `n` that violates its roots identity
   passes at most `n` challenges (`card_roots_check_le`).
 
+### Spendable lineage and QR routing
+
+- Every pair in a derivable `NoteNullifiers` is the note's nullifier at its epoch
+  (`NullifiersDerivable.mem_seq`). `UnspentBind` divisibility forces every tested value to be the
+  note's nullifier (`NoteUnspentDerivable.lineage`).
+- A derivable `NoteSpendable` proves that the note's nullifier is unpublished at every epoch from its
+  lineage start up to its current epoch (`SpendableDerivable.lineage`). With buckets that hold their
+  whole epochs, this discharges the lineage hypothesis (`no_double_spend_of_spendable`). A
+  `SpendableInit` lineage never lifts (`spendableInit_cannot_lift`).
+- QR routing keeps every root that matches the selected profile (`Route.retains`). A child bucket
+  may hold extra roots. An extra root only makes a nonzero opening harder. Exclusion is sound when
+  the source holds the epoch's publications and the queried value matches the profile
+  (`Route.not_published`). The exceptional-value guard is necessary (`exceptional_guard_needed`).
+- A routed bucket holds only the published values that match its profile. Completeness is therefore
+  stated per query (`QueryComplete`). The profile-aware lineage needs completeness only for the
+  values it opens (`SpendableDerivable.routed_lineage`, `no_double_spend_of_routed`).
+  `routed_query_without_global_completeness` exhibits a valid routed query on a bucket that omits a
+  different publication of its epoch.
+- A mask whose weight is `d` and whose selected indices sum to `d(d - 1)/2` is the prefix
+  `0, ..., d - 1` (`eq_range_of_field_checks`). Equality of the packed register with the bucket
+  profile then forces the queried value to match the profile (`matches_of_field_checks`).
+- Two runs that start on epoch-boundary digests and end at one anchor have the same start and the
+  same product. Sealing against the next entry anchor pins the source to the epoch's publications
+  (`Run.sealed_source_eq`, `routedQuery_of_sealed`). Builders may route and merge same-profile
+  intakes in any order (`CheckedIntake.complete`).
+
 ## Assumptions and open boundaries
 
 A theorem applies only when every hypothesis holds. The items below are hypotheses or modelling
@@ -134,6 +160,9 @@ choices that no theorem here discharges.
   operands are fixed.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
+- **Typed circuit inputs.** The profile checks take genuine booleans, a canonical depth and explicit
+  no-wrap bounds as typed inputs (`ProfileMask.lean`, `ProfileQuery.lean`). The model derives no
+  boolean or range constraint from a field witness.
 
 ### Hashes and the pairing
 
@@ -159,6 +188,9 @@ choices that no theorem here discharges.
 The chain model folds each anchor with the epoch of the block that contains it. Consensus must
 compute the folds with the same epochs.
 
+Source sealing compares a bucket with the next entry anchor folded from the epoch's chronological
+publication list. That anchor and that list are inputs. `Chain.Valid` does not derive them.
+
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
 `a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
 spend's lineage tests the note's nullifier for `p` against that bucket. That nullifier differs from
@@ -175,6 +207,6 @@ note with the same commitment.
 
 ## Axiom census
 
-`Tachyon/Axioms.lean` runs `#print axioms` on each headline theorem inside `#guard_msgs`. The build
-fails if a headline theorem gains an axiom. The headline theorems depend on `propext`,
+`Tachyon/Axioms.lean` and the `Axioms.lean` file beside a module run `#print axioms` on each
+headline theorem inside `#guard_msgs`. The build fails if a headline theorem gains an axiom. The headline theorems depend on `propext`,
 `Classical.choice` and `Quot.sound` only, with no `sorryAx`.
