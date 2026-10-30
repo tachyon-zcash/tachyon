@@ -205,6 +205,24 @@ info: 'Tachyon.noteAccountingOrBreak' depends on axioms: [propext, Classical.cho
 #print axioms Tachyon.noteAccountingOrBreak
 
 /--
+info: 'Tachyon.doubleSpendBreakOrLaterStart' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.doubleSpendBreakOrLaterStart
+
+/--
+info: 'Tachyon.sameStartBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.sameStartBreak
+
+/--
+info: 'Tachyon.later_start_of_no_collisions' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.later_start_of_no_collisions
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
