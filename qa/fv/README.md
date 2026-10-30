@@ -182,6 +182,22 @@ carries or about the leaf step's constraints on it.
   execution-local corollary. `doubleSpendObservedBreak` instantiates the queries with checked source
   data.
 
+### Indexed nullifier sets and runtime openings
+
+- The indexed encoding of `(i, v)` is `(v + (i + 1) X)^3 - 2`. With a nonzero slope and a cubic
+  non-residue, the factor is irreducible (`factor_irreducible`). For indices below `bound` with
+  `3 bound^2 < p`, equal factors have equal indices and values (`indexed_factor_injective`). Without
+  the bound, indices can collide (`indices_can_collide_without_bound`).
+- Associated factors of this form are equal (`indexed_associated_injective`). Exact division of
+  indexed products is therefore multiset containment, with the quotient pinned to the remaining
+  factors (`indexed_division`). The cubic identity in `UnspentBind` derives the multiset equation
+  that the lineage model uses (`lineage_of_polynomial_bind`).
+- For the Pallas base field, `2` is a cubic non-residue (`two_noncube`), and the production and test
+  epoch bounds satisfy `3 bound^2 < p` (`epoch_bound_safe`, `test_epoch_bound_safe`).
+- Spendable traces and source certificates take a runtime opening type with an interpretation into
+  polynomials (`OpeningSemantics`). The double-spend reduction over it compiles as ordinary code
+  (`doubleSpendRuntimeBreak`). Polynomials appear only in proof fields.
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
@@ -214,6 +230,12 @@ choices that no theorem here discharges.
 - **Typed circuit inputs.** The profile checks take genuine booleans, a canonical depth and explicit
   no-wrap bounds as typed inputs (`ProfileMask.lean`, `ProfileQuery.lean`). The model derives no
   boolean or range constraint from a field witness.
+
+### Field parameters
+
+- **Pasta primality.** The Pallas modulus and the modular exponent witness are checked in the
+  kernel. Primality is an explicit `Fact modulus.Prime` argument. Ragu takes it from CompElliptic,
+  which this project does not depend on.
 
 ### Hashes and the pairing
 
