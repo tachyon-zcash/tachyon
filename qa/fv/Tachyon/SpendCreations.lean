@@ -43,21 +43,32 @@ structure BucketEvidence (m : Model P C A ℕ) (chain : List (Chain.Stamp F A)) 
   source : BucketPublication.CertifiedSource m OpeningSemantics.interpret chain first view
   bucket : view.bucket = b
 
-/-- Publication evidence for the root of a lineage that a lift extends. A `SpendableInit` root
-needs none: the lift's first bucket starts on a boundary digest, which collides with the root's
-stamp fold. -/
-def SpendableTrace.LiftedEvidence (chain : List (Chain.Stamp F A)) {start : ℕ}
+/-- Certified source data for a lineage's `QrSpendableInit` root. A `SpendableInit` root needs
+none: unlifted, the chain archive at the spendable's anchor covers it; lifted, the lift's first
+bucket starts on a boundary digest, which collides with the root's stamp fold. -/
+def SpendableTrace.SourceEvidence (chain : List (Chain.Stamp F A)) {start : ℕ}
     {sp : NoteSpendable F A} : SpendableTrace m ValidBucket Query nf start sp → Type _
   | .init .. => PUnit
   | .qrInit b .. => BucketEvidence m chain b.bucket
-  | .lift previous .. => previous.LiftedEvidence chain
+  | .lift previous .. => previous.SourceEvidence chain
 
 /-- Publication evidence for the root of a spendable lineage. -/
 def SpendableTrace.RootEvidence (chain : List (Chain.Stamp F A)) {start : ℕ}
     {sp : NoteSpendable F A} : SpendableTrace m ValidBucket Query nf start sp → Type _
   | .init previous contents e .. => InitEvidence m chain (m.nextStamp previous e contents)
   | .qrInit b .. => BucketEvidence m chain b.bucket
-  | .lift previous .. => previous.LiftedEvidence chain
+  | .lift previous .. => previous.SourceEvidence chain
+
+/-- A lineage's root evidence from a publication-linked node at the spendable's anchor and certified
+source data for a `QrSpendableInit` root. -/
+def SpendableTrace.rootEvidence {chain : List (Chain.Stamp F A)} {start e : ℕ}
+    {sp : NoteSpendable F A} :
+    (t : SpendableTrace m ValidBucket Query nf start sp) →
+      PublicationNodes.LinkedNode m OpeningSemantics.interpret chain e sp.anchor →
+      t.SourceEvidence chain → t.RootEvidence chain
+  | .init .., archive, _ => ⟨e, archive⟩
+  | .qrInit .., _, sources => sources
+  | .lift .., _, sources => sources
 
 variable [DecidableEq P] [DecidableEq C] [DecidableEq A] {chain : List (Chain.Stamp F A)}
 
@@ -74,7 +85,7 @@ computes the collision between its stamp fold and the segment's boundary-digest 
 def SpendableTrace.liftedPublishedOrBreak {start : ℕ} {sp : NoteSpendable F A} :
     (t : SpendableTrace m ValidBucket Query nf start sp) → {nu : NoteUnspent F A} →
       NoteUnspentTrace m ValidBucket Query nf nu → nu.anchor_start = sp.anchor →
-      t.LiftedEvidence chain → Chain.published chain start sp.cm ⊕' ObservedBreak m
+      t.SourceEvidence chain → Chain.published chain start sp.cm ⊕' ObservedBreak m
   | .init previous contents e .., _, unspent, hanchor, _ =>
       .inr ⟨[], [m.stampInput previous e contents, unspent.entrance],
         ⟨.hash ⟨m.stampInput previous e contents, unspent.entrance,

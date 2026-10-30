@@ -5,8 +5,10 @@ import Tachyon.Foundation.RelationWitness
 # Chain spends
 
 A spend on a chain of traced bundles sits at a bundle position and a descriptor position of that
-bundle (`ChainSpend`). It carries its traced spendable, the publication evidence for its lineage's
-root, a chain node trace for its anchor, its `SpendAction` and the note behind its commitment.
+bundle (`ChainSpend`). It carries its traced spendable, the chain archive's publication-linked node
+at its anchor, certified source data for a `QrSpendableInit` root, its `SpendAction` and the note
+behind its commitment. The archive supplies a `SpendableInit` root's evidence, so source data for
+buckets is the only evidence from outside the chain.
 
 Any two spends at distinct positions are ordered: by bundle position, or by descriptor position
 within one bundle. `ChainSpend.unsharedOrBreak` decides whether their notes' creations share a
@@ -51,16 +53,17 @@ theorem TracedBundle.chain_split {a b : Fin bundles.length} (hab : a < b) :
 
 variable (m ValidBucket Query nf bundles) in
 /-- A spend at bundle position `bundle` and descriptor position `position`: its traced spendable,
-the publication evidence for its lineage's root, a chain node trace for its anchor at the bundle's
-anchor epoch, its `SpendAction`, and the note behind its commitment. -/
+certified source data for a `QrSpendableInit` root, the chain archive's publication-linked node at
+its anchor in the bundle's anchor epoch, its `SpendAction`, and the note behind its commitment. -/
 structure ChainSpend where
   bundle : Fin bundles.length
   position : Fin bundles[bundle].descs.length
   start : ℕ
   spendable : NoteSpendable F A
   trace : SpendableTrace m ValidBucket Query nf start spendable
-  evidence : trace.RootEvidence (bundles.map TracedBundle.toChain)
-  node : NodeTrace m (epoch bundles[bundle].stamp.anchor) spendable.anchor
+  sources : trace.SourceEvidence (bundles.map TracedBundle.toChain)
+  archive : PublicationNodes.LinkedNode m OpeningSemantics.interpret
+    (bundles.map TracedBundle.toChain) (epoch bundles[bundle].stamp.anchor) spendable.anchor
   action : SpendAction R (epoch bundles[bundle].stamp.anchor) (spendBind nf spendable)
     (actionDigest bundles[bundle].descs[position])
   note : Note F
@@ -81,7 +84,7 @@ def ChainSpend.unsharedOfEarlier
   if hshared : c.index = c'.index ∧ c.leaf.digest = c'.leaf.digest then
     match sharedCreationBreak oracle hchain bundles[s.bundle].verified bundles[s'.bundle].verified
         (TracedBundle.chain_split hlt).1 (TracedBundle.chain_split hlt).2 (List.getElem_mem _)
-        (List.getElem_mem _) s.trace s'.trace s.node s'.node s.action s'.action s.commits
+        (List.getElem_mem _) s.trace s'.trace s.archive.node s'.archive.node s.action s'.action s.commits
         s'.commits c c' hshared.1 hshared.2 with
     | .inl (.inl witness) => .inr (.inl (.inl ⟨_, _, witness⟩))
     | .inl (.inr broken) => .inr (.inl (.inr broken))
@@ -95,8 +98,8 @@ def ChainSpend.unsharedOfSameBundle (s s' : ChainSpend m ValidBucket Query nf bu
     (c : Creation bundles s.note s.start) (c' : Creation bundles s'.note s'.start) :
     ¬ (c.index = c'.index ∧ c.leaf.digest = c'.leaf.digest) ⊕'
       ((ObservedBreak m ⊕' Q) ⊕' TachygramCollision H) := by
-  obtain ⟨b, position, start, spendable, trace, evidence, node, action, note, commits⟩ := s
-  obtain ⟨b', position', start', spendable', trace', evidence', node', action', note', commits'⟩ :=
+  obtain ⟨b, position, start, spendable, trace, sources, archive, action, note, commits⟩ := s
+  obtain ⟨b', position', start', spendable', trace', sources', archive', action', note', commits'⟩ :=
     s'
   dsimp only at hbundle hposition c c' ⊢
   subst hbundle
@@ -107,7 +110,7 @@ def ChainSpend.unsharedOfSameBundle (s s' : ChainSpend m ValidBucket Query nf bu
         .inr (.inl (.inl ⟨_, _, sameBundleSpendBreak bundles[b].verified
           (List.split_of_lt hposition position'.isLt).1
           (List.split_of_lt hposition position'.isLt).2 trace trace'
-          (by rw [commits, commits', hnote]) node node' action action'⟩))
+          (by rw [commits, commits', hnote]) archive.node archive'.node action action'⟩))
   else .inl hshared
 
 /-- Two spends at distinct positions on a valid chain of traced bundles: their notes' creations do
@@ -151,7 +154,9 @@ def spendsUnsharedOrBreak
       ∀ i j, i ≠ j → ¬ ((c i).index = (c j).index ∧ (c i).leaf.digest = (c j).leaf.digest)} ⊕'
       ((ObservedBreak m ⊕' Q) ⊕' TachygramCollision H) :=
   match finForallOrRelationWitness fun i =>
-      match (spends i).trace.creationOrBreak rfl (spends i).evidence (spends i).commits with
+      match (spends i).trace.creationOrBreak rfl
+          ((spends i).trace.rootEvidence (spends i).archive (spends i).sources)
+          (spends i).commits with
       | .inl creation => .inl creation
       | .inr (.inl broken) => .inr (.inl (.inl broken))
       | .inr (.inr collision) => .inr (.inr collision) with
