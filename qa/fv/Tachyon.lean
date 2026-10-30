@@ -14,6 +14,8 @@ import Tachyon.SpendBinding
 import Tachyon.SpendableTraces
 import Tachyon.LiftTraces
 import Tachyon.SpendProvenance
+import Tachyon.Foundation.RelationWitness
+import Tachyon.NoteValues
 import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
 import Tachyon.Value
