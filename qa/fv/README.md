@@ -255,6 +255,35 @@ carries or about the leaf step's constraints on it.
   The fee and output pairing reductions drop their encoding-failure branches for Pasta
   (`pastaFeeChangeEqOrBreak`, `pastaOutputPairingOrBreak`).
 
+### Spent supply
+
+- Each leaf value is within `maxMoney` by its step's range check
+  (`TachygramLeaf.signedValue_abs_le`).
+- A lifted `SpendableInit` root needs no evidence. Its first bucket starts on a boundary digest, and
+  that digest equals the root's stamp fold only through a cross-domain collision
+  (`SpendableTrace.liftedPublishedOrBreak`). A chain spend takes the evidence for an unlifted
+  `SpendableInit` root from the chain archive. Certified bucket sources are its only evidence from
+  outside the chain.
+- A chain spend credits its own note's value to its bundle, or a nullifier has two preimages
+  (`ChainSpend.creditOrCollision`).
+- The bundle's fee descriptor opens to its own fee leaf (`TracedBundle.feeOpensOrBreak`). The signed
+  values of the action leaves and the fee leaf sum to the value balance, and the max fee covers the
+  fee (`TracedBundle.balanceOrBreak`).
+- `chainCreated` sums the value of every note the chain's covered leaves create. Any family of
+  spends at distinct positions spends at most `chainCreated`, or yields a break
+  (`spentWithinCreatedOrBreak`).
+
+### Oracle foundations
+
+- `AdaptiveOracle.lean` ports ragu's structural oracle computations, query logs, query bounds and
+  cache normalization (`run_dedup`, `dedup_queries_nodup`). It omits ragu's probability layer.
+- An oracle table updated at a point outside the first `n` queries leaves the prepared state
+  unchanged, and the execution resumes with the new answer (`run_fork_at_prepared_query`). A target
+  set selected from that state is blind to the fresh answer (`card_prepared_targets_le`).
+- With a nonzero generator and a lossless encoding, `word ↦ offset + [embed word] G` is injective.
+  At most `k` nonce words hit `k` fixed targets (`card_fixed_targets_le`,
+  `uniform_fixed_targets_bound`).
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
@@ -311,6 +340,17 @@ choices that no theorem here discharges.
   fold inputs. No finite hash satisfies it, so results that assume it are symbolic. The trace
   reductions above replace it with execution-local collision freedom.
 
+### Random oracle and probability
+
+The probability results are deterministic counts. `Idealization.lean` counts passing challenges,
+and `NonceChallengeBounds.lean` and `OraclePrefixes.lean` count nonce words that hit a target set
+fixed before the fresh answer. Dividing a count by the size of the sampled set bounds the
+probability for one uniform fresh value.
+
+There is no union bound over a whole adaptive execution. Such a game samples the oracle table
+independently of the adversary program, and the structural port holds the program fixed while the
+table is reprogrammed. Poseidon is never shown to behave as a random oracle.
+
 ### Consensus rules
 
 `Chain.Valid` is a hypothesis of the chain-level theorems. It includes these rules.
@@ -352,6 +392,21 @@ note with the same commitment.
 note-creation results show that such a spend consumes a creation of its own, debited in its own
 bundle. They take a publication-linked archive of chain nodes (`LinkedNode`) and certified bucket
 sources (`CertifiedSource`) as inputs.
+
+### Pool turnstile and adjuncts
+
+`spentWithinCreatedOrBreak` and `TracedBundle.balanceOrBreak` together would give a turnstile. The
+sum over bundles of fee plus value balance would be at most zero. The pool would then pay out no
+more value than entered it. That statement is unproved, and two inputs are missing.
+
+- **Adjunct accounting.** A verified bundle's `descs` and `adjunctFees` include its adjuncts'
+  descriptors and fee descriptors. Adjunct change notes count in `chainCreated`, while
+  `TracedBundle.balanceOrBreak` balances only the bundle's own fee. `Consensus/Bundle.lean` keeps
+  adjunct pointers out of scope. Combining the two results across aggregates needs a
+  specification of how consensus accounts for adjuncts.
+- **Every spend as a chain spend.** The turnstile sums over every spend leaf on the chain. A spend
+  leaf would have to carry its `SpendableTrace` for the bundle traces to enumerate those leaves as
+  `ChainSpend` values.
 
 ## Axiom census
 
