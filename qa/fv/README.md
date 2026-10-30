@@ -145,10 +145,11 @@ carries or about the leaf step's constraints on it.
 - Every pair in a derivable `NoteNullifiers` is the note's nullifier at its epoch
   (`NullifiersDerivable.mem_seq`). `UnspentBind` divisibility forces every tested value to be the
   note's nullifier (`NoteUnspentDerivable.lineage`).
-- A derivable `NoteSpendable` proves that the note's nullifier is unpublished at every epoch from its
-  lineage start up to its current epoch (`SpendableDerivable.lineage`). With buckets that hold their
-  whole epochs, this discharges the lineage hypothesis (`no_double_spend_of_spendable`). A
-  `SpendableInit` lineage never lifts (`spendableInit_cannot_lift`).
+- A derivable `NoteSpendable` proves that the note's nullifier is unpublished at every epoch from
+  its lineage start to the epoch before its current one (`SpendableDerivable.lineage`). With
+  buckets that hold their whole epochs, this discharges the lineage hypothesis
+  (`no_double_spend_of_spendable`). A `SpendableInit` lineage never lifts
+  (`spendableInit_cannot_lift`).
 - QR routing keeps every root that matches the selected profile (`Route.retains`). A child bucket
   may hold extra roots. An extra root only makes a nonzero opening harder. Exclusion is sound when
   the source holds the epoch's publications and the queried value matches the profile
@@ -228,6 +229,32 @@ carries or about the leaf step's constraints on it.
   blind-hash collision, an encoding failure, or a relation among the value generators
   (`changeEqOrBreak`).
 
+### Notes, creations and republication
+
+- A descriptor's `cv` is the `cv` of the leaf its digest covers, or the two preimages collide
+  (`descriptorOpensOrCollision`). The leaves' signed note values sum to the change, the fee and the
+  value balance, with the fee at most the max fee, or the bundle yields a break
+  (`noteAccountingOrBreak`, `TracedBundle.accountingOrBreak`).
+- Two spends of one note compute a break, or the second lineage starts after the first spend's
+  publication (`doubleSpendBreakOrLaterStart`). Spends of one `cm` whose lineages start in one epoch
+  compute a break (`sameStartBreak`).
+- A published note commitment comes from a covered leaf that creates the note, either an output or
+  a fee leaf whose change note it is (`publishedNoteOrCollision`, `creationOrCollision`). The
+  descriptor covering that leaf debits the note's value (`Creation.debitOrBreak`). Two spends that
+  consume one creation compute a break (`sharedCreationBreak`).
+- A spendable lineage starts at a publication of its `cm`, or the comparison with a
+  publication-linked node or certified bucket source computes a collision
+  (`creationPublicationOrBreak`, `SpendableTrace.startPublishedOrBreak`). Any two spends on a chain
+  of traced bundles, including two in one bundle, consume distinct creations or compute a break
+  (`distinctCreationsOrBreak`, `sameBundleDistinctCreationsOrBreak`). A family of spends at distinct
+  positions maps injectively into the chain's creations, or yields a break
+  (`spendsUnsharedOrBreak`).
+- Two output leaves with one digest have one `(cm, pad)` pair, or the reduction returns a digest,
+  nonce or note collision (`tachygramsEqOrBreak`). The canonical lift of Pallas base-field words and
+  bounded amounts into the scalar field is injective (`lift_injective`, `noteWordLift_injective`).
+  The fee and output pairing reductions drop their encoding-failure branches for Pasta
+  (`pastaFeeChangeEqOrBreak`, `pastaOutputPairingOrBreak`).
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
@@ -265,14 +292,15 @@ choices that no theorem here discharges.
 
 - **Pasta primality.** The Pallas modulus and the modular exponent witness are checked in the
   kernel. Primality is an explicit `Fact modulus.Prime` argument. Ragu takes it from CompElliptic,
-  which this project does not depend on.
+  which this project does not depend on. The Pallas scalar modulus is handled the same way
+  (`ScalarEncodings.lean`).
 
 ### Hashes and the pairing
 
 - **The pairing `R`.** Unmerge soundness depends on it. In the protocol it rests on Poseidon and on
-  the leaf proofs deriving their tachygrams from the digest preimage. Fee/fee pairing is reduced to
-  computed breaks (`FeePairing.lean`). Spend/spend, output/output and spend/output pairing remain
-  hypotheses.
+  the leaf proofs deriving their tachygrams from the digest preimage. Fee/fee and output/output
+  pairing are reduced to computed breaks (`FeePairing.lean`, `OutputPairing.lean`). Spend/spend and
+  spend/output pairing remain hypotheses.
 - **Signatures.** The authorization results take the RedPallas verification equation as given. The
   consent policy stands for the honest owner's signing requests in the security game. RedPallas
   unforgeability and the probability that a Fiat-Shamir forger yields a fork are unproved.
@@ -304,10 +332,10 @@ publication list. That anchor and that list are inputs. `Chain.Valid` does not d
 folding have separate inputs.
 
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
-`a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
-spend's lineage tests the note's nullifier for `p` against that bucket. That nullifier differs from
-both published ones. The later spend publishes the nullifiers for its own anchor epoch, and the
-window finds no duplicate. Both spends pass.
+`a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A
+later spend's lineage tests the note's nullifier for `p` against that bucket. That nullifier
+differs from both published ones. The later spend publishes the nullifiers for its own anchor
+epoch, and the window finds no duplicate. Both spends pass.
 
 `Consensus/Bundle.lean` leaves signatures, the value balance and adjunct pointers out of scope.
 The value results model the binding signature as its verification equation (`hbvk`). They take
@@ -320,8 +348,13 @@ The double-spend theorems assume that the second spend's lineage starts no later
 spend's publication. A lineage that starts at a later publication of the same `cm` spends a second
 note with the same commitment.
 
+`doubleSpendBreakOrLaterStart` drops that hypothesis and returns the later start as an outcome. The
+note-creation results show that such a spend consumes a creation of its own, debited in its own
+bundle. They take a publication-linked archive of chain nodes (`LinkedNode`) and certified bucket
+sources (`CertifiedSource`) as inputs.
+
 ## Axiom census
 
 `Tachyon/Axioms.lean` and the `Axioms.lean` file beside a module run `#print axioms` on each
-headline theorem inside `#guard_msgs`. The build fails if a headline theorem gains an axiom. The headline theorems depend on `propext`,
-`Classical.choice` and `Quot.sound` only, with no `sorryAx`.
+headline theorem inside `#guard_msgs`. The build fails if a headline theorem gains an axiom. The
+headline theorems depend on `propext`, `Classical.choice` and `Quot.sound` only, with no `sorryAx`.
