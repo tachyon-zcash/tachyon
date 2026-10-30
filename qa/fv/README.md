@@ -284,6 +284,29 @@ carries or about the leaf step's constraints on it.
   At most `k` nonce words hit `k` fixed targets (`card_fixed_targets_le`,
   `uniform_fixed_targets_bound`).
 
+### Spend pairing
+
+- `withReads` runs an adversary and then queries the hash inputs its output's verification reads.
+  Every designated input appears in the query log, at a cost of one query per input
+  (`designated_mem_queries`). Cache normalization keeps those inputs, and `designatedIndex` locates
+  each one's observation (`designated_mem_normalized`).
+- Candidate keys and nonce words recorded before a fresh query form a fixed target set of at most
+  `Q (Q + 1)^2` keys for a history of length `Q` (`targets_card_le`, `prefix_targets_update`).
+- When a consumer's input carries a producer's answer, the producer query came first, or the answer
+  was predicted in an earlier input (`normalizedDependencyOrPrediction`, `chainOrPrediction`).
+- Spend and output frames carry their claimed `cm` and `rk`, with distinct nonce domains. `Valid`
+  checks the note, payment-key and randomized-key equations against one typed table. A NoteSeed
+  payment opening and the action's opening agree, or a payment hash collides
+  (`seedPairOrCollision`). One nonce input fixes the pair, or a note or payment hash collides
+  (`sameNoncePairOrCollision`).
+- Two valid frames with one digest give equal tachygram pairs, a typed hash collision, a fresh
+  payment or commitment prediction, or a nonce-target hit (`loggedPairOrBreak`). This covers
+  spend/spend, output/output and mixed pairs in both nonce orders. The normalized two-frame
+  execution makes at most `Q + 8` queries for a `Q`-query adversary (`history_length_le`).
+- One prefix-fixed set holds every bad word, with at most `2n + n (n + 1)^2` words after `n` queries
+  (`badWords_card_le`, `badWords_uniform_fraction_le`, `pasta_spend_badWords_card_le`). An execution
+  that avoids those words gives pair equality or a hash collision (`loggedPairOrHashCollision`).
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
@@ -307,6 +330,7 @@ choices that no theorem here discharges.
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
   from registered steps on accepted inputs. The reductions take their traces and certificates as
   inputs. A knowledge extractor for the real proof system must supply them, and none is modelled.
+  The spend-pairing frames and their `Valid` predicate are model inputs of the same kind.
 - **Commitment binding and the random challenge.** The model reads commitments as polynomials and
   checks as identities. `Idealization.lean` counts the challenges that fixed violating operands
   pass. Dividing by the field size bounds the probability for a uniform challenge drawn after the
@@ -329,7 +353,9 @@ choices that no theorem here discharges.
 - **The pairing `R`.** Unmerge soundness depends on it. In the protocol it rests on Poseidon and on
   the leaf proofs deriving their tachygrams from the digest preimage. Fee/fee and output/output
   pairing are reduced to computed breaks (`FeePairing.lean`, `OutputPairing.lean`). Spend/spend and
-  spend/output pairing remain hypotheses.
+  spend/output pairing over typed frames reduce to hash collisions or fresh-answer hits on a counted
+  bad-word set (`SpendPairing.lean`). Replacing the `R` hypothesis outright would also need the
+  random-oracle probability bound, concrete Poseidon security and frame extraction below.
 - **Signatures.** The authorization results take the RedPallas verification equation as given. The
   consent policy stands for the honest owner's signing requests in the security game. RedPallas
   unforgeability and the probability that a Fiat-Shamir forger yields a fork are unproved.
@@ -344,7 +370,8 @@ choices that no theorem here discharges.
 
 The probability results are deterministic counts. `Idealization.lean` counts passing challenges,
 and `NonceChallengeBounds.lean` and `OraclePrefixes.lean` count nonce words that hit a target set
-fixed before the fresh answer. Dividing a count by the size of the sampled set bounds the
+fixed before the fresh answer. `SpendPairing.lean` counts the bad words for one fresh query
+(`history_badWords_card_le`). Dividing a count by the size of the sampled set bounds the
 probability for one uniform fresh value.
 
 There is no union bound over a whole adaptive execution. Such a game samples the oracle table
