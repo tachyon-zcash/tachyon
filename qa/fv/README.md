@@ -167,6 +167,12 @@ window finds no duplicate. Both spends pass.
 
 `Consensus/Bundle.lean` leaves signatures, the value balance and adjunct pointers out of scope.
 
+### Lineage start
+
+The double-spend theorems assume that the second spend's lineage starts no later than the first
+spend's publication. A lineage that starts at a later publication of the same `cm` spends a second
+note with the same commitment.
+
 ## Axiom census
 
 `Tachyon/Axioms.lean` runs `#print axioms` on each headline theorem inside `#guard_msgs`. The build
