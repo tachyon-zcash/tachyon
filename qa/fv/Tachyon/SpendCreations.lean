@@ -9,7 +9,9 @@ creation stamp's tachygram set at `cm`, and `QrSpendableInit` opens its bucket a
 publication-linked node at the creation anchor (`PublicationNodes.LinkedNode`) or certified source
 data for the bucket (`BucketPublication.CertifiedSource`), the commitment is published at the
 lineage's start epoch, or the comparison computes a collision
-(`SpendableTrace.startPublishedOrBreak`).
+(`SpendableTrace.startPublishedOrBreak`). A lift of a `SpendableInit` root needs no evidence: the
+lift's first bucket starts on the boundary digest `QrBucketSeal` witnesses, and that digest equals
+the root's stamp fold only through a cross-domain collision.
 
 On a chain of traced bundles, each spend's note thus has a creation at its lineage's start
 (`SpendableTrace.creationOrBreak`). Two spends of notes on that chain, the first earlier in chain
@@ -41,14 +43,46 @@ structure BucketEvidence (m : Model P C A ℕ) (chain : List (Chain.Stamp F A)) 
   source : BucketPublication.CertifiedSource m OpeningSemantics.interpret chain first view
   bucket : view.bucket = b
 
+/-- Publication evidence for the root of a lineage that a lift extends. A `SpendableInit` root
+needs none: the lift's first bucket starts on a boundary digest, which collides with the root's
+stamp fold. -/
+def SpendableTrace.LiftedEvidence (chain : List (Chain.Stamp F A)) {start : ℕ}
+    {sp : NoteSpendable F A} : SpendableTrace m ValidBucket Query nf start sp → Type _
+  | .init .. => PUnit
+  | .qrInit b .. => BucketEvidence m chain b.bucket
+  | .lift previous .. => previous.LiftedEvidence chain
+
 /-- Publication evidence for the root of a spendable lineage. -/
 def SpendableTrace.RootEvidence (chain : List (Chain.Stamp F A)) {start : ℕ}
     {sp : NoteSpendable F A} : SpendableTrace m ValidBucket Query nf start sp → Type _
   | .init previous contents e .. => InitEvidence m chain (m.nextStamp previous e contents)
   | .qrInit b .. => BucketEvidence m chain b.bucket
-  | .lift previous .. => previous.RootEvidence chain
+  | .lift previous .. => previous.LiftedEvidence chain
 
 variable [DecidableEq P] [DecidableEq C] [DecidableEq A] {chain : List (Chain.Stamp F A)}
+
+/-- A root of a certified bucket is published at the bucket's epoch, or the source comparison
+computes a collision. -/
+def BucketEvidence.publishedOrBreak {b : QrBucket F A} (ev : BucketEvidence m chain b) {v : F}
+    (hroot : b.contents.eval v = 0) : Chain.published chain b.epoch v ⊕' ObservedBreak m :=
+  mapOutcome (ev.source.publicationOrBreak v (by rw [ev.bucket]; exact hroot))
+    fun h => by rw [← ev.bucket]; exact h
+
+/-- A lineage that a lift extends from an unspent segment starting at its anchor: its note
+commitment is published at its start epoch, or a collision is computed. A `SpendableInit` root
+computes the collision between its stamp fold and the segment's boundary-digest entrance. -/
+def SpendableTrace.liftedPublishedOrBreak {start : ℕ} {sp : NoteSpendable F A} :
+    (t : SpendableTrace m ValidBucket Query nf start sp) → {nu : NoteUnspent F A} →
+      NoteUnspentTrace m ValidBucket Query nf nu → nu.anchor_start = sp.anchor →
+      t.LiftedEvidence chain → Chain.published chain start sp.cm ⊕' ObservedBreak m
+  | .init previous contents e .., _, unspent, hanchor, _ =>
+      .inr ⟨[], [m.stampInput previous e contents, unspent.entrance],
+        ⟨.hash ⟨m.stampInput previous e contents, unspent.entrance,
+          (unspent.entrance_ne_stamp _ _ _).symm, (unspent.entrance_eval.trans hanchor).symm⟩,
+          ⟨List.mem_cons_self, by simp⟩⟩⟩
+  | .qrInit _ _ _ _ _ _ _ hroot, _, _, _, ev => ev.publishedOrBreak hroot
+  | .lift previous unspent _ _ hanchor, _, _, _, ev =>
+      previous.liftedPublishedOrBreak unspent hanchor ev
 
 /-- A lineage's note commitment is published at the lineage's start epoch, or the root's
 publication evidence computes a collision. -/
@@ -57,10 +91,8 @@ def SpendableTrace.startPublishedOrBreak {start : ℕ} {sp : NoteSpendable F A} 
       Chain.published chain start sp.cm ⊕' ObservedBreak m
   | .init previous contents e _ hroot _, ev =>
       ev.archive.publicationOrBreak previous e contents _ rfl hroot
-  | .qrInit (nu := nu) _ _ _ _ _ _ _ hroot, ev =>
-      mapOutcome (ev.source.publicationOrBreak nu.cm (by rw [ev.bucket]; exact hroot))
-        fun h => by rw [← ev.bucket]; exact h
-  | .lift previous .., ev => previous.startPublishedOrBreak ev
+  | .qrInit _ _ _ _ _ _ _ hroot, ev => ev.publishedOrBreak hroot
+  | .lift previous unspent _ _ hanchor, ev => previous.liftedPublishedOrBreak unspent hanchor ev
 
 variable [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ} {R : ℕ → F → Multiset F}
   {Δ Φ : Type w} {actionDigest : Δ → F} {feeDigest : Φ → F} {H : TachygramHash F}

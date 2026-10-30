@@ -6,8 +6,9 @@ import Tachyon.SpendBinding
 
 `SpendableDerivable` and the unspent predicates it consumes are propositions, so a reduction cannot
 case on them to compute a collision. `UnspentTrace`, `NoteUnspentTrace` and `SpendableTrace` carry
-the same derivations as data, with each bucket's sealing predecessor explicit (`SealedBucket`):
-`QrBucketSeal` ends a bucket on the boundary digest into the epoch after it. Each opening carries its
+the same derivations as data, with each bucket's `QrBucketSeal` witnesses explicit (`SealedBucket`):
+the bucket starts on a boundary digest into its epoch and ends on the boundary digest into the epoch
+after it. Each opening carries its
 query evidence `Query b v` as data. Each `forget` recovers the proposition, in the safe direction
 from data to proof.
 
@@ -39,12 +40,22 @@ instance {F : Type u} [Field F] : OpeningSemantics F[X] F :=
 variable {F : Type u} {C : Type v} {A : Type w} {P : Type y} [Field F] {m : Model P C A ℕ}
   {ValidBucket : QrBucket F A → Prop} {Query : QrBucket F A → F → Type x} {nf : F → ℕ → F}
 
-/-- A `QrBucket` with its sealing predecessor as data: the bucket ends on the boundary digest into
-the epoch after it. -/
+/-- A `QrBucket` with `QrBucketSeal`'s witnesses as data: the bucket starts on the boundary digest
+of `entry` into its epoch, and ends on the boundary digest of `previous` into the epoch after it. -/
 structure SealedBucket (F : Type u) [Field F] (m : Model P C A ℕ) where
   bucket : QrBucket F A
+  entry : A
+  entering : bucket.anchor_start = m.epochHash entry bucket.epoch
   previous : A
   sealing : bucket.anchor_next = m.epochHash previous (bucket.epoch + 1)
+
+/-- The boundary-digest preimage a sealed bucket starts on. -/
+def SealedBucket.entrance (b : SealedBucket F m) : Input C A ℕ :=
+  .epoch b.entry b.bucket.epoch
+
+theorem SealedBucket.entrance_eval (b : SealedBucket F m) :
+    m.eval b.entrance = b.bucket.anchor_start :=
+  b.entering.symm
 
 /-- The boundary-digest preimage a sealed bucket ends on. -/
 def SealedBucket.closing (b : SealedBucket F m) : Input C A ℕ :=
@@ -103,6 +114,25 @@ theorem UnspentTrace.closing_label {u : ArbitraryUnspent F A} :
   | .init .. => rfl
   | .lift .. => rfl
   | .fuse _ rightTrace .. => rightTrace.closing_label
+
+/-- The boundary-digest preimage the segment starts on: its first bucket's entrance. -/
+def UnspentTrace.entrance {u : ArbitraryUnspent F A} :
+    UnspentTrace m ValidBucket Query u → Input C A ℕ
+  | .init b .. => b.entrance
+  | .lift previous .. => previous.entrance
+  | .fuse leftTrace .. => leftTrace.entrance
+
+theorem UnspentTrace.entrance_eval {u : ArbitraryUnspent F A} :
+    (t : UnspentTrace m ValidBucket Query u) → m.eval t.entrance = u.anchor_start
+  | .init b .. => b.entrance_eval
+  | .lift previous .. => previous.entrance_eval
+  | .fuse leftTrace .. => leftTrace.entrance_eval
+
+theorem UnspentTrace.entrance_ne_stamp {u : ArbitraryUnspent F A} (a : A) (e : ℕ) (c : C) :
+    (t : UnspentTrace m ValidBucket Query u) → t.entrance ≠ .stamp a e c
+  | .init .. => nofun
+  | .lift previous .. => previous.entrance_ne_stamp a e c
+  | .fuse leftTrace .. => leftTrace.entrance_ne_stamp a e c
 
 /-- Every epoch of the segment has an opened value unpublished in that epoch, or the oracle breaks
 on one of the segment's queries. -/
@@ -163,6 +193,18 @@ theorem NoteUnspentTrace.closing_eval {nu : NoteUnspent F A} :
 theorem NoteUnspentTrace.closing_label {nu : NoteUnspent F A} :
     (t : NoteUnspentTrace m ValidBucket Query nf nu) → t.closing.label = nu.epoch_next
   | .bind _ unspent .. => unspent.closing_label
+
+def NoteUnspentTrace.entrance {nu : NoteUnspent F A} :
+    NoteUnspentTrace m ValidBucket Query nf nu → Input C A ℕ
+  | .bind _ unspent .. => unspent.entrance
+
+theorem NoteUnspentTrace.entrance_eval {nu : NoteUnspent F A} :
+    (t : NoteUnspentTrace m ValidBucket Query nf nu) → m.eval t.entrance = nu.anchor_start
+  | .bind _ unspent .. => unspent.entrance_eval
+
+theorem NoteUnspentTrace.entrance_ne_stamp {nu : NoteUnspent F A} (a : A) (e : ℕ) (c : C) :
+    (t : NoteUnspentTrace m ValidBucket Query nf nu) → t.entrance ≠ .stamp a e c
+  | .bind _ unspent .. => unspent.entrance_ne_stamp a e c
 
 /-- The note's nullifier is unpublished in every epoch of the bound segment, or the oracle breaks
 on one of its queries. -/
