@@ -64,16 +64,16 @@ def TracedBundle.descriptorOpensOrBreak
 
 /-- A traced bundle's action leaves balance under its binding signature: their signed note values
 sum to the change, the fee and the value balance, with the fee at most the max fee; or the bundle
-yields a tagged digest collision or a nontrivial relation among `(V, W)`. Signed values are bounded
-by `M`, and `(n + 2) M` stays below the characteristic. -/
+yields a tagged digest collision or a nontrivial relation among `(V, W)`. Leaf values are within
+`maxMoney` by their steps' range checks; the max fee and the value balance must be too, and
+`(n + 2) maxMoney` stays below the characteristic. -/
 def TracedBundle.accountingOrBreak [DecidableEq K] {p : ℕ} [CharP K p]
     (b : TracedBundle IsFee epoch R actionDigest feeDigest H (DigestOpening K Hd V W) Lift)
     (hactionDigest : ∀ δ, actionDigest δ = Hd.eval (actionInput δ))
     (cvMax : G) (maxFee fee change vBalance : ℤ) (blind bsk : K)
     (hmax : cvMax = valueCommit V W (-maxFee : K) blind) (hchange : change = maxFee - fee)
-    (hrange : 0 ≤ change) {M : ℕ}
-    (hvalues : ∀ l ∈ b.trace.positive, |l.provenance.signedValue| ≤ M) (hmaxFee : |maxFee| ≤ M)
-    (hvb : |vBalance| ≤ M) (hp : (b.descs.length + 2) * M < p)
+    (hrange : 0 ≤ change) (hmaxFee : |maxFee| ≤ maxMoney) (hvb : |vBalance| ≤ maxMoney)
+    (hp : (b.descs.length + 2) * maxMoney < p)
     (hbvk : ∑ i : Fin b.descs.length, (actionInput b.descs[i]).commitment + cvMax -
       (vBalance : K) • V = bsk • W) :
     (∑ i, (b.actionLeaf i).provenance.signedValue = change + fee + vBalance ∧ fee ≤ maxFee) ⊕'
@@ -92,7 +92,8 @@ def TracedBundle.accountingOrBreak [DecidableEq K] {p : ℕ} [CharP K p]
       match feeAccountingOrRelation Finset.univ ∅
           (fun i => (b.actionLeaf i).provenance.signedValue) Empty.elim
           (fun i => (b.actionLeaf i).provenance.opening.rcv) (fun _ => 0) maxFee fee change
-          vBalance blind bsk (fun i _ => hvalues _ (b.actionLeaf_spec i).1) (fun j => j.elim)
+          vBalance blind bsk (fun i _ => (b.actionLeaf i).provenance.signedValue_abs_le)
+          (fun j => j.elim)
           hmaxFee hvb hchange (by simpa using hp) hbvk' with
       | .inr relation => .inr (.inr relation)
       | .inl hbalance => .inl ⟨by simpa using hbalance, by omega⟩

@@ -33,6 +33,9 @@ structure Note (F : Type u) where
   psi : F
   deriving DecidableEq
 
+/-- `MAX_MONEY`, the bound `SpendBind`, `OutputBind` and `FeeFuse` check note values against. -/
+def maxMoney : ℕ := 2_100_000_000_000_000
+
 /-- The change note of a max fee note: its `rcm`, `pk` and `psi`, holding `change`. -/
 def Note.withValue {F : Type u} (n : Note F) (change : ℕ) : Note F :=
   ⟨n.rcm, n.pk, change, n.psi⟩
@@ -68,17 +71,18 @@ structure TachygramCollision (H : TachygramHash F) where
 pairing `R` are a spent note's nullifier pair at some epoch `x`, an output note's commitment and pad,
 or the change note's commitment. `Opens d v` opens the value commitment behind digest `d` to the
 signed value `v`: `SpendBind` commits `+v`, `OutputBind` commits `-v`, and `FeeFuse` and `FeeSeed`
-commit `-maxFee`. -/
+commit `-maxFee`. Each step checks its note value against `maxMoney`. -/
 inductive TachygramLeaf (H : TachygramHash F) (Opens : F → ℤ → Type w) (R : ℕ → F → Multiset F)
     (epoch : A → ℕ) (d : F) (a : A) : Type (max u w)
   | spend (n : Note F) (x : ℕ) : Opens d n.value →
       R (epoch a) d = {H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)} →
-        TachygramLeaf H Opens R epoch d a
+        n.value ≤ maxMoney → TachygramLeaf H Opens R epoch d a
   | output (n : Note F) : Opens d (-n.value) →
-      R (epoch a) d = {H.noteCommit n, H.pad n} → TachygramLeaf H Opens R epoch d a
+      R (epoch a) d = {H.noteCommit n, H.pad n} → n.value ≤ maxMoney →
+        TachygramLeaf H Opens R epoch d a
   | fee (maxFee : Note F) (fee change : ℕ) : Opens d (-maxFee.value) →
       change + fee = maxFee.value → R (epoch a) d = {H.noteCommit (maxFee.withValue change)} →
-        TachygramLeaf H Opens R epoch d a
+        maxFee.value ≤ maxMoney → TachygramLeaf H Opens R epoch d a
 
 variable {H : TachygramHash F} {Opens : F → ℤ → Type w} {R : ℕ → F → Multiset F}
   {epoch : A → ℕ}
@@ -103,19 +107,19 @@ def TachygramLeaf.createsOrCollision {d : F} {a : A} {n : Note F}
     (k : TachygramLeaf H Opens R epoch d a) (hmem : H.noteCommit n ∈ R (epoch a) d) :
     k.Creates n ⊕' TachygramCollision H :=
   match k with
-  | .spend n' x _ hR =>
+  | .spend n' x _ hR _ =>
       .inr <| if hx : H.noteCommit n = H.nullifier (H.noteCommit n') x then
         ⟨.note n, .nullifier (H.noteCommit n') x, nofun, hx⟩
       else
         ⟨.note n, .nullifier (H.noteCommit n') (x + 1), nofun, by
           rw [hR] at hmem
           simpa [hx] using hmem⟩
-  | .output n' _ hR =>
+  | .output n' _ hR _ =>
       if hcm : H.noteCommit n = H.noteCommit n' then noteEqOrCollision H n n' hcm
       else .inr ⟨.note n, .pad n', nofun, by
         rw [hR] at hmem
         simpa [hcm] using hmem⟩
-  | .fee maxFee _ change _ _ hR =>
+  | .fee maxFee _ change _ _ hR _ =>
       noteEqOrCollision H n (maxFee.withValue change) (by rw [hR] at hmem; simpa using hmem)
 
 variable {IsFee : F → Prop} {Δ Φ : Type*} {actionDigest : Δ → F} {feeDigest : Φ → F}

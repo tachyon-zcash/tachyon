@@ -71,9 +71,17 @@ def TachygramLeaf.signedValue {d : F} {a : A} : TachygramLeaf H Opens R epoch d 
 /-- The leaf's value opening. -/
 def TachygramLeaf.opening {d : F} {a : A} :
     (k : TachygramLeaf H Opens R epoch d a) → Opens d k.signedValue
-  | .spend _ _ o _ => o
-  | .output _ o _ => o
-  | .fee _ _ _ o _ _ => o
+  | .spend _ _ o .. => o
+  | .output _ o .. => o
+  | .fee _ _ _ o .. => o
+
+/-- A leaf's signed value is within `maxMoney`. -/
+theorem TachygramLeaf.signedValue_abs_le {d : F} {a : A} (k : TachygramLeaf H Opens R epoch d a) :
+    |k.signedValue| ≤ maxMoney := by
+  cases k with
+  | spend n _ _ _ hrange => simpa [TachygramLeaf.signedValue] using hrange
+  | output n _ _ hrange => simpa [TachygramLeaf.signedValue] using hrange
+  | fee maxFee _ _ _ _ _ hrange => simpa [TachygramLeaf.signedValue] using hrange
 
 /-- A leaf that creates note `n` debits at least `n`'s value. -/
 theorem TachygramLeaf.Creates.debit {d : F} {a : A} {n : Note F}

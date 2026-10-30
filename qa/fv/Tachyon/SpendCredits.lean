@@ -37,7 +37,7 @@ def TachygramLeaf.creditsOrCollision {d : F} {a : A} {n : Note F} {x : ℕ}
     (hR : R (epoch a) d = {H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)}) :
     (k.signedValue = n.value) ⊕' TachygramCollision H :=
   match k with
-  | .spend n' x' _ hR' =>
+  | .spend n' x' _ hR' _ =>
       have hmem : H.nullifier (H.noteCommit n') x' ∈
           ({H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)} : Multiset F) := by
         rw [← hR, hR']
@@ -47,7 +47,7 @@ def TachygramLeaf.creditsOrCollision {d : F} {a : A} {n : Note F} {x : ℕ}
           nullifierNoteOrCollision H n n' x x' hx
         else nullifierNoteOrCollision H n n' (x + 1) x' (by simpa [hx] using hmem))
         fun hnote => congrArg (fun n : Note F => (n.value : ℤ)) hnote
-  | .output n' _ hR' =>
+  | .output n' _ hR' _ =>
       have hmem : H.noteCommit n' ∈
           ({H.nullifier (H.noteCommit n) x, H.nullifier (H.noteCommit n) (x + 1)} : Multiset F) := by
         rw [← hR, hR']
@@ -55,7 +55,7 @@ def TachygramLeaf.creditsOrCollision {d : F} {a : A} {n : Note F} {x : ℕ}
       .inr <| if hx : H.noteCommit n' = H.nullifier (H.noteCommit n) x then
         ⟨.note n', .nullifier (H.noteCommit n) x, nofun, hx⟩
       else ⟨.note n', .nullifier (H.noteCommit n) (x + 1), nofun, by simpa [hx] using hmem⟩
-  | .fee _ _ _ _ _ hR' => False.elim <| by
+  | .fee _ _ _ _ _ hR' _ => False.elim <| by
       have hcard := congrArg Multiset.card (hR'.symm.trans hR)
       simp at hcard
 
