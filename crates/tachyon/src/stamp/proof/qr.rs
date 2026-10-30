@@ -19,23 +19,24 @@
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
 //! profile against a bucket and opens the bucket at it.
 
-#![expect(
-    clippy::pattern_type_mismatch,
-    reason = "Maybe projections borrow fixed witness tuples without moving their polynomial wrappers"
-)]
-
 extern crate alloc;
 use ragu::{
-    Cycle as _, Encoded, FixedGenerators as _, Header, Index, Step, StepCtx,
-    pasta::{Eq, Fp, Pasta},
+    Cycle as _, Encoded, FixedGenerators as _, Header, Index, PoseidonPermutation as _, Step,
+    StepCtx,
+    pasta::{Eq, EqAffine, Fp, Pasta, PoseidonFp},
 };
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::Bound,
     maybe::Maybe as _,
 };
 use ragu_pcd::pasta::baked;
-use ragu_primitives::{Element, GadgetExt as _};
+use ragu_primitives::{
+    Boolean, Element, GadgetExt as _,
+    poseidon::{Sponge, SpongeState},
+    vec::FixedVec,
+};
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
@@ -47,14 +48,22 @@ pub use crate::{
     stamp::headers::qr::{QrBucket, QrIntake, QrIntakeSides},
 };
 use crate::{
-    digest::poseidon,
+    constants::EPOCH_MAX,
+    gadgets::arithmetic as circuit,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{bind_poly_handle, enforce_poly_product, poly_handle_limbs},
+    relations::enforce::{
+        bind_poly_handle, enforce_constant_polynomial, enforce_poly_product, indexed_member_factor,
+        poly_handle_limbs,
+    },
 };
+
+#[cfg(test)]
+const fn select_sibling_header_commitment(bit: bool, non_residue: Eq, residue: Eq) -> Eq {
+    if bit { non_residue } else { residue }
+}
 
 /// Start a root intake from a [`Summary`].
 ///
@@ -98,8 +107,14 @@ impl Step for QrSummaryIntake {
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let discriminant = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        let zero = Element::constant(ctx.dr, Fp::ZERO);
         let output = D::try_just(|| {
-            let (discriminant,) = witness.take();
+            let (carrier_discriminant,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
                 left.take();
             let () = right.take();
@@ -108,7 +123,7 @@ impl Step for QrSummaryIntake {
                     summary_epoch,
                     summary_anchor_prev,
                     summary_anchor_end,
-                    discriminant,
+                    carrier_discriminant,
                     QrProfile::ROOT,
                     summary_acc_commit,
                 ),
@@ -116,8 +131,23 @@ impl Step for QrSummaryIntake {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let fields = crate::stamp::headers::qr::QrIntakeOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_end: (left_encoded.as_gadget().anchor_end.element.clone()).into(),
+            discriminant: (discriminant).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: zero.clone(),
+                bits: zero,
+            },
+            contents: (left_encoded.as_gadget().acc_commit.encoding.clone()).into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
 }
 
@@ -165,13 +195,35 @@ impl Step for QrStampIntakeSeed {
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let discriminant_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.2)),
+        )?;
+        let previous = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        let epoch_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.1)),
+        )?;
+        let limbs = crate::gadgets::commitment::HostCommitment::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Eq::from(data.3).to_affine()),
+        )
+        .map(|encoding| encoding.limbs)?;
+        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous.clone())
+            .next_stamp(ctx.dr, epoch_element.clone(), limbs.clone())
+            .map(|anchor| anchor.element)?;
         let output = D::try_just(|| {
             let (anchor_prev, epoch, discriminant, stamp_commit) = witness.take();
             let () = left.take();
             let () = right.take();
-            let anchor_end = anchor_prev
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            let anchor_end = Anchor::from(*anchor.value().take());
             Ok((
                 (
                     epoch,
@@ -185,8 +237,24 @@ impl Step for QrStampIntakeSeed {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let zero = Element::constant(ctx.dr, Fp::ZERO);
+        let fields = crate::stamp::headers::qr::QrIntakeOutput {
+            epoch: (epoch_element).into(),
+            anchor_prev: (previous).into(),
+            anchor_end: (anchor).into(),
+            discriminant: (discriminant_element).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: zero.clone(),
+                bits: zero,
+            },
+            contents: (crate::gadgets::commitment::HostCommitment { limbs }).into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
 }
 
@@ -239,6 +307,25 @@ impl Step for QrEmptyIntakeSeed {
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let anchor_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        let discriminant_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.2)),
+        )?;
+        let epoch_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.1)),
+        )?;
+        circuit::bounded::<D, 32>(ctx.dr, &epoch_element, u64::from(EPOCH_MAX))?;
+        let empty = *Pasta::host_generators(baked()).g().first().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("fixed generator table is empty".into())
+        })?;
         let output = D::try_just(|| {
             let (anchor, epoch, discriminant) = witness.take();
             let () = left.take();
@@ -250,14 +337,46 @@ impl Step for QrEmptyIntakeSeed {
                     anchor,
                     discriminant,
                     QrProfile::ROOT,
-                    TachygramSetCommit::default(),
+                    TachygramSetCommit::from(empty.to_projective()),
                 ),
                 (),
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let bytes = empty.to_bytes();
+        let (low, high) = bytes.split_at(16);
+        let limbs = [
+            Element::constant(
+                ctx.dr,
+                Fp::from_u128(u128::from_le_bytes(low.try_into().map_err(|_err| {
+                    ragu_core::Error::InvalidWitness("fixed limb width".into())
+                })?)),
+            ),
+            Element::constant(
+                ctx.dr,
+                Fp::from_u128(u128::from_le_bytes(high.try_into().map_err(|_err| {
+                    ragu_core::Error::InvalidWitness("fixed limb width".into())
+                })?)),
+            ),
+        ];
+        let zero = Element::constant(ctx.dr, Fp::ZERO);
+        let fields = crate::stamp::headers::qr::QrIntakeOutput {
+            epoch: (epoch_element).into(),
+            anchor_prev: (anchor_element.clone()).into(),
+            anchor_end: (anchor_element).into(),
+            discriminant: (discriminant_element).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: zero.clone(),
+                bits: zero,
+            },
+            contents: (crate::gadgets::commitment::HostCommitment { limbs }).into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
 }
 
@@ -271,6 +390,10 @@ impl Step for QrEmptyIntakeSeed {
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
+#[expect(
+    clippy::pattern_type_mismatch,
+    reason = "Maybe projections borrow fixed witness tuples without moving polynomial wrappers"
+)]
 impl Step for QrIntakeMerge {
     type Aux<'source> = ();
     type Left = QrIntake;
@@ -284,7 +407,7 @@ impl Step for QrIntakeMerge {
 
     #[expect(
         clippy::too_many_lines,
-        reason = "the native merge also returns three encoded headers"
+        reason = "predicates and connected header wiring stay together"
     )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
@@ -327,13 +450,13 @@ impl Step for QrIntakeMerge {
         bind_poly_handle(
             ctx,
             &left_handle,
-            left.as_ref().map(|data| Eq::from(data.5).to_affine()),
+            &left_encoded.as_gadget().contents.encoding.limbs,
             "QrIntakeMerge: left contents do not match header",
         )?;
         bind_poly_handle(
             ctx,
             &right_handle,
-            right.as_ref().map(|data| Eq::from(data.5).to_affine()),
+            &right_encoded.as_gadget().contents.encoding.limbs,
             "QrIntakeMerge: right contents do not match header",
         )?;
         enforce_poly_product(
@@ -343,54 +466,41 @@ impl Step for QrIntakeMerge {
             &merged_handle,
             "QrIntakeMerge: merged contents are not the union of the inputs",
         )?;
-        let output = D::try_just(|| {
-            let (left_contents, right_contents, merged) = witness.take();
-            let (
-                left_epoch,
-                left_anchor_prev,
-                left_anchor_end,
-                left_discriminant,
-                left_profile,
-                left_commit,
-            ) = left.take();
-            let (
-                right_epoch,
-                right_anchor_prev,
-                right_anchor_end,
-                right_discriminant,
-                right_profile,
-                right_commit,
-            ) = right.take();
-            enforce_zero(
-                Fp::from(left_epoch) - Fp::from(right_epoch),
+        for (left_element, right_element, message) in [
+            (
+                left_encoded.as_gadget().epoch.element.clone(),
+                right_encoded.as_gadget().epoch.element.clone(),
                 "QrIntakeMerge: inputs cover different epochs",
-            )?;
-            enforce_zero(
-                Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            ),
+            (
+                left_encoded.as_gadget().discriminant.element.clone(),
+                right_encoded.as_gadget().discriminant.element.clone(),
                 "QrIntakeMerge: inputs derive from different discriminants",
-            )?;
-            enforce_zero(
-                Fp::from(u64::from(left_profile.depth)) - Fp::from(u64::from(right_profile.depth)),
+            ),
+            (
+                left_encoded.as_gadget().profile.depth.clone(),
+                right_encoded.as_gadget().profile.depth.clone(),
                 "QrIntakeMerge: inputs sit at different depths",
-            )?;
-            enforce_zero(
-                Fp::from(u64::from(left_profile.bits)) - Fp::from(u64::from(right_profile.bits)),
+            ),
+            (
+                left_encoded.as_gadget().profile.bits.clone(),
+                right_encoded.as_gadget().profile.bits.clone(),
                 "QrIntakeMerge: inputs sit at different profiles",
-            )?;
-            enforce_zero(
-                Fp::from(left_anchor_end) - Fp::from(right_anchor_prev),
+            ),
+            (
+                left_encoded.as_gadget().anchor_end.element.clone(),
+                right_encoded.as_gadget().anchor_prev.element.clone(),
                 "QrIntakeMerge: left.anchor_end must equal right.anchor_prev",
-            )?;
-            enforce_equal_point(
-                Eq::from(left_contents.commit()),
-                Eq::from(left_commit),
-                "QrIntakeMerge: left contents do not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_contents.commit()),
-                Eq::from(right_commit),
-                "QrIntakeMerge: right contents do not match header",
-            )?;
+            ),
+        ] {
+            left_element
+                .enforce_equal(ctx.dr, &right_element)
+                .map_err(|_err| ragu_core::Error::InvalidWitness(message.into()))?;
+        }
+        let output = D::try_just(|| {
+            let (_, _, merged) = witness.take();
+            let (left_epoch, left_anchor_prev, _, left_discriminant, left_profile, _) = left.take();
+            let (_, _, right_anchor_end, ..) = right.take();
             Ok((
                 (
                     left_epoch,
@@ -404,8 +514,26 @@ impl Step for QrIntakeMerge {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let fields = crate::stamp::headers::qr::QrIntakeOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_end: (right_encoded.as_gadget().anchor_end.element.clone()).into(),
+            discriminant: (left_encoded.as_gadget().discriminant.element.clone()).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: left_encoded.as_gadget().profile.depth.clone(),
+                bits: left_encoded.as_gadget().profile.bits.clone(),
+            },
+            contents: (crate::gadgets::commitment::HostCommitment {
+                limbs: poly_handle_limbs(ctx.dr, &merged_handle)?,
+            })
+            .into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
 }
 
@@ -420,6 +548,10 @@ impl Step for QrIntakeMerge {
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
+#[expect(
+    clippy::pattern_type_mismatch,
+    reason = "Maybe projections borrow fixed witness tuples without moving polynomial wrappers"
+)]
 impl Step for QrIntakeSplit {
     type Aux<'source> = ();
     type Left = QrIntake;
@@ -431,6 +563,10 @@ impl Step for QrIntakeSplit {
 
     const INDEX: Index = Index::new(17);
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the split keeps the polynomial bindings and computed header in one step"
+    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D>,
@@ -472,7 +608,7 @@ impl Step for QrIntakeSplit {
         bind_poly_handle(
             ctx,
             &contents_handle,
-            left.as_ref().map(|data| Eq::from(data.5).to_affine()),
+            &left_encoded.as_gadget().contents.encoding.limbs,
             "QrIntakeSplit: contents do not match header",
         )?;
         enforce_poly_product(
@@ -483,8 +619,15 @@ impl Step for QrIntakeSplit {
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
-        let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
-        let exceptional_element = Element::alloc(ctx.dr, &mut (), exceptional)?;
+        let discriminant_element = left_encoded.as_gadget().discriminant.element.clone();
+        let [depth_element, _bits_element] = crate::gadgets::profile::QrProfileGadget {
+            depth: (left_encoded.as_gadget().profile.depth).clone(),
+            bits: (left_encoded.as_gadget().profile.bits).clone(),
+        }
+        .validate(ctx.dr)?;
+        let exceptional_element = discriminant_element
+            .add(ctx.dr, &depth_element)
+            .negate(ctx.dr);
         let non_residue_assignment = ctx.evaluate(
             &non_residue_handle,
             exceptional_element.value().map(|value| *value),
@@ -506,15 +649,9 @@ impl Step for QrIntakeSplit {
         )?;
 
         let output = D::try_just(|| {
-            let (contents, non_residue, residue) = witness.take();
-            let (epoch, anchor_prev, anchor_end, discriminant, profile, contents_commit) =
-                left.take();
+            let (_, non_residue, residue) = witness.take();
+            let (epoch, anchor_prev, anchor_end, discriminant, profile, _) = left.take();
             let () = right.take();
-            enforce_equal_point(
-                Eq::from(contents.commit()),
-                Eq::from(contents_commit),
-                "QrIntakeSplit: contents do not match header",
-            )?;
             Ok((
                 (
                     epoch,
@@ -529,8 +666,30 @@ impl Step for QrIntakeSplit {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let fields = crate::stamp::headers::qr::QrIntakeSidesOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_end: (left_encoded.as_gadget().anchor_end.element.clone()).into(),
+            discriminant: (left_encoded.as_gadget().discriminant.element.clone()).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: left_encoded.as_gadget().profile.depth.clone(),
+                bits: left_encoded.as_gadget().profile.bits.clone(),
+            },
+            non_residue: (crate::gadgets::commitment::HostCommitment {
+                limbs: poly_handle_limbs(ctx.dr, &non_residue_handle)?,
+            })
+            .into(),
+            residue: (crate::gadgets::commitment::HostCommitment {
+                limbs: poly_handle_limbs(ctx.dr, &residue_handle)?,
+            })
+            .into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
 }
 
@@ -564,14 +723,24 @@ impl Step for QrIntakeSplit {
 #[derive(Debug)]
 pub struct QrSideDescend;
 
+#[expect(
+    clippy::pattern_type_mismatch,
+    reason = "Maybe projections borrow fixed witness tuples without moving polynomial wrappers"
+)]
 impl Step for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = ();
     type Shared = ();
-    /// `(bit, sibling_contents, interpolant, quotient)`
-    type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+    /// `(bit, sibling_contents, interpolant, quotient, discriminant_shim)`
+    type Witness<'source> = (
+        bool,
+        TachygramSetPoly,
+        QrInterpolantPoly,
+        QrQuotientPoly,
+        Polynomial<Fp, ProductionRank>,
+    );
 
     const INDEX: Index = Index::new(18);
 
@@ -600,52 +769,30 @@ impl Step for QrSideDescend {
     {
         let left_encoded =
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        // TODO: a real circuit needs a bit decomposition of `depth` here; mock
-        // ragu accepts the native comparison.
-        let witness_for_native = witness.clone();
-        let native = D::try_just(|| {
-            let (bit, sibling_contents, ..) = witness_for_native.take();
-            let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) =
-                left.take();
-            let () = right.take();
-            if profile.depth >= u32::BITS {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "QrSideDescend: profile has no bit left for another side".into(),
-                ));
-            }
-
-            // TODO: a real circuit must constrain `bit` boolean; the type carries it
-            // under mock ragu.
-            // TODO: select point coordinates in the real circuit. These native group
-            // selectors produce identity intermediates when the commitments agree or
-            // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
-            let sibling_commit = sibling_contents.commit();
-            let sibling = Eq::from(residue)
-                + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
-            enforce_equal_point(
-                Eq::from(sibling_commit),
-                sibling,
-                "QrSideDescend: sibling does not match the header",
-            )?;
-            let selected = Eq::from(non_residue)
-                + ((Eq::from(residue) - Eq::from(non_residue)) * Fp::from(u64::from(bit)));
-            let output = (
-                epoch,
-                anchor_prev,
-                anchor_end,
-                discriminant,
-                profile.descend(bit),
-                TachygramSetCommit::from(selected),
-            );
-            Ok((
-                output,
-                bit,
-                discriminant.at(profile.depth),
-                Eq::from(sibling_commit).to_affine(),
-            ))
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let [depth_element, profile_bits] = crate::gadgets::profile::QrProfileGadget {
+            depth: (left_encoded.as_gadget().profile.depth).clone(),
+            bits: (left_encoded.as_gadget().profile.bits).clone(),
+        }
+        .validate(ctx.dr)?;
+        circuit::bounded::<D, 5>(ctx.dr, &depth_element, 31).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrSideDescend: profile has no bit left for another side".into(),
+            )
         })?;
+        let bit = Boolean::alloc(ctx.dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        let [non_residue_lo, non_residue_hi] =
+            left_encoded.as_gadget().non_residue.encoding.limbs.clone();
+        let [residue_lo, residue_hi] = left_encoded.as_gadget().residue.encoding.limbs.clone();
+        let sibling_expected_lo = bit.conditional_select(ctx.dr, &residue_lo, &non_residue_lo)?;
+        let sibling_expected_hi = bit.conditional_select(ctx.dr, &residue_hi, &non_residue_hi)?;
+        let selected_lo = bit.conditional_select(ctx.dr, &non_residue_lo, &residue_lo)?;
+        let selected_hi = bit.conditional_select(ctx.dr, &non_residue_hi, &residue_hi)?;
+        let base_discriminant = left_encoded.as_gadget().discriminant.element.clone();
+        let discriminant_element = base_discriminant.add(ctx.dr, &depth_element);
+        let one = Element::constant(ctx.dr, Fp::ONE);
+        let next_depth = depth_element.add(ctx.dr, &one);
+        let next_bits = profile_bits.double(ctx.dr).add(ctx.dr, &bit.element());
         let sibling_handle = ctx.witness_polynomial(
             witness
                 .as_ref()
@@ -654,50 +801,38 @@ impl Step for QrSideDescend {
         let interpolant_handle = ctx.witness_polynomial(
             witness
                 .as_ref()
-                .map(|(_, _, interpolant, _)| interpolant.as_ref().clone()),
+                .map(|(_, _, interpolant, ..)| interpolant.as_ref().clone()),
         )?;
         let quotient_handle = ctx.witness_polynomial(
             witness
                 .as_ref()
-                .map(|(_, _, _, quotient)| quotient.as_ref().clone()),
+                .map(|(_, _, _, quotient, _)| quotient.as_ref().clone()),
         )?;
-        bind_poly_handle(
-            ctx,
-            &sibling_handle,
-            native
-                .as_ref()
-                .map(|(_, _, _, sibling_commit)| *sibling_commit),
-            "QrSideDescend: sibling does not match the header",
-        )?;
-
         let [sibling_lo, sibling_hi] = poly_handle_limbs(ctx.dr, &sibling_handle)?;
+        sibling_lo
+            .enforce_equal(ctx.dr, &sibling_expected_lo)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSideDescend: sibling does not match the header".into(),
+                )
+            })?;
+        sibling_hi
+            .enforce_equal(ctx.dr, &sibling_expected_hi)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSideDescend: sibling does not match the header".into(),
+                )
+            })?;
         let [interpolant_lo, interpolant_hi] = poly_handle_limbs(ctx.dr, &interpolant_handle)?;
         let [quotient_lo, quotient_hi] = poly_handle_limbs(ctx.dr, &quotient_handle)?;
-        let discriminant_assignment = native
-            .clone()
-            .map(|(_, _, discriminant_at_depth, _)| discriminant_at_depth);
-        let shim = D::try_just(|| {
-            let discriminant_at_depth = discriminant_assignment.take();
-            #[expect(clippy::expect_used, reason = "the host generator table is nonempty")]
-            let &g0 = Pasta::host_generators(baked())
-                .g()
-                .first()
-                .expect("at least one generator");
-            let point = (g0.to_projective() * discriminant_at_depth).to_affine();
-            let encoding = point.to_bytes();
-            let (lo, hi) = encoding.split_at(16);
-            let limb = |encoded_limb: &[u8]| -> ragu_core::Result<Fp> {
-                let limb_bytes: [u8; 16] = encoded_limb.try_into().map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "a commitment limb must contain 16 bytes".into(),
-                    )
-                })?;
-                Ok(Fp::from_u128(u128::from_le_bytes(limb_bytes)))
-            };
-            Ok([limb(lo)?, limb(hi)?])
-        })?;
-        let shim_lo = Element::alloc(ctx.dr, &mut (), shim.as_ref().map(|limbs| limbs[0]))?;
-        let shim_hi = Element::alloc(ctx.dr, &mut (), shim.as_ref().map(|limbs| limbs[1]))?;
+        let shim_handle = ctx.witness_polynomial(witness.as_ref().map(|data| data.4.clone()))?;
+        enforce_constant_polynomial(
+            ctx,
+            &shim_handle,
+            &discriminant_element,
+            "QrSideDescend: discriminant shim is not constant",
+        )?;
+        let [shim_lo, shim_hi] = poly_handle_limbs(ctx.dr, &shim_handle)?;
         let z = ctx.derive_challenge(&(
             [sibling_lo, sibling_hi],
             (
@@ -714,25 +849,13 @@ impl Step for QrSideDescend {
         let sibling_at_z = Element::alloc(ctx.dr, &mut (), sibling_assignment)?;
         let interpolant_at_z = Element::alloc(ctx.dr, &mut (), interpolant_assignment)?;
         let quotient_at_z = Element::alloc(ctx.dr, &mut (), quotient_assignment)?;
-        let bit_element = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native.clone().map(|(_, bit, ..)| Fp::from(u64::from(bit))),
-        )?;
-        let discriminant_element = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native
-                .clone()
-                .map(|(_, _, discriminant_at_depth, _)| discriminant_at_depth),
-        )?;
+        let bit_element = bit.element();
         let shifted = z.add(ctx.dr, &discriminant_element);
         let sibling_product = sibling_at_z.mul(ctx.dr, &quotient_at_z)?;
         let interpolant_square = interpolant_at_z.square(ctx.dr)?;
         let class_residual = interpolant_square.sub(ctx.dr, &sibling_product);
         let multiplier_delta = Element::constant(ctx.dr, Fp::from(4));
         let scaled_bit = bit_element.mul(ctx.dr, &multiplier_delta)?;
-        let one = Element::constant(ctx.dr, Fp::ONE);
         let sibling_multiplier = scaled_bit.add(ctx.dr, &one);
         let expected_class = sibling_multiplier.mul(ctx.dr, &shifted)?;
         class_residual
@@ -754,11 +877,49 @@ impl Step for QrSideDescend {
         )?;
         ctx.enforce_poly_query(&quotient_handle, z, quotient_at_z)?;
 
-        let output = native.map(|(output, ..)| output);
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
+        let output = D::try_just(|| {
+            let low_bytes = selected_lo.value().take().to_bytes();
+            let high_bytes = selected_hi.value().take().to_bytes();
+            let mut encoding = [0u8; 32];
+            encoding[..16].copy_from_slice(&low_bytes[..16]);
+            encoding[16..].copy_from_slice(&high_bytes[..16]);
+            let selected = EqAffine::from_bytes(encoding).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("invalid selected commitment encoding".into())
+            })?;
+            let [depth_first, depth_second, depth_third, depth_fourth, ..] =
+                next_depth.value().take().to_bytes();
+            let [bits_first, bits_second, bits_third, bits_fourth, ..] =
+                next_bits.value().take().to_bytes();
+            let (epoch, start, end, discriminant, ..) = left.take();
+            let profile = QrProfile {
+                depth: u32::from_le_bytes([depth_first, depth_second, depth_third, depth_fourth]),
+                bits: u32::from_le_bytes([bits_first, bits_second, bits_third, bits_fourth]),
+            };
+            Ok((
+                epoch,
+                start,
+                end,
+                discriminant,
+                profile,
+                TachygramSetCommit::from(selected.to_projective()),
+            ))
+        })?;
+        let fields = crate::stamp::headers::qr::QrIntakeOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_end: (left_encoded.as_gadget().anchor_end.element.clone()).into(),
+            discriminant: (left_encoded.as_gadget().discriminant.element.clone()).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: next_depth,
+                bits: next_bits,
+            },
+            contents: (crate::gadgets::commitment::HostCommitment {
+                limbs: [selected_lo, selected_hi],
+            })
+            .into(),
+        };
         Ok((
-            (left_encoded, right_encoded, encoded),
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             (),
             output,
             D::unit(),
@@ -834,31 +995,69 @@ impl Step for QrBucketSeal {
     {
         let left_encoded =
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (anchor_final_prev,) = witness.take();
-            let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = left.take();
-            let () = right.take();
-            enforce_zero(
-                Fp::from(anchor_prev)
-                    - poseidon::anchor_next_epoch(Fp::from(anchor_final_prev), Fp::from(epoch)),
-                "QrBucketSeal: witnessed boundary digest does not match intake's first anchor",
-            )?;
-            let epoch_next = epoch.next().ok_or_else(|| {
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let epoch_element = left_encoded.as_gadget().epoch.element.clone();
+        let next = crate::gadgets::epoch::EpochIndexGadget::from((epoch_element).clone())
+            .next(ctx.dr)
+            .map(|epoch| epoch.element)
+            .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrBucketSeal: crossing past the final epoch".into(),
                 )
             })?;
-            let crossing = anchor_end
-                .next_epoch(epoch_next)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        let previous = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        let start = left_encoded.as_gadget().anchor_prev.element.clone();
+        let end = left_encoded.as_gadget().anchor_end.element.clone();
+        let mut boundary_sponge = Sponge::resume(
+            SpongeState::from_elements(FixedVec::from_fn(|index| {
+                Element::constant(
+                    ctx.dr,
+                    if index == PoseidonFp::RATE {
+                        Fp::from_u128(u128::from_le_bytes(*b"Tachyon-AnchorEp"))
+                    } else {
+                        Fp::ZERO
+                    },
+                )
+            })),
+            Pasta::circuit_poseidon(baked()),
+        );
+        boundary_sponge.absorb(ctx.dr, &previous)?;
+        boundary_sponge.absorb(ctx.dr, &epoch_element)?;
+        let boundary = boundary_sponge.squeeze(ctx.dr)?;
+        start.enforce_equal(ctx.dr, &boundary).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
+                    .into(),
+            )
+        })?;
+        let mut crossing_sponge = Sponge::resume(
+            SpongeState::from_elements(FixedVec::from_fn(|index| {
+                Element::constant(
+                    ctx.dr,
+                    if index == PoseidonFp::RATE {
+                        Fp::from_u128(u128::from_le_bytes(*b"Tachyon-AnchorEp"))
+                    } else {
+                        Fp::ZERO
+                    },
+                )
+            })),
+            Pasta::circuit_poseidon(baked()),
+        );
+        crossing_sponge.absorb(ctx.dr, &end)?;
+        crossing_sponge.absorb(ctx.dr, &next)?;
+        let crossing = crossing_sponge.squeeze(ctx.dr)?;
+        let output = D::try_just(|| {
+            let (epoch, anchor_prev, _, discriminant, profile, contents) = left.take();
 
             Ok((
                 (
                     epoch,
                     anchor_prev,
-                    crossing,
+                    Anchor::from(*crossing.value().take()),
                     discriminant,
                     profile,
                     contents,
@@ -867,62 +1066,24 @@ impl Step for QrBucketSeal {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let fields = crate::stamp::headers::qr::QrBucketOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_start: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_next: (crossing).into(),
+            discriminant: (left_encoded.as_gadget().discriminant.element.clone()).into(),
+            profile: crate::gadgets::profile::QrProfileGadget {
+                depth: left_encoded.as_gadget().profile.depth.clone(),
+                bits: left_encoded.as_gadget().profile.bits.clone(),
+            },
+            contents: (left_encoded.as_gadget().contents.encoding.clone()).into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            data,
+            aux,
+        ))
     }
-}
-
-/// Fix `value`'s side at every discriminant of the progression from
-/// `discriminant`, and check `profile` is the value's first `depth` sides.
-///
-/// The relations and their soundness are on [`QrUnspentInit`].
-/// [`UnspentLift`](super::pool::UnspentLift) runs the same checks.
-pub(super) fn enforce_value_profile(
-    value: Tachygram,
-    discriminant: QrDiscriminant,
-    profile: QrProfile,
-    classes: &[QrClassRoot; QrProfile::MAX_DEPTH],
-    mask: &[bool; QrProfile::MAX_DEPTH],
-) -> ragu_core::Result<()> {
-    // TODO: a real circuit must constrain every side and mask bit boolean;
-    // the types carry it under mock ragu.
-    let mut shifted = Fp::from(value) + Fp::from(discriminant);
-    let mut position_fp = Fp::ZERO;
-    let mut depth_acc = Fp::ZERO;
-    let mut index_acc = Fp::ZERO;
-    let mut bits_acc = Fp::ZERO;
-    for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
-        let side_fp = Fp::from(u64::from(side));
-        let multiplier = Fp::from(5) - ((Fp::from(5) - Fp::ONE) * side_fp);
-        enforce_zero(
-            root.square() - (multiplier * shifted),
-            "QR profile: root does not square to the claimed class",
-        )?;
-        enforce_nonzero(
-            (shifted * (Fp::ONE - side_fp)) + side_fp,
-            "QR profile: exceptional discriminant claimed the non-residue class",
-        )?;
-
-        let selected_fp = Fp::from(u64::from(selected));
-        depth_acc += selected_fp;
-        index_acc += selected_fp * position_fp;
-        bits_acc += selected_fp * (bits_acc + side_fp);
-        shifted += Fp::ONE;
-        position_fp += Fp::ONE;
-    }
-    enforce_zero(
-        depth_acc - Fp::from(u64::from(profile.depth)),
-        "QR profile: depth mask does not match the bucket's depth",
-    )?;
-    enforce_zero(
-        index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
-        "QR profile: depth mask is not a prefix",
-    )?;
-    enforce_zero(
-        bits_acc - Fp::from(u64::from(profile.bits)),
-        "QR profile: value does not take the bucket's profile",
-    )?;
-    Ok(())
 }
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
@@ -988,20 +1149,21 @@ impl Step for QrUnspentInit {
     type Output = ArbitraryUnspent;
     type Right = ();
     type Shared = ();
-    /// `(value, classes, mask, sequence, contents)`
+    /// `(value, classes, mask, sequence, contents, value_shim)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
         TachygramSetPoly,
+        Polynomial<Fp, ProductionRank>,
     );
 
     const INDEX: Index = Index::new(19);
 
     #[expect(
         clippy::too_many_lines,
-        reason = "the step checks a fixed-depth profile and a fixed-width scalar shim"
+        reason = "predicates and connected header wiring stay together"
     )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
@@ -1024,35 +1186,55 @@ impl Step for QrUnspentInit {
     {
         let left_encoded =
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let left_header = left.clone();
-        let native = D::try_just(|| {
-            let (value, classes, mask, sequence, contents) = witness.take();
-            let (
-                bucket_epoch,
-                bucket_anchor_start,
-                bucket_anchor_next,
-                discriminant,
-                profile,
-                contents_commit,
-            ) = left.take();
-            let () = right.take();
-            enforce_equal_point(
-                Eq::from(contents.commit()),
-                Eq::from(contents_commit),
-                "QrUnspentInit: contents do not match the bucket",
-            )?;
-            enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
-            enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
-            let epoch_next = bucket_epoch.next().ok_or_else(|| {
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let value_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        value_element
+            .clone()
+            .enforce_nonzero(ctx.dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("QrUnspentInit: tested value is zero".into())
+            })?;
+        let discriminant_element = left_encoded.as_gadget().discriminant.element.clone();
+        crate::gadgets::profile::QrProfileGadget {
+            depth: (&[
+                left_encoded.as_gadget().profile.depth.clone(),
+                left_encoded.as_gadget().profile.bits.clone(),
+            ])[0]
+                .clone(),
+            bits: (&[
+                left_encoded.as_gadget().profile.depth.clone(),
+                left_encoded.as_gadget().profile.bits.clone(),
+            ])[1]
+                .clone(),
+        }
+        .enforce_value(
+            ctx.dr,
+            &value_element,
+            &discriminant_element,
+            witness.as_ref().map(|data| data.1),
+            witness.as_ref().map(|data| data.2),
+        )?;
+        let epoch_element = left_encoded.as_gadget().epoch.element.clone();
+        let epoch_next = crate::gadgets::epoch::EpochIndexGadget::from((epoch_element).clone())
+            .next(ctx.dr)
+            .map(|epoch| epoch.element)
+            .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
             })?;
+        let native = D::try_just(|| {
+            let (value, _, _, sequence, contents, _) = witness.clone().take();
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = left.take();
             let output = (
                 bucket_anchor_start,
                 bucket_epoch,
                 sequence.commit(),
-                epoch_next,
+                crate::gadgets::epoch::EpochIndexGadget::from((epoch_next).clone())
+                    .value()
+                    .take(),
                 bucket_anchor_next,
             );
             Ok((sequence, contents, value, bucket_epoch, output))
@@ -1070,58 +1252,25 @@ impl Step for QrUnspentInit {
         bind_poly_handle(
             ctx,
             &contents_handle,
-            left_header
-                .as_ref()
-                .map(|data| Eq::from(data.5).to_affine()),
+            &left_encoded.as_gadget().contents.encoding.limbs,
             "QrUnspentInit: contents do not match the bucket",
         )?;
 
         let [sequence_lo, sequence_hi] = poly_handle_limbs(ctx.dr, &sequence_handle)?;
-        let value_assignment = native.clone().map(|(_, _, value, ..)| Fp::from(value));
-        let scalar_shim = D::try_just(|| {
-            let value = value_assignment.take();
-            #[expect(clippy::expect_used, reason = "the host generator table is nonempty")]
-            let &g0 = Pasta::host_generators(baked())
-                .g()
-                .first()
-                .expect("at least one generator");
-            let point = (g0.to_projective() * value).to_affine();
-            let encoding = point.to_bytes();
-            let (lo, hi) = encoding.split_at(16);
-            let limb = |encoded_limb: &[u8]| -> ragu_core::Result<Fp> {
-                let limb_bytes: [u8; 16] = encoded_limb.try_into().map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "a commitment limb must contain 16 bytes".into(),
-                    )
-                })?;
-                Ok(Fp::from_u128(u128::from_le_bytes(limb_bytes)))
-            };
-            Ok([limb(lo)?, limb(hi)?])
-        })?;
-        let shim_lo = Element::alloc(ctx.dr, &mut (), scalar_shim.as_ref().map(|limbs| limbs[0]))?;
-        let shim_hi = Element::alloc(ctx.dr, &mut (), scalar_shim.as_ref().map(|limbs| limbs[1]))?;
+        let shim_handle = ctx.witness_polynomial(witness.as_ref().map(|data| data.5.clone()))?;
+        enforce_constant_polynomial(
+            ctx,
+            &shim_handle,
+            &value_element,
+            "QrUnspentInit: value shim is not constant",
+        )?;
+        let [shim_lo, shim_hi] = poly_handle_limbs(ctx.dr, &shim_handle)?;
         let z = ctx.derive_challenge(&([sequence_lo, sequence_hi], [shim_lo, shim_hi]))?;
         let sequence_assignment =
             ctx.evaluate(&sequence_handle, z.value().map(|challenge| *challenge))?;
         let sequence_at_z = Element::alloc(ctx.dr, &mut (), sequence_assignment)?;
-        let value_element = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native.clone().map(|(_, _, value, ..)| Fp::from(value)),
-        )?;
-        let index_element = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native
-                .as_ref()
-                .map(|(_, _, _, bucket_epoch, _)| Fp::from(u64::from(*bucket_epoch)) + Fp::ONE),
-        )?;
-        let index_times_z = index_element.mul(ctx.dr, &z)?;
-        let shifted = value_element.add(ctx.dr, &index_times_z);
-        let square = shifted.square(ctx.dr)?;
-        let cube = square.mul(ctx.dr, &shifted)?;
-        let two = Element::constant(ctx.dr, Fp::from(2));
-        let expected_sequence = cube.sub(ctx.dr, &two);
+        let index_element = epoch_next.clone();
+        let expected_sequence = indexed_member_factor(ctx.dr, &value_element, &index_element, &z)?;
         sequence_at_z
             .enforce_equal(ctx.dr, &expected_sequence)
             .map_err(|_err| {
@@ -1144,13 +1293,44 @@ impl Step for QrUnspentInit {
         ctx.enforce_poly_query(&contents_handle, value_element, contents_at_value)?;
 
         let output = native.map(|(_, _, _, _, output)| output);
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
+        let fields = crate::stamp::headers::pool::ArbitraryUnspentOutput {
+            anchor_start: (left_encoded.as_gadget().anchor_start.element.clone()).into(),
+            epoch_start: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            epoch_next: (epoch_next).into(),
+            anchor_next: (left_encoded.as_gadget().anchor_next.element.clone()).into(),
+            elapsed: (crate::gadgets::commitment::HostCommitment {
+                limbs: poly_handle_limbs(ctx.dr, &sequence_handle)?,
+            })
+            .into(),
+        };
         Ok((
-            (left_encoded, right_encoded, encoded),
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             (),
             output,
             D::unit(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu::pasta::Eq;
+    use udon::curve::Projective as _;
+
+    use super::select_sibling_header_commitment;
+
+    #[test]
+    fn sibling_binding_selects_the_header_side_named_by_the_bit() {
+        let non_residue = Eq::generator();
+        let residue = non_residue.double();
+        assert_ne!(non_residue, residue);
+        assert_eq!(
+            select_sibling_header_commitment(true, non_residue, residue),
+            non_residue
+        );
+        assert_eq!(
+            select_sibling_header_commitment(false, non_residue, residue),
+            residue
+        );
     }
 }

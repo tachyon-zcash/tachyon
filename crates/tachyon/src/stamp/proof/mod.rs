@@ -27,6 +27,9 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
+#[cfg(test)]
+mod seams;
+
 use lazy_static::lazy_static;
 pub use ragu::Proof;
 use ragu::{Application, ApplicationBuilder};

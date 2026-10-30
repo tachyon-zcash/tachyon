@@ -7,7 +7,11 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{Pcd, Proof, pasta::Fp};
+use ragu::{
+    Pcd, PoseidonPermutation as _, Proof,
+    pasta::{Fp, PoseidonFp},
+};
+use ragu_circuits::polynomials::sparse::Polynomial;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
@@ -17,7 +21,7 @@ use zcash_tachyon::{
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,
-    note,
+    fee, note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::proof::{HEADER_SIZE, PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
     value, witness,
@@ -233,23 +237,48 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let nf: [Nullifier; 3] = array::from_fn(|_| Nullifier::from(random_fp(rng)));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
 
-    // Anchor discontinuity: the right segment skips epoch one.
+    // Isolate anchor discontinuity at the same epoch, then retain the gapped
+    // composition as a second genuine-child attack. Both use exact products.
     let left =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(1)));
-    let right =
+    let detached = detached_segment(rng, EpochIndex::new(1), at);
+    let later =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(3)));
-    let w = witness::unspent_fuse((*left.data(), *right.data()), &nf[0..1], &nf[2..3]);
-    let err = PROOF_SYSTEM
-        .fuse(rng, pool::UnspentFuse, w, left, right)
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: left.anchor_next must equal right.anchor_start"
-    );
+    for (right, start, value) in [
+        (detached, EpochIndex::new(1), nf[1]),
+        (later, EpochIndex::new(2), nf[2]),
+    ] {
+        assert!(
+            PROOF_SYSTEM
+                .verify(&left, &mut *rng)
+                .expect("valid left child")
+        );
+        assert!(
+            PROOF_SYSTEM
+                .verify(&right, &mut *rng)
+                .expect("valid right child")
+        );
+        let left_poly = NfSeqPoly::new(EpochIndex::new(0), &nf[0..1]);
+        let right_poly = NfSeqPoly::new(start, &[value]);
+        let combined = left_poly.clone() * right_poly.clone();
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::UnspentFuse,
+                (left_poly, combined, right_poly),
+                left.clone(),
+                right,
+            )
+            .err()
+            .expect("discontinuous anchors rejected");
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "UnspentFuse: left.anchor_next must equal right.anchor_start"
+        );
+    }
 }
 
 /// Fuse two spans with their honest member lists.
@@ -327,6 +356,129 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
             "AnchorSpanFuse: spans do not share a vertex"
         );
     }
+}
+
+fn reject_anchor_seed_polynomial(coefficients: impl FnOnce(Fp) -> Vec<Fp>) {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let initial = Anchor::default();
+    let epoch = EpochIndex::new(0);
+    let members = [Tachygram::from(Fp::from(17))];
+    let honest = witness::anchor_span_seed(((), ()), initial, epoch, &members);
+    let end = initial
+        .next_stamp(epoch, &honest.2)
+        .expect("nonempty stamp");
+    let (control, ()) = PROOF_SYSTEM
+        .seed(rng, pool::AnchorSpanSeed, honest.clone())
+        .expect("honest singleton");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("honest proof")
+    );
+    assert_eq!(
+        control.data().1,
+        zcash_tachyon::AnchorSetCommit::singleton(end)
+    );
+    let mut bad = honest;
+    bad.3 = AnchorSetPoly::from(Polynomial::from_coeffs(coefficients(Fp::from(end))));
+    let error = PROOF_SYSTEM
+        .seed(rng, pool::AnchorSpanSeed, bad)
+        .err()
+        .expect("wrong singleton is rejected");
+    let ragu_core::Error::InvalidWitness(message) = error else {
+        panic!("unexpected rejection: {error:?}");
+    };
+    assert!(
+        message.to_string().starts_with("poly-query rejected:"),
+        "{message}"
+    );
+}
+
+#[test]
+fn anchor_span_seed_rejects_a_wrong_root() {
+    reject_anchor_seed_polynomial(|anchor| vec![-anchor - Fp::ONE, Fp::ONE]);
+}
+
+#[test]
+fn anchor_span_seed_rejects_a_scaled_singleton() {
+    reject_anchor_seed_polynomial(|anchor| vec![-anchor.double(), Fp::from(2)]);
+}
+
+#[test]
+fn anchor_span_seed_rejects_a_quadratic() {
+    reject_anchor_seed_polynomial(|anchor| vec![-anchor, Fp::ONE, Fp::ONE]);
+}
+
+#[test]
+fn anchor_span_seed_rejects_an_identity_stamp_on_the_driver() {
+    use ragu::{
+        Cycle as _,
+        pasta::{Eq, Pasta},
+    };
+    use ragu_core::{
+        drivers::emulator::{Emulator, Wireless},
+        maybe::{Always, Maybe as _},
+    };
+    use ragu_pcd::pasta::baked;
+    use ragu_primitives::{
+        Element,
+        poseidon::{Sponge, SpongeState},
+        vec::FixedVec,
+    };
+    use udon::curve::{Affine as _, Projective as _};
+
+    let rng = &mut StdRng::seed_from_u64(0);
+    let previous = Anchor::from(Fp::from(42));
+    let epoch = EpochIndex::new(0);
+    let identity = Eq::identity();
+    let bytes = identity.to_affine().to_bytes();
+    let (low, high) = bytes.split_at(16);
+    let mut emulator = Emulator::<Wireless<Always<()>, Fp>>::execute();
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            &mut emulator,
+            if index == PoseidonFp::RATE {
+                Fp::from_u128(u128::from_le_bytes(*b"Tachyon-AnchorSt"))
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(baked()));
+    for input in [
+        Fp::from(previous),
+        Fp::from(epoch),
+        Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 bytes"))),
+    ] {
+        let element = Element::constant(&mut emulator, input);
+        sponge
+            .absorb(&mut emulator, &element)
+            .expect("native bad-witness assignment");
+    }
+    let folded = *sponge
+        .squeeze(&mut emulator)
+        .expect("native bad-witness assignment")
+        .value()
+        .take();
+    let singleton = AnchorSetPoly::from(Polynomial::from_coeffs(vec![-folded, Fp::ONE]));
+    let error = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::AnchorSpanSeed,
+            (
+                previous,
+                epoch,
+                zcash_tachyon::TachygramSetCommit::from(identity),
+                singleton,
+            ),
+        )
+        .err()
+        .expect("identity stamp is rejected by its local domain constraint");
+    let ragu_core::Error::InvalidWitness(message) = error else {
+        panic!("unexpected rejection: {error:?}");
+    };
+    assert_eq!(message.to_string(), "invalid anchor step");
 }
 
 /// An output stamp anchored at `stamp_anchor`, carried on its header.
@@ -516,6 +668,45 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
             inner.to_string(),
             "AnchorSpanFuse: combined is not the union of the halves"
         );
+    }
+
+    // Foreign operands retain an exact product, so only header binding rejects.
+    for replace_left in [true, false] {
+        let foreign_members = [Anchor::from(Fp::from(42))];
+        let supplied_left = if replace_left {
+            &foreign_members[..]
+        } else {
+            left_members.as_slice()
+        };
+        let supplied_right = if replace_left {
+            right_members.as_slice()
+        } else {
+            &foreign_members[..]
+        };
+        let bad = (
+            supplied_left.iter().copied().collect::<AnchorSetPoly>(),
+            supplied_left
+                .iter()
+                .chain(supplied_right)
+                .copied()
+                .collect::<AnchorSetPoly>(),
+            supplied_right.iter().copied().collect::<AnchorSetPoly>(),
+        );
+        let expected = if replace_left {
+            assert_ne!(bad.0.commit(), left.data().1);
+            "AnchorSpanFuse: left members do not match header"
+        } else {
+            assert_ne!(bad.2.commit(), right.data().1);
+            "AnchorSpanFuse: right members do not match header"
+        };
+        let error = PROOF_SYSTEM
+            .fuse(rng, pool::AnchorSpanFuse, bad, left.clone(), right.clone())
+            .err()
+            .expect("foreign members rejected");
+        let ragu_core::Error::InvalidWitness(message) = error else {
+            panic!("unexpected rejection: {error:?}");
+        };
+        assert_eq!(message.to_string(), expected);
     }
 
     // Reversed halves share no vertex.
@@ -937,15 +1128,14 @@ fn unspent_fuse_composes() {
 fn unspent_fuse_rejects_wrong_left_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
     let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
+    let foreign = NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]);
+    let honest_right = NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]);
+    let combined = foreign.clone() * honest_right.clone();
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentFuse,
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-            ),
+            (foreign, combined, honest_right),
             left,
             right,
         )
@@ -964,15 +1154,14 @@ fn unspent_fuse_rejects_wrong_left_seq() {
 fn unspent_fuse_rejects_wrong_right_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
     let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
+    let honest_left = NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]);
+    let foreign = NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]);
+    let combined = honest_left.clone() * foreign.clone();
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentFuse,
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
-            ),
+            (honest_left, combined, foreign),
             left,
             right,
         )
@@ -1341,6 +1530,36 @@ fn honest_secret(rng: &mut StdRng, user: &WalletSim, note: Note) -> Pcd<delegati
     secret
 }
 
+#[test]
+fn note_seed_rejects_a_zero_commitment_trapdoor_on_the_driver() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let control = honest_secret(rng, &user, note);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("valid secret")
+    );
+    let error = PROOF_SYSTEM
+        .seed(
+            rng,
+            delegation::NoteSeed,
+            (
+                note.value,
+                note.psi,
+                note::CommitmentTrapdoor::from(Fp::ZERO),
+                user.pak,
+            ),
+        )
+        .err()
+        .expect("zero trapdoor is rejected");
+    let ragu_core::Error::InvalidWitness(message) = error else {
+        panic!("unexpected rejection: {error:?}");
+    };
+    assert_eq!(message.to_string(), "NoteSeed: commitment trapdoor is zero");
+}
+
 /// `NoteSeed` certifies the note's opening alongside its commitment and
 /// master key.
 #[test]
@@ -1433,15 +1652,33 @@ fn nullifier_derive_rejects_a_misaligned_epoch_start() {
     let note = user.random_note(500);
 
     let secret = honest_secret(rng, &user, note);
-    let (_, seq) = witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12));
-    expect_invalid(
-        rng,
-        delegation::NullifierDerive,
-        (EpochIndex::new(14), seq),
-        secret,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
-        "NullifierDerive: epoch_start is not group-aligned",
+    let master = Fp::from(secret.data().2);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&secret, &mut *rng)
+            .expect("valid secret child")
     );
+    for start in [13u32, 14u32] {
+        let groups: [[Fp; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
+            array::from_fn(|group| {
+                poseidon::nullifier_group(
+                    master,
+                    Fp::from(u64::from(start) + u64::try_from(group * PoseidonFp::RATE).unwrap()),
+                )
+            });
+        let members: [Nullifier; NF_DERIVATION_WIDTH] = array::from_fn(|slot| {
+            Nullifier::from(groups[slot / PoseidonFp::RATE][slot % PoseidonFp::RATE])
+        });
+        let seq = NfSeqPoly::new(EpochIndex::new(start), &members);
+        expect_invalid(
+            rng,
+            delegation::NullifierDerive,
+            (EpochIndex::new(start), seq),
+            secret.clone(),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            "NullifierDerive: epoch_start is not group-aligned",
+        );
+    }
 }
 
 /// A window has to land inside the epoch range: an index past `EPOCH_MAX`
@@ -1551,10 +1788,19 @@ fn nullifier_fuse_rejects_non_contiguous() {
     let (left_start, right_start) = (EpochIndex::new(0), EpochIndex::new(32));
     let range_a = user.derivation_pcd(rng, note, left_start, EpochIndex::new(15));
     let range_b = user.derivation_pcd(rng, note, right_start, EpochIndex::new(47));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &user.covering_window(&note, &range_a),
-        &user.covering_window(&note, &range_b),
+    let left_seq = NfSeqPoly::new(left_start, &user.covering_window(&note, &range_a));
+    let right_seq = NfSeqPoly::new(right_start, &user.covering_window(&note, &range_b));
+    let merged = left_seq.clone() * right_seq.clone();
+    let witness = (left_seq, merged, right_seq);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&range_a, &mut *rng)
+            .expect("valid left child")
+    );
+    assert!(
+        PROOF_SYSTEM
+            .verify(&range_b, &mut *rng)
+            .expect("valid right child")
     );
 
     let err = PROOF_SYSTEM
@@ -1577,10 +1823,19 @@ fn nullifier_fuse_rejects_wrong_cm() {
     let (left_start, right_start) = (EpochIndex::new(0), EpochIndex::new(16));
     let range_a = user.derivation_pcd(rng, note_a, left_start, EpochIndex::new(15));
     let range_b = user.derivation_pcd(rng, note_b, right_start, EpochIndex::new(31));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &user.covering_window(&note_a, &range_a),
-        &user.covering_window(&note_b, &range_b),
+    let left_seq = NfSeqPoly::new(left_start, &user.covering_window(&note_a, &range_a));
+    let right_seq = NfSeqPoly::new(right_start, &user.covering_window(&note_b, &range_b));
+    let merged = left_seq.clone() * right_seq.clone();
+    let witness = (left_seq, merged, right_seq);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&range_a, &mut *rng)
+            .expect("valid left child")
+    );
+    assert!(
+        PROOF_SYSTEM
+            .verify(&range_b, &mut *rng)
+            .expect("valid right child")
     );
 
     let err = PROOF_SYSTEM
@@ -1606,6 +1861,16 @@ fn spend_bind_rejects_a_secret_for_another_note() {
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let foreign = honest_secret(rng, &user, other);
     let rcv = value::Trapdoor::random(rng);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&spendable, &mut *rng)
+            .expect("valid spendable child")
+    );
+    assert!(
+        PROOF_SYSTEM
+            .verify(&foreign, &mut *rng)
+            .expect("valid secret child")
+    );
 
     let err = PROOF_SYSTEM
         .fuse(rng, spend::SpendBind, (rcv,), spendable, foreign)
@@ -1615,6 +1880,103 @@ fn spend_bind_rejects_a_secret_for_another_note() {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "SpendBind: secret does not match note");
+}
+
+#[test]
+fn spend_bind_rejects_a_tampered_secret_carrier_even_when_cm_join_matches() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let other = user.random_note(700);
+    let mut pool = PoolSim::genesis(rng);
+    let height = mine_cm_block(rng, &mut pool, note.commitment());
+    let spendable = user.spendable_init(rng, &note, &pool, height);
+    let foreign = honest_secret(rng, &user, other);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&foreign, &mut *rng)
+            .expect("genuine secret proof")
+    );
+    let mut data = *foreign.data();
+    data.0 = spendable.data().0;
+    let forged = foreign
+        .proof()
+        .clone()
+        .carry::<delegation::NoteSecret>(data);
+    assert!(
+        !PROOF_SYSTEM
+            .verify(&forged, &mut *rng)
+            .expect("tampered carrier verification")
+    );
+    // This targets the framework's input-header connection, not SpendBind's
+    // local cm equality: that equality is satisfied by the substituted data.
+    let trapdoor = value::Trapdoor::random(rng);
+    let error = PROOF_SYSTEM
+        .fuse(rng, spend::SpendBind, (trapdoor,), spendable, forged)
+        .err()
+        .expect("input encoding must match the genuine child proof");
+    let ragu_core::Error::InvalidWitness(message) = error else {
+        panic!("unexpected rejection: {error:?}");
+    };
+    assert_eq!(
+        message.to_string(),
+        "input header does not match child proof"
+    );
+}
+
+#[test]
+fn spend_bind_rejects_a_genuine_lineage_in_the_final_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let secret = honest_secret(rng, &user, note);
+    let start = EpochIndex::new(EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap());
+    let (range, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            delegation::NullifierDerive,
+            witness::nullifier_derive((*secret.data(), ()), start),
+            secret.clone(),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        )
+        .expect("bounded final window");
+    for epoch in [EpochIndex::new(EPOCH_MAX - 1), EpochIndex::new(EPOCH_MAX)] {
+        let creation_set =
+            iter::once(Tachygram::from(note.commitment())).collect::<TachygramSetPoly>();
+        let (lineage, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableInit,
+                (Anchor::from(Fp::from(42)), creation_set, epoch),
+                range.clone(),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            )
+            .expect("genuine creation lineage");
+        assert!(
+            PROOF_SYSTEM
+                .verify(&lineage, &mut *rng)
+                .expect("valid lineage")
+        );
+        let trapdoor = value::Trapdoor::random(rng);
+        let result = PROOF_SYSTEM.fuse(rng, spend::SpendBind, (trapdoor,), lineage, secret.clone());
+        if u32::from(epoch) == EPOCH_MAX {
+            let error = result.err().expect("final epoch has no successor");
+            let ragu_core::Error::InvalidWitness(message) = error else {
+                panic!("unexpected rejection: {error:?}");
+            };
+            assert_eq!(
+                message.to_string(),
+                "SpendBind: no epoch follows the spend epoch"
+            );
+        } else {
+            let (control, ()) = result.expect("penultimate epoch has a successor");
+            assert!(
+                PROOF_SYSTEM
+                    .verify(&control, &mut *rng)
+                    .expect("valid spend control")
+            );
+        }
+    }
 }
 
 /// At an epoch ending its sponge group, the pair's second half comes from the
@@ -1955,6 +2317,153 @@ fn output_action_is_bound_to_its_note() {
 
     assert_eq!(output_action_commit(rng, note, theta, rcv), planned);
     assert_ne!(output_action_commit(rng, diverted, theta, rcv), planned);
+}
+
+#[test]
+fn action_merge_directly_rejects_genuine_children_at_different_anchors() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let make_action = |prepare_rng: &mut StdRng, note: Note, anchor: Anchor| {
+        let (rcv, theta, plan) = build_output_plan(prepare_rng, note);
+        let (bind, ()) = PROOF_SYSTEM
+            .seed(prepare_rng, output::OutputBind, (note, rcv))
+            .expect("output bind");
+        let roots = [bind.data().0, bind.data().1];
+        let supplied = witness::output_action((*bind.data(), ()), theta, anchor);
+        let sets = (supplied.2.clone(), supplied.3.clone());
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                prepare_rng,
+                stamp::OutputAction,
+                supplied,
+                bind,
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            )
+            .expect("genuine output action");
+        (pcd, sets, plan.digest().expect("action digest"), roots)
+    };
+    let near = Anchor::from(Fp::from(42));
+    for far in [near, Anchor::from(Fp::from(43))] {
+        let (left, left_sets, left_digest, left_roots) =
+            make_action(rng, user.random_note(200), near);
+        let (right, right_sets, right_digest, right_roots) =
+            make_action(rng, user.random_note(300), far);
+        assert!(
+            PROOF_SYSTEM
+                .verify(&left, &mut *rng)
+                .expect("valid left child")
+        );
+        assert!(
+            PROOF_SYSTEM
+                .verify(&right, &mut *rng)
+                .expect("valid right child")
+        );
+        let merged = (
+            [left_digest, right_digest]
+                .into_iter()
+                .collect::<ActionSetPoly>(),
+            left_roots
+                .into_iter()
+                .chain(right_roots)
+                .collect::<TachygramSetPoly>(),
+        );
+        let result = PROOF_SYSTEM.fuse(
+            rng,
+            stamp::ActionMerge,
+            (left_sets, merged, right_sets),
+            left,
+            right,
+        );
+        if far == near {
+            let (control, ()) = result.expect("matching anchors compose");
+            assert!(
+                PROOF_SYSTEM
+                    .verify(&control, &mut *rng)
+                    .expect("valid merged control")
+            );
+        } else {
+            let error = result.err().expect("different anchors rejected");
+            let ragu_core::Error::InvalidWitness(message) = error else {
+                panic!("unexpected rejection: {error:?}");
+            };
+            assert_eq!(message.to_string(), "ActionMerge: anchors must match");
+        }
+    }
+}
+
+#[test]
+fn stamp_merge_directly_rejects_genuine_children_at_different_anchors() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let near = Anchor::from(Fp::from(42));
+    for far in [near, Anchor::from(Fp::from(43))] {
+        let left_note = user.random_note(0);
+        let right_note = user.random_note(0);
+        let left_witness = witness::fee_seed(((), ()), left_note, near);
+        let right_witness = witness::fee_seed(((), ()), right_note, far);
+        let left_sets = (left_witness.2.clone(), left_witness.3.clone());
+        let right_sets = (right_witness.2.clone(), right_witness.3.clone());
+        let (left, ()) = PROOF_SYSTEM
+            .seed(rng, stamp::FeeSeed, left_witness)
+            .expect("left fee seed");
+        let (right, ()) = PROOF_SYSTEM
+            .seed(rng, stamp::FeeSeed, right_witness)
+            .expect("right fee seed");
+        assert!(
+            PROOF_SYSTEM
+                .verify(&left, &mut *rng)
+                .expect("valid left child")
+        );
+        assert!(
+            PROOF_SYSTEM
+                .verify(&right, &mut *rng)
+                .expect("valid right child")
+        );
+        let left_digest = fee::Descriptor {
+            max_commitment: left_note.fee_blind().commit(-left_note.value),
+            value: value::Positive::ZERO,
+        }
+        .digest()
+        .expect("left fee digest");
+        let right_digest = fee::Descriptor {
+            max_commitment: right_note.fee_blind().commit(-right_note.value),
+            value: value::Positive::ZERO,
+        }
+        .digest()
+        .expect("right fee digest");
+        let merged = (
+            [left_digest, right_digest]
+                .into_iter()
+                .collect::<ActionSetPoly>(),
+            [
+                Tachygram::from(left_note.commitment()),
+                Tachygram::from(right_note.commitment()),
+            ]
+            .into_iter()
+            .collect::<TachygramSetPoly>(),
+        );
+        let result = PROOF_SYSTEM.fuse(
+            rng,
+            stamp::StampMerge,
+            (left_sets, merged, right_sets),
+            left,
+            right,
+        );
+        if far == near {
+            let (control, ()) = result.expect("matching anchors compose");
+            assert!(
+                PROOF_SYSTEM
+                    .verify(&control, &mut *rng)
+                    .expect("valid merged control")
+            );
+        } else {
+            let error = result.err().expect("different anchors rejected");
+            let ragu_core::Error::InvalidWitness(message) = error else {
+                panic!("unexpected rejection: {error:?}");
+            };
+            assert_eq!(message.to_string(), "StampMerge: anchors must match");
+        }
+    }
 }
 
 /// The action commitment of a spend of `note` proved with the planned `theta`

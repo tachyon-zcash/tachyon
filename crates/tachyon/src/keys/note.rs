@@ -1,7 +1,7 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
 use derive_more::{AsRef, Debug, From, Into};
-use ragu_core::pasta::{EpAffine, Fp};
+use ragu_core::pasta::EpAffine;
 use udon::{
     curve::Affine as _,
     field::{FieldAdapter, PallasBase},
@@ -34,8 +34,8 @@ use crate::{digest::poseidon, nullifier};
 /// `nk` alone does NOT confer spend authority; combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
-#[derive(Clone, Copy, Debug)]
-pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
+#[derive(Clone, Copy, Debug, Into)]
+pub struct NullifierKey(#[debug(skip)] pub(super) FieldAdapter<PallasBase>);
 
 impl NullifierKey {
     /// Derive a note's master key from its nullifier trapdoor `psi`.
@@ -113,6 +113,7 @@ impl PaymentKey {
 
 #[cfg(test)]
 mod tests {
+    use ragu_core::pasta::Fp;
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
     use udon::field::Field as _;
 

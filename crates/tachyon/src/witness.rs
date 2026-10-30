@@ -6,9 +6,11 @@
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
 
-use alloc::collections::BTreeSet;
+use alloc::{collections::BTreeSet, vec};
+use core::iter;
 
 use ragu::{Header, Step, pasta::Fp};
+use ragu_circuits::polynomials::sparse::Polynomial;
 
 use crate::{
     collections,
@@ -159,7 +161,11 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_commit)`.
+/// stamp_commit, members)`.
+///
+/// # Panics
+///
+/// Panics if the stamp is empty or its commitment is the identity.
 #[must_use]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
@@ -167,11 +173,12 @@ pub fn anchor_span_seed(
     epoch: EpochIndex,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, AnchorSpanSeed> {
-    (
-        anchor_start,
-        epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
-    )
+    let stamp_commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
+    #[expect(clippy::expect_used, reason = "builder requires a nonempty stamp")]
+    let end = anchor_start
+        .next_stamp(epoch, &stamp_commit)
+        .expect("valid stamp fold");
+    (anchor_start, epoch, stamp_commit, iter::once(end).collect())
 }
 
 /// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
@@ -331,7 +338,7 @@ pub fn qr_intake_split(
 }
 
 /// Prepare the witness for [`QrSideDescend`]: `(bit, sibling_contents,
-/// interpolant, quotient)`.
+/// interpolant, quotient, discriminant_shim)`.
 ///
 /// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
 /// is the residue side when set. The decomposition is the sibling's, at the
@@ -369,6 +376,7 @@ pub fn qr_side_descend(
             .collect(),
         interpolant.into(),
         quotient.into(),
+        Polynomial::from_coeffs(vec![discriminant.at(profile.depth)]),
     )
 }
 
@@ -385,7 +393,7 @@ pub const fn qr_bucket_seal(
 }
 
 /// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
-/// sequence, contents)`.
+/// sequence, contents, value_shim)`.
 ///
 /// # Panics
 ///
@@ -404,6 +412,7 @@ pub fn qr_unspent_init(
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
+        Polynomial::from_coeffs(vec![Fp::from(value)]),
     )
 }
 
@@ -434,7 +443,7 @@ pub const fn evidence_tree_open(
 }
 
 /// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
-/// elapsed_seq, extended_seq, contents)`.
+/// elapsed_seq, extended_seq, contents, value_shim)`.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
@@ -455,6 +464,7 @@ pub fn unspent_lift(
         elapsed_seq.clone(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
+        Polynomial::from_coeffs(vec![Fp::from(value)]),
     )
 }
 

@@ -7,6 +7,7 @@ use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
 use ragu::{Pcd, Proof, Step, pasta::Fp};
+use ragu_circuits::polynomials::sparse::Polynomial;
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
@@ -638,26 +639,35 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
         )
         .expect("QrIntakeSplit");
 
-    let (_, foreign_sibling, ..) = witness::qr_side_descend((*split.data(), ()), &members, false);
-    let (_, _, interpolant, quotient) =
-        witness::qr_side_descend((*split.data(), ()), &members, true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (true, foreign_sibling, interpolant, quotient),
-            split,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: sibling does not match the header"
-    );
+    assert!(PROOF_SYSTEM.verify(&split, &mut *rng).expect("valid split"));
+    for bit in [false, true] {
+        // The foreign polynomial has a valid decomposition for the required
+        // sibling class. Only its binding to the selected child header is bad.
+        let mut candidate = Fp::ONE;
+        while qr::classify(candidate, discriminant.at(0)).0 == bit
+            || members.contains(&Tachygram::from(candidate))
+        {
+            candidate += Fp::ONE;
+        }
+        let foreign = [Tachygram::from(candidate)];
+        let bad = witness::qr_side_descend((*split.data(), ()), &foreign, bit);
+        let expected = if bit { split.data().5 } else { split.data().6 };
+        assert_ne!(bad.1.commit(), expected);
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                bad,
+                split.clone(),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            )
+            .err()
+            .expect("foreign sibling rejected");
+        assert_eq!(
+            invalid_witness(err),
+            "QrSideDescend: sibling does not match the header"
+        );
+    }
 }
 
 /// The interpolant of the other side does not decompose the sibling at its
@@ -697,15 +707,15 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
         .expect("QrIntakeSplit");
 
     for bit in [true, false] {
-        let (_, sibling_contents, _interpolant, quotient) =
+        let (_, sibling_contents, _interpolant, quotient, shim) =
             witness::qr_side_descend((*split.data(), ()), &members, bit);
-        let (_, _, foreign_interpolant, _) =
+        let (_, _, foreign_interpolant, ..) =
             witness::qr_side_descend((*split.data(), ()), &members, !bit);
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                (bit, sibling_contents, foreign_interpolant, quotient),
+                (bit, sibling_contents, foreign_interpolant, quotient, shim),
                 split.clone(),
                 Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
@@ -755,15 +765,15 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
         .expect("QrIntakeSplit");
 
     for bit in [true, false] {
-        let (_, sibling_contents, interpolant, _quotient) =
+        let (_, sibling_contents, interpolant, _quotient, shim) =
             witness::qr_side_descend((*split.data(), ()), &members, bit);
-        let (_, _, _, foreign_quotient) =
+        let (_, _, _, foreign_quotient, _) =
             witness::qr_side_descend((*split.data(), ()), &members, !bit);
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                (bit, sibling_contents, interpolant, foreign_quotient),
+                (bit, sibling_contents, interpolant, foreign_quotient, shim),
                 split.clone(),
                 Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
@@ -829,7 +839,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     // Extracting the short residue child attests the padded sibling, which
     // holds a residue-class root and so has no non-residue decomposition; the
     // honest sibling's decomposition is the best a prover can offer.
-    let (_, _, interpolant, quotient) =
+    let (_, _, interpolant, quotient, shim) =
         witness::qr_side_descend((*sides.data(), ()), &members, true);
     let err = PROOF_SYSTEM
         .fuse(
@@ -840,6 +850,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
                 padded_non_residue.iter().copied().collect(),
                 interpolant,
                 quotient,
+                shim,
             ),
             sides.clone(),
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
@@ -918,7 +929,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
-    let (_, _, interpolant, quotient) =
+    let (_, _, interpolant, quotient, _) =
         witness::qr_side_descend((*honest_split.data(), ()), &members, false);
 
     let sibling = misfiled.iter().copied().collect::<TachygramSetPoly>();
@@ -929,6 +940,11 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
     ]);
     let solved = QrDiscriminant::from(
         interpolant.eval(z).square() - (sibling.eval(z) * quotient.eval(z)) - z,
+    );
+    assert_eq!(
+        interpolant.eval(z).square() - (sibling.eval(z) * quotient.eval(z)),
+        z + solved.at(0),
+        "forged residue-side class equation holds at the reduced challenge"
     );
     assert!(
         misfiled
@@ -972,7 +988,13 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            (false, sibling, interpolant, quotient),
+            (
+                false,
+                sibling,
+                interpolant,
+                quotient,
+                Polynomial::from_coeffs(vec![solved.at(0)]),
+            ),
             sides,
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
@@ -1243,7 +1265,7 @@ fn qr_intake_merge_rejects_different_profiles() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            witness::qr_side_descend((*split.data(), ()), &left_members, true),
+            witness::qr_side_descend((*split.data(), ()), &left_members, false),
             split,
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
@@ -1252,7 +1274,7 @@ fn qr_intake_merge_rejects_different_profiles() {
     let deeper_members: Vec<Tachygram> = left_members
         .iter()
         .copied()
-        .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
+        .filter(|&member| !qr::classify(Fp::from(member), Fp::from(discriminant)).0)
         .collect();
     let witness = witness::qr_intake_merge(
         (*deeper.data(), *right.data()),
@@ -1260,7 +1282,13 @@ fn qr_intake_merge_rejects_different_profiles() {
         &right_members,
     );
     let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
+        .fuse(
+            rng,
+            qr::QrIntakeMerge,
+            witness,
+            deeper.clone(),
+            right.clone(),
+        )
         .err()
         .unwrap();
     let ragu_core::Error::InvalidWitness(inner) = err else {
@@ -1269,6 +1297,44 @@ fn qr_intake_merge_rejects_different_profiles() {
     assert_eq!(
         inner.to_string(),
         "QrIntakeMerge: inputs sit at different depths"
+    );
+
+    let (right_split, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            witness::qr_intake_split((*right.data(), ()), &right_members),
+            right,
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        )
+        .expect("right split");
+    let (right_deeper, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSideDescend,
+            witness::qr_side_descend((*right_split.data(), ()), &right_members, true),
+            right_split,
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        )
+        .expect("right residue child");
+    let right_deeper_members = right_members
+        .into_iter()
+        .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
+        .collect::<Vec<_>>();
+    assert_eq!(deeper.data().4.depth, right_deeper.data().4.depth);
+    assert_ne!(deeper.data().4.bits, right_deeper.data().4.bits);
+    let bit_witness = witness::qr_intake_merge(
+        (*deeper.data(), *right_deeper.data()),
+        &deeper_members,
+        &right_deeper_members,
+    );
+    let bit_error = PROOF_SYSTEM
+        .fuse(rng, qr::QrIntakeMerge, bit_witness, deeper, right_deeper)
+        .err()
+        .expect("different profile registers rejected");
+    assert_eq!(
+        invalid_witness(bit_error),
+        "QrIntakeMerge: inputs sit at different profiles"
     );
 }
 
@@ -2101,7 +2167,11 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    pool.mine(vec![vec![Tachygram::from(note.commitment())]]);
+    pool.advance(epoch1.last_block().0 - pool.height().0, |_| {
+        random_block(rng, 1, 1)
+    });
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
 
@@ -2141,6 +2211,55 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     assert_eq!(
         invalid_witness(err),
         "QrSpendableInit: segment does not start in the bucket's epoch"
+    );
+}
+
+#[test]
+fn qr_spendable_init_rejects_foreign_contents_even_when_the_note_is_a_root() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex::new(0);
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
+    pool.advance(epoch.last_block().0, |_| random_block(rng, 1, 1));
+    let bucket = epoch_bucket(rng, &pool, epoch);
+    let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
+    let honest = witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members);
+    let (control, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::QrSpendableInit,
+            honest,
+            unspent.clone(),
+            bucket.pcd.clone(),
+        )
+        .expect("honest creation membership");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("valid control")
+    );
+    let foreign = [
+        Tachygram::from(note.commitment()),
+        Tachygram::from(Fp::from(17)),
+    ]
+    .into_iter()
+    .collect::<TachygramSetPoly>();
+    assert_eq!(foreign.eval(Fp::from(note.commitment())), Fp::ZERO);
+    assert_ne!(foreign.commit(), bucket.pcd.data().5);
+    let error = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::QrSpendableInit,
+            (foreign,),
+            unspent,
+            bucket.pcd,
+        )
+        .err()
+        .expect("foreign contents rejected");
+    assert_eq!(
+        invalid_witness(error),
+        "QrSpendableInit: contents do not match the bucket"
     );
 }
 
@@ -2277,6 +2396,16 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     let bucket = seal_qr_intake(rng, foreign, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    assert_ne!(
+        witness.4.eval(Fp::from(nf)),
+        Fp::ZERO,
+        "foreign-bucket nonmembership must be valid"
+    );
+    assert!(
+        PROOF_SYSTEM
+            .verify(&bucket.pcd, &mut *rng)
+            .expect("valid foreign bucket")
+    );
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
         invalid_witness(err),
@@ -2301,6 +2430,37 @@ fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentIn
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
     fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).expect("the honest witness passes");
     (nf, bucket, witness)
+}
+
+/// Isolate mask constraints: choose genuine classifications whose selected
+/// side fold stays unchanged under the test's deliberately malformed mask.
+fn mask_attack_fixture(
+    rng: &mut StdRng,
+    predicate: impl Fn(&[QrClassRoot; QrProfile::MAX_DEPTH]) -> bool,
+) -> (QrBucketEntry, UnspentInitWitness) {
+    let (pool, final_anchor) = small_epoch(rng);
+    let discriminant = QrDiscriminant::from(Fp::from(5));
+    let mut candidate = Fp::ONE;
+    while !predicate(&QrClassRoot::along(candidate, discriminant)) {
+        candidate += Fp::ONE;
+    }
+    let bucket = qr_bucket_at(
+        rng,
+        &pool,
+        (Anchor::default(), final_anchor),
+        discriminant,
+        24,
+        2,
+        candidate,
+        Anchor::from(Fp::ZERO),
+    );
+    let honest = witness::qr_unspent_init(
+        (*bucket.pcd.data(), ()),
+        Tachygram::from(candidate),
+        &bucket.members,
+    );
+    fuse_unspent_init(rng, bucket.pcd.clone(), honest.clone()).expect("honest control");
+    (bucket, honest)
 }
 
 #[test]
@@ -2351,7 +2511,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::from(random_fp(rng));
-    let position = 1;
+    let position = 5;
     let value = -discriminant.at(position);
     assert_ne!(value, Fp::ZERO);
     let nf = Nullifier::from(value);
@@ -2396,7 +2556,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
 #[test]
 fn qr_unspent_init_rejects_a_non_prefix_mask() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+    let (bucket, mut witness) = mask_attack_fixture(rng, |classes| classes[1].0 == classes[2].0);
 
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = array::from_fn(|position| position == 0 || position == 2);
@@ -2411,7 +2571,9 @@ fn qr_unspent_init_rejects_a_non_prefix_mask() {
 #[test]
 fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+    let (bucket, mut witness) = mask_attack_fixture(rng, |classes| {
+        !classes[0].0 && !classes[1].0 && !classes[2].0
+    });
 
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
@@ -2441,33 +2603,32 @@ fn recarry_bucket(
 #[test]
 fn qr_bucket_seal_refuses_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     let discriminant = QrDiscriminant::from(random_fp(rng));
-    let intake = build_qr_partition(
-        rng,
-        &pool,
-        (Anchor::default(), pool.anchor()),
-        discriminant,
-        24,
-        0,
-    )
-    .into_iter()
-    .next()
-    .expect("one intake");
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
-
-    let mut data = *intake.pcd.data();
-    data.0 = final_epoch;
-    data.1 = anchor_final_prev.next_epoch(final_epoch).unwrap();
-    let forged = intake.pcd.proof().clone().carry::<qr::QrIntake>(data);
-    let witness = witness::qr_bucket_seal((data, ()), anchor_final_prev);
+    let entry = anchor_final_prev
+        .next_epoch(final_epoch)
+        .expect("nonzero final epoch");
+    let members = [Tachygram::from(Fp::from(17)), Tachygram::from(Fp::from(19))];
+    let (intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), entry, final_epoch, discriminant, &members),
+        )
+        .expect("a genuine intake in the final epoch");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&intake, &mut *rng)
+            .expect("valid final-epoch child")
+    );
+    let witness = witness::qr_bucket_seal((*intake.data(), ()), anchor_final_prev);
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrBucketSeal,
             witness,
-            forged,
+            intake,
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
@@ -2557,12 +2718,31 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
 #[test]
 fn qr_unspent_init_rejects_a_zero_value() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, _witness) = honest_unspent_init(rng);
-
-    let witness = witness::qr_unspent_init(
-        (*bucket.pcd.data(), ()),
+    let (pool, final_anchor) = small_epoch(rng);
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), final_anchor),
+        24,
+        0,
+        Fp::ZERO,
+        Anchor::from(Fp::ZERO),
+    );
+    let (epoch, _, _, discriminant, profile, _) = *bucket.pcd.data();
+    assert_eq!(profile, QrProfile::ROOT);
+    let contents = bucket.members.iter().copied().collect::<TachygramSetPoly>();
+    assert_ne!(
+        contents.eval(Fp::ZERO),
+        Fp::ZERO,
+        "zero must really be absent"
+    );
+    let witness = (
         Tachygram::from(Fp::ZERO),
-        &bucket.members,
+        QrClassRoot::along(Fp::ZERO, discriminant),
+        [false; QrProfile::MAX_DEPTH],
+        NfSeqPoly::new(epoch, &[Nullifier::from(Fp::ZERO)]),
+        contents,
+        Polynomial::from_coeffs(vec![Fp::ZERO]),
     );
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(invalid_witness(err), "QrUnspentInit: tested value is zero");
@@ -2576,7 +2756,7 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
 
     let other = Nullifier::from(random_fp(rng));
     assert_ne!(other, nf);
-    let (_, _, _, ref mut sequence, _) = witness;
+    let (_, _, _, ref mut sequence, ..) = witness;
     *sequence = NfSeqPoly::new(epoch, &[other]);
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
@@ -2616,6 +2796,7 @@ fn qr_unspent_init_rejects_a_twin_value() {
         "the twin passes an unpinned identity"
     );
     witness.0 = Tachygram::from(twin);
+    witness.5 = Polynomial::from_coeffs(vec![twin]);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
@@ -2633,7 +2814,7 @@ fn qr_unspent_init_rejects_foreign_contents() {
     let foreign = iter::once(Tachygram::from(random_fp(rng))).collect::<TachygramSetPoly>();
     let (.., contents_commit) = *bucket.pcd.data();
     assert_ne!(foreign.commit(), contents_commit);
-    let (.., ref mut contents) = witness;
+    let (.., ref mut contents, _) = witness;
     *contents = foreign;
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
@@ -2641,6 +2822,164 @@ fn qr_unspent_init_rejects_foreign_contents() {
         invalid_witness(err),
         "QrUnspentInit: contents do not match the bucket"
     );
+}
+
+#[test]
+fn qr_unspent_init_rejects_an_independent_or_nonconstant_value_shim() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (value, bucket, honest) = honest_unspent_init(rng);
+    let control = fuse_unspent_init(rng, bucket.pcd.clone(), honest.clone()).expect("honest shim");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("valid control")
+    );
+    for coefficients in [
+        vec![Fp::from(value) + Fp::ONE],
+        vec![Fp::from(value), Fp::ONE],
+    ] {
+        let mut bad = honest.clone();
+        bad.5 = Polynomial::from_coeffs(coefficients);
+        let error = fuse_unspent_init(rng, bucket.pcd.clone(), bad)
+            .err()
+            .expect("shim rejected");
+        assert_eq!(
+            invalid_witness(error),
+            "QrUnspentInit: value shim is not constant"
+        );
+    }
+}
+
+#[test]
+fn qr_side_descend_rejects_an_independent_or_nonconstant_discriminant_shim() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let members = [Tachygram::from(Fp::from(17)), Tachygram::from(Fp::from(19))];
+    let discriminant = QrDiscriminant::from(Fp::from(5));
+    let (root, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                Anchor::default(),
+                EpochIndex::new(0),
+                discriminant,
+                &members,
+            ),
+        )
+        .expect("honest intake");
+    let split_witness = witness::qr_intake_split((*root.data(), ()), &members);
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            split_witness,
+            root,
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        )
+        .expect("honest split");
+    let honest = witness::qr_side_descend((*sides.data(), ()), &members, true);
+    let (control, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSideDescend,
+            honest.clone(),
+            sides.clone(),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        )
+        .expect("honest descent");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("valid control")
+    );
+    for coefficients in [vec![Fp::from(6)], vec![Fp::from(5), Fp::ONE]] {
+        let mut bad = honest.clone();
+        bad.4 = Polynomial::from_coeffs(coefficients);
+        let error = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                bad,
+                sides.clone(),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            )
+            .err()
+            .expect("shim rejected");
+        assert_eq!(
+            invalid_witness(error),
+            "QrSideDescend: discriminant shim is not constant"
+        );
+    }
+}
+
+#[test]
+fn unspent_lift_rejects_an_independent_or_nonconstant_value_shim() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let pool = pool_through(rng, EpochIndex::new(2));
+    let first = epoch_bucket(rng, &pool, EpochIndex::new(0));
+    let segment = qr_bucket_segment(rng, &first, |_| Nullifier::from(Fp::from(23)));
+    let bucket = epoch_bucket(rng, &pool, EpochIndex::new(1));
+    let honest = witness::unspent_lift(
+        (*segment.data(), *bucket.pcd.data()),
+        Tachygram::from(Fp::from(29)),
+        &[Nullifier::from(Fp::from(23))],
+        &bucket.members,
+    );
+    let control =
+        fuse_unspent_lift(rng, segment.clone(), &bucket, honest.clone()).expect("honest lift");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&control, &mut *rng)
+            .expect("valid control")
+    );
+    for coefficients in [vec![Fp::from(30)], vec![Fp::from(29), Fp::ONE]] {
+        let mut bad = honest.clone();
+        bad.6 = Polynomial::from_coeffs(coefficients);
+        let error = fuse_unspent_lift(rng, segment.clone(), &bucket, bad)
+            .err()
+            .expect("shim rejected");
+        assert_eq!(
+            invalid_witness(error),
+            "UnspentLift: value shim is not constant"
+        );
+    }
+}
+
+#[test]
+fn unspent_lift_rejects_a_zero_value_on_its_own_driver() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let pool = pool_through(rng, EpochIndex::new(2));
+    let first = epoch_bucket(rng, &pool, EpochIndex::new(0));
+    let previous_value = Nullifier::from(Fp::from(23));
+    let segment = qr_bucket_segment(rng, &first, |_| previous_value);
+    let bucket = epoch_bucket(rng, &pool, EpochIndex::new(1));
+    let (_, _, _, discriminant, profile, _) = *bucket.pcd.data();
+    assert_eq!(profile, QrProfile::ROOT);
+    let contents = bucket.members.iter().copied().collect::<TachygramSetPoly>();
+    assert_ne!(
+        contents.eval(Fp::ZERO),
+        Fp::ZERO,
+        "zero is absent from the bucket"
+    );
+    let elapsed = NfSeqPoly::new(EpochIndex::new(0), &[previous_value]);
+    let extended =
+        elapsed.clone() * NfSeqPoly::new(EpochIndex::new(1), &[Nullifier::from(Fp::ZERO)]);
+    // The zero shim is a legitimate identity polynomial handle, not a point
+    // on a header. Every other equation in this deliberately bad tuple holds.
+    let bad = (
+        Tachygram::from(Fp::ZERO),
+        QrClassRoot::along(Fp::ZERO, discriminant),
+        [false; QrProfile::MAX_DEPTH],
+        elapsed,
+        extended,
+        contents,
+        Polynomial::from_coeffs(vec![Fp::ZERO]),
+    );
+    let error = fuse_unspent_lift(rng, segment, &bucket, bad)
+        .err()
+        .expect("zero value rejected");
+    assert_eq!(invalid_witness(error), "UnspentLift: tested value is zero");
 }
 
 /// The step reads one bucket's depth, so a router splits only what is over
@@ -2976,7 +3315,7 @@ fn unspent_lift_carries_a_spendable() {
 #[test]
 fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let pool = pool_through(rng, EpochIndex::new(3));
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(random_fp(rng)));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
@@ -2984,7 +3323,21 @@ fn unspent_lift_rejects_invalid_extensions() {
     let first = epoch_bucket(rng, &pool, epoch0);
     let segment = qr_bucket_segment(rng, &first, nf);
     let bucket = epoch_bucket(rng, &pool, epoch1);
-    let past = epoch_bucket(rng, &pool, epoch2);
+    let detached_previous = Anchor::from(Fp::from(42));
+    let detached_entry = detached_previous.next_epoch(epoch1).expect("nonzero epoch");
+    let detached_intake = seed_qr_empty_intake(
+        rng,
+        detached_entry,
+        epoch1,
+        QrDiscriminant::from(Fp::from(17)),
+    );
+    let detached = seal_qr_intake(rng, detached_intake, detached_previous);
+    let detached_lift = witness::unspent_lift(
+        (*segment.data(), *detached.pcd.data()),
+        nf1.into(),
+        &[nf0],
+        &detached.members,
+    );
     let honest = |value: Tachygram, elapsed: &[Nullifier]| {
         witness::unspent_lift(
             (*segment.data(), *bucket.pcd.data()),
@@ -2994,16 +3347,16 @@ fn unspent_lift_rejects_invalid_extensions() {
         )
     };
 
-    let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
+    let (value, classes, mask, elapsed_seq, _extended, contents, shim) = honest(nf1.into(), &[nf0]);
     let forged_extended = NfSeqPoly::new(epoch0, &[nf0, Nullifier::from(random_fp(rng))]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
     let other = random_fp(rng);
 
     let cases = [
         (
-            "a bucket past the segment's end",
-            &past,
-            honest(nf1.into(), &[nf0]),
+            "a same-epoch bucket opening elsewhere",
+            &detached,
+            detached_lift,
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
@@ -3028,6 +3381,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 elapsed_seq.clone(),
                 forged_extended,
                 contents.clone(),
+                shim.clone(),
             ),
             "UnspentLift: extended is not elapsed with the tested pair",
         ),
@@ -3041,6 +3395,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 elapsed_seq,
                 honest(nf1.into(), &[nf0]).4,
                 contents,
+                shim,
             ),
             "QR profile: root does not square to the claimed class",
         ),
