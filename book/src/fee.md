@@ -136,8 +136,8 @@ published bundles. An accepted proof therefore covers the signed $\cv_\maxfee$
 at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
 cannot be applied twice to the same lineage. Merging and lifting carry fee
 digests and fee change note commitments like any other set members. A merge
-keeps the receiving stamp's fee. Stripping carries the fee into the stripped
-trailer.
+keeps the receiving stamp's fee. An unmerge undoes a merge and keeps the
+dividend's fee. Stripping carries the fee into the stripped trailer.
 
 ## Balance
 

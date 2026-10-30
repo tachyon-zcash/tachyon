@@ -98,6 +98,132 @@ fn unmerge_removes_one_contributor() {
         .expect("the quotient covers A and its adjunct C");
 }
 
+/// The quotient keeps the dividend's fee. Dividing `B` out of `B` merged into
+/// `A` undoes the merge, leaving a stamp that verifies on `A`. Dividing `A`
+/// out instead leaves `A`'s fee on a stamp covering `B`, which fails on `B`
+/// and verifies once merged into `C`'s stamp at `C`'s fee.
+#[test]
+fn unmerge_keeps_the_dividend_fee() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let alice_fee = value::Positive::try_from(40u64).expect("fee within MAX_MONEY");
+    let bob_fee = value::Positive::try_from(70u64).expect("fee within MAX_MONEY");
+    let carol_fee = value::Positive::try_from(90u64).expect("fee within MAX_MONEY");
+    let [alice, bob, mut carol] = [alice_fee, bob_fee, carol_fee].map(|fee| {
+        let (plan, signed, spend_pcds) = wallet.signed(
+            rng,
+            vec![],
+            vec![wallet.random_note(500)],
+            wallet.random_note(100),
+        );
+        signed.stamp(
+            plan.stamp_plan(anchor, fee)
+                .prove(rng, &wallet.pak, spend_pcds)
+                .expect("prove with the fee"),
+        )
+    });
+
+    let on_alice = alice
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                bob.stamp.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
+        .expect("merge B into A");
+
+    let mut kept = alice.clone();
+    kept.stamp = on_alice
+        .clone()
+        .unmerge(
+            rng,
+            (
+                alice.descriptors().chain(bob.descriptors()).collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (
+                bob.stamp.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
+        .expect("divide B out of the aggregate on A");
+    assert_eq!(kept.stamp.fee, alice_fee, "the quotient keeps A's fee");
+    let kept_wtxid = mock_wtxid(&kept);
+    kept.verify(
+        rng,
+        &mock_sighash(kept.commitment()),
+        &kept_wtxid.into(),
+        &[],
+    )
+    .expect("the quotient covers A at A's fee");
+
+    let mut hostless = bob.clone();
+    hostless.stamp = on_alice
+        .unmerge(
+            rng,
+            (
+                alice.descriptors().chain(bob.descriptors()).collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (
+                alice.stamp.clone(),
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+        )
+        .expect("divide A out of the aggregate on A");
+    assert_eq!(hostless.stamp.fee, alice_fee, "the quotient keeps A's fee");
+    let hostless_wtxid = mock_wtxid(&hostless);
+    let err = hostless
+        .verify(
+            rng,
+            &mock_sighash(hostless.commitment()),
+            &hostless_wtxid.into(),
+            &[],
+        )
+        .expect_err("B must not verify at A's fee");
+    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
+        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
+    };
+
+    carol.stamp = carol
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                carol.descriptors().collect(),
+                [carol.fee_descriptor()].into(),
+            ),
+            (
+                hostless.stamp,
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
+        .expect("merge the quotient into C");
+    assert_eq!(carol.stamp.fee, carol_fee, "the merge keeps C's fee");
+    let carol_wtxid = mock_wtxid(&carol);
+    carol
+        .verify(
+            rng,
+            &mock_sighash(carol.commitment()),
+            &carol_wtxid.into(),
+            &[&bob.strip(carol_wtxid)],
+        )
+        .expect("the merge covers C and its adjunct B");
+}
+
 /// Sub-aggregate boundaries do not bound removal. Merging `C`, the complement
 /// of a mined `B·C`, into `A·B` and dividing `B·C` out leaves `A`, though no
 /// merge produced `B·C` as a part of `(A·B)·C`.

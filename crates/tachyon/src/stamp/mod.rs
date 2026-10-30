@@ -1144,8 +1144,12 @@ impl ProofStamp {
     /// divisor's covered actions, fees and tachygrams.
     ///
     /// Each side pairs a stamp with its covered action and fee descriptors.
-    /// The quotient keeps this stamp's fee. A divisor that does not divide
-    /// this stamp fails in the proof system.
+    /// The quotient stays with this stamp's bundle and keeps this stamp's fee,
+    /// undoing a merge of the divisor into this stamp. A divisor that removes
+    /// this stamp's bundle leaves a quotient whose fee belongs to a bundle it
+    /// no longer covers, and merging it into another stamp keeps that stamp's
+    /// fee. A divisor that does not divide this stamp fails in the proof
+    /// system.
     ///
     /// # Errors
     ///

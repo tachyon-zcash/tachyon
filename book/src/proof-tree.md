@@ -90,6 +90,7 @@ The aggregator runs `StampLift` on each input, along spans that contain that inp
 The merged stamp stays with one receiving bundle and keeps that bundle's fee, and the bundles it covers are stripped to point at the receiver.
 An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
 `StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
+It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee.
 An aggregator uses it when a block includes some of its contributors while the aggregate is still being built: it divides the aggregate by the included contributors' stamps and keeps building from the quotient.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 

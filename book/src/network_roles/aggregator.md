@@ -115,6 +115,8 @@ Rebuild instead when that is less work than the divisions and merges needed.
 
 $Q$ can go back on $A$ only if it still covers $A$'s own actions and fee.
 If the block included $A$'s bundle too, the remaining work has to go into a different complete aggregate.
+Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and no bundle it covers can carry it.
+Merge $Q$ into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, and the merged stamp keeps that bundle's fee.
 
 ## At the miner
 
