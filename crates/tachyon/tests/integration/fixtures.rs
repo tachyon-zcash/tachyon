@@ -29,7 +29,7 @@ use zcash_tachyon::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
-            stamp::{Stamp, StampMerge, StampUnmerge},
+            stamp::{Stamp, StampMerge},
             summary,
         },
     },
@@ -284,26 +284,6 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .expect("multiset merge must prove");
 
     pcd
-}
-
-/// Fuses a `StampUnmerge` over the given PCDs and set polynomials, without
-/// checking that the polynomials match the headers or that the divisor
-/// divides the dividend.
-pub fn forge_unmerge<RNG: CryptoRng>(
-    rng: &mut RNG,
-    (dividend_pcd, dividend_sets): (Pcd<Stamp>, (ActionSetPoly, TachygramSetPoly)),
-    quotient_sets: (ActionSetPoly, TachygramSetPoly),
-    (divisor_pcd, divisor_sets): (Pcd<Stamp>, (ActionSetPoly, TachygramSetPoly)),
-) -> ragu_core::Result<Pcd<Stamp>> {
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            StampUnmerge,
-            (dividend_sets, quotient_sets, divisor_sets),
-            dividend_pcd,
-            divisor_pcd,
-        )
-        .map(|(pcd, ())| pcd)
 }
 
 pub fn random_block<RNG: CryptoRng>(
