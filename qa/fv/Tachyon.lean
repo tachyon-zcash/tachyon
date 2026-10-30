@@ -27,6 +27,7 @@ import Tachyon.BundleSpendCreations
 import Tachyon.BundleAccounting
 import Tachyon.ChainSpends
 import Tachyon.SpendCredits
+import Tachyon.SpentSupply
 import Tachyon.Value
 import Tachyon.FeeAccounting
 import Tachyon.RemovalClosure
