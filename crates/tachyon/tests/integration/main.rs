@@ -28,6 +28,8 @@ mod fee;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod fuzz_seeds;
+#[cfg(test)]
 mod proof;
 #[cfg(test)]
 mod qr;
