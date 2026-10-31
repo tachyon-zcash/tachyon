@@ -35,3 +35,5 @@ mod qr;
 mod stamp;
 #[cfg(test)]
 mod summary;
+#[cfg(test)]
+mod unmerge;

@@ -19,7 +19,7 @@
 - [Network Roles]()
   - [Overview](network_roles/overview.md)
   - [Oblivious Sync Service]()
-  - [Aggregator]()
+  - [Aggregator](network_roles/aggregator.md)
   - [ZCash Miner]()
 - [Tachyon Testnet]()
 - [Alex's Corner]()

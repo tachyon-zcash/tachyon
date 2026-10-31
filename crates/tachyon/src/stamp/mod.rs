@@ -23,7 +23,7 @@ use proof::{
     PROOF_SYSTEM, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
-        StampLift, StampMerge,
+        StampLift, StampMerge, StampUnmerge,
     },
 };
 use ragu::PROOF_SIZE_COMPRESSED;
@@ -1126,6 +1126,126 @@ impl ProofStamp {
                 merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
                 rng,
             )
+            .map_err(ProveError::ProofFailed)?
+            .proof()
+            .clone();
+
+        Ok(Self {
+            coverage,
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee: self.fee,
+        })
+    }
+
+    /// Divides this stamp by a divisor stamp at the same anchor, removing the
+    /// divisor's covered actions, fees and tachygrams.
+    ///
+    /// Each side pairs a stamp with its covered action and fee descriptors.
+    /// The quotient stays with this stamp's bundle and keeps this stamp's fee,
+    /// undoing a merge of the divisor into this stamp. A divisor that removes
+    /// this stamp's bundle leaves a quotient whose fee belongs to a bundle it
+    /// no longer covers, and merging it into another stamp keeps that stamp's
+    /// fee. A divisor that does not divide this stamp fails in the proof
+    /// system.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if an action digest cannot be computed or a
+    /// proof-system step fails.
+    pub fn unmerge<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        (desc, fees): (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>),
+        (divisor_stamp, divisor_desc, divisor_fees): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<fee::Descriptor>,
+        ),
+    ) -> Result<Self, ProveError> {
+        let quotient_desc: BTreeSet<action::Descriptor> =
+            desc.difference(&divisor_desc).copied().collect();
+        let quotient_fees: BTreeSet<fee::Descriptor> =
+            fees.difference(&divisor_fees).copied().collect();
+        let tachygrams: BTreeSet<Tachygram> = self
+            .tachygrams
+            .difference(&divisor_stamp.tachygrams)
+            .copied()
+            .collect();
+
+        let dividend_action_set = desc
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(fees.iter().map(fee::Descriptor::digest))
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+        let quotient_action_set = quotient_desc
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(quotient_fees.iter().map(fee::Descriptor::digest))
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+        let divisor_action_set = divisor_desc
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(divisor_fees.iter().map(fee::Descriptor::digest))
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+
+        let dividend_tachygram_set = self
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        let quotient_tachygram_set = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+        let divisor_tachygram_set = divisor_stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+
+        let dividend_pcd = self.proof.carry::<Stamp>((
+            dividend_action_set.commit(),
+            dividend_tachygram_set.commit(),
+            self.anchor,
+        ));
+        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>((
+            divisor_action_set.commit(),
+            divisor_tachygram_set.commit(),
+            divisor_stamp.anchor,
+        ));
+
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                StampUnmerge,
+                (
+                    (dividend_action_set, dividend_tachygram_set),
+                    (quotient_action_set, quotient_tachygram_set),
+                    (divisor_action_set, divisor_tachygram_set),
+                ),
+                dividend_pcd,
+                divisor_pcd,
+            )
+            .map_err(ProveError::ProofFailed)?;
+
+        let coverage = blake2b::stamp_coverage_digest(
+            &blake2b::action_descriptor_digest(
+                &quotient_desc.into_iter().collect::<Vec<[u8; 64]>>(),
+            ),
+            &blake2b::stamp_fees_digest(
+                &quotient_fees
+                    .into_iter()
+                    .map(<[u8; 40]>::from)
+                    .collect::<Vec<[u8; 40]>>(),
+            ),
+        );
+
+        let (_, tachygram_set, anchor) = *pcd.data();
+        let proof = PROOF_SYSTEM
+            .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .proof()
             .clone();

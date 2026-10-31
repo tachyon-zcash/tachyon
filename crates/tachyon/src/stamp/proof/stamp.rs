@@ -726,3 +726,122 @@ impl Step for FeeSeed {
         ))
     }
 }
+
+/// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
+///
+/// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
+/// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its
+/// tachygram polynomial is the product over exactly those leaves'
+/// tachygrams. The output is leaf-generated over the dividend's leaf
+/// multiset minus the divisor's, at the shared anchor.
+///
+/// # Soundness
+///
+/// The quotient is witnessed but not free. The dividend and divisor are bound
+/// to their header commitments, and each product relation absorbs all three
+/// operands into its challenge, so
+/// $\mathsf{divisor} \cdot \mathsf{quotient} = \mathsf{dividend}$ holds as a
+/// polynomial identity in each column.
+///
+/// Both columns are products of linear factors, so unique factorization in
+/// $\mathbb{F}_p\[X\]$ places the divisor's digest multiset inside the
+/// dividend's. Repeated roots subtract by multiplicity. A digest determines
+/// its tachygrams at a fixed epoch. The epoch closes through consensus anchor
+/// membership: the output threads the dividend's anchor, a span folds only
+/// under the `Tachyon-AnchorSt` domain, and
+/// [`SpendableInit`](super::spendable::SpendableInit) absorbs the creation
+/// epoch. Once consensus checks the published anchor, every spend leaf beneath
+/// it derived its nullifier pair at that anchor's epoch, and the tachygram
+/// quotient is exactly the removed leaves' tachygrams.
+///
+/// This rests on Poseidon collision resistance, Pedersen binding, discrete
+/// log, and Poseidon preimage resistance composed through a discrete-log
+/// relation. [`NoteSeed`](super::delegation::NoteSeed) derives `pk` and
+/// [`SpendAction`] checks it, which closes that relation in-circuit.
+///
+/// Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in
+/// hand, and merging in a complement first lets division remove any leaf
+/// multiset the stamps in hand combine to express.
+///
+/// Six committed polynomials and six openings, two product challenges, four
+/// commit-equalities and one scalar equality.
+#[derive(Debug)]
+pub struct StampUnmerge;
+
+impl Step for StampUnmerge {
+    type Aux<'source> = ();
+    type Left = Stamp;
+    type Output = Stamp;
+    type Right = Stamp;
+    /// `(dividend, quotient, divisor)`, each an `(action_set, tachygram_set)`
+    /// pair.
+    type Witness<'source> = (
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+    );
+
+    const INDEX: Index = Index::new(37);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (
+            (dividend_action_set, dividend_tachygram_set),
+            (quotient_action_set, quotient_tachygram_set),
+            (divisor_action_set, divisor_tachygram_set),
+        ): Self::Witness<'source>,
+        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
+        (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_anchor) - Fp::from(right_anchor),
+            "StampUnmerge: anchors must match",
+        )?;
+
+        enforce_equal_point(
+            Eq::from(dividend_action_set.commit()),
+            Eq::from(left_action_commit),
+            "StampUnmerge: dividend action accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(divisor_action_set.commit()),
+            Eq::from(right_action_commit),
+            "StampUnmerge: divisor action accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(dividend_tachygram_set.commit()),
+            Eq::from(left_tachygram_commit),
+            "StampUnmerge: dividend tachygram accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(divisor_tachygram_set.commit()),
+            Eq::from(right_tachygram_commit),
+            "StampUnmerge: divisor tachygram accumulator must commit to header commit",
+        )?;
+
+        enforce_poly_product(
+            ctx,
+            divisor_action_set.as_ref(),
+            quotient_action_set.as_ref(),
+            dividend_action_set.as_ref(),
+            "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
+        )?;
+        enforce_poly_product(
+            ctx,
+            divisor_tachygram_set.as_ref(),
+            quotient_tachygram_set.as_ref(),
+            dividend_tachygram_set.as_ref(),
+            "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
+        )?;
+
+        Ok((
+            (
+                quotient_action_set.commit(),
+                quotient_tachygram_set.commit(),
+                left_anchor,
+            ),
+            (),
+        ))
+    }
+}
