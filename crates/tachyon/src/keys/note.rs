@@ -5,11 +5,8 @@ use ragu_core::pasta::EpAffine;
 #[cfg(test)]
 use rand_core::CryptoRng;
 #[cfg(test)]
-use udon::field::random;
-use udon::{
-    curve::Affine as _,
-    field::{Fp, Reduced},
-};
+use udon::field;
+use udon::{curve::Affine as _, field::Fp};
 
 use super::{master::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{digest::poseidon, nullifier};
@@ -39,12 +36,12 @@ use crate::{digest::poseidon, nullifier};
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
-pub struct NullifierKey(#[debug(skip)] pub(super) Fp<Reduced>);
+pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive a note's master key from its nullifier trapdoor `psi`.
@@ -95,12 +92,12 @@ impl NullifierKey {
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
 #[derive(AsRef, Clone, Copy, Debug, From, Into)]
-pub struct PaymentKey(#[debug(skip)] Fp<Reduced>);
+pub struct PaymentKey(#[debug(skip)] Fp);
 
 impl PaymentKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the payment key from `ak` and `nk`:

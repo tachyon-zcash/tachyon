@@ -50,11 +50,11 @@ impl Header for SpendHeader {
         let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(nf_current).into_loose()),
-                pasta::Fp::new(Fp::from(nf_next).into_loose()),
-                pasta::Fp::new(Fp::from(anchor).into_loose()),
-                pasta::Fp::new(Fp::from(pk).into_loose()),
+                pasta::Fp::new(Fp::from(cm)),
+                pasta::Fp::new(Fp::from(nf_current)),
+                pasta::Fp::new(Fp::from(nf_next)),
+                pasta::Fp::new(Fp::from(anchor)),
+                pasta::Fp::new(Fp::from(pk)),
             ],
             Vec::new(),
             vec![Ep::from(cv)],

@@ -6,10 +6,7 @@
 
 use corez::io::{self, Read, Write};
 use ragu_core::pasta::{EpAffine, EqAffine};
-use udon::{
-    curve::Affine as _,
-    field::{Fp, Reduced},
-};
+use udon::{curve::Affine as _, field::Fp};
 
 pub(crate) mod compactsize;
 
@@ -38,7 +35,7 @@ pub(crate) fn write_compactsize<W: Write>(mut writer: W, value: u64) -> io::Resu
 }
 
 /// Read a Pallas base field element (`Fp`) from 32 bytes.
-pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp<Reduced>> {
+pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
     let mut bytes = [0u8; 32];
     reader.read_exact(&mut bytes)?;
     Fp::from_bytes(bytes)
@@ -46,7 +43,7 @@ pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp<Reduced>> {
 }
 
 /// Write a Pallas base field element (`Fp`) as 32 bytes.
-pub(crate) fn write_fp<W: Write>(mut writer: W, fp: &Fp<Reduced>) -> io::Result<()> {
+pub(crate) fn write_fp<W: Write>(mut writer: W, fp: &Fp) -> io::Result<()> {
     writer.write_all(&fp.to_bytes())
 }
 

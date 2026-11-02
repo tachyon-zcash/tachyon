@@ -7,7 +7,7 @@ use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, pasta::Pasta};
 use udon::{
     curve::{ProjectiveAdapter, Vesta},
-    field::{Fp, Reduced},
+    field::Fp,
 };
 
 use crate::{
@@ -44,8 +44,8 @@ impl NfSeqPoly {
 
     /// Evaluate the sequence polynomial at a given point.
     #[must_use]
-    pub fn eval(&self, x: Fp<Reduced>) -> Fp<Reduced> {
-        self.0.eval(x.into_loose().into()).into_inner().reduce()
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x.into()).into_inner()
     }
 }
 

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta;
-use udon::field::{Fp, Reduced};
+use udon::field::Fp;
 
 pub(crate) mod indexed_multiset;
 pub(crate) mod multiset;
@@ -58,7 +58,7 @@ fn derivative(coeffs: &[Fp]) -> Polynomial<pasta::Fp, ProductionRank> {
 /// The coefficients of the polynomial of least degree through `points`.
 ///
 /// Returns `None` when two points share an abscissa.
-pub(crate) fn interpolate(points: &[(Fp<Reduced>, Fp<Reduced>)]) -> Option<Vec<Fp>> {
+pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
     fn reduced(range: &[(Fp, Fp)]) -> (Vec<Fp>, Vec<Fp>) {
         if let &[(at, weighted_value)] = range {
             return ([weighted_value].to_vec(), [at.neg(), <Fp>::ONE].to_vec());
@@ -79,7 +79,7 @@ pub(crate) fn interpolate(points: &[(Fp<Reduced>, Fp<Reduced>)]) -> Option<Vec<F
         (combined, vanishing)
     }
 
-    let abscissas: Vec<Fp> = points.iter().map(|&(at, _)| at.into_loose()).collect();
+    let abscissas: Vec<Fp> = points.iter().map(|&(at, _)| at).collect();
     let vanishing = arithmetic::poly_with_roots(&abscissas);
 
     // The normalizer for each point is $v'(x_i) = \prod_{j \neq i}(x_i -
@@ -89,7 +89,7 @@ pub(crate) fn interpolate(points: &[(Fp<Reduced>, Fp<Reduced>)]) -> Option<Vec<F
     let weighted: Vec<(Fp, Fp)> = points
         .iter()
         .map(|&(abscissa, value)| {
-            let at = abscissa.into_loose();
+            let at = abscissa;
             let weight = normalizers.eval(at.into()).into_inner().invert()?;
             Some((at, weight.mul(&value)))
         })

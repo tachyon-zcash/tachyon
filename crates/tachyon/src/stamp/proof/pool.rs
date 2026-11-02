@@ -87,10 +87,10 @@ impl Header for ArbitraryUnspent {
         let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_start).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_next).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(epoch_start)),
+                pasta::Fp::new(Fp::from(epoch_next)),
+                pasta::Fp::new(Fp::from(anchor_next)),
             ],
             Vec::new(),
             Vec::new(),
@@ -115,11 +115,11 @@ impl Header for NoteUnspent {
         let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_start).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_next).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
+                pasta::Fp::new(Fp::from(cm)),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(epoch_start)),
+                pasta::Fp::new(Fp::from(epoch_next)),
+                pasta::Fp::new(Fp::from(anchor_next)),
             ],
             Vec::new(),
             Vec::new(),
@@ -160,8 +160,8 @@ impl Header for AnchorSpan {
         let (anchor_start, members, anchor_end) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_end).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(anchor_end)),
             ],
             Vec::new(),
             Vec::new(),
@@ -434,23 +434,14 @@ impl Step for UnspentLift {
                         .g()
                         .first()
                         .expect("at least one generator");
-                    g0 * pasta::Fp::new(Fp::from(value).into_loose())
+                    g0 * pasta::Fp::new(Fp::from(value))
                 }],
             )?
-            .into_inner()
-            .reduce();
+            .into_inner();
         let elapsed_at_z = elapsed_seq.eval(z);
         let extended_at_z = extended_seq.eval(z);
-        ctx.enforce_poly_query(
-            elapsed_seq.commit().into(),
-            z.into_loose().into(),
-            elapsed_at_z.into_loose().into(),
-        )?;
-        ctx.enforce_poly_query(
-            extended_seq.commit().into(),
-            z.into_loose().into(),
-            extended_at_z.into_loose().into(),
-        )?;
+        ctx.enforce_poly_query(elapsed_seq.commit().into(), z.into(), elapsed_at_z.into())?;
+        ctx.enforce_poly_query(extended_seq.commit().into(), z.into(), extended_at_z.into())?;
         enforce_zero(
             extended_at_z.sub(&elapsed_at_z.mul(&indexed_multiset::direct_eval(
                 [(u64::from(bucket_epoch), value.into())],
@@ -462,8 +453,8 @@ impl Step for UnspentLift {
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(
             contents_commit.into(),
-            Fp::from(value).into_loose().into(),
-            contents_at_value.into_loose().into(),
+            Fp::from(value).into(),
+            contents_at_value.into(),
         )?;
         enforce_nonzero(
             contents_at_value,

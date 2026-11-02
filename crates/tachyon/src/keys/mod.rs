@@ -121,7 +121,10 @@ mod tests {
         assert_ne!(nk.0.to_bytes(), Fp::from(pk).to_bytes());
 
         let pak = sk.derive_proof_private();
-        assert_eq!(Fp::from(pak.derive_payment_key()), Fp::from(pk));
+        assert_eq!(
+            Fp::from(pak.derive_payment_key()).reduce(),
+            Fp::from(pk).reduce()
+        );
     }
 
     /// pk must bind to nk: varying nk (with ak fixed) must produce a
@@ -135,9 +138,9 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let pk = PaymentKey::derive(&ak, &nk);
 
-        let nk_other = NullifierKey(nk.0.add(&<Fp>::ONE).reduce());
+        let nk_other = NullifierKey(nk.0.add(&<Fp>::ONE));
         let pk_other = PaymentKey::derive(&ak, &nk_other);
-        assert_ne!(Fp::from(pk), Fp::from(pk_other));
+        assert_ne!(Fp::from(pk).reduce(), Fp::from(pk_other).reduce());
     }
 
     /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for

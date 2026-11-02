@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta;
-use udon::field::{Fp, Reduced};
+use udon::field::Fp;
 
 use super::arithmetic;
 
@@ -52,10 +52,10 @@ pub(crate) const fn class_multiplier(side: bool) -> Fp {
 /// multiplicative and the multiplier is a non-residue, so exactly one branch
 /// always does, and this is unreachable.
 #[must_use]
-pub fn classify(value: Fp<Reduced>, discriminant: Fp<Reduced>) -> (bool, Fp<Reduced>) {
+pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
     let shifted = value.add(&discriminant).reduce();
     if let Some(root) = shifted.sqrt() {
-        return (true, root);
+        return (true, root.into_loose());
     }
     // The character is multiplicative and n is a non-residue, so exactly
     // one of the two character branches has a root.
@@ -64,18 +64,21 @@ pub fn classify(value: Fp<Reduced>, discriminant: Fp<Reduced>) -> (bool, Fp<Redu
         clippy::expect_used,
         reason = "one of the two character branches always has a root"
     )]
-    (false, root.expect("non-residue branch has a root"))
+    (
+        false,
+        root.expect("non-residue branch has a root").into_loose(),
+    )
 }
 
 /// One side's points $(x_i, y_i)$, each $y_i$ the root of $x_i$ on that side.
-pub(crate) type ClassificationPoints = Vec<(Fp<Reduced>, Fp<Reduced>)>;
+pub(crate) type ClassificationPoints = Vec<(Fp, Fp)>;
 
 /// Split values by side at `discriminant`, returning the residue-side then
 /// the non-residue-side points.
 #[must_use]
 pub(crate) fn split(
-    values: impl IntoIterator<Item = Fp<Reduced>>,
-    discriminant: Fp<Reduced>,
+    values: impl IntoIterator<Item = Fp>,
+    discriminant: Fp,
 ) -> (ClassificationPoints, ClassificationPoints) {
     let mut residue = Vec::new();
     let mut non_residue = Vec::new();
@@ -93,7 +96,7 @@ pub(crate) fn split(
 /// Divides `coeffs` by $(X - \mathsf{root})$ in place, exactly.
 ///
 /// Returns `None` when the division leaves a remainder.
-fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp<Reduced>) -> Option<()> {
+fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
     let mut carry = <Fp>::ZERO;
     for coeff in coeffs.iter_mut().rev() {
         let quotient_coeff = carry;
@@ -120,9 +123,9 @@ fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp<Reduced>) -> Option<()> {
 /// Returns `None` when two abscissas coincide or a point lies off the side.
 #[must_use]
 pub(crate) fn decomposition(
-    points: &[(Fp<Reduced>, Fp<Reduced>)],
+    points: &[(Fp, Fp)],
     class: Fp,
-    shift: Fp<Reduced>,
+    shift: Fp,
 ) -> Option<(
     Polynomial<pasta::Fp, ProductionRank>,
     Polynomial<pasta::Fp, ProductionRank>,
@@ -133,10 +136,7 @@ pub(crate) fn decomposition(
         super::interpolate(points)?
     };
     if interpolant_coeffs.iter().all(Fp::is_zero) {
-        let abscissas: Vec<Fp> = points
-            .iter()
-            .map(|&(abscissa, _)| abscissa.into_loose())
-            .collect();
+        let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
         interpolant_coeffs = arithmetic::poly_with_roots(&abscissas);
     }
 
@@ -167,7 +167,7 @@ mod tests {
 
     use ragu_circuits::polynomials::Rank as _;
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-    use udon::field::random;
+    use udon::field;
 
     use super::*;
     use crate::collections::multiset;
@@ -184,7 +184,7 @@ mod tests {
     }
 
     /// Euler-criterion quadratic character: $1$, $-1$, or $0$.
-    fn chi(x: Fp<Reduced>) -> Fp<Reduced> {
+    fn chi(x: Fp) -> Fp {
         let mut result = <Fp>::ONE;
         for limb in half_order().iter().rev() {
             for bit in (0..u64::BITS).rev() {
@@ -194,36 +194,39 @@ mod tests {
                 }
             }
         }
-        result.reduce()
+        result
     }
 
-    fn minus_one() -> Fp<Reduced> {
-        <Fp>::ONE.neg().reduce()
+    fn minus_one() -> Fp {
+        <Fp>::ONE.neg()
     }
 
-    fn eval_at(poly: &Polynomial<pasta::Fp, ProductionRank>, at: Fp<Reduced>) -> Fp<Reduced> {
-        poly.eval(at.into_loose().into()).into_inner().reduce()
+    fn eval_at(poly: &Polynomial<pasta::Fp, ProductionRank>, at: Fp) -> Fp {
+        poly.eval(at.into()).into_inner()
     }
 
     #[test]
     fn the_non_residue_constant_satisfies_the_euler_criterion() {
-        assert_eq!(chi(QUADRATIC_NON_RESIDUE.reduce()), minus_one());
+        assert_eq!(chi(QUADRATIC_NON_RESIDUE).reduce(), minus_one().reduce());
     }
 
     #[test]
     fn small_cubic_non_residues_are_quadratic_residues() {
-        assert_eq!(chi(Fp::from_u64(2)), Fp::ONE);
-        assert_eq!(chi(Fp::from_u64(3)), Fp::ONE);
+        assert_eq!(chi(Fp::from_u64(2)).reduce(), Fp::ONE);
+        assert_eq!(chi(Fp::from_u64(3)).reduce(), Fp::ONE);
     }
 
     #[test]
     fn classification_matches_the_legendre_symbol() {
         let rng = &mut StdRng::seed_from_u64(21);
         for _ in 0..64 {
-            let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-            let x = random(|bytes| rng.fill_bytes(bytes)).reduce();
+            let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+            let x = field::random(|bytes| rng.fill_bytes(bytes));
             let (bit, root) = classify(x, discriminant);
-            assert_eq!(bit, chi(x.add(&discriminant).reduce()) != minus_one());
+            assert_eq!(
+                bit,
+                chi(x.add(&discriminant)).reduce() != minus_one().reduce()
+            );
             assert_eq!(
                 root.square().reduce(),
                 class_multiplier(bit).mul(&x.add(&discriminant)).reduce()
@@ -234,23 +237,22 @@ mod tests {
     #[test]
     fn the_exceptional_value_is_pinned_to_the_residue_side() {
         let rng = &mut StdRng::seed_from_u64(22);
-        let discriminant: Fp<Reduced> = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        assert_eq!(
-            classify(discriminant.neg().reduce(), discriminant),
-            (true, Fp::ZERO)
-        );
+        let discriminant: Fp = field::random(|bytes| rng.fill_bytes(bytes));
+        let (bit, root) = classify(discriminant.neg(), discriminant);
+        assert!(bit);
+        assert!(root.is_zero());
     }
 
     #[test]
     fn a_value_takes_exactly_one_side() {
         let rng = &mut StdRng::seed_from_u64(28);
-        let discriminant: Fp<Reduced> = random(|bytes| rng.fill_bytes(bytes)).reduce();
+        let discriminant: Fp = field::random(|bytes| rng.fill_bytes(bytes));
         for _ in 0..32 {
-            let x = random(|bytes| rng.fill_bytes(bytes)).reduce();
+            let x = field::random(|bytes| rng.fill_bytes(bytes));
             let (bit, root) = classify(x, discriminant);
             let opposite = class_multiplier(!bit).mul(&x.add(&discriminant)).reduce();
             assert!(
-                opposite.sqrt().is_none() || x == discriminant.neg().reduce(),
+                opposite.sqrt().is_none() || x.reduce() == discriminant.neg().reduce(),
                 "a non-exceptional value classified on both sides"
             );
             assert_eq!(
@@ -263,20 +265,19 @@ mod tests {
     #[test]
     fn splits_are_exhaustive_and_disjoint() {
         let rng = &mut StdRng::seed_from_u64(30);
-        let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let values: Vec<Fp<Reduced>> =
-            iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
-                .take(64)
-                .collect();
+        let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
+            .take(64)
+            .collect();
 
         let (residue, non_residue) = split(values.iter().copied(), discriminant);
         assert_eq!(residue.len() + non_residue.len(), values.len());
         for &(value, root) in &residue {
-            assert_ne!(chi(value.add(&discriminant).reduce()), minus_one());
+            assert_ne!(chi(value.add(&discriminant)).reduce(), minus_one().reduce());
             assert_eq!(root.square().reduce(), value.add(&discriminant).reduce());
         }
         for &(value, root) in &non_residue {
-            assert_eq!(chi(value.add(&discriminant).reduce()), minus_one());
+            assert_eq!(chi(value.add(&discriminant)).reduce(), minus_one().reduce());
             assert_eq!(
                 root.square().reduce(),
                 QUADRATIC_NON_RESIDUE
@@ -288,26 +289,26 @@ mod tests {
 
     /// Collects a polynomial's coefficients with the sparse capacity padding
     /// trimmed; the zero polynomial densifies to `[0]`.
-    fn dense(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<Fp<Reduced>> {
+    fn dense(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<Fp> {
         let mut coeffs = poly
             .iter_coeffs()
-            .map(|coeff| coeff.into_inner().reduce())
+            .map(pasta::Fp::into_inner)
             .collect::<Vec<_>>();
         let last_nonzero = coeffs.iter().rposition(|coeff| !coeff.is_zero());
         coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
         coeffs
     }
 
-    fn abscissas_of(points: &[(Fp<Reduced>, Fp<Reduced>)]) -> Vec<Fp<Reduced>> {
+    fn abscissas_of(points: &[(Fp, Fp)]) -> Vec<Fp> {
         points.iter().map(|&(abscissa, _)| abscissa).collect()
     }
 
     /// Verifies $u^2 - c \cdot (X + s) = q \cdot h$ coefficient by coefficient
     /// for one side.
     fn verify_side(
-        points: &[(Fp<Reduced>, Fp<Reduced>)],
+        points: &[(Fp, Fp)],
         class: Fp,
-        shift: Fp<Reduced>,
+        shift: Fp,
         u: &Polynomial<pasta::Fp, ProductionRank>,
         h: &Polynomial<pasta::Fp, ProductionRank>,
     ) {
@@ -316,13 +317,19 @@ mod tests {
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
-        lhs[0] = lhs[0].sub(&class.mul(&shift)).reduce();
-        lhs[1] = lhs[1].sub(&class).reduce();
+        lhs[0] = lhs[0].sub(&class.mul(&shift));
+        lhs[1] = lhs[1].sub(&class);
         let rhs = dense(&super::super::poly_mul(&q, h));
-        let lhs_coeffs = lhs.iter().map(|coeff| coeff.into_loose().into()).collect();
-        assert_eq!(dense(&Polynomial::from_coeffs(lhs_coeffs)), rhs);
+        let lhs_coeffs = lhs.into_iter().map(pasta::Fp::new).collect();
+        assert_eq!(
+            dense(&Polynomial::from_coeffs(lhs_coeffs))
+                .iter()
+                .map(|coeff| coeff.reduce())
+                .collect::<Vec<_>>(),
+            rhs.iter().map(|coeff| coeff.reduce()).collect::<Vec<_>>()
+        );
         for &(abscissa, root) in points {
-            assert_eq!(eval_at(u, abscissa), root);
+            assert_eq!(eval_at(u, abscissa).reduce(), root.reduce());
         }
     }
 
@@ -330,13 +337,13 @@ mod tests {
     fn the_set_encoding_is_monic() {
         let rng = &mut StdRng::seed_from_u64(33);
         for count in [0, 1, 5] {
-            let values: Vec<Fp<Reduced>> =
-                iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
+            let values: Vec<Fp> =
+                iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
                     .take(count)
                     .collect();
             let encoded = dense(&multiset::encode(values));
             assert_eq!(encoded.len(), count + 1);
-            assert_eq!(encoded.last(), Some(&Fp::ONE));
+            assert!(encoded.last().is_some_and(Fp::is_one));
         }
     }
 
@@ -344,9 +351,9 @@ mod tests {
     fn the_decomposition_holds_on_both_sides() {
         let rng = &mut StdRng::seed_from_u64(23);
         for count in [0, 1, 2, 7] {
-            let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-            let values: Vec<Fp<Reduced>> =
-                iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
+            let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+            let values: Vec<Fp> =
+                iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
                     .take((2 * count) + 2)
                     .collect();
             let (residue, non_residue) = split(values, discriminant);
@@ -367,11 +374,10 @@ mod tests {
     #[test]
     fn the_decomposition_holds_at_the_polynomial_capacity() {
         let rng = &mut StdRng::seed_from_u64(26);
-        let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let values: Vec<Fp<Reduced>> =
-            iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
-                .take(ProductionRank::num_coeffs() - 1)
-                .collect();
+        let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
+            .take(ProductionRank::num_coeffs() - 1)
+            .collect();
         let (residue, non_residue) = split(values, discriminant);
         for (points, class) in [
             (&residue, class_multiplier(true)),
@@ -382,7 +388,7 @@ mod tests {
             // The full coefficient compare is quadratic in B; evaluation at
             // random points verifies the identity in linear time instead.
             for _ in 0..4 {
-                let z = random(|bytes| rng.fill_bytes(bytes)).reduce();
+                let z = field::random(|bytes| rng.fill_bytes(bytes));
                 assert_eq!(
                     eval_at(&u, z)
                         .square()
@@ -397,11 +403,10 @@ mod tests {
     #[test]
     fn a_misfiled_value_has_no_decomposition() {
         let rng = &mut StdRng::seed_from_u64(31);
-        let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let values: Vec<Fp<Reduced>> =
-            iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
-                .take(16)
-                .collect();
+        let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
+            .take(16)
+            .collect();
         let (mut residue, mut non_residue) = split(values, discriminant);
         residue.push(non_residue.pop().unwrap());
         assert!(decomposition(&residue, class_multiplier(true), discriminant).is_none());
@@ -410,8 +415,8 @@ mod tests {
     #[test]
     fn a_repeated_value_has_no_decomposition() {
         let rng = &mut StdRng::seed_from_u64(32);
-        let discriminant = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let value = random(|bytes| rng.fill_bytes(bytes)).reduce();
+        let discriminant = field::random(|bytes| rng.fill_bytes(bytes));
+        let value = field::random(|bytes| rng.fill_bytes(bytes));
         let (residue, non_residue) = split([value, value], discriminant);
         let (points, class) = if residue.is_empty() {
             (&non_residue, class_multiplier(false))
@@ -425,23 +430,23 @@ mod tests {
     #[test]
     fn an_exceptional_value_lands_residue_side_with_root_zero() {
         let rng = &mut StdRng::seed_from_u64(34);
-        let discriminant: Fp<Reduced> = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let exceptional = discriminant.neg().reduce();
-        let values: Vec<Fp<Reduced>> =
-            iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
-                .take(16)
-                .chain(iter::once(exceptional))
-                .collect();
+        let discriminant: Fp = field::random(|bytes| rng.fill_bytes(bytes));
+        let exceptional = discriminant.neg();
+        let values: Vec<Fp> = iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
+            .take(16)
+            .chain(iter::once(exceptional))
+            .collect();
 
         let (residue, non_residue) = split(values, discriminant);
         assert!(
-            residue.contains(&(exceptional, Fp::ZERO)),
+            residue
+                .iter()
+                .any(|&(value, root)| value.reduce() == exceptional.reduce() && root.is_zero()),
             "the exceptional value must land on the residue side"
         );
         let q2 = multiset::encode(abscissas_of(&non_residue));
-        assert_ne!(
-            eval_at(&q2, exceptional),
-            Fp::ZERO,
+        assert!(
+            !eval_at(&q2, exceptional).is_zero(),
             "the non-residue side must open nonzero at -R"
         );
         let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
@@ -459,19 +464,25 @@ mod tests {
     #[test]
     fn an_all_zero_side_takes_the_vanishing_polynomial() {
         let rng = &mut StdRng::seed_from_u64(35);
-        let discriminant: Fp<Reduced> = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let points = [(discriminant.neg().reduce(), Fp::ZERO)];
+        let discriminant: Fp = field::random(|bytes| rng.fill_bytes(bytes));
+        let points = [(discriminant.neg(), Fp::ZERO)];
         let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
-        assert_eq!(dense(&u), [discriminant, Fp::ONE]);
+        assert_eq!(
+            dense(&u)
+                .iter()
+                .map(|coeff| coeff.reduce())
+                .collect::<Vec<_>>(),
+            [discriminant.reduce(), Fp::ONE]
+        );
         verify_side(&points, class_multiplier(true), discriminant, &u, &h);
     }
 
     #[test]
     fn the_decomposition_reads_as_a_profile_over_discriminants() {
         let rng = &mut StdRng::seed_from_u64(50);
-        let value: Fp<Reduced> = random(|bytes| rng.fill_bytes(bytes)).reduce();
-        let discriminants: Vec<Fp<Reduced>> =
-            iter::repeat_with(|| random(|bytes| rng.fill_bytes(bytes)).reduce())
+        let value: Fp = field::random(|bytes| rng.fill_bytes(bytes));
+        let discriminants: Vec<Fp> =
+            iter::repeat_with(|| field::random(|bytes| rng.fill_bytes(bytes)))
                 .take(9)
                 .collect();
         let mut residue = Vec::new();

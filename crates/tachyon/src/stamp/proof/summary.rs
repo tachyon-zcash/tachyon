@@ -41,9 +41,9 @@ impl Header for Summary {
         let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_prev).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_end).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_prev)),
+                pasta::Fp::new(Fp::from(anchor_end)),
             ],
             Vec::new(),
             Vec::new(),

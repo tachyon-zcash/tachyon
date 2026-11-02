@@ -622,7 +622,7 @@ fn spend_rejects_invalid_note() {
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    assert_eq!(Fp::from(note.psi), Fp::from(phantom.psi), "shared psi");
+    assert_eq!(note.psi, phantom.psi, "shared psi");
     assert_ne!(note.commitment(), phantom.commitment(), "distinct cm");
 
     let wrong_value = value::Positive::try_from(999_999u64).expect("test value in range");
@@ -1356,16 +1356,16 @@ fn note_seed_carries_the_note() {
     assert_eq!(mk, user.mk(&note));
     assert_eq!(
         (
-            Fp::from(opening.rcm),
-            Fp::from(opening.pk),
+            Fp::from(opening.rcm).reduce(),
+            Fp::from(opening.pk).reduce(),
             u64::from(opening.value),
-            Fp::from(opening.psi),
+            Fp::from(opening.psi).reduce(),
         ),
         (
-            Fp::from(note.rcm),
-            Fp::from(note.pk),
+            Fp::from(note.rcm).reduce(),
+            Fp::from(note.pk).reduce(),
             u64::from(note.value),
-            Fp::from(note.psi),
+            Fp::from(note.psi).reduce(),
         ),
         "the seed emits the opening `cm` commits to"
     );
@@ -1390,8 +1390,8 @@ fn note_seed_derives_the_payment_key_from_pak() {
 
     let (cm, opening, _) = *secret.data();
     assert_eq!(
-        Fp::from(opening.pk),
-        Fp::from(stranger.pak.derive_payment_key()),
+        Fp::from(opening.pk).reduce(),
+        Fp::from(stranger.pak.derive_payment_key()).reduce(),
         "the opening carries the payment key of the witnessed pak"
     );
     assert_ne!(

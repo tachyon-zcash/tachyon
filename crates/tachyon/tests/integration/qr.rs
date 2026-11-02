@@ -8,7 +8,7 @@ use core::{array, iter};
 
 use ragu::{Pcd, Proof, Step};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::field::{Fp, Reduced};
+use udon::field::Fp;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
@@ -96,7 +96,7 @@ pub(crate) fn qr_bucket_for(
     span: (Anchor, Anchor),
     capacity: usize,
     depth: u32,
-    value: Fp<Reduced>,
+    value: Fp,
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
     let discriminant = QrDiscriminant::random(rng);
@@ -123,7 +123,7 @@ pub(crate) fn qr_bucket_at(
     discriminant: QrDiscriminant,
     capacity: usize,
     depth: u32,
-    value: Fp<Reduced>,
+    value: Fp,
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
     let profile = qr_profile_of(value, discriminant, depth);
@@ -393,7 +393,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let exceptional = Tachygram::from(Fp::from(discriminant).neg().reduce());
+    let exceptional = Tachygram::from(Fp::from(discriminant).neg());
     let members: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
         .take(8)
         .chain([exceptional])
@@ -457,15 +457,14 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         // Choose x from R_0 and the selected split depth.
         let value = Fp::from(discriminant)
             .neg()
-            .sub(&<Fp>::from_u64(u64::from(depth)))
-            .reduce();
-        assert_ne!(value, Fp::ZERO);
+            .sub(&<Fp>::from_u64(u64::from(depth)));
+        assert!(!value.is_zero());
         let exceptional = Tachygram::from(value);
         let members: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
             .take(8)
             .chain([exceptional])
             .collect();
-        assert!(members.iter().all(|member| Fp::from(*member) != Fp::ZERO));
+        assert!(members.iter().all(|&member| !Fp::from(member).is_zero()));
         for (index, member) in members.iter().enumerate() {
             assert!(!members[index + 1..].contains(member));
         }
@@ -497,7 +496,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         }
         assert_eq!(intake.pcd.data().4.depth, depth);
         assert!(intake.members.contains(&exceptional));
-        assert_eq!(value.add(&discriminant.at(depth)).reduce(), Fp::ZERO);
+        assert!(value.add(&discriminant.at(depth)).is_zero());
         PROOF_SYSTEM
             .fuse(
                 rng,
@@ -935,8 +934,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             .eval(z)
             .square()
             .sub(&sibling.eval(z).mul(&quotient.eval(z)))
-            .sub(&z)
-            .reduce(),
+            .sub(&z),
     );
     assert!(
         misfiled
@@ -1620,7 +1618,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
         !intake
             .members
             .iter()
-            .any(|&member| Fp::from(member) == Fp::from(nf)),
+            .any(|&member| member == Tachygram::from(nf)),
         "a fresh nullifier is absent from the epoch"
     );
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
@@ -2318,7 +2316,7 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
 
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(_, ref mut root) = roots[0];
-    let off = root.add(&<Fp>::ONE).reduce();
+    let off = root.add(&<Fp>::ONE);
     assert_ne!(off.square().reduce(), root.square().reduce());
     *root = off;
 
@@ -2339,8 +2337,8 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     assert_eq!(profile.depth, 2);
 
     let position = 5;
-    let shifted = Fp::from(nf).add(&discriminant.at(position)).reduce();
-    assert_ne!(shifted, Fp::ZERO);
+    let shifted = Fp::from(nf).add(&discriminant.at(position));
+    assert!(!shifted.is_zero());
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = !*side;
@@ -2360,8 +2358,8 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
     let position = 1;
-    let value = discriminant.at(position).neg().reduce();
-    assert_ne!(value, Fp::ZERO);
+    let value = discriminant.at(position).neg();
+    assert!(!value.is_zero());
     let nf = Nullifier::from(value);
 
     let bucket = qr_bucket_at(
@@ -2378,7 +2376,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         !bucket
             .members
             .iter()
-            .any(|&member| Fp::from(member) == value),
+            .any(|&member| member == Tachygram::from(value)),
         "the fixed point is absent from the epoch"
     );
     let mut witness =
@@ -2617,10 +2615,10 @@ fn qr_unspent_init_rejects_a_twin_value() {
 
     let z = unpinned_challenge(&[witness.3.commit().into()]);
     let twin = cube_root_twin(epoch, nf.into(), z);
-    assert_ne!(twin, Fp::from(nf));
+    assert_ne!(twin.reduce(), Fp::from(nf).reduce());
     assert_eq!(
-        indexed_factor(epoch, twin, z),
-        indexed_factor(epoch, nf.into(), z),
+        indexed_factor(epoch, twin, z).reduce(),
+        indexed_factor(epoch, nf.into(), z).reduce(),
         "the twin passes an unpinned identity"
     );
     witness.0 = Tachygram::from(twin);
@@ -2869,7 +2867,7 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     let discriminant = QrDiscriminant::random(rng);
     let base = Fp::from(Tachygram::random(rng));
     let members: Vec<Tachygram> = (0..12u64)
-        .map(|offset| Tachygram::from(base.add(&<Fp>::from_u64(offset)).reduce()))
+        .map(|offset| Tachygram::from(base.add(&<Fp>::from_u64(offset))))
         .collect();
     let depth = 3;
 

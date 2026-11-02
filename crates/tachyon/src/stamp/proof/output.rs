@@ -31,10 +31,7 @@ impl Header for OutputHeader {
     fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad, cv) = *data;
         (
-            vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(pad).into_loose()),
-            ],
+            vec![pasta::Fp::new(Fp::from(cm)), pasta::Fp::new(Fp::from(pad))],
             Vec::new(),
             vec![Ep::from(cv)],
             Vec::new(),

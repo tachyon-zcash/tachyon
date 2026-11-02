@@ -2,13 +2,13 @@
 
 use core::array;
 
-use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
+use derive_more::{Debug, Into};
 use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 #[cfg(test)]
 use rand_core::CryptoRng;
 #[cfg(test)]
-use udon::field::random;
-use udon::field::{Fp, Reduced};
+use udon::field;
+use udon::field::Fp;
 
 use crate::{
     digest::poseidon,
@@ -25,13 +25,21 @@ use crate::{
 ///
 /// `mk` grants derivation over the whole epoch space; a delegate receives
 /// proven value windows.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp<Reduced>);
+#[derive(Clone, Copy, Debug, Into)]
+pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
+
+impl PartialEq for NoteMasterKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.reduce() == other.0.reduce()
+    }
+}
+
+impl Eq for NoteMasterKey {}
 
 impl NoteMasterKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the nullifier for a single epoch.
@@ -77,7 +85,7 @@ impl NoteMasterKey {
             0,
             "epoch_start must be group-aligned"
         );
-        let groups: [[Fp<Reduced>; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
+        let groups: [[Fp; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
             array::from_fn(|offset| {
                 let group_start = u32::from(epoch_start) + (offset * PoseidonFp::RATE) as u32;
                 poseidon::nullifier_group(self.0, Fp::from(EpochIndex::new(group_start)))

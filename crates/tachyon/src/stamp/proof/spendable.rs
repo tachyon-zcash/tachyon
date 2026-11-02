@@ -42,9 +42,9 @@ impl Header for NoteSpendable {
         let (cm, epoch_current, anchor) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_current).into_loose()),
-                pasta::Fp::new(Fp::from(anchor).into_loose()),
+                pasta::Fp::new(Fp::from(cm)),
+                pasta::Fp::new(Fp::from(epoch_current)),
+                pasta::Fp::new(Fp::from(anchor)),
             ],
             Vec::new(),
             Vec::new(),
@@ -96,13 +96,10 @@ impl Step for SpendableInit {
         let cm_in_set = creation_set.eval(cm.into());
         ctx.enforce_poly_query(
             creation_set.commit().into(),
-            Fp::from(cm).into_loose().into(),
-            cm_in_set.into_loose().into(),
+            Fp::from(cm).into(),
+            cm_in_set.into(),
         )?;
-        enforce_zero(
-            cm_in_set.into_loose(),
-            "SpendableInit: commitment not in set",
-        )?;
+        enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
         // The anchor immediately after the creation stamp, computed in-circuit
@@ -194,13 +191,10 @@ impl Step for QrSpendableInit {
         let cm_in_bucket = contents.eval(cm.into());
         ctx.enforce_poly_query(
             bucket_commit.into(),
-            Fp::from(cm).into_loose().into(),
-            cm_in_bucket.into_loose().into(),
+            Fp::from(cm).into(),
+            cm_in_bucket.into(),
         )?;
-        enforce_zero(
-            cm_in_bucket.into_loose(),
-            "QrSpendableInit: commitment not in bucket",
-        )?;
+        enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
 
         Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))
     }

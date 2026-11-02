@@ -589,11 +589,8 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
     )
     .expect("a full descent");
     let (_sides, ref mut children) = path[0];
-    children[EVIDENCE_TREE_ARITY - 1] = EvidenceTreeRoot(
-        Fp::from(children[EVIDENCE_TREE_ARITY - 1])
-            .add(&<Fp>::ONE)
-            .reduce(),
-    );
+    children[EVIDENCE_TREE_ARITY - 1] =
+        EvidenceTreeRoot(Fp::from(children[EVIDENCE_TREE_ARITY - 1]).add(&<Fp>::ONE));
 
     let err = PROOF_SYSTEM
         .fuse(

@@ -70,10 +70,10 @@ impl Header for QrIntake {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_prev).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_end).into_loose()),
-                pasta::Fp::new(Fp::from(discriminant).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_prev)),
+                pasta::Fp::new(Fp::from(anchor_end)),
+                pasta::Fp::new(Fp::from(discriminant)),
                 pasta::Fp::from(u64::from(profile.depth)),
                 pasta::Fp::from(u64::from(profile.bits)),
             ],
@@ -110,10 +110,10 @@ impl Header for QrIntakeSides {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_prev).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_end).into_loose()),
-                pasta::Fp::new(Fp::from(discriminant).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_prev)),
+                pasta::Fp::new(Fp::from(anchor_end)),
+                pasta::Fp::new(Fp::from(discriminant)),
                 pasta::Fp::from(u64::from(profile.depth)),
                 pasta::Fp::from(u64::from(profile.bits)),
             ],
@@ -389,12 +389,12 @@ impl Step for QrIntakeSplit {
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
-        let exceptional = discriminant.at(profile.depth).neg().reduce();
+        let exceptional = discriminant.at(profile.depth).neg();
         let non_residue_at_exceptional = non_residue.eval(exceptional);
         ctx.enforce_poly_query(
             non_residue.commit().into(),
-            exceptional.into_loose().into(),
-            non_residue_at_exceptional.into_loose().into(),
+            exceptional.into(),
+            non_residue_at_exceptional.into(),
         )?;
         enforce_nonzero(
             non_residue_at_exceptional,
@@ -501,29 +501,16 @@ impl Step for QrSideDescend {
                         .g()
                         .first()
                         .expect("at least one generator");
-                    g0 * pasta::Fp::new(discriminant.at(profile.depth).into_loose())
+                    g0 * pasta::Fp::new(discriminant.at(profile.depth))
                 },
             ])?
-            .into_inner()
-            .reduce();
+            .into_inner();
         let sibling_at_z = sibling_contents.eval(z);
         let interpolant_at_z = interpolant.eval(z);
         let quotient_at_z = quotient.eval(z);
-        ctx.enforce_poly_query(
-            sibling_commit.into(),
-            z.into_loose().into(),
-            sibling_at_z.into_loose().into(),
-        )?;
-        ctx.enforce_poly_query(
-            interpolant_commit.into(),
-            z.into_loose().into(),
-            interpolant_at_z.into_loose().into(),
-        )?;
-        ctx.enforce_poly_query(
-            quotient_commit.into(),
-            z.into_loose().into(),
-            quotient_at_z.into_loose().into(),
-        )?;
+        ctx.enforce_poly_query(sibling_commit.into(), z.into(), sibling_at_z.into())?;
+        ctx.enforce_poly_query(interpolant_commit.into(), z.into(), interpolant_at_z.into())?;
+        ctx.enforce_poly_query(quotient_commit.into(), z.into(), quotient_at_z.into())?;
         let shifted = z.add(&discriminant.at(profile.depth));
         let class_residual = interpolant_at_z
             .square()
@@ -579,10 +566,10 @@ impl Header for QrBucket {
         let (epoch, anchor_start, anchor_next, discriminant, profile, contents) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
-                pasta::Fp::new(Fp::from(discriminant).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(anchor_next)),
+                pasta::Fp::new(Fp::from(discriminant)),
                 pasta::Fp::from(u64::from(profile.depth)),
                 pasta::Fp::from(u64::from(profile.bits)),
             ],
@@ -702,7 +689,7 @@ pub(super) fn enforce_value_profile(
             "QR profile: root does not square to the claimed class",
         )?;
         enforce_nonzero(
-            shifted.mul(&<Fp>::ONE.sub(&side_fp)).add(&side_fp).reduce(),
+            shifted.mul(&<Fp>::ONE.sub(&side_fp)).add(&side_fp),
             "QR profile: exceptional discriminant claimed the non-residue class",
         )?;
 
@@ -838,16 +825,11 @@ impl Step for QrUnspentInit {
                     .g()
                     .first()
                     .expect("at least one generator");
-                g0 * pasta::Fp::new(Fp::from(value).into_loose())
+                g0 * pasta::Fp::new(Fp::from(value))
             }])?
-            .into_inner()
-            .reduce();
+            .into_inner();
         let sequence_at_z = sequence.eval(z);
-        ctx.enforce_poly_query(
-            sequence_commit.into(),
-            z.into_loose().into(),
-            sequence_at_z.into_loose().into(),
-        )?;
+        ctx.enforce_poly_query(sequence_commit.into(), z.into(), sequence_at_z.into())?;
 
         let member_at_z =
             indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z);
@@ -859,8 +841,8 @@ impl Step for QrUnspentInit {
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(
             contents_commit.into(),
-            Fp::from(value).into_loose().into(),
-            contents_at_value.into_loose().into(),
+            Fp::from(value).into(),
+            contents_at_value.into(),
         )?;
         enforce_nonzero(
             contents_at_value,

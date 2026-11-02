@@ -50,12 +50,12 @@ impl Header for NoteSecret {
         let (cm, note, mk) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(note.rcm).into_loose()),
-                pasta::Fp::new(Fp::from(note.pk).into_loose()),
+                pasta::Fp::new(Fp::from(cm)),
+                pasta::Fp::new(Fp::from(note.rcm)),
+                pasta::Fp::new(Fp::from(note.pk)),
                 pasta::Fp::from(u64::from(note.value)),
-                pasta::Fp::new(Fp::from(note.psi).into_loose()),
-                pasta::Fp::new(mk.0.into_loose()),
+                pasta::Fp::new(Fp::from(note.psi)),
+                pasta::Fp::new(mk.0),
             ],
             Vec::new(),
             Vec::new(),
@@ -93,9 +93,9 @@ impl Header for NoteNullifiers {
         let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_start).into_loose()),
-                pasta::Fp::new(Fp::from(epoch_end).into_loose()),
+                pasta::Fp::new(Fp::from(cm)),
+                pasta::Fp::new(Fp::from(epoch_start)),
+                pasta::Fp::new(Fp::from(epoch_end)),
             ],
             Vec::new(),
             Vec::new(),
@@ -238,16 +238,9 @@ impl Step for NullifierDerive {
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
         // is not vacuous.
-        let z = ctx
-            .derive_challenge(&[seq.commit().into()])?
-            .into_inner()
-            .reduce();
+        let z = ctx.derive_challenge(&[seq.commit().into()])?.into_inner();
         let seq_at_z = seq.eval(z);
-        ctx.enforce_poly_query(
-            seq.commit().into(),
-            z.into_loose().into(),
-            seq_at_z.into_loose().into(),
-        )?;
+        ctx.enforce_poly_query(seq.commit().into(), z.into(), seq_at_z.into())?;
 
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.

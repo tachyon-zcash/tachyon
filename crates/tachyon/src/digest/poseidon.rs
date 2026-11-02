@@ -21,7 +21,7 @@ use ragu_primitives::{
 };
 use udon::{
     curve::{Affine as _, PallasAffine},
-    field::{Fp, Reduced},
+    field::Fp,
 };
 
 use crate::{constants::EVIDENCE_TREE_ARITY, pasta};
@@ -35,16 +35,16 @@ type Emu = Emulator<Wireless<Always<()>, pasta::Fp>>;
     clippy::expect_used,
     reason = "sponge squeeze cannot fail in wireless `Always` mode"
 )]
-fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp<Reduced> {
+fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
     let squeezed = sponge.squeeze(emulator).expect("infallible");
-    squeezed.value().take().into_inner().reduce()
+    squeezed.value().take().into_inner()
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
 /// zero rate, then absorbs `input`.
 fn tagged_sponge<const L: usize>(
     domain: &[u8; 16],
-    input: [Fp<Reduced>; L],
+    input: [Fp; L],
 ) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
     let capacity = <Fp>::from_u128(u128::from_le_bytes(*domain));
@@ -64,13 +64,13 @@ fn tagged_sponge<const L: usize>(
         reason = "sponge absorb cannot fail in wireless `Always` mode"
     )]
     for value in input {
-        let element = Element::constant(&mut emulator, value.into_loose().into());
+        let element = Element::constant(&mut emulator, value.into());
         sponge.absorb(&mut emulator, &element).expect("infallible");
     }
     (emulator, sponge)
 }
 
-fn hash<const L: usize>(domain: &[u8; 16], input: [Fp<Reduced>; L]) -> Fp<Reduced> {
+fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     let (mut emulator, mut sponge) = tagged_sponge(domain, input);
     squeeze(&mut emulator, &mut sponge)
 }
@@ -81,7 +81,7 @@ const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 #[must_use]
-pub fn fee_blind(pk: Fp<Reduced>, psi: Fp<Reduced>, rcm: Fp<Reduced>) -> Fp<Reduced> {
+pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     hash::<3>(FEE_BLIND_DOMAIN, [pk, psi, rcm])
 }
 
@@ -91,40 +91,46 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
 /// \mathsf{fee})$.
 #[must_use]
-pub fn fee_digest(cv_max_fee: PallasAffine, fee: u64) -> Fp<Reduced> {
+pub fn fee_digest(cv_max_fee: PallasAffine, fee: u64) -> Fp {
     let (x, y) = cv_max_fee.coordinates();
-    hash::<3>(FEE_DIGEST_DOMAIN, [*x, *y, Fp::from_u64(fee)])
+    hash::<3>(
+        FEE_DIGEST_DOMAIN,
+        [x.into_loose(), y.into_loose(), Fp::from_u64(fee)],
+    )
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from action fields.
 #[must_use]
-pub fn action_digest(cv: PallasAffine, rk: PallasAffine) -> Fp<Reduced> {
+pub fn action_digest(cv: PallasAffine, rk: PallasAffine) -> Fp {
     let (cv_x, cv_y) = cv.coordinates();
     let (rk_x, rk_y) = rk.coordinates();
-    hash::<4>(ACTION_DIGEST_DOMAIN, [*cv_x, *cv_y, *rk_x, *rk_y])
+    hash::<4>(
+        ACTION_DIGEST_DOMAIN,
+        [
+            cv_x.into_loose(),
+            cv_y.into_loose(),
+            rk_x.into_loose(),
+            rk_y.into_loose(),
+        ],
+    )
 }
 
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 #[must_use]
-pub fn payment_key(ak: PallasAffine, nk: Fp<Reduced>) -> Fp<Reduced> {
+pub fn payment_key(ak: PallasAffine, nk: Fp) -> Fp {
     let (x, y) = ak.coordinates();
-    hash::<3>(PAYMENT_KEY_DOMAIN, [*x, *y, nk])
+    hash::<3>(PAYMENT_KEY_DOMAIN, [x.into_loose(), y.into_loose(), nk])
 }
 
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 
 /// Derives a note commitment from note fields.
 #[must_use]
-pub fn note_commitment(
-    rcm: Fp<Reduced>,
-    pk: Fp<Reduced>,
-    value: u64,
-    psi: Fp<Reduced>,
-) -> Fp<Reduced> {
+pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     hash::<4>(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from_u64(value), psi])
 }
 
@@ -137,12 +143,7 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
 /// observer pair them off and recover the output count.
 #[must_use]
-pub fn pad_tachygram(
-    rcm: Fp<Reduced>,
-    pk: Fp<Reduced>,
-    value: u64,
-    psi: Fp<Reduced>,
-) -> Fp<Reduced> {
+pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     hash::<4>(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from_u64(value), psi])
 }
 
@@ -156,7 +157,7 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 ///   )
 /// $$
 #[must_use]
-pub fn nf_master(psi: Fp<Reduced>, nk: Fp<Reduced>) -> Fp<Reduced> {
+pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     hash::<2>(NULLIFIER_MASTER_DOMAIN, [psi, nk])
 }
 
@@ -168,7 +169,7 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
 #[must_use]
-pub fn alpha_spend(theta: Fp<Reduced>, cm: Fp<Reduced>) -> Fp<Reduced> {
+pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     hash::<2>(SPEND_ALPHA_DOMAIN, [theta, cm])
 }
 
@@ -180,7 +181,7 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
 #[must_use]
-pub fn alpha_output(theta: Fp<Reduced>, cm: Fp<Reduced>) -> Fp<Reduced> {
+pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     hash::<2>(OUTPUT_ALPHA_DOMAIN, [theta, cm])
 }
 
@@ -194,10 +195,7 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// Panics if the sponge rejects an absorb or a squeeze. The emulator is
 /// native and the element count is fixed at `RATE`, so this is unreachable.
 #[must_use]
-pub fn nullifier_group(
-    mk: Fp<Reduced>,
-    epoch_start: Fp<Reduced>,
-) -> [Fp<Reduced>; PoseidonFp::RATE] {
+pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     let (mut emulator, mut sponge) = tagged_sponge(NULLIFIER_DOMAIN, [mk, epoch_start]);
     array::from_fn(|_| squeeze(&mut emulator, &mut sponge))
 }
@@ -212,7 +210,7 @@ pub fn nullifier_group(
 ///
 /// Panics if `point` is the identity.
 #[expect(clippy::expect_used, reason = "constant-size decomposition")]
-fn point_limbs(point: EqAffine) -> (Fp<Reduced>, Fp<Reduced>) {
+fn point_limbs(point: EqAffine) -> (Fp, Fp) {
     assert!(
         !point.is_identity(),
         "commitment must not be the identity point"
@@ -235,11 +233,7 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 ///
 /// Panics if `tgs` is the identity point.
 #[must_use]
-pub fn anchor_next_stamp(
-    anchor_prev: Fp<Reduced>,
-    epoch: Fp<Reduced>,
-    tgs: EqAffine,
-) -> Fp<Reduced> {
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
     let (tgs_lo, tgs_hi) = point_limbs(tgs);
     hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
 }
@@ -254,14 +248,14 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 /// Panics if `contents` is the identity point.
 #[must_use]
 pub fn evidence_tree_leaf(
-    epoch: Fp<Reduced>,
-    anchor_start: Fp<Reduced>,
-    anchor_next: Fp<Reduced>,
-    discriminant: Fp<Reduced>,
-    depth: Fp<Reduced>,
-    bits: Fp<Reduced>,
+    epoch: Fp,
+    anchor_start: Fp,
+    anchor_next: Fp,
+    discriminant: Fp,
+    depth: Fp,
+    bits: Fp,
     contents: EqAffine,
-) -> Fp<Reduced> {
+) -> Fp {
     let (contents_lo, contents_hi) = point_limbs(contents);
     hash::<8>(
         QR_BUCKET_DOMAIN,
@@ -286,7 +280,7 @@ pub fn evidence_tree_leaf(
 ///   )
 /// $$
 #[must_use]
-pub fn evidence_tree_node(children: [Fp<Reduced>; EVIDENCE_TREE_ARITY]) -> Fp<Reduced> {
+pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
     hash::<EVIDENCE_TREE_ARITY>(EVIDENCE_NODE_DOMAIN, children)
 }
 
@@ -297,6 +291,6 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 /// Produces the entry anchor of `epoch` when `anchor_prev` is the final
 /// anchor of the epoch before.
 #[must_use]
-pub fn anchor_next_epoch(anchor_prev: Fp<Reduced>, epoch: Fp<Reduced>) -> Fp<Reduced> {
+pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     hash::<2>(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])
 }

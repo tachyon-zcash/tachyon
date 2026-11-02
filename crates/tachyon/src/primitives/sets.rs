@@ -9,7 +9,7 @@ use ragu_core::{
 };
 use udon::{
     curve::{Projective as _, ProjectiveAdapter, Vesta},
-    field::{Fp, Reduced},
+    field::Fp,
 };
 
 use super::{ActionDigest, Anchor, Tachygram};
@@ -101,9 +101,7 @@ impl AnchorSetCommit {
     )]
     pub fn singleton(anchor: Anchor) -> Self {
         let generators = Pasta::host_generators(pasta::baked()).g();
-        Self(
-            Eq::from(generators[1]) - generators[0] * pasta::Fp::new(Fp::from(anchor).into_loose()),
-        )
+        Self(Eq::from(generators[1]) - generators[0] * pasta::Fp::new(Fp::from(anchor)))
     }
 }
 
@@ -130,8 +128,8 @@ impl AnchorSetPoly {
 
     /// Evaluate the set polynomial at a given point.
     #[must_use]
-    pub fn eval(&self, x: Fp<Reduced>) -> Fp<Reduced> {
-        self.0.eval(x.into_loose().into()).into_inner().reduce()
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x.into()).into_inner()
     }
 }
 
@@ -150,8 +148,8 @@ impl TachygramSetPoly {
 
     /// Evaluate the set polynomial at a given point.
     #[must_use]
-    pub fn eval(&self, x: Fp<Reduced>) -> Fp<Reduced> {
-        self.0.eval(x.into_loose().into()).into_inner().reduce()
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x.into()).into_inner()
     }
 }
 
@@ -164,8 +162,8 @@ impl ActionSetPoly {
 
     /// Evaluate the set polynomial at a given point.
     #[must_use]
-    pub fn eval(&self, x: Fp<Reduced>) -> Fp<Reduced> {
-        self.0.eval(x.into_loose().into()).into_inner().reduce()
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x.into()).into_inner()
     }
 }
 

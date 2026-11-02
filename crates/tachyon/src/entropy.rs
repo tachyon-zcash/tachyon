@@ -8,7 +8,7 @@ use core::{any::type_name, marker::PhantomData};
 
 use derive_more::{Debug, Into};
 use rand_core::CryptoRng;
-use udon::field::{Fp, Fq, Reduced, random};
+use udon::field::{self, Fp, Fq};
 
 use crate::{note, primitives::Effect};
 
@@ -28,7 +28,7 @@ use crate::{note, primitives::Effect};
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-pub struct ActionEntropy(#[debug(skip)] pub(crate) Fp<Reduced>);
+pub struct ActionEntropy(#[debug(skip)] pub(crate) Fp);
 
 impl ActionEntropy {
     /// Parse action entropy from its canonical 32-byte encoding.
@@ -39,7 +39,7 @@ impl ActionEntropy {
 
     /// Sample fresh per-action entropy.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
@@ -67,7 +67,7 @@ mod sealed {
 #[derive(Clone, Copy, Debug, Into)]
 #[debug("ActionRandomizer<{}>", type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(
-    pub(crate) Fq<Reduced>,
+    pub(crate) Fq,
     #[into(skip)] pub(crate) PhantomData<S>,
 );
 
@@ -86,10 +86,10 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let cm = note::Commitment::random(&mut rng);
 
-        let spend_alpha: Fq<Reduced> = theta.randomizer::<effect::Spend>(cm).into();
-        let output_alpha: Fq<Reduced> = theta.randomizer::<effect::Output>(cm).into();
+        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
+        let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
 
-        assert_ne!(spend_alpha, output_alpha);
+        assert_ne!(spend_alpha.reduce(), output_alpha.reduce());
     }
 
     #[test]
@@ -100,13 +100,13 @@ mod tests {
         let cm = note::Commitment::random(&mut rng);
 
         // Deterministic: same theta twice
-        let first: Fq<Reduced> = theta_a.randomizer::<effect::Spend>(cm).into();
-        let second: Fq<Reduced> = theta_a.randomizer::<effect::Spend>(cm).into();
-        assert_eq!(first, second);
+        let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
+        let second: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
+        assert_eq!(first.reduce(), second.reduce());
 
         // Sensitive: different theta
-        let other: Fq<Reduced> = theta_b.randomizer::<effect::Spend>(cm).into();
-        assert_ne!(first, other);
+        let other: Fq = theta_b.randomizer::<effect::Spend>(cm).into();
+        assert_ne!(first.reduce(), other.reduce());
     }
 
     /// The scalar alpha has the same encoding as the Poseidon output, so the
@@ -117,8 +117,8 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let cm = note::Commitment::random(&mut rng);
 
-        let spend: Fq<Reduced> = theta.randomizer::<effect::Spend>(cm).into();
-        let output: Fq<Reduced> = theta.randomizer::<effect::Output>(cm).into();
+        let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
+        let output: Fq = theta.randomizer::<effect::Output>(cm).into();
 
         assert_eq!(
             spend.to_bytes(),
@@ -136,7 +136,7 @@ mod tests {
         let Some(parsed) = ActionEntropy::from_bytes(theta.0.to_bytes()) else {
             panic!("canonical encoding must parse");
         };
-        assert_eq!(parsed.0, theta.0);
+        assert_eq!(parsed.0.reduce(), theta.0.reduce());
     }
 
     #[test]

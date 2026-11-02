@@ -54,11 +54,11 @@ impl Header for EvidenceTree {
         let (epoch, anchor_start, anchor_next, discriminant, root) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
-                pasta::Fp::new(Fp::from(discriminant).into_loose()),
-                pasta::Fp::new(Fp::from(root).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(anchor_next)),
+                pasta::Fp::new(Fp::from(discriminant)),
+                pasta::Fp::new(Fp::from(root)),
             ],
             Vec::new(),
             Vec::new(),
@@ -93,12 +93,12 @@ impl Header for EvidenceTreePair {
         let (epoch, anchor_start, anchor_next, discriminant, first, second) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
-                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
-                pasta::Fp::new(Fp::from(discriminant).into_loose()),
-                pasta::Fp::new(Fp::from(first).into_loose()),
-                pasta::Fp::new(Fp::from(second).into_loose()),
+                pasta::Fp::new(Fp::from(epoch)),
+                pasta::Fp::new(Fp::from(anchor_start)),
+                pasta::Fp::new(Fp::from(anchor_next)),
+                pasta::Fp::new(Fp::from(discriminant)),
+                pasta::Fp::new(Fp::from(first)),
+                pasta::Fp::new(Fp::from(second)),
             ],
             Vec::new(),
             Vec::new(),
@@ -460,7 +460,7 @@ impl Step for EvidenceTreeDescend {
             let inner_side = <Fp>::from_u64(u64::from(inner));
             let lower = first.add(&inner_side.mul(&second.sub(&first)));
             let upper = third.add(&inner_side.mul(&fourth.sub(&third)));
-            node = lower.add(&outer_side.mul(&upper.sub(&lower))).reduce();
+            node = lower.add(&outer_side.mul(&upper.sub(&lower)));
         }
 
         Ok((

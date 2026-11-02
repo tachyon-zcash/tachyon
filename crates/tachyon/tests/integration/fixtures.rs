@@ -13,7 +13,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
-    field::{Fp, Reduced},
+    field::Fp,
 };
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
@@ -887,7 +887,7 @@ pub(crate) fn build_qr_branch<RNG: CryptoRng>(
     (start, end): (Anchor, Anchor),
     discriminant: QrDiscriminant,
     capacity: usize,
-    value: Fp<Reduced>,
+    value: Fp,
     depth: u32,
 ) -> Vec<QrIntakeEntry> {
     let mut layer = build_qr_roots(rng, pool, (start, end), discriminant, capacity);
@@ -1098,11 +1098,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
 
 /// The profile a value takes at `depth` levels of the progression from
 /// `discriminant`.
-pub(crate) fn qr_profile_of(
-    value: Fp<Reduced>,
-    discriminant: QrDiscriminant,
-    depth: u32,
-) -> QrProfile {
+pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
     let mut profile = QrProfile::ROOT;
     for level in 0..depth {
         profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
@@ -1784,7 +1780,7 @@ impl Default for SyncSim {
 
 /// The mock's Fiat-Shamir challenge over `commitments` alone: the `z` a
 /// prover knows before choosing a free scalar the challenge does not absorb.
-pub fn unpinned_challenge(commitments: &[Eq]) -> Fp<Reduced> {
+pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(b"MkRagu_Challng_\0")
@@ -1799,17 +1795,13 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp<Reduced> {
 
 /// Another member at `epoch` whose indexed factor
 /// $(m + (i+1)X)^3 - 2$ agrees with `member`'s at `z`.
-pub fn cube_root_twin(epoch: EpochIndex, member: Fp<Reduced>, z: Fp<Reduced>) -> Fp<Reduced> {
+pub fn cube_root_twin(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
     let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
-    <Fp>::ZETA.mul(&member.add(&shift)).sub(&shift).reduce()
+    <Fp>::ZETA.mul(&member.add(&shift)).sub(&shift)
 }
 
 /// The indexed factor of `member` at `epoch`, evaluated at `z`.
-pub fn indexed_factor(epoch: EpochIndex, member: Fp<Reduced>, z: Fp<Reduced>) -> Fp<Reduced> {
+pub fn indexed_factor(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
     let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
-    member
-        .add(&shift)
-        .pow_u64(3)
-        .sub(&<Fp>::from_u64(2))
-        .reduce()
+    member.add(&shift).pow_u64(3).sub(&<Fp>::from_u64(2))
 }

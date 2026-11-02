@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use derive_more::{Debug, From};
 use ff::PrimeField as _;
 use rand_core::CryptoRng;
-use udon::field::{Fp, Fq, Reduced};
+use udon::field::{Fp, Fq};
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -87,7 +87,7 @@ impl SpendingKey {
     )]
     pub fn derive_auth_private(&self) -> SpendAuthorizingKey {
         // Derive ask scalar from sk via PRF (Orchard §4.2.3).
-        let mut ask = <Fq<Reduced>>::from_wide_bytes_reduced(&blake2b::prf_expand_ask(&self.0));
+        let mut ask = <Fq>::from_wide_bytes_reduced(&blake2b::prf_expand_ask(&self.0));
 
         // Sign normalization (§5.4.7.1): ak must have tilde_y = 0.
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
@@ -98,7 +98,7 @@ impl SpendingKey {
         )
         .into();
         if ak[31] >> 7u8 == 1u8 {
-            ask = ask.neg().reduce();
+            ask = ask.neg();
         }
 
         // Build the final key from the sign-normalized scalar.

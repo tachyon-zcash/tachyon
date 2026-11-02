@@ -80,7 +80,7 @@ impl Header for Stamp {
 
     fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         (
-            vec![pasta::Fp::new(Fp::from(data.2).into_loose())],
+            vec![pasta::Fp::new(Fp::from(data.2))],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(data.0), Eq::from(data.1)],
@@ -460,8 +460,8 @@ impl Step for StampLift {
         )?;
         ctx.enforce_poly_query(
             Eq::from(span_members),
-            Fp::from(stamp_anchor).into_loose().into(),
-            anchor_eval.into_loose().into(),
+            Fp::from(stamp_anchor).into(),
+            anchor_eval.into(),
         )?;
 
         let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
@@ -506,8 +506,8 @@ impl Step for ActionLift {
         )?;
         ctx.enforce_poly_query(
             Eq::from(span_members),
-            Fp::from(actions_anchor).into_loose().into(),
-            anchor_eval.into_loose().into(),
+            Fp::from(actions_anchor).into(),
+            anchor_eval.into(),
         )?;
 
         let data = (

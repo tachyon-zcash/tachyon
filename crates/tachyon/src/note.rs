@@ -35,7 +35,7 @@
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
-use udon::field::{Fp, Fq, Reduced, random};
+use udon::field::{self, Fp, Fq};
 
 use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
 
@@ -44,12 +44,12 @@ use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug, From, Into)]
-pub struct CommitmentTrapdoor(#[debug(skip)] Fp<Reduced>);
+pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 
@@ -94,9 +94,8 @@ impl Note {
     /// Panics if the note commitment trapdoor is zero.
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        assert_ne!(
-            self.rcm.0,
-            Fp::ZERO,
+        assert!(
+            !self.rcm.0.is_zero(),
             "note commitment trapdoor should not be zero"
         );
 
@@ -114,8 +113,8 @@ impl Note {
 /// Produced by committing to the note fields. An output publishes `cm` as a
 /// tachygram; a spend keeps it as a private witness.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-#[from(Fp<Reduced>, Tachygram)]
-#[into(Fp<Reduced>, Tachygram)]
+#[from(Fp, Tachygram)]
+#[into(Fp, Tachygram)]
 pub struct Commitment(Tachygram);
 
 #[cfg(test)]

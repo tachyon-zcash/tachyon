@@ -40,7 +40,7 @@
 use ragu::StepCtx;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, Error, Result, pasta::Pasta};
-use udon::field::{Fp, Reduced};
+use udon::field::Fp;
 
 use crate::pasta;
 
@@ -109,17 +109,14 @@ pub(crate) fn enforce_poly_product(
 pub(crate) fn enforce_poly_roots<const N: usize>(
     ctx: &mut StepCtx<'_>,
     accumulator: &Polynomial<pasta::Fp, ProductionRank>,
-    roots: &[Fp<Reduced>; N],
+    roots: &[Fp; N],
     err: &'static str,
 ) -> Result<()> {
     let accumulator_com = accumulator.commit(Pasta::host_generators(pasta::baked()));
     let z = ctx.derive_challenge(&[accumulator_com])?;
 
     let accumulator_at_z = accumulator.eval(z);
-    let factors_at_z: pasta::Fp = roots
-        .iter()
-        .map(|root| z - pasta::Fp::new(root.into_loose()))
-        .product();
+    let factors_at_z: pasta::Fp = roots.iter().map(|&root| z - pasta::Fp::new(root)).product();
     if accumulator_at_z != factors_at_z {
         return Err(Error::InvalidWitness(err.into()));
     }

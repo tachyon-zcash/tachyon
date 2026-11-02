@@ -10,7 +10,7 @@ use ragu_core::pasta::{self, Ep, EpAffine};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, AffineAdapter, Pallas, Projective as _, ProjectiveAdapter},
-    field::{Fq, Reduced, random},
+    field::{self, Fq},
 };
 
 use crate::constants::MAX_MONEY;
@@ -61,7 +61,7 @@ lazy_static! {
 /// ($\mathbb{F}_q$, Pallas scalar field).
 #[derive(Clone, Copy, Debug, Default, Into)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueTrapdoor(#[debug(skip)] Fq<Reduced>);
+pub struct ValueTrapdoor(#[debug(skip)] Fq);
 
 impl Trapdoor {
     /// The zero trapdoor.
@@ -69,12 +69,12 @@ impl Trapdoor {
 
     /// Generate a random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// A trapdoor derived from other secret data, such as a max fee note's
     /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq<Reduced>) -> Self {
+    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
         Self(scalar)
     }
 
@@ -88,8 +88,8 @@ impl Trapdoor {
     /// Orchard (§5.4.8.3).
     #[must_use]
     pub fn commit<const MIN: i64, const MAX: i64>(self, value: Value<MIN, MAX>) -> Commitment {
-        let commit_value = *VALUE_COMMIT_V * pasta::Fq::new(Fq::from(value).into_loose());
-        let commit_trapdoor = *VALUE_COMMIT_R * pasta::Fq::new(self.0.into_loose());
+        let commit_value = *VALUE_COMMIT_V * pasta::Fq::new(Fq::from(value));
+        let commit_trapdoor = *VALUE_COMMIT_R * pasta::Fq::new(self.0);
         ValueCommitment(commit_value + commit_trapdoor)
     }
 }
@@ -237,7 +237,7 @@ impl<const MAX: i64> From<Value<0, MAX>> for u64 {
     }
 }
 
-impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq<Reduced> {
+impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
     /// Signed value as a Pallas scalar, for use as the `V`-component
     /// exponent in a value commitment.
     fn from(value: Value<MIN, MAX>) -> Self {
@@ -292,7 +292,7 @@ mod tests {
 
         let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
-        let rcv_sum = Into::<Fq<Reduced>>::into(rcv_a).add(&Into::<Fq<Reduced>>::into(rcv_b));
+        let rcv_sum = Into::<Fq>::into(rcv_a).add(&Into::<Fq>::into(rcv_b));
 
         assert_eq!(
             remainder,

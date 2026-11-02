@@ -1,9 +1,9 @@
 use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use derive_more::{Debug, From, Into};
 use rand_core::CryptoRng;
-use udon::field::{Fp, Reduced, random};
+use udon::field::{self, Fp};
 
 use crate::serialization;
 
@@ -20,13 +20,21 @@ use crate::serialization;
 /// Consensus rejects a published tachygram that has already appeared in
 /// any block of the current or immediately preceding epoch. See the
 /// Tachygrams book chapter for why the window spans two epochs.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Tachygram(Fp<Reduced>);
+#[derive(Clone, Copy, Debug, From, Into)]
+pub struct Tachygram(Fp);
+
+impl PartialEq for Tachygram {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.reduce() == other.0.reduce()
+    }
+}
+
+impl Eq for Tachygram {}
 
 impl Tachygram {
     /// Sample a uniformly random tachygram.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+        Self(field::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Read as a field element from the consensus wire format.
@@ -60,7 +68,7 @@ impl PartialOrd for Tachygram {
 impl Ord for Tachygram {
     /// Order by the canonical little-endian byte encoding of the field
     /// element, matching the byte-lexicographic order the stamp digest
-    /// commits to, rather than the numeric `Ord` of `Fp<Reduced>`.
+    /// commits to, rather than the numeric order of the canonical integer.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_bytes().cmp(&other.0.to_bytes())
     }

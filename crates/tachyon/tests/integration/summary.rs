@@ -106,9 +106,8 @@ fn summary_over_an_anchor_span_matches_the_pool() {
     assert_eq!(members.len(), 12, "every published tachygram accumulates");
     assert_eq!(acc_commit, acc.commit());
     for &tg in &members {
-        assert_eq!(
-            acc.eval(Fp::from(tg)),
-            Fp::ZERO,
+        assert!(
+            acc.eval(Fp::from(tg)).is_zero(),
             "each member is a root of the accumulator"
         );
     }
