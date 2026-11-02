@@ -18,7 +18,7 @@ use zcash_tachyon::{
     nullifier::Nullifier,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
+        pool::{ArbitraryUnspent, NoteUnspent, UnspentBind, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
     value, witness,
@@ -2593,24 +2593,13 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     );
 }
 
-/// A cube-root twin of the tested value shares its factor at the challenge the
-/// sequence alone would give. At the root profile the twin passes every
-/// routing check, so only the challenge absorbing `value` rejects it.
-#[test]
-fn qr_unspent_init_rejects_a_twin_value() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-    let bucket = qr_bucket_for(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        24,
-        0,
-        Fp::from(nf),
-        Anchor::from(Fp::ZERO),
-    );
-    let (epoch, _, _, discriminant, ..) = *bucket.pcd.data();
+/// The segment of `bucket` whose sequence names `nf` but whose tested value is
+/// a cube-root twin of `nf`, chosen after the challenge the sequence alone
+/// gives. At the root profile the twin passes every routing check, so
+/// [`qr::QrUnspentInit`] accepts it and writes it to `nf_last`.
+fn twin_segment(rng: &mut StdRng, bucket: &QrBucketEntry, nf: Nullifier) -> Pcd<ArbitraryUnspent> {
+    let (epoch, _, _, discriminant, profile, _) = *bucket.pcd.data();
+    assert_eq!(profile, QrProfile::ROOT);
     let mut witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
@@ -2620,15 +2609,154 @@ fn qr_unspent_init_rejects_a_twin_value() {
     assert_eq!(
         indexed_factor(epoch, twin, z),
         indexed_factor(epoch, nf.into(), z),
-        "the twin passes an unpinned identity"
+        "the twin passes the sequence identity"
     );
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let segment =
+        fuse_unspent_init(rng, bucket.pcd.clone(), witness).expect("the twin passes its own step");
+    let (_, _, nf_first, _, nf_last, ..) = *segment.data();
+    assert_eq!((nf_first, nf_last), (twin.into(), twin.into()));
+    segment
+}
+
+/// A twin tested by [`qr::QrUnspentInit`] fails [`UnspentBind`]'s
+/// last-member check: the sequence's factor is the genuine nullifier's, not
+/// the twin's.
+#[test]
+fn a_twin_value_fails_unspent_bind() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    let pool = pool_through(rng, epoch1);
+    let nf = user.nf_at(&note, epoch0);
+
+    let bucket = epoch_bucket(rng, &pool, epoch0);
+    let segment = twin_segment(rng, &bucket, nf);
+    let range = user.derivation_pcd(rng, note, epoch0, epoch1);
+    let witness = witness::unspent_bind(
+        (*segment.data(), *range.data()),
+        &user.covering_window(&note, &range),
+        &[nf],
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(rng, UnspentBind, witness, segment, range)
+        .err()
+        .unwrap();
     assert_eq!(
         invalid_witness(err),
-        "QrUnspentInit: sequence does not match the tested pair"
+        "UnspentBind: elapsed does not end with its last member"
+    );
+}
+
+/// A twin tested by [`qr::QrUnspentInit`] fails [`UnspentLift`]'s
+/// last-member check on the segment it extends.
+#[test]
+fn a_twin_value_fails_unspent_lift() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
+    let pool = pool_through(rng, epoch2);
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+
+    let first = epoch_bucket(rng, &pool, epoch0);
+    let segment = twin_segment(rng, &first, nf0);
+    let bucket = epoch_bucket(rng, &pool, epoch1);
+    let lift = witness::unspent_lift(
+        (*segment.data(), *bucket.pcd.data()),
+        nf1.into(),
+        &[nf0],
+        &bucket.members,
+    );
+
+    let err = fuse_unspent_lift(rng, segment, &bucket, lift)
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "UnspentLift: elapsed does not end with its last member"
+    );
+}
+
+/// A twin tested by [`qr::QrUnspentInit`] fails [`UnspentFuse`]'s
+/// last-member check on its left half.
+#[test]
+fn a_twin_value_fails_unspent_fuse() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
+    let pool = pool_through(rng, epoch2);
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+
+    let first = epoch_bucket(rng, &pool, epoch0);
+    let left = twin_segment(rng, &first, nf0);
+    let second = epoch_bucket(rng, &pool, epoch1);
+    let right = qr_bucket_segment(rng, &second, |_| nf1);
+    let witness = witness::unspent_fuse((*left.data(), *right.data()), &[nf0], &[nf1]);
+
+    let err = PROOF_SYSTEM
+        .fuse(rng, UnspentFuse, witness, left, right)
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "UnspentFuse: left does not end with its last member"
+    );
+}
+
+/// A twin tested by [`UnspentLift`] passes the lift and fails
+/// [`UnspentBind`]'s last-member check: `extended`'s new factor is the
+/// genuine nullifier's, not the twin's. The lift's challenge absorbs the
+/// bucket's contents; over the two sequences alone it would be the bind's
+/// challenge with the honest prefix, and the twin would pass both.
+#[test]
+fn a_lifted_twin_value_fails_unspent_bind() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
+    let pool = pool_through(rng, epoch2);
+    let [nf0, nf1] = [user.nf_at(&note, epoch0), user.nf_at(&note, epoch1)];
+
+    let first = epoch_bucket(rng, &pool, epoch0);
+    let segment = qr_bucket_segment(rng, &first, |_| nf0);
+    let bucket = epoch_bucket(rng, &pool, epoch1);
+    let (_, _, _, discriminant, profile, _) = *bucket.pcd.data();
+    assert_eq!(profile, QrProfile::ROOT);
+    let mut lift = witness::unspent_lift(
+        (*segment.data(), *bucket.pcd.data()),
+        nf1.into(),
+        &[nf0],
+        &bucket.members,
+    );
+
+    let z = unpinned_challenge(&[
+        lift.4.commit().into(),
+        lift.5.commit().into(),
+        lift.6.commit().into(),
+    ]);
+    let twin = cube_root_twin(epoch1, nf1.into(), z);
+    assert_ne!(twin, Fp::from(nf1));
+    lift.0 = Tachygram::from(twin);
+    lift.1 = QrClassRoot::along(twin, discriminant);
+    let lifted =
+        fuse_unspent_lift(rng, segment, &bucket, lift).expect("the twin passes its own step");
+    assert_eq!(lifted.data().4, Nullifier::from(twin));
+
+    let range = user.derivation_pcd(rng, note, epoch0, epoch2);
+    let witness = witness::unspent_bind(
+        (*lifted.data(), *range.data()),
+        &user.covering_window(&note, &range),
+        &[nf0, nf1],
+    );
+    let err = PROOF_SYSTEM
+        .fuse(rng, UnspentBind, witness, lifted, range)
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "UnspentBind: elapsed does not end with its last member"
     );
 }
 

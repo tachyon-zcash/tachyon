@@ -25,8 +25,6 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{
     delegation::NoteNullifiers,
@@ -77,7 +75,10 @@ use crate::{
 /// bucket's own epoch. Each epoch carries exactly one member: `QrUnspentInit`
 /// pins its one member by its challenge identity, `UnspentLift` adds exactly
 /// one at `epoch_next` by its, and [`UnspentFuse`]'s identity determines the
-/// combined polynomial exactly, so the property composes by induction.
+/// combined polynomial exactly, so the property composes by induction. The
+/// tested value is free at its own challenge, so the first two identities hold
+/// as polynomials once the last-member check above confines the value to the
+/// sequence's factors.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -432,13 +433,22 @@ impl Step for UnspentFuse {
 /// its own challenge. `unspent.nf_last` is a header field, fixed before that
 /// challenge.
 ///
-/// The challenge absorbs both sequences and `[value]·G_0`, so the identity
-/// $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$ the one
-/// indexed member `(epoch_next, value)`, fixes `extended` to `elapsed` plus
-/// exactly that member. The member's epoch is `epoch_next`, which advances by
-/// one, so `extended` keeps one member per epoch in
-/// `[epoch_start, epoch_next)`. `value` is free until [`UnspentBind`] forces
-/// it against the note's derivation.
+/// The identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with
+/// $F$ the one indexed member `(epoch_next, value)`, is checked at a challenge
+/// absorbing both sequences and `contents`. `value` is free and not absorbed,
+/// so a prover can pick it after the challenge. `value` is also the output's
+/// `nf_last`, and the step that next takes the output as a prefix checks that
+/// `extended` has the factor `(epoch_next, nf_last)`, at a challenge over that
+/// prefix and `extended`. That challenge is drawn after `value` is fixed. It
+/// differs from this one because this one also absorbs `contents`: with the
+/// honest prefix `elapsed`, the two would otherwise coincide, and a value
+/// picked here would pass both. The later check confines `value` to
+/// `extended`'s own factors at `epoch_next`, all fixed before this step's
+/// challenge, so the identity here holds as polynomials: `extended` is
+/// `elapsed` plus exactly that member. The member's epoch is `epoch_next`,
+/// which advances by one, so `extended` keeps one member per epoch in
+/// `[epoch_start, epoch_next)`. [`UnspentBind`] forces `value` against the
+/// note's derivation.
 ///
 /// Four committed polynomials: the prefix, the two sequences and the contents.
 #[derive(Debug)]
@@ -526,18 +536,11 @@ impl Step for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
         })?;
 
-        let z =
-            ctx.derive_challenge(
-                &[elapsed_seq.commit().into(), extended_seq.commit().into(), {
-                    // The mock absorbs only points, so absorb `[value]·G_0`.
-                    #[expect(clippy::expect_used, reason = "constant size")]
-                    let &g0 = Pasta::host_generators(Pasta::baked())
-                        .g()
-                        .first()
-                        .expect("at least one generator");
-                    g0 * Fp::from(value)
-                }],
-            )?;
+        let z = ctx.derive_challenge(&[
+            elapsed_seq.commit().into(),
+            extended_seq.commit().into(),
+            contents_commit.into(),
+        ])?;
         let elapsed_at_z = elapsed_seq.eval(z);
         let extended_at_z = extended_seq.eval(z);
         ctx.enforce_poly_query(elapsed_seq.commit().into(), z, elapsed_at_z)?;

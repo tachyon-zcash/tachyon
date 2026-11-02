@@ -749,10 +749,19 @@ pub(super) fn enforce_value_profile(
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to. `value` is a free witness. The challenge absorbs
-/// it, so the sequence identity fixes the one member to it;
-/// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
-/// note's genuine derivation.
+/// the bucket belongs to.
+///
+/// `value` is a free witness, and the challenge absorbs only the sequence. On
+/// its own the identity leaves `value` loose: a prover can pick it after the
+/// challenge, from a cube root of $\mathsf{sequence}(z) + 2$. `value` is also
+/// the segment's `nf_last`, and the step that next takes the segment as a
+/// prefix checks that the sequence has the factor `(epoch, nf_last)`, at a
+/// challenge drawn after `value` is fixed. That challenge absorbs a prefix as
+/// well as the sequence, so it differs from this one. The check confines
+/// `value` to the sequence's own factors at `epoch`, all fixed before this
+/// step's challenge, so the identity here holds as polynomials and the
+/// sequence is the one member. [`UnspentBind`](super::pool::UnspentBind)
+/// forces that member against the note's genuine derivation.
 ///
 /// [`QrBucketSeal`] performs the boundary digest, and so establishes
 /// whole-epoch coverage. This step and every fuse and lift preserve it.
@@ -802,15 +811,7 @@ impl Step for QrUnspentInit {
         })?;
 
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into(), {
-            // The mock absorbs only points, so absorb `[value]·G_0`.
-            #[expect(clippy::expect_used, reason = "constant size")]
-            let &g0 = Pasta::host_generators(Pasta::baked())
-                .g()
-                .first()
-                .expect("at least one generator");
-            g0 * Fp::from(value)
-        }])?;
+        let z = ctx.derive_challenge(&[sequence_commit.into()])?;
         let sequence_at_z = sequence.eval(z);
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
