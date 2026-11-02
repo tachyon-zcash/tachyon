@@ -1579,7 +1579,7 @@ fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
         let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
-        assert_eq!(unspent.data().2, NfSeqPoly::new(epoch, &[nf]).commit());
+        assert_eq!(unspent.data().3, NfSeqPoly::new(epoch, &[nf]).commit());
     }
 }
 
@@ -1621,7 +1621,13 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
     let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
 
-    let (anchor_start, epoch_start, elapsed, segment_epoch_next, anchor_next) = *unspent.data();
+    let (anchor_start, epoch_start, nf_first, elapsed, nf_last, segment_epoch_next, anchor_next) =
+        *unspent.data();
+    assert_eq!(
+        (nf_first, nf_last),
+        (nf, nf),
+        "the one member is both the first and the last"
+    );
     assert_eq!(
         anchor_start,
         Anchor::default(),
@@ -1688,12 +1694,12 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let right = segment(bucket1, nf1);
     let entry1 = final0.next_epoch(epoch1).unwrap();
     assert_eq!(
-        left.data().4,
+        left.data().6,
         entry1,
         "epoch zero's segment crosses to epoch one's entry anchor"
     );
     assert_eq!(
-        left.data().4,
+        left.data().6,
         right.data().0,
         "which is exactly where epoch one's segment opens"
     );
@@ -1708,7 +1714,7 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
         )
         .expect("UnspentFuse straight across the boundary");
 
-    let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
+    let (anchor_start, epoch_start, _, elapsed, _, epoch_next, anchor_next) = *fused.data();
     assert_eq!(anchor_start, Anchor::default());
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch2));
     assert_eq!(anchor_next, final1.next_epoch(epoch2).unwrap());
@@ -1802,7 +1808,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .expect("UnspentFuse across the stampless epoch");
-    let (fused_anchor_start, _, elapsed, fused_epoch_next, fused_anchor_next) = *fused.data();
+    let (fused_anchor_start, _, _, elapsed, _, fused_epoch_next, fused_anchor_next) = *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
@@ -2700,7 +2706,9 @@ fn qr_unspent_init_accepts_ragged_depths() {
             (
                 Anchor::default(),
                 epoch,
+                nf,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
+                nf,
                 epoch_next,
                 final_anchor.next_epoch(epoch_next).unwrap()
             ),
@@ -2740,7 +2748,9 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
             (
                 Anchor::default(),
                 epoch,
+                nf,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
+                nf,
                 epoch_next,
                 final_anchor.next_epoch(epoch_next).unwrap()
             ),
@@ -2995,7 +3005,8 @@ fn unspent_lift_rejects_invalid_extensions() {
         )
     };
 
-    let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
+    let (value, classes, mask, prefix_seq, elapsed_seq, _extended, contents) =
+        honest(nf1.into(), &[nf0]);
     let forged_extended = NfSeqPoly::new(epoch0, &[nf0, Nullifier::from(Fp::random(&mut *rng))]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
     let other = Fp::random(&mut *rng);
@@ -3026,6 +3037,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 value,
                 classes,
                 mask,
+                prefix_seq.clone(),
                 elapsed_seq.clone(),
                 forged_extended,
                 contents.clone(),
@@ -3039,8 +3051,9 @@ fn unspent_lift_rejects_invalid_extensions() {
                 value,
                 QrClassRoot::along(other, discriminant),
                 mask,
+                prefix_seq,
                 elapsed_seq,
-                honest(nf1.into(), &[nf0]).4,
+                honest(nf1.into(), &[nf0]).5,
                 contents,
             ),
             "QR profile: root does not square to the claimed class",

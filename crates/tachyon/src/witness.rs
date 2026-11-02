@@ -92,10 +92,15 @@ pub fn nullifier_fuse(
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
-/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+/// `(left_prefix_seq, left_elapsed_seq, combined_elapsed_seq,
+/// right_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
-/// covered epoch.
+/// covered epoch. The left prefix is `left_elapsed` without its last member.
+///
+/// # Panics
+///
+/// Panics if `left_elapsed` is empty.
 #[must_use]
 pub fn unspent_fuse(
     (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
@@ -104,8 +109,13 @@ pub fn unspent_fuse(
 ) -> StepWitness<'static, UnspentFuse> {
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, left_prefix) = left_elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
     let combined = [left_elapsed, right_elapsed].concat();
     (
+        NfSeqPoly::new(left_epoch_start, left_prefix),
         NfSeqPoly::new(left_epoch_start, left_elapsed),
         NfSeqPoly::new(left_epoch_start, &combined),
         NfSeqPoly::new(right_epoch_start, right_elapsed),
@@ -113,12 +123,17 @@ pub fn unspent_fuse(
 }
 
 /// Prepare the witness for [`UnspentBind`]:
-/// `(elapsed_seq, nf_seq, complement_seq)`.
+/// `(prefix_seq, elapsed_seq, nf_seq, complement_seq)`.
 ///
-/// `elapsed` is the unspent's member list, one per covered epoch. `window`
-/// is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the complement is the window's runs on both
-/// sides of the unspent's span, multiplied.
+/// `elapsed` is the unspent's member list, one per covered epoch, and the
+/// prefix is `elapsed` without its last member. `window` is the complete
+/// covering sequence, one member per epoch of the derivation header's range;
+/// the complement is the window's runs on both sides of the unspent's span,
+/// multiplied.
+///
+/// # Panics
+///
+/// Panics if `elapsed` is empty.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -129,14 +144,19 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, _, epoch_next, _) = unspent;
+    let (_, epoch_start, _, _, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, prefix) = elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
     let complement_seq =
         NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
     (
+        NfSeqPoly::new(epoch_start, prefix),
         NfSeqPoly::new(epoch_start, elapsed),
         NfSeqPoly::new(nullifiers_epoch_start, window),
         complement_seq,
@@ -435,10 +455,15 @@ pub const fn evidence_tree_open(
 }
 
 /// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
-/// elapsed_seq, extended_seq, contents)`.
+/// prefix_seq, elapsed_seq, extended_seq, contents)`.
 ///
-/// `elapsed` is the segment's member list, one per covered epoch; `value`
-/// becomes the member at the bucket's epoch.
+/// `elapsed` is the segment's member list, one per covered epoch, and the
+/// prefix is `elapsed` without its last member; `value` becomes the member at
+/// the bucket's epoch.
+///
+/// # Panics
+///
+/// Panics if `elapsed` is empty.
 #[must_use]
 pub fn unspent_lift(
     (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
@@ -448,11 +473,16 @@ pub fn unspent_lift(
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, prefix) = elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
+        NfSeqPoly::new(epoch_start, prefix),
         elapsed_seq.clone(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),

@@ -899,7 +899,7 @@ fn multi_epoch_fuse_setup(
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(4)));
     assert_eq!(left.data().0, Anchor::default(), "left opens on genesis");
     assert_eq!(
-        left.data().4,
+        left.data().6,
         right.data().0,
         "the halves meet at epoch 2's entry anchor"
     );
@@ -911,7 +911,7 @@ fn unspent_fuse_composes() {
     let rng = &mut StdRng::seed_from_u64(0);
     let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
     let start = left.data().0;
-    let end = right.data().4;
+    let end = right.data().6;
 
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
@@ -923,9 +923,12 @@ fn unspent_fuse_composes() {
         )
         .expect("UnspentFuse at an entry anchor");
 
-    let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
+    let (anchor_start, epoch_start, nf_first, elapsed, nf_last, epoch_next, anchor_next) =
+        *fused.data();
     assert_eq!(anchor_start, start);
     assert_eq!(anchor_next, end);
+    assert_eq!(nf_first, nf0, "the left half's first member");
+    assert_eq!(nf_last, nf3, "the right half's last member");
     assert_eq!(
         elapsed,
         NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]).commit(),
@@ -944,6 +947,7 @@ fn unspent_fuse_rejects_wrong_left_seq() {
             rng,
             pool::UnspentFuse,
             (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf1]),
                 NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
@@ -971,6 +975,7 @@ fn unspent_fuse_rejects_wrong_right_seq() {
             rng,
             pool::UnspentFuse,
             (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0]),
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
@@ -999,6 +1004,7 @@ fn unspent_fuse_rejects_wrong_combined() {
             rng,
             pool::UnspentFuse,
             (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0]),
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
@@ -1044,9 +1050,15 @@ fn lift_crosses_a_stampless_epoch() {
         |epoch| user.nf_at(&note, epoch),
         (epoch1, epoch3),
     );
-    let (_, epoch_start, elapsed, epoch_next, _) = *arbitrary.data();
+    let (_, epoch_start, nf_first, elapsed, nf_last, epoch_next, _) = *arbitrary.data();
     assert_eq!(epoch_start, epoch1);
     assert_eq!(epoch_next, epoch3);
+    assert_eq!(nf_first, user.nf_at(&note, epoch1));
+    assert_eq!(
+        nf_last,
+        user.nf_at(&note, epoch2),
+        "the silent epoch's member"
+    );
     assert_eq!(
         elapsed,
         NfSeqPoly::new(
@@ -1083,7 +1095,7 @@ fn unspent_bind_rejects_a_forged_member() {
     // The witnessed sequence matches the header, with the forged member in
     // it, so the poly bind passes; the divisibility read then finds no such
     // member in the genuine sequence and rejects it.
-    let (_, _, _, unspent_end, _) = *unspent.data();
+    let (_, _, _, _, _, unspent_end, _) = *unspent.data();
     let range = user.derivation_pcd(rng, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
@@ -1123,12 +1135,14 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
         epoch_start,
+        elapsed[0],
         NfSeqPoly::new(epoch_start, &elapsed).commit(),
+        elapsed[elapsed.len() - 1],
         epoch_end,
         Anchor::from(Fp::ZERO),
     );
 
-    let (_elapsed_seq, _nf_seq, complement_seq) = witness::unspent_bind(
+    let (_prefix_seq, _elapsed_seq, _nf_seq, complement_seq) = witness::unspent_bind(
         (synthetic_unspent, *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -1151,7 +1165,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
 
     let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (_honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
+    let (prefix_seq, _honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -1165,7 +1179,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         .fuse(
             rng,
             pool::UnspentBind,
-            (bogus_elapsed, nf_seq, complement_seq),
+            (prefix_seq, bogus_elapsed, nf_seq, complement_seq),
             unspent,
             range,
         )
@@ -1195,6 +1209,7 @@ fn unspent_bind_rejects_uncovered_start() {
     let range = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
     let window = user.covering_window(&note, &range);
     let witness = (
+        NfSeqPoly::new(EpochIndex::new(0), &[]),
         NfSeqPoly::new(EpochIndex::new(0), &elapsed),
         NfSeqPoly::new(EpochIndex::new(64), &window),
         NfSeqPoly::new(EpochIndex::new(64), &[]),
@@ -1231,6 +1246,7 @@ fn unspent_bind_rejects_uncovered_end() {
     // by hand: the genuine elapsed and covering sequence, an empty
     // complement.
     let witness = (
+        NfSeqPoly::new(last, &[]),
         NfSeqPoly::new(last, &[user.nf_at(&note, last)]),
         NfSeqPoly::new(EpochIndex::new(0), &window),
         NfSeqPoly::new(EpochIndex::new(0), &[]),
@@ -2136,7 +2152,7 @@ fn unspent_bind_rejects_a_forged_complement() {
 
     let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
-    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
+    let (prefix_seq, elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -2148,7 +2164,7 @@ fn unspent_bind_rejects_a_forged_complement() {
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, forged),
+        (prefix_seq, elapsed_seq, nf_seq, forged),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
@@ -2179,7 +2195,12 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, complement_seq),
+        (
+            NfSeqPoly::new(epoch1, &[]),
+            elapsed_seq,
+            nf_seq,
+            complement_seq,
+        ),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
@@ -2198,7 +2219,7 @@ fn unspent_bind_rejects_a_duplicating_complement() {
 
     let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
+    let (prefix_seq, elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -2209,7 +2230,7 @@ fn unspent_bind_rejects_a_duplicating_complement() {
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, duplicating),
+        (prefix_seq, elapsed_seq, nf_seq, duplicating),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
@@ -2249,7 +2270,7 @@ fn multi_window_span_binds_once() {
     let unspent = user.unspent_bind(rng, arbitrary, &note);
 
     assert_eq!(
-        (unspent.data().2, unspent.data().3),
+        (unspent.data().2, unspent.data().5),
         (EpochIndex::new(0), EpochIndex::new(last_epoch)),
         "one bind carries the whole multi-window span"
     );

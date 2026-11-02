@@ -35,12 +35,13 @@ use super::{
 use crate::{
     collections::indexed_multiset,
     note::{self},
+    nullifier::Nullifier,
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::enforce_poly_product,
+    relations::enforce::{enforce_poly_factor, enforce_poly_product},
 };
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
@@ -64,6 +65,12 @@ use crate::{
 /// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
 /// on `anchor_next`.
 ///
+/// `nf_first` is the member at `epoch_start` and `nf_last` the member at
+/// `epoch_next - 1`. The step that tests a value writes it to `nf_last`, and
+/// the step that next takes the segment as a prefix checks that `elapsed` ends
+/// with it: [`UnspentLift`], [`UnspentFuse`] for its left half, or
+/// [`UnspentBind`]. A right half's `nf_last` becomes the fused segment's.
+///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
 /// because `QrUnspentInit` and [`UnspentLift`] encode their member from the
@@ -75,17 +82,29 @@ use crate::{
 pub struct ArbitraryUnspent;
 
 impl Header for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`
-    type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
+    /// `(anchor_start, epoch_start, nf_first, elapsed, nf_last, epoch_next,
+    /// anchor_next)`
+    type Data = (
+        Anchor,
+        EpochIndex,
+        Nullifier,
+        NfSeqCommit,
+        Nullifier,
+        EpochIndex,
+        Anchor,
+    );
 
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *data;
+        let (anchor_start, epoch_start, nf_first, elapsed, nf_last, epoch_next, anchor_next) =
+            *data;
         (
             vec![
                 Fp::from(anchor_start),
                 Fp::from(epoch_start),
+                Fp::from(nf_first),
+                Fp::from(nf_last),
                 Fp::from(epoch_next),
                 Fp::from(anchor_next),
             ],
@@ -102,19 +121,30 @@ impl Header for ArbitraryUnspent {
 pub struct NoteUnspent;
 
 impl Header for NoteUnspent {
-    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. `cm` leads;
-    /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed`.
-    type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
+    /// `(cm, anchor_start, epoch_start, nf_first, nf_last, epoch_next,
+    /// anchor_next)`. `cm` leads; the rest mirrors the [`ArbitraryUnspent`]
+    /// without `elapsed`.
+    type Data = (
+        note::Commitment,
+        Anchor,
+        EpochIndex,
+        Nullifier,
+        Nullifier,
+        EpochIndex,
+        Anchor,
+    );
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
+        let (cm, anchor_start, epoch_start, nf_first, nf_last, epoch_next, anchor_next) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(anchor_start),
                 Fp::from(epoch_start),
+                Fp::from(nf_first),
+                Fp::from(nf_last),
                 Fp::from(epoch_next),
                 Fp::from(anchor_next),
             ],
@@ -273,7 +303,23 @@ impl Step for AnchorSpanFuse {
 /// The halves meet at one boundary: `left.anchor_next == right.anchor_start`
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
-/// their product.
+/// their product. The fused segment takes `nf_first` from the left half and
+/// `nf_last` from the right.
+///
+/// # Soundness
+///
+/// The left half's last member becomes interior here, so the step checks that
+/// `left_elapsed` ends with it,
+///
+/// $$
+///   \mathsf{left\_elapsed}(X) = \mathsf{left\_prefix}(X) \cdot
+///   F_{(\mathsf{left.epoch\_next} - 1,\, \mathsf{left.nf\_last})}(X),
+/// $$
+///
+/// at a challenge absorbing both sequences. `left.nf_last` and
+/// `left.epoch_next` are header fields, fixed before that challenge.
+///
+/// Four committed polynomials: the left prefix and the three sequences.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -282,17 +328,36 @@ impl Step for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(left_prefix_seq, left_elapsed_seq, combined_elapsed_seq,
+    /// right_elapsed_seq)`
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(2);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
-        (left_anchor_start, left_epoch_start, left_elapsed, left_epoch_next, left_anchor_next): <Self::Left as Header>::Data,
-        (right_anchor_start, right_epoch_start, right_elapsed, right_epoch_next, right_anchor_next): <Self::Right as Header>::Data,
+        (left_prefix_seq, left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<
+            'source,
+        >,
+        (
+            left_anchor_start,
+            left_epoch_start,
+            left_nf_first,
+            left_elapsed,
+            left_nf_last,
+            left_epoch_next,
+            left_anchor_next,
+        ): <Self::Left as Header>::Data,
+        (
+            right_anchor_start,
+            right_epoch_start,
+            _,
+            right_elapsed,
+            right_nf_last,
+            right_epoch_next,
+            right_anchor_next,
+        ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(left_elapsed_seq.commit()),
@@ -312,6 +377,20 @@ impl Step for UnspentFuse {
             Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
             "UnspentFuse: halves do not meet at one epoch",
         )?;
+        // The factor is not absorbed into the challenge. Its member is
+        // `(left.epoch_next − 1, left.nf_last)`, both fields of the left header.
+        enforce_poly_factor(
+            ctx,
+            left_prefix_seq.as_ref(),
+            |z| {
+                indexed_multiset::direct_eval(
+                    [(u64::from(left_epoch_next) - 1, left_nf_last.into())],
+                    z,
+                )
+            },
+            left_elapsed_seq.as_ref(),
+            "UnspentFuse: left does not end with its last member",
+        )?;
         enforce_poly_product(
             ctx,
             left_elapsed_seq.as_ref(),
@@ -323,7 +402,9 @@ impl Step for UnspentFuse {
             (
                 left_anchor_start,
                 left_epoch_start,
+                left_nf_first,
                 combined_elapsed_seq.commit(),
+                right_nf_last,
                 right_epoch_next,
                 right_anchor_next,
             ),
@@ -339,21 +420,27 @@ impl Step for UnspentFuse {
 /// `epoch_next` are the bucket's `anchor_start` and `epoch`. The step tests one
 /// value against the bucket as [`QrUnspentInit`](super::qr::QrUnspentInit)
 /// does, appends it to `elapsed` as the member at `epoch_next`, and moves the
-/// segment's bound to the bucket's `anchor_next`. One step per epoch, where
+/// segment's bound to the bucket's `anchor_next`. The value becomes the
+/// segment's `nf_last`. One step per epoch, where
 /// [`QrUnspentInit`](super::qr::QrUnspentInit) then [`UnspentFuse`] takes two.
 ///
 /// # Soundness
 ///
 /// `elapsed_seq` is bound to the header by commit-equality and `contents` to
-/// the bucket. The challenge absorbs both sequences and `[value]·G_0`, so the
-/// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
-/// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
-/// plus exactly that member. The member's epoch is `epoch_next`, which
-/// advances by one, so `extended` keeps one member per epoch in
-/// `[epoch_start, epoch_next)`. `value` is free until
-/// [`UnspentBind`] forces it against the note's derivation.
+/// the bucket. The segment's last member becomes interior here, so the step
+/// checks that `elapsed` ends with `unspent.nf_last` at `epoch_next - 1`, at
+/// its own challenge. `unspent.nf_last` is a header field, fixed before that
+/// challenge.
 ///
-/// Three committed polynomials, each opened once.
+/// The challenge absorbs both sequences and `[value]·G_0`, so the identity
+/// $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$ the one
+/// indexed member `(epoch_next, value)`, fixes `extended` to `elapsed` plus
+/// exactly that member. The member's epoch is `epoch_next`, which advances by
+/// one, so `extended` keeps one member per epoch in
+/// `[epoch_start, epoch_next)`. `value` is free until [`UnspentBind`] forces
+/// it against the note's derivation.
+///
+/// Four committed polynomials: the prefix, the two sequences and the contents.
 #[derive(Debug)]
 pub struct UnspentLift;
 
@@ -362,11 +449,13 @@ impl Step for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, elapsed_seq, extended_seq, contents)`
+    /// `(value, classes, mask, prefix_seq, elapsed_seq, extended_seq,
+    /// contents)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
+        NfSeqPoly,
         NfSeqPoly,
         NfSeqPoly,
         TachygramSetPoly,
@@ -377,11 +466,15 @@ impl Step for UnspentLift {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, classes, mask, elapsed_seq, extended_seq, contents): Self::Witness<'source>,
+        (value, classes, mask, prefix_seq, elapsed_seq, extended_seq, contents): Self::Witness<
+            'source,
+        >,
         (
             unspent_anchor_start,
             unspent_epoch_start,
+            unspent_nf_first,
             unspent_elapsed,
+            unspent_nf_last,
             unspent_epoch_next,
             unspent_anchor_next,
         ): <Self::Left as Header>::Data,
@@ -411,6 +504,20 @@ impl Step for UnspentLift {
             Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
             "UnspentLift: elapsed does not match header",
+        )?;
+        // The factor is not absorbed into the challenge. Its member is
+        // `(epoch_next − 1, nf_last)`, both fields of the left header.
+        enforce_poly_factor(
+            ctx,
+            prefix_seq.as_ref(),
+            |z| {
+                indexed_multiset::direct_eval(
+                    [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
+                    z,
+                )
+            },
+            elapsed_seq.as_ref(),
+            "UnspentLift: elapsed does not end with its last member",
         )?;
         enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
         enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
@@ -453,7 +560,9 @@ impl Step for UnspentLift {
             (
                 unspent_anchor_start,
                 unspent_epoch_start,
+                unspent_nf_first,
                 extended_seq.commit(),
+                value.into(),
                 epoch_next,
                 bucket_anchor_next,
             ),
@@ -487,8 +596,15 @@ impl Step for UnspentLift {
 /// Completeness rides `elapsed`'s provenance invariants, so every epoch of
 /// `[epoch_start, epoch_next)` was tested with its own genuine nullifier.
 ///
+/// No later step takes the segment as a prefix, so the bind checks that
+/// `elapsed` ends with `nf_last` at `epoch_next - 1`, at its own challenge.
+/// `nf_last` is a header field, fixed before that challenge.
+///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
 /// the validated [`NoteUnspent`].
+///
+/// Four committed polynomials: the prefix, `elapsed`, `nf_seq` and the
+/// complement.
 #[derive(Debug)]
 pub struct UnspentBind;
 
@@ -497,19 +613,21 @@ impl Step for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(elapsed_seq, nf_seq, complement_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(prefix_seq, elapsed_seq, nf_seq, complement_seq)`
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_seq, nf_seq, complement_seq): Self::Witness<'source>,
+        (prefix_seq, elapsed_seq, nf_seq, complement_seq): Self::Witness<'source>,
         (
             unspent_anchor_start,
             unspent_epoch_start,
+            unspent_nf_first,
             unspent_elapsed,
+            unspent_nf_last,
             unspent_epoch_next,
             unspent_anchor_next,
         ): <Self::Left as Header>::Data,
@@ -536,6 +654,20 @@ impl Step for UnspentBind {
             Eq::from(nf_commit),
             "UnspentBind: covering sequence does not match header",
         )?;
+        // The factor is not absorbed into the challenge. Its member is
+        // `(epoch_next − 1, nf_last)`, both fields of the left header.
+        enforce_poly_factor(
+            ctx,
+            prefix_seq.as_ref(),
+            |z| {
+                indexed_multiset::direct_eval(
+                    [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
+                    z,
+                )
+            },
+            elapsed_seq.as_ref(),
+            "UnspentBind: elapsed does not end with its last member",
+        )?;
 
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
@@ -552,6 +684,8 @@ impl Step for UnspentBind {
                 nullifiers_cm,
                 unspent_anchor_start,
                 unspent_epoch_start,
+                unspent_nf_first,
+                unspent_nf_last,
                 unspent_epoch_next,
                 unspent_anchor_next,
             ),

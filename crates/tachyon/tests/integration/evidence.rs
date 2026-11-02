@@ -242,7 +242,7 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
         *direct.data(),
         "the segment is the one the sealed bucket starts"
     );
-    let (cm, _, epoch_start, epoch_next, _) = *bound.data();
+    let (cm, _, epoch_start, _, _, epoch_next, _) = *bound.data();
     assert_eq!(cm, note.commitment());
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch1));
 }
