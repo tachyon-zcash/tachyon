@@ -78,7 +78,8 @@ use core::mem;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use udon::field::Field as _;
 
-use crate::{arithmetic, pasta::Fp};
+use super::arithmetic;
+use crate::pasta::Fp;
 
 const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000002"
