@@ -88,7 +88,8 @@ pub(crate) fn enforce_poly_product(
 /// in cheap field operations.
 ///
 /// `factor` maps the challenge to `F(z)`: `|z| z - root` for the linear factor
-/// `X − root`, or an indexed-multiset evaluation for one indexed member. `product` is prover-supplied and the relation works only from the
+/// `X − root`, or an indexed-multiset evaluation for one indexed member.
+/// `product` is prover-supplied and the relation works only from the
 /// two commitments and their openings at `z` -- it does not multiply the
 /// inputs. The point-wise identity `product(z) = multiplicand(z)·F(z)` at a
 /// random `z` confirms the relation: with both operands committed and absorbed
