@@ -126,13 +126,6 @@ impl Note {
 pub struct Commitment(Tachygram);
 
 #[cfg(test)]
-impl Commitment {
-    pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Tachygram::random(rng))
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 

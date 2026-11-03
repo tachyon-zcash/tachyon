@@ -1,6 +1,6 @@
 //! Value commitments and bounded value types.
 
-use core::{cmp, ops};
+use core::{cmp, ops, ops::Neg as _};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use group::GroupEncoding as _;
@@ -246,7 +246,7 @@ impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
         match value.0.cmp(&0) {
             cmp::Ordering::Equal => Self::ZERO,
             cmp::Ordering::Greater => Self::from(value.0.unsigned_abs()),
-            cmp::Ordering::Less => -Self::from(value.0.unsigned_abs()),
+            cmp::Ordering::Less => Self::from(value.0.unsigned_abs()).neg(),
         }
     }
 }

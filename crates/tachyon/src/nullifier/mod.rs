@@ -25,13 +25,6 @@ pub const NF_DERIVATION_WIDTH: usize = 16;
 #[into(Fp, Tachygram)]
 pub struct Nullifier(Tachygram);
 
-impl Nullifier {
-    /// Sample a uniformly random nullifier.
-    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Tachygram::random(rng))
-    }
-}
-
 /// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
 ///
 /// Used to derive the note's master key $\mathsf{mk} =
