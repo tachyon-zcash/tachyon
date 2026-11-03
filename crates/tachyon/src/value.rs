@@ -1,6 +1,6 @@
 //! Value commitments and bounded value types.
 
-use core::ops;
+use core::{cmp, ops};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use group::GroupEncoding as _;
@@ -9,7 +9,7 @@ use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
-    field::{Field as _, PastaField},
+    field::Field as _,
 };
 
 use crate::{
@@ -243,7 +243,11 @@ impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
     /// Signed value as a Pallas scalar, for use as the `V`-component
     /// exponent in a value commitment.
     fn from(value: Value<MIN, MAX>) -> Self {
-        Self::new(PastaField::from_i64(value.0))
+        match value.0.cmp(&0) {
+            cmp::Ordering::Equal => Self::ZERO,
+            cmp::Ordering::Greater => Self::from(value.0.unsigned_abs()),
+            cmp::Ordering::Less => -Self::from(value.0.unsigned_abs()),
+        }
     }
 }
 
@@ -318,14 +322,14 @@ mod tests {
 
         let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
-        let rcv_sum = Fq::from(rcv_a) + Fq::from(rcv_b);
+        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
 
         assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
     }
 
     #[test]
     fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from(0xFACE));
+        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
         assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
     }
 

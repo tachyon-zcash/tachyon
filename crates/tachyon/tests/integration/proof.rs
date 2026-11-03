@@ -813,7 +813,7 @@ fn spend_rejects_invalid_note() {
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    assert_eq!(note.psi, phantom.psi, "shared psi");
+    assert_eq!(Fp::from(note.psi), Fp::from(phantom.psi), "shared psi");
     assert_ne!(note.commitment(), phantom.commitment(), "distinct cm");
 
     let wrong_value = value::Positive::try_from(999_999u64).expect("test value in range");

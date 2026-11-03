@@ -5,7 +5,7 @@ use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
 use ragu::{
     Cycle as _, Pcd, PoseidonPermutation as _, Proof,
-    pasta::{Eq, Pasta, PoseidonFp},
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::{
@@ -33,7 +33,7 @@ use zcash_tachyon::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::Fp,
+    pasta::{Eq, Fp},
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{

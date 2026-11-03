@@ -13,7 +13,7 @@ use crate::pasta::Fp;
 /// Roots per leaf of the [`poly_with_roots`] product tree.
 const ROOT_CHUNK: usize = 128;
 
-pub(crate) fn poly_mul(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
+pub(super) fn poly_mul(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
     out.clear();
 
     if left.is_empty() || right.is_empty() {

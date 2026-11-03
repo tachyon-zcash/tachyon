@@ -60,7 +60,7 @@ impl PartialOrd for Tachygram {
 impl Ord for Tachygram {
     /// Order by the canonical little-endian byte encoding of the field
     /// element, matching the byte-lexicographic order the stamp digest
-    /// commits to, rather than the numeric order of the canonical integer.
+    /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_bytes().cmp(&other.0.to_bytes())
     }
