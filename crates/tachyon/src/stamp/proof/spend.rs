@@ -12,7 +12,7 @@ use crate::{
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
-    pasta::{self, Ep, Eq, Fp},
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
@@ -45,7 +45,7 @@ impl Header for SpendHeader {
 
     const SUFFIX: Suffix = Suffix::new(5);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
         (
             vec![

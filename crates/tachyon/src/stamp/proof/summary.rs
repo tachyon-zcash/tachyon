@@ -14,7 +14,7 @@ use alloc::{vec, vec::Vec};
 use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
-    pasta::{self, Ep, Eq, Fp},
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     ragu_constraint::enforce_equal_point,
     relations::enforce::enforce_poly_product,
@@ -36,7 +36,7 @@ impl Header for Summary {
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
         (
             vec![Fp::from(epoch), Fp::from(anchor_prev), Fp::from(anchor_end)],

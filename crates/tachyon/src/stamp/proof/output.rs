@@ -11,7 +11,7 @@ use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
     note::Note,
-    pasta::{self, Ep, Eq, Fp},
+    pasta::{Ep, Eq, Fp, Fq},
     ragu_constraint::enforce_nonzero,
     value,
 };
@@ -31,7 +31,7 @@ impl Header for OutputHeader {
 
     const SUFFIX: Suffix = Suffix::new(7);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad, cv) = *data;
         (
             vec![Fp::from(cm), Fp::from(pad)],

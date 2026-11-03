@@ -23,7 +23,7 @@ use super::qr::QrBucket;
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
-    pasta::{self, Ep, Eq, Fp},
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetCommit,
     },
@@ -50,7 +50,7 @@ impl Header for EvidenceTree {
 
     const SUFFIX: Suffix = Suffix::new(12);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, root) = *data;
         (
             vec![
@@ -89,7 +89,7 @@ impl Header for EvidenceTreePair {
 
     const SUFFIX: Suffix = Suffix::new(13);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, first, second) = *data;
         (
             vec![

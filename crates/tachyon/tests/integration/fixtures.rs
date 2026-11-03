@@ -5,10 +5,7 @@ use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
 use ragu::{Pcd, Proof};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::{
-    PoseidonPermutation as _,
-    pasta::{Eq, PoseidonFp},
-};
+use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{
@@ -28,7 +25,7 @@ use zcash_tachyon::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::Fp,
+    pasta::{Eq, Fp},
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{

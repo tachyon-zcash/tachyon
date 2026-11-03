@@ -17,7 +17,7 @@ use ragu::{Header, Index, Step, Suffix};
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     note,
-    pasta::{self, Ep, Eq, Fp},
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
 };
@@ -37,7 +37,7 @@ impl Header for NoteSpendable {
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_current, anchor) = *data;
         (
             vec![Fp::from(cm), Fp::from(epoch_current), Fp::from(anchor)],

@@ -12,10 +12,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use ragu_core::{
-    PoseidonPermutation as _,
-    pasta::{self, Ep, Eq, PoseidonFp},
-};
+use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 use udon::field::Field as _;
 
 use crate::{
@@ -24,7 +21,7 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::Fp,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -47,14 +44,14 @@ impl Header for NoteSecret {
 
     const SUFFIX: Suffix = Suffix::new(8);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, note, mk) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(note.rcm),
                 Fp::from(note.pk),
-                pasta::Fp::from(u64::from(note.value)),
+                Fp::from(u64::from(note.value)),
                 Fp::from(note.psi),
                 mk.0,
             ],
@@ -90,7 +87,7 @@ impl Header for NoteNullifiers {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
             vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],

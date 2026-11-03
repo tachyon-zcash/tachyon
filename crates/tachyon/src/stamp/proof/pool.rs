@@ -24,10 +24,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use ragu_core::{
-    Cycle as _, FixedGenerators as _,
-    pasta::{Ep, Eq, Pasta},
-};
+use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 
 use super::{
     delegation::NoteNullifiers,
@@ -37,7 +34,7 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     pasta,
-    pasta::Fp,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -83,7 +80,7 @@ impl Header for ArbitraryUnspent {
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *data;
         (
             vec![
@@ -111,7 +108,7 @@ impl Header for NoteUnspent {
 
     const SUFFIX: Suffix = Suffix::new(3);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
         (
             vec![
@@ -156,7 +153,7 @@ impl Header for AnchorSpan {
 
     const SUFFIX: Suffix = Suffix::new(14);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_start, members, anchor_end) = *data;
         (
             vec![Fp::from(anchor_start), Fp::from(anchor_end)],

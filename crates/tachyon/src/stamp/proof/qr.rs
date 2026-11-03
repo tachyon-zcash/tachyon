@@ -24,10 +24,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use ragu_core::{
-    Cycle as _, FixedGenerators as _,
-    pasta::{Ep, Eq, Pasta},
-};
+use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 use udon::field::Field as _;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
@@ -36,7 +33,7 @@ use crate::{
     collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
     digest::poseidon,
     pasta,
-    pasta::Fp,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -67,7 +64,7 @@ impl Header for QrIntake {
 
     const SUFFIX: Suffix = Suffix::new(4);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = *data;
         (
             vec![
@@ -107,7 +104,7 @@ impl Header for QrIntakeSides {
 
     const SUFFIX: Suffix = Suffix::new(10);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) = *data;
         (
             vec![
@@ -554,7 +551,7 @@ impl Header for QrBucket {
 
     const SUFFIX: Suffix = Suffix::new(11);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, profile, contents) = *data;
         (
             vec![

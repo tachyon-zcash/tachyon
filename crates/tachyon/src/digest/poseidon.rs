@@ -12,7 +12,7 @@ use ragu_core::{
     Cycle as _, PoseidonPermutation as _,
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe as _},
-    pasta::{EqAffine, Pasta, PoseidonFp},
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{
     Element,
@@ -21,7 +21,11 @@ use ragu_primitives::{
 };
 use udon::{curve::Affine as _, field::Field as _};
 
-use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
+use crate::{
+    constants::EVIDENCE_TREE_ARITY,
+    pasta,
+    pasta::{EqAffine, Fp},
+};
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
