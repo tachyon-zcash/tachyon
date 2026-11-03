@@ -74,8 +74,6 @@ impl Mul for NfSeqPoly {
             );
             coeffs
         });
-        let mut product = Vec::new();
-        arithmetic::poly_mul(&left, &right, &mut product);
-        Self(Polynomial::from_coeffs(product))
+        Self(Polynomial::from_coeffs(arithmetic::poly_mul(&left, &right)))
     }
 }

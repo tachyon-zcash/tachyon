@@ -122,8 +122,7 @@ pub(crate) fn decomposition(
     }
 
     let translate = [class * shift, class];
-    let mut h_coeffs = Vec::new();
-    arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs, &mut h_coeffs);
+    let mut h_coeffs = arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs);
     if h_coeffs.len() < translate.len() {
         h_coeffs.resize(translate.len(), Fp::ZERO);
     }
@@ -131,7 +130,7 @@ pub(crate) fn decomposition(
         *coeff -= translate_coeff;
     }
     for &(abscissa, _) in points {
-        arithmetic::divide_by_root(&mut h_coeffs, abscissa)?;
+        h_coeffs = arithmetic::divide_by_root(&h_coeffs, abscissa)?;
     }
 
     Some((
@@ -269,15 +268,13 @@ mod tests {
         h: &Polynomial<Fp, ProductionRank>,
     ) {
         let q = multiset::encode(abscissas_of(points));
-        let mut lhs = Vec::new();
-        arithmetic::poly_mul(&dense(u), &dense(u), &mut lhs);
+        let mut lhs = arithmetic::poly_mul(&dense(u), &dense(u));
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
         lhs[0] -= class * shift;
         lhs[1] -= class;
-        let mut rhs = Vec::new();
-        arithmetic::poly_mul(&dense(&q), &dense(h), &mut rhs);
+        let rhs = arithmetic::poly_mul(&dense(&q), &dense(h));
         assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
         for &(abscissa, root) in points {
             assert_eq!(u.eval(abscissa), root);

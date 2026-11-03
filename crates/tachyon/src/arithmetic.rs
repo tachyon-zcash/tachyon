@@ -1,12 +1,12 @@
-use alloc::{vec, vec::Vec};
-use core::mem;
+//! Dense polynomial arithmetic over ascending `Fp` coefficient slices.
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use alloc::{vec, vec::Vec};
+
 use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
     field::Field as _,
-    polynomial::vanishing_polynomial,
+    polynomial::{divide_linear_in_place, evaluate_iter, vanishing_polynomial},
 };
 
 use crate::pasta::Fp;
@@ -14,11 +14,10 @@ use crate::pasta::Fp;
 /// Roots per leaf of the [`poly_with_roots`] product tree.
 const ROOT_CHUNK: usize = 128;
 
-pub(crate) fn poly_mul(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
-    out.clear();
-
+/// The product of `left` and `right`, empty when either factor is empty.
+pub(crate) fn poly_mul(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
     if left.is_empty() || right.is_empty() {
-        return;
+        return Vec::new();
     }
 
     let schoolbook_cost = left.len().saturating_mul(right.len());
@@ -26,27 +25,28 @@ pub(crate) fn poly_mul(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
         .next_power_of_two()
         .saturating_mul(16);
     if schoolbook_cost <= fft_cost {
-        poly_mul_schoolbook(left, right, out);
+        poly_mul_schoolbook(left, right)
     } else {
-        poly_mul_fft(left, right, out);
+        poly_mul_fft(left, right)
     }
 }
 
 #[expect(clippy::indexing_slicing, reason = "the output spans the convolution")]
-fn poly_mul_schoolbook(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
-    out.resize(left.len() + right.len() - 1, Fp::ZERO);
+fn poly_mul_schoolbook(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
+    let mut out = vec![Fp::ZERO; left.len() + right.len() - 1];
     for (i, ai) in left.iter().enumerate() {
         for (j, bj) in right.iter().enumerate() {
             out[i + j] += *ai * bj;
         }
     }
+    out
 }
 
 #[expect(
     clippy::expect_used,
     reason = "the product fits the FFT domain, which expands onto itself"
 )]
-fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
+fn poly_mul_fft(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
     let result_len = left.len() + right.len() - 1;
     let n = result_len.next_power_of_two();
     let transform = Transform::new(
@@ -57,8 +57,8 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
     let expansion = Expansion::new(transform, transform.domain(), None)
         .expect("a subgroup expands onto itself");
 
-    out.resize(2 * n, Fp::ZERO);
-    let (product, factor) = Fp::as_slice_mut(out).split_at_mut(n);
+    let mut out = vec![Fp::ZERO; 2 * n];
+    let (product, factor) = Fp::as_slice_mut(&mut out).split_at_mut(n);
     expansion
         .coefficients(
             Fp::as_slice(right),
@@ -87,8 +87,10 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
         )
         .expect("serial transform needs no scratch");
     out.truncate(result_len);
+    out
 }
 
+/// The monic polynomial whose roots are `roots`, with multiplicity.
 #[expect(
     clippy::expect_used,
     reason = "each leaf spans its roots and leading one; the nonempty product tree has a root"
@@ -107,17 +109,15 @@ pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
             leaf
         })
         .collect();
-    let mut out = Vec::new();
 
     while polys.len() > 1 {
         let mut next = Vec::with_capacity(polys.len().div_ceil(2));
         let mut iter = polys.into_iter();
-        while let Some(mut first) = iter.next() {
-            if let Some(second) = iter.next() {
-                poly_mul(&first, &second, &mut out);
-                mem::swap(&mut first, &mut out);
-            }
-            next.push(first);
+        while let Some(first) = iter.next() {
+            next.push(match iter.next() {
+                Some(second) => poly_mul(&first, &second),
+                None => first,
+            });
         }
         polys = next;
     }
@@ -125,37 +125,16 @@ pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     polys.into_iter().next().expect("nonempty product tree")
 }
 
-/// Divides `coeffs` by $(X - \mathsf{root})$ in place, exactly.
-///
-/// Returns `None` when the division leaves a remainder.
-pub(crate) fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
-    let mut carry = Fp::ZERO;
-    for coeff in coeffs.iter_mut().rev() {
-        let quotient_coeff = carry;
-        carry = *coeff + (carry * root);
-        *coeff = quotient_coeff;
-    }
-    // After the pass, `carry` is the remainder and the vector holds the
-    // quotient with one trailing zero coefficient.
-    (carry == Fp::ZERO).then(|| coeffs.pop())?;
-    Some(())
+/// The exact quotient of `coeffs` by $(X - \mathsf{root})$, or `None` when a
+/// remainder is left.
+pub(crate) fn divide_by_root(coeffs: &[Fp], root: Fp) -> Option<Vec<Fp>> {
+    let mut quotient = coeffs.to_vec();
+    let split = divide_linear_in_place(Fp::as_slice_mut(&mut quotient), root.as_inner());
+    (split == 1 && quotient.first() == Some(&Fp::ZERO)).then(|| quotient.split_off(split))
 }
 
-#[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
-fn derivative(coeffs: &[Fp]) -> Polynomial<Fp, ProductionRank> {
-    Polynomial::from_coeffs(
-        coeffs
-            .iter()
-            .enumerate()
-            .skip(1)
-            .map(|(degree, coeff)| Fp::from(degree as u64) * coeff)
-            .collect(),
-    )
-}
-
-/// The coefficients of the polynomial of least degree through `points`.
-///
-/// Returns `None` when two points share an abscissa.
+/// The polynomial of least degree through `points`, or `None` when two points
+/// share an abscissa.
 pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
     fn reduced(range: &[(Fp, Fp)]) -> (Vec<Fp>, Vec<Fp>) {
         if let &[(at, weighted_value)] = range {
@@ -165,16 +144,12 @@ pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
         let (left_interp, left_vanishing) = reduced(left);
         let (right_interp, right_vanishing) = reduced(right);
 
-        let mut combined = Vec::new();
-        let mut cross = Vec::new();
-        let mut vanishing = Vec::new();
-        poly_mul(&left_interp, &right_vanishing, &mut combined);
-        poly_mul(&right_interp, &left_vanishing, &mut cross);
-        poly_mul(&left_vanishing, &right_vanishing, &mut vanishing);
+        let mut combined = poly_mul(&left_interp, &right_vanishing);
+        let cross = poly_mul(&right_interp, &left_vanishing);
         for (coeff, cross_coeff) in combined.iter_mut().zip(cross.iter()) {
             *coeff += cross_coeff;
         }
-        (combined, vanishing)
+        (combined, poly_mul(&left_vanishing, &right_vanishing))
     }
 
     let abscissas: Vec<Fp> = points.iter().map(|&(at, _)| at).collect();
@@ -182,12 +157,18 @@ pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
 
     // The normalizer for each point is $v'(x_i) = \prod_{j \neq i}(x_i -
     // x_j)$; a non-invertible normalizer marks a repeated abscissa.
-    let normalizers = derivative(&vanishing);
+    #[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
+    let derivative: Vec<Fp> = vanishing
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(degree, coeff)| Fp::from(degree as u64) * coeff)
+        .collect();
 
     let weighted: Vec<(Fp, Fp)> = points
         .iter()
         .map(|&(at, value)| {
-            let weight = normalizers.eval(at).invert()?;
+            let weight = evaluate_iter(&derivative, at).invert()?;
             Some((at, weight * value))
         })
         .collect::<Option<Vec<_>>>()?;

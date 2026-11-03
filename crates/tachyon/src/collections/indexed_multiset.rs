@@ -72,9 +72,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use core::mem;
-
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use udon::field::Field as _;
 
@@ -107,13 +104,13 @@ fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
 pub(crate) fn encode(
     members: impl IntoIterator<Item = (u64, Fp)>,
 ) -> Polynomial<Fp, ProductionRank> {
-    let mut product = [Fp::ONE].to_vec();
-    let mut out = Vec::new();
-    for (idx, m) in members {
-        arithmetic::poly_mul(&product, &encode_single(idx, m), &mut out);
-        mem::swap(&mut product, &mut out);
-    }
-    Polynomial::from_coeffs(product)
+    Polynomial::from_coeffs(
+        members
+            .into_iter()
+            .fold([Fp::ONE].to_vec(), |product, (idx, m)| {
+                arithmetic::poly_mul(&product, &encode_single(idx, m))
+            }),
+    )
 }
 
 /// Evaluate the indexed multiset without building the polynomial.
@@ -125,6 +122,8 @@ pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use rand::{Rng as _, RngExt as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -151,10 +150,7 @@ mod tests {
         let member = Fp::random(|bytes| rng.fill_bytes(bytes));
 
         let m_ix = [member, Fp::from(idx) + Fp::ONE];
-        let mut m_ix_square = Vec::new();
-        arithmetic::poly_mul(&m_ix, &m_ix, &mut m_ix_square);
-        let mut manual = Vec::new();
-        arithmetic::poly_mul(&m_ix_square, &m_ix, &mut manual);
+        let mut manual = arithmetic::poly_mul(&arithmetic::poly_mul(&m_ix, &m_ix), &m_ix);
         manual[0] -= NON_RESIDUE;
 
         assert_eq!(encode_single(idx, member).as_slice(), manual.as_slice());
