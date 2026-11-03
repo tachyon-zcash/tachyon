@@ -26,6 +26,7 @@ pub mod stamp;
 pub mod value;
 pub mod witness;
 
+mod arithmetic;
 mod collections;
 pub mod gadgets;
 mod primitives;

@@ -77,7 +77,7 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{digest::poseidon, note, primitives::effect};
@@ -88,7 +88,7 @@ mod tests {
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::random(&mut rng);
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
         let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
@@ -101,7 +101,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(101);
         let theta_a = ActionEntropy::random(&mut rng);
         let theta_b = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::random(&mut rng);
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         // Deterministic: same theta twice
         let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
@@ -119,7 +119,7 @@ mod tests {
     fn randomizer_embeds_the_poseidon_output() {
         let mut rng = StdRng::seed_from_u64(102);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::random(&mut rng);
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
         let output: Fq = theta.randomizer::<effect::Output>(cm).into();
@@ -165,7 +165,7 @@ mod tests {
     fn debug_randomizer_redacts_scalar() {
         let mut rng = StdRng::seed_from_u64(200);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::random(&mut rng);
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
         let alpha = theta.randomizer::<effect::Spend>(cm);
         let dbg = alloc::format!("{alpha:?}");
         assert!(dbg.contains("ActionRandomizer"), "must name the type");
