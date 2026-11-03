@@ -294,14 +294,14 @@ mod tests {
 
         let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
-        let rcv_sum = Fq::from(rcv_a) + Fq::from(rcv_b);
+        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
 
         assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
     }
 
     #[test]
     fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from(0xFACE));
+        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
         assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
     }
 

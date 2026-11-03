@@ -7,7 +7,7 @@ use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
 use ragu::{Pcd, Proof, Step};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
@@ -2655,9 +2655,9 @@ fn qr_unspent_init_accepts_ragged_depths() {
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
     let discriminant = QrDiscriminant::random(rng);
-    let shallow_value = Fp::from(Nullifier::random(rng));
+    let shallow_value = Fp::random(|bytes| rng.fill_bytes(bytes));
     let shallow_side = qr::classify(shallow_value, discriminant.at(0)).0;
-    let deep_value = iter::repeat_with(|| Fp::from(Nullifier::random(rng)))
+    let deep_value = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
         .find(|&value| qr::classify(value, discriminant.at(0)).0 != shallow_side)
         .expect("a value on the other side");
 
@@ -2860,7 +2860,7 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     let epoch = EpochIndex::new(3);
     let anchor_prev = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let base = Fp::from(Tachygram::random(rng));
+    let base = Fp::random(|bytes| rng.fill_bytes(bytes));
     let members: Vec<Tachygram> = (0..12u64)
         .map(|offset| Tachygram::from(base + Fp::from(offset)))
         .collect();
@@ -2998,7 +2998,7 @@ fn unspent_lift_rejects_invalid_extensions() {
     let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
     let forged_extended = NfSeqPoly::new(epoch0, &[nf0, Nullifier::random(rng)]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
-    let other = Fp::from(Nullifier::random(rng));
+    let other = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let cases = [
         (

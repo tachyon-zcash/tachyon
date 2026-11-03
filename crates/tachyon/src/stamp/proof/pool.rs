@@ -437,13 +437,13 @@ impl Step for UnspentLift {
         ctx.enforce_poly_query(extended_seq.commit().into(), z, extended_at_z)?;
         enforce_zero(
             extended_at_z
-                - elapsed_at_z
-                    * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z),
+                - (elapsed_at_z
+                    * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z)),
             "UnspentLift: extended is not elapsed with the tested pair",
         )?;
 
         let contents_at_value = contents.eval(value.into());
-        ctx.enforce_poly_query(contents_commit.into(), Fp::from(value), contents_at_value)?;
+        ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "UnspentLift: found nullifier in the bucket",

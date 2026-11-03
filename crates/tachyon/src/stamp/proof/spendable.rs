@@ -89,7 +89,7 @@ impl Step for SpendableInit {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_in_set = creation_set.eval(cm.into());
-        ctx.enforce_poly_query(creation_set.commit().into(), Fp::from(cm), cm_in_set)?;
+        ctx.enforce_poly_query(creation_set.commit().into(), cm.into(), cm_in_set)?;
         enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
@@ -180,7 +180,7 @@ impl Step for QrSpendableInit {
 
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let cm_in_bucket = contents.eval(cm.into());
-        ctx.enforce_poly_query(bucket_commit.into(), Fp::from(cm), cm_in_bucket)?;
+        ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
         enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
 
         Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))

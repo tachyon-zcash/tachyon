@@ -821,7 +821,7 @@ impl Step for QrUnspentInit {
         )?;
 
         let contents_at_value = contents.eval(value.into());
-        ctx.enforce_poly_query(contents_commit.into(), Fp::from(value), contents_at_value)?;
+        ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "QrUnspentInit: found nullifier in the bucket",

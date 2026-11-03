@@ -155,7 +155,7 @@ impl QrClassRoot {
     /// `discriminant`, in depth order.
     #[must_use]
     pub fn along(value: Fp, discriminant: QrDiscriminant) -> [Self; QrProfile::MAX_DEPTH] {
-        let mut shifted = value + discriminant.0;
+        let mut shifted = value + Fp::from(discriminant);
         array::from_fn(|_| {
             let class = Self::of(shifted, Fp::ZERO);
             shifted += Fp::ONE;
