@@ -37,12 +37,11 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use pasta_curves::Fp;
 use ragu::StepCtx;
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{Error, Result};
-use ragu_pasta::Pasta;
+use ragu_core::{Cycle as _, Error, Result, pasta::Pasta};
+
+use crate::{pasta, pasta::Fp};
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -67,7 +66,7 @@ pub(crate) fn enforce_poly_product(
     product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
-    let generators = Pasta::host_generators(Pasta::baked());
+    let generators = Pasta::host_generators(pasta::baked());
     let multiplicand_com = multiplicand.commit(generators);
     let multiplier_com = multiplier.commit(generators);
     let product_com = product.commit(generators);
@@ -109,7 +108,7 @@ pub(crate) fn enforce_poly_factor(
     product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
-    let generators = Pasta::host_generators(Pasta::baked());
+    let generators = Pasta::host_generators(pasta::baked());
     let multiplicand_com = multiplicand.commit(generators);
     let product_com = product.commit(generators);
     let z = ctx.derive_challenge(&[multiplicand_com, product_com])?;
@@ -154,7 +153,7 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
     roots: &[Fp; N],
     err: &'static str,
 ) -> Result<()> {
-    let accumulator_com = accumulator.commit(Pasta::host_generators(Pasta::baked()));
+    let accumulator_com = accumulator.commit(Pasta::host_generators(pasta::baked()));
     let z = ctx.derive_challenge(&[accumulator_com])?;
 
     let accumulator_at_z = accumulator.eval(z);
@@ -172,8 +171,8 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
 mod tests {
     use core::array;
 
-    use ff::Field as _;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+    use udon::field::Field as _;
 
     use super::*;
     use crate::collections::multiset;
@@ -183,10 +182,10 @@ mod tests {
     #[test]
     fn linear_factor_holds_only_for_the_extended_set() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let members: [Fp; 3] = array::from_fn(|_| Fp::random(&mut *rng));
-        let root = Fp::random(&mut *rng);
-        let other = Fp::random(&mut *rng);
-        let z = Fp::random(&mut *rng);
+        let members: [Fp; 3] = array::from_fn(|_| Fp::random(|bytes| rng.fill_bytes(bytes)));
+        let root = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let other = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let z = Fp::random(|bytes| rng.fill_bytes(bytes));
         let holds = |multiplicand: &Polynomial<Fp, ProductionRank>,
                      factor_root: Fp,
                      product: &Polynomial<Fp, ProductionRank>| {

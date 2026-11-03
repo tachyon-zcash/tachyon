@@ -1,13 +1,16 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::{Eq, Fp};
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::Pasta;
+use ragu_core::{Cycle as _, pasta::Pasta};
+use rand_core::CryptoRng;
+use udon::field::Field as _;
 
-use crate::collections::qr;
+use crate::{
+    collections::qr,
+    pasta,
+    pasta::{Eq, Fp},
+};
 
 /// A routing network's first discriminant $R_0$.
 ///
@@ -25,6 +28,11 @@ use crate::collections::qr;
 pub struct QrDiscriminant(pub Fp);
 
 impl QrDiscriminant {
+    /// Sample a uniformly random first discriminant.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// The discriminant a split at `depth` classifies at.
     #[must_use]
     pub fn at(self, depth: u32) -> Fp {
@@ -41,7 +49,7 @@ impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrInterpolantCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
 
     /// Evaluate the interpolant at a given point.
@@ -64,7 +72,7 @@ impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrQuotientCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
 
     /// Evaluate the quotient at a given point.

@@ -7,11 +7,10 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
+use udon::field::Field as _;
 use zcash_tachyon::{
     ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
     Note, Tachygram, TachygramSetPoly, action,
@@ -20,6 +19,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
     value, witness,
 };
@@ -73,8 +73,8 @@ fn detached_segment(
     epoch: EpochIndex,
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> Pcd<pool::ArbitraryUnspent> {
-    let anchor_final_prev = Anchor::from(Fp::random(&mut *rng));
-    let discriminant = zcash_tachyon::QrDiscriminant::from(Fp::random(&mut *rng));
+    let anchor_final_prev = Anchor::random(rng);
+    let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = seed_qr_empty_intake(
         rng,
         anchor_final_prev.next_epoch(epoch).unwrap(),
@@ -130,7 +130,7 @@ fn honest_spend_stamp(
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("SpendAction honest");
     stamp
@@ -203,7 +203,7 @@ fn spendable_init_rejects_tg_absent() {
     let note = user.random_note(500);
 
     let nf_header = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let absent_tg = Tachygram::from(Fp::random(&mut *rng));
+    let absent_tg = Tachygram::random(rng);
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -216,7 +216,7 @@ fn spendable_init_rejects_tg_absent() {
                 EpochIndex::new(0),
             ),
             nf_header,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -231,7 +231,8 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(2).last_block());
-    let nf: [Nullifier; 3] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let nf: [Nullifier; 3] =
+        array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
 
     // Anchor discontinuity: the right segment skips epoch one.
@@ -277,7 +278,7 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
         let (left, left_members) =
             build_anchor_span_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(0));
 
-        let bogus_start = Anchor(Fp::random(&mut *rng));
+        let bogus_start = Anchor::random(rng);
         let stamps = pool.block(BlockHeight(1)).tachygrams();
         let seed_witness =
             witness::anchor_span_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]);
@@ -418,7 +419,7 @@ fn stamp_lift_rejects_invalid_lifts() {
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (anchor_start, ..) = *span.data();
     // A fork folds a stamp the published chain never carried.
-    let fork_set = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]).commit();
+    let fork_set = TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
     let fork = anchor_start
         .next_stamp(BlockHeight(1).epoch(), &fork_set)
         .unwrap();
@@ -487,8 +488,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
     {
         let (left_poly, _combined, right_poly) =
             witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
-        let fork_set =
-            TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]).commit();
+        let fork_set = TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
         let fork = left
             .data()
             .2
@@ -675,7 +675,7 @@ fn spend_rejects_invalid_note() {
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -713,7 +713,7 @@ fn step_accepts_zero_value_note() {
                 stamp::OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), out_theta, out_anchor),
                 bind_pcd,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("output of a zero-value note");
     }
@@ -733,7 +733,7 @@ fn step_accepts_zero_value_note() {
                 stamp::SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
                 bind_pcd,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("spend of a zero-value note");
     }
@@ -891,7 +891,8 @@ fn multi_epoch_fuse_setup(
 ) {
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(3).last_block());
-    let nf: [Nullifier; 4] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let nf: [Nullifier; 4] =
+        array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
     let left =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
@@ -1081,7 +1082,7 @@ fn unspent_bind_rejects_a_forged_member() {
     let note = user.random_note(500);
     let pool = pool_closing_epoch_zero(rng, &note);
 
-    let forged = Nullifier::from(Fp::random(&mut *rng));
+    let forged = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let nf = |epoch: EpochIndex| {
         if epoch == epoch0 {
@@ -1172,7 +1173,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
     );
     let bogus_elapsed = NfSeqPoly::new(
         EpochIndex::new(0),
-        &[Nullifier::from(Fp::random(&mut *rng))],
+        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
     );
 
     let err = PROOF_SYSTEM
@@ -1441,7 +1442,7 @@ fn nullifier_derive_rejects_a_foreign_sequence() {
         delegation::NullifierDerive,
         (epoch_start, foreign_seq),
         secret_a,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "NullifierDerive: sequence does not match the derived window",
     );
 }
@@ -1460,7 +1461,7 @@ fn nullifier_derive_rejects_a_misaligned_epoch_start() {
         delegation::NullifierDerive,
         (EpochIndex::new(14), seq),
         secret,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "NullifierDerive: epoch_start is not group-aligned",
     );
 }
@@ -1489,7 +1490,7 @@ fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
             delegation::NullifierDerive,
             (epoch_start, NfSeqPoly::new(epoch_start, &[])),
             secret,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -1690,14 +1691,14 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     let (_rcv, theta) = spend_witness(rng);
     let (.., action_set, _pair) = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
     // A foreign tachygram in place of the confirmed pair.
-    let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
+    let forged = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
 
     expect_invalid(
         rng,
         stamp::SpendAction,
         (theta, user.pak, action_set, forged),
         bind_pcd,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "SpendAction: tachygram set does not commit to the nullifier pair",
     );
 }
@@ -1727,7 +1728,7 @@ fn spend_stamp_rejects_a_foreign_action_set() {
         stamp::SpendAction,
         (theta, user.pak, foreign, tachygram_set),
         bind_pcd,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "SpendAction: action set does not commit to the action",
     );
 }
@@ -1857,7 +1858,7 @@ fn output_stamp_publishes_the_note_pair() {
             stamp::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("OutputAction honest");
 
@@ -1886,14 +1887,14 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
     let anchor = PoolSim::genesis(rng).anchor();
     let (.., action_set, _pair) = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
     // A foreign tachygram in place of the bound pair.
-    let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
+    let forged = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
 
     expect_invalid(
         rng,
         stamp::OutputAction,
         (theta, anchor, action_set, forged),
         bind_pcd,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "OutputAction: tachygram set does not commit to the bound pair",
     );
 }
@@ -1931,7 +1932,7 @@ fn output_stamp_rejects_a_foreign_action_set() {
         stamp::OutputAction,
         (theta, anchor, foreign, tachygram_set),
         bind_pcd,
-        Proof::trivial().carry::<()>(()),
+        Proof::bootstrap().carry::<()>(()),
         "OutputAction: action set does not commit to the action",
     );
 }
@@ -1954,7 +1955,7 @@ fn output_action_commit(
             stamp::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("OutputAction honest");
     pcd.data().0
@@ -1998,7 +1999,7 @@ fn spend_action_commit(
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("SpendAction honest");
     pcd.data().0
@@ -2095,7 +2096,7 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     let (left_seq, _merged, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
     let wrong_members: Vec<Nullifier> =
-        iter::repeat_with(|| Nullifier::from(Fp::random(&mut *rng)))
+        iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
             .take(32)
             .collect();
     let wrong = NfSeqPoly::new(EpochIndex::new(0), &wrong_members);
@@ -2159,7 +2160,7 @@ fn unspent_bind_rejects_a_forged_complement() {
     );
     let forged = NfSeqPoly::new(
         EpochIndex::new(1),
-        &[Nullifier::from(Fp::random(&mut *rng))],
+        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
     );
     expect_invalid(
         rng,

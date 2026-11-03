@@ -12,12 +12,12 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     note,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
 };

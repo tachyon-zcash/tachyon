@@ -23,7 +23,6 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
 use super::{
@@ -34,6 +33,7 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     nullifier::Nullifier,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,

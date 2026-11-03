@@ -10,8 +10,6 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -22,6 +20,7 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     keys::private,
+    pasta::Fp,
     stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
     value, *,
 };
@@ -2071,9 +2070,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let mut tampered = stamp;
     let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
     tampered.tachygrams.remove(&dropped);
-    tampered
-        .tachygrams
-        .insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered.tachygrams.insert(Tachygram::random(rng));
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());

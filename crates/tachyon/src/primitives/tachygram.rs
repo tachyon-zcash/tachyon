@@ -2,12 +2,10 @@ use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::PrimeField as _;
-use pasta_curves::Fp;
-#[cfg(test)]
 use rand_core::CryptoRng;
+use udon::field::Field as _;
 
-use crate::serialization;
+use crate::{pasta::Fp, serialization};
 
 /// A field element ($\mathbb{F}_p$) in the Tachyon polynomial accumulator.
 ///
@@ -26,11 +24,9 @@ use crate::serialization;
 pub struct Tachygram(Fp);
 
 impl Tachygram {
-    #[cfg(test)]
-    pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        use ff::Field as _;
-
-        Self(Fp::random(rng))
+    /// Sample a uniformly random tachygram.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Read as a field element from the consensus wire format.
@@ -66,6 +62,6 @@ impl Ord for Tachygram {
     /// element, matching the byte-lexicographic order the stamp digest
     /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.to_repr().as_ref().cmp(other.0.to_repr().as_ref())
+        self.0.to_bytes().cmp(&other.0.to_bytes())
     }
 }

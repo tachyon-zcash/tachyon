@@ -73,7 +73,7 @@ fn fee_less_output_bundle(
             OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("OutputAction");
     let stamp = ProofStamp {
@@ -167,7 +167,7 @@ fn fee_fuse_binds_its_sets() {
             FeeFuse,
             valid.clone(),
             stamp_pcd(),
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("a FeeFuse stamp");
     let (_, other_fee, _, other_output_sets) = fee_witness(50);
@@ -216,7 +216,7 @@ fn fee_fuse_binds_its_sets() {
             FeeFuse,
             corrupt,
             stamp_pcd(),
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         ) else {
             panic!("expected InvalidWitness: {expected}");
         };
@@ -288,7 +288,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 .as_ref()
                 .clone()
                 .carry::<Actions>(stamp_header),
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .expect("a fee above the maximum must not apply");
@@ -334,7 +334,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 &once.stamp.tachygrams,
             ),
             once.stamp.proof.clone().carry::<Actions>(header),
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("mock ragu permits a substituted child header");
     let mut twice_stamp = once.stamp.clone();
