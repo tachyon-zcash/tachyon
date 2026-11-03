@@ -13,7 +13,10 @@ use ragu_core::{
     maybe::Maybe as _,
 };
 use ragu_primitives::Element;
-use udon::{curve::Projective as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 pub use crate::stamp::headers::stamp::{Actions, Stamp};
@@ -899,15 +902,10 @@ impl Step for FeeFuse {
             let cv_max_fee =
                 value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
                     .commit(-max_fee_note.value);
-            let cv_max_fee_affine = *EpAffine::from(cv_max_fee)
-                .as_inner()
-                .as_affine()
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "FeeFuse: fee commitment is the identity".into(),
-                    )
-                })?;
-            let fee_digest = poseidon::fee_digest(cv_max_fee_affine, u64::from(fee));
+            let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
+            })?;
+            let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
             let fee_change_commitment = enforce_nonzero(
                 poseidon::note_commitment(rcm, pk, change, psi),
                 "FeeFuse: fee change note commitment is zero",
@@ -1028,15 +1026,10 @@ impl Step for FeeSeed {
             let cv_max_fee =
                 value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
                     .commit(-max_fee_note.value);
-            let cv_max_fee_affine = *EpAffine::from(cv_max_fee)
-                .as_inner()
-                .as_affine()
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "FeeSeed: fee commitment is the identity".into(),
-                    )
-                })?;
-            let fee_digest = poseidon::fee_digest(cv_max_fee_affine, 0);
+            let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
+            })?;
+            let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
             let fee_change_commitment = enforce_nonzero(
                 poseidon::note_commitment(rcm, pk, 0, psi),
                 "FeeSeed: fee change note commitment is zero",
