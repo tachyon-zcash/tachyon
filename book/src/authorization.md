@@ -264,7 +264,8 @@ A modified action breaks both checks.
 ## Detailed Sequence
 
 The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through stamping, and `Bundle::verify` through consensus.
-Custody is drawn as a separate participant for the device-split case; a single device runs the same steps inside `Plan::sign`.
+Custody is drawn as a separate participant for a device-split integration that does not exist yet.
+`Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
 Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
 
@@ -328,7 +329,7 @@ par Authorizing
         note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon_FeeBlind(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
         note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
-        note over Custody: confirm sighash
+        note over Custody: confirm sighash (custody requirement, not performed by Plan::sign)
 
         loop per spend action
             note over Custody: rsk = ask + alpha
@@ -358,7 +359,7 @@ and Proving
         User ->> Stamper: stamp_plan, pak { ak, nk }, per spend (NoteSecret, NoteSpendable, anchor spans)
 
         loop per spend action
-            note over Stamper: the last supplied anchor span must end at stamp_plan.anchor, checked first
+            note over Stamper: checked first, with spans the last must end at stamp_plan.anchor, without spans the spendable anchor must already equal it
             critical SpendBind(NoteSpendable, NoteSecret), witness rcv
                 note over Stamper: spendable.cm == secret.cm
                 note over Stamper: mk = Poseidon_NfMaster(psi, nk), carried by NoteSecret
@@ -373,7 +374,7 @@ and Proving
                 note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
                 note over Stamper: Actions (Commit(X - d), Commit((X - nf_e)(X - nf_next)), anchor)
             end
-            loop per supplied anchor span
+            loop per supplied anchor span, possibly none
                 note over Stamper: ActionLift, anchor is the span start or a member, becomes the span end
             end
         end
