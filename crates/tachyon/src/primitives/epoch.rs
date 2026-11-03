@@ -1,10 +1,12 @@
 use core::ops;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use pasta_curves::Fp;
 
 use super::BlockHeight;
-use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
+use crate::{
+    constants::{EPOCH_MAX, EPOCH_SIZE},
+    pasta::Fp,
+};
 
 /// A tachyon epoch: a point in the accumulator's history.
 ///

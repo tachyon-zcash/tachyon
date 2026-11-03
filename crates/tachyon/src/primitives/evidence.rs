@@ -1,5 +1,6 @@
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use pasta_curves::Fp;
+
+use crate::pasta::Fp;
 
 /// The root of a Poseidon Merkle tree over sealed bucket digests.
 ///

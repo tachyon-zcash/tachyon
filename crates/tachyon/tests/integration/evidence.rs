@@ -1,13 +1,13 @@
 //! Evidence trees: folding sealed QR buckets under one root and replaying them.
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit,
     constants::EVIDENCE_TREE_ARITY,
+    pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
     witness,
 };
@@ -88,7 +88,7 @@ fn descend_to_leaf(
                 evidence::EvidenceTreeDescend,
                 witness::evidence_tree_descend((*node.data(), ()), path),
                 node,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("EvidenceTreeDescend");
         node = pcd;
@@ -112,7 +112,7 @@ fn open_leaf(
             evidence::EvidenceTreeOpen,
             witness::evidence_tree_open((*node.data(), ()), profile, contents),
             node,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .map(|(bucket, ())| bucket)
 }
@@ -121,7 +121,7 @@ fn open_leaf(
 fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -171,7 +171,7 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
 fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -256,7 +256,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let value = Fp::random(&mut *rng);
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let first = qr_bucket_for(
         rng,
@@ -290,7 +290,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
 fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let value = Fp::random(&mut *rng);
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
     let span = (Anchor::default(), final_anchor);
 
     let first = qr_bucket_for(
@@ -332,8 +332,8 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
 fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
-    let value = Fp::random(&mut *rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let whole = qr_bucket_at(
         rng,
@@ -369,8 +369,8 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
-    let value = Fp::random(&mut *rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let genuine = qr_bucket_at(
         rng,
@@ -392,7 +392,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     let fake_prev = fake_anchor_final_prev
         .next_epoch(epoch1)
         .expect("epoch one is nonzero");
-    let members = [Tachygram::from(Fp::random(&mut *rng))];
+    let members = [Tachygram::random(rng)];
     let (intake, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -424,7 +424,7 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let value = Fp::random(&mut *rng);
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let bucket0 = qr_bucket_for(
         rng,
@@ -468,7 +468,7 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
 fn evidence_tree_cap_is_transparent_to_a_descent() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -491,7 +491,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
             evidence::EvidenceTreeCap,
             (),
             tree.pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("EvidenceTreeCap");
     let raised = *capped.data();
@@ -510,7 +510,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
 fn evidence_tree_open_rejects_a_forged_leaf() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -565,7 +565,7 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
 fn evidence_tree_descend_rejects_children_that_miss_the_node() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -598,7 +598,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
             evidence::EvidenceTreeDescend,
             witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
             tree.pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -615,7 +615,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
 fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
 
     let routed = build_qr_partition(
         rng,
@@ -638,7 +638,7 @@ fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
             evidence::EvidenceTreeOpen,
             witness::evidence_tree_open((*tree.pcd.data(), ()), leaf.profile, leaf.contents),
             tree.pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .err()
         .unwrap();

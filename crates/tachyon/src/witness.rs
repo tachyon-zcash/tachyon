@@ -8,7 +8,6 @@
 
 use alloc::collections::BTreeSet;
 
-use pasta_curves::Fp;
 use ragu::{Header, Step};
 
 use crate::{
@@ -19,6 +18,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::Nullifier,
+    pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
         QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
