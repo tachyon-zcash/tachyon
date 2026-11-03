@@ -26,6 +26,7 @@ pub mod stamp;
 pub mod value;
 pub mod witness;
 
+mod arithmetic;
 mod collections;
 mod primitives;
 mod ragu_constraint;

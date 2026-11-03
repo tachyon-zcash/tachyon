@@ -1,6 +1,7 @@
 use alloc::{vec, vec::Vec};
 use core::mem;
 
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
@@ -92,7 +93,7 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
     clippy::expect_used,
     reason = "each leaf spans its roots and leading one; the nonempty product tree has a root"
 )]
-pub(super) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
+pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     if roots.is_empty() {
         return vec![Fp::ONE];
     }
@@ -122,4 +123,79 @@ pub(super) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     }
 
     polys.into_iter().next().expect("nonempty product tree")
+}
+
+/// Divides `coeffs` by $(X - \mathsf{root})$ in place, exactly.
+///
+/// Returns `None` when the division leaves a remainder.
+pub(crate) fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
+    let mut carry = Fp::ZERO;
+    for coeff in coeffs.iter_mut().rev() {
+        let quotient_coeff = carry;
+        carry = *coeff + (carry * root);
+        *coeff = quotient_coeff;
+    }
+    // After the pass, `carry` is the remainder and the vector holds the
+    // quotient with one trailing zero coefficient.
+    (carry == Fp::ZERO).then(|| coeffs.pop())?;
+    Some(())
+}
+
+#[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
+fn derivative(coeffs: &[Fp]) -> Polynomial<Fp, ProductionRank> {
+    Polynomial::from_coeffs(
+        coeffs
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(degree, coeff)| Fp::from(degree as u64) * coeff)
+            .collect(),
+    )
+}
+
+/// The coefficients of the polynomial of least degree through `points`.
+///
+/// Returns `None` when two points share an abscissa.
+pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
+    fn reduced(range: &[(Fp, Fp)]) -> (Vec<Fp>, Vec<Fp>) {
+        if let &[(at, weighted_value)] = range {
+            return ([weighted_value].to_vec(), [-at, Fp::ONE].to_vec());
+        }
+        let (left, right) = range.split_at(range.len().div_ceil(2));
+        let (left_interp, left_vanishing) = reduced(left);
+        let (right_interp, right_vanishing) = reduced(right);
+
+        let mut combined = Vec::new();
+        let mut cross = Vec::new();
+        let mut vanishing = Vec::new();
+        poly_mul(&left_interp, &right_vanishing, &mut combined);
+        poly_mul(&right_interp, &left_vanishing, &mut cross);
+        poly_mul(&left_vanishing, &right_vanishing, &mut vanishing);
+        for (coeff, cross_coeff) in combined.iter_mut().zip(cross.iter()) {
+            *coeff += cross_coeff;
+        }
+        (combined, vanishing)
+    }
+
+    let abscissas: Vec<Fp> = points.iter().map(|&(at, _)| at).collect();
+    let vanishing = poly_with_roots(&abscissas);
+
+    // The normalizer for each point is $v'(x_i) = \prod_{j \neq i}(x_i -
+    // x_j)$; a non-invertible normalizer marks a repeated abscissa.
+    let normalizers = derivative(&vanishing);
+
+    let weighted: Vec<(Fp, Fp)> = points
+        .iter()
+        .map(|&(at, value)| {
+            let weight = normalizers.eval(at).invert()?;
+            Some((at, weight * value))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if weighted.is_empty() {
+        return Some([Fp::ZERO].to_vec());
+    }
+
+    let (mut coeffs, _) = reduced(&weighted);
+    coeffs.resize(points.len(), Fp::ZERO);
+    Some(coeffs)
 }
