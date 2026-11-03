@@ -1557,7 +1557,7 @@ fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let first = QrDiscriminant::random(rng);
     let second = QrDiscriminant::random(rng);
@@ -1594,7 +1594,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let discriminant = QrDiscriminant::random(rng);
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let routed = build_qr_partition(
         rng,
@@ -1656,7 +1656,7 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     // Fill epoch zero and open epoch one, one stamp per block.
     pool.advance(epoch1.first_block().0 + 1, |_| random_block(rng, 1, 1));
-    let [nf0, nf1] = array::from_fn(|_| Nullifier::random(rng));
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
 
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.anchor();
@@ -1746,7 +1746,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
     pool.advance(EPOCH_SIZE, |_| Vec::new());
     pool.mine(random_block(rng, 1, 1));
-    let [nf0, nf1] = array::from_fn(|_| Nullifier::random(rng));
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
 
     let final0 = pool.block(epoch0.last_block()).anchor();
     let entry1 = pool.block(epoch1.first_block()).prev;
@@ -2260,7 +2260,7 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     }
     let final_anchor = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::random(rng);
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let routed = build_qr_partition(
         rng,
@@ -2289,7 +2289,7 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
 /// witness, which is checked to pass before any test tampers with it.
 fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentInitWitness) {
     let (pool, final_anchor) = small_epoch(rng);
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let bucket = qr_bucket_for(
         rng,
         &pool,
@@ -2575,7 +2575,7 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     let (nf, bucket, mut witness) = honest_unspent_init(rng);
     let (epoch, ..) = *bucket.pcd.data();
 
-    let other = Nullifier::random(rng);
+    let other = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     assert_ne!(other, nf);
     let (_, _, _, ref mut sequence, _) = witness;
     *sequence = NfSeqPoly::new(epoch, &[other]);
@@ -2594,7 +2594,7 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
 fn qr_unspent_init_rejects_a_twin_value() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let bucket = qr_bucket_for(
         rng,
         &pool,
@@ -2717,7 +2717,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
-    let nf = Nullifier::random(rng);
+    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     for depth in [0, 1, 31, u32::BITS] {
         let bucket = qr_bucket_for(
@@ -2919,7 +2919,7 @@ fn unspent_lift_appends_one_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
     let pool = pool_through(rng, epoch2);
-    let [nf0, nf1] = array::from_fn(|_| Nullifier::random(rng));
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 
     let first = epoch_bucket(rng, &pool, epoch0);
@@ -2979,7 +2979,7 @@ fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
     let pool = pool_through(rng, EpochIndex::new(3));
-    let [nf0, nf1] = array::from_fn(|_| Nullifier::random(rng));
+    let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 
     let first = epoch_bucket(rng, &pool, epoch0);
@@ -2996,7 +2996,13 @@ fn unspent_lift_rejects_invalid_extensions() {
     };
 
     let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
-    let forged_extended = NfSeqPoly::new(epoch0, &[nf0, Nullifier::random(rng)]);
+    let forged_extended = NfSeqPoly::new(
+        epoch0,
+        &[
+            nf0,
+            Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))),
+        ],
+    );
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
     let other = Fp::random(|bytes| rng.fill_bytes(bytes));
 

@@ -8,7 +8,7 @@ use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
@@ -231,7 +231,8 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(2).last_block());
-    let nf: [Nullifier; 3] = array::from_fn(|_| Nullifier::random(rng));
+    let nf: [Nullifier; 3] =
+        array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
 
     // Anchor discontinuity: the right segment skips epoch one.
@@ -890,7 +891,8 @@ fn multi_epoch_fuse_setup(
 ) {
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(3).last_block());
-    let nf: [Nullifier; 4] = array::from_fn(|_| Nullifier::random(rng));
+    let nf: [Nullifier; 4] =
+        array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
     let left =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
@@ -1068,7 +1070,7 @@ fn unspent_bind_rejects_a_forged_member() {
     let note = user.random_note(500);
     let pool = pool_closing_epoch_zero(rng, &note);
 
-    let forged = Nullifier::random(rng);
+    let forged = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let nf = |epoch: EpochIndex| {
         if epoch == epoch0 {
@@ -1155,7 +1157,10 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         &user.covering_window(&note, &range),
         &elapsed,
     );
-    let bogus_elapsed = NfSeqPoly::new(EpochIndex::new(0), &[Nullifier::random(rng)]);
+    let bogus_elapsed = NfSeqPoly::new(
+        EpochIndex::new(0),
+        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+    );
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -2074,9 +2079,10 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
         .collect();
     let (left_seq, _merged, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
-    let wrong_members: Vec<Nullifier> = iter::repeat_with(|| Nullifier::random(rng))
-        .take(32)
-        .collect();
+    let wrong_members: Vec<Nullifier> =
+        iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
+            .take(32)
+            .collect();
     let wrong = NfSeqPoly::new(EpochIndex::new(0), &wrong_members);
     expect_invalid(
         rng,
@@ -2136,7 +2142,10 @@ fn unspent_bind_rejects_a_forged_complement() {
         &user.covering_window(&note, &range),
         &elapsed,
     );
-    let forged = NfSeqPoly::new(EpochIndex::new(1), &[Nullifier::random(rng)]);
+    let forged = NfSeqPoly::new(
+        EpochIndex::new(1),
+        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+    );
     expect_invalid(
         rng,
         pool::UnspentBind,
