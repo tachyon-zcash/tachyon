@@ -1,11 +1,18 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
 use derive_more::{AsRef, Debug, From, Into};
-use group::GroupEncoding as _;
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+#[cfg(test)]
+use rand_core::CryptoRng;
+use udon::curve::Affine as _;
+#[cfg(test)]
+use udon::field::Field as _;
 
 use super::{master::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, nullifier};
+use crate::{
+    digest::poseidon,
+    nullifier,
+    pasta::{EpAffine, Fp},
+};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -35,6 +42,11 @@ use crate::{digest::poseidon, nullifier};
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
+    #[cfg(test)]
+    pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// Derive a note's master key from its nullifier trapdoor `psi`.
     #[must_use]
     pub fn derive_note_private(&self, psi: nullifier::Trapdoor) -> NoteMasterKey {
@@ -86,6 +98,11 @@ impl NullifierKey {
 pub struct PaymentKey(#[debug(skip)] Fp);
 
 impl PaymentKey {
+    #[cfg(test)]
+    pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// Derive the payment key from `ak` and `nk`:
     ///
     /// $$
@@ -101,21 +118,15 @@ impl PaymentKey {
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
         let ak_bytes: [u8; 32] = ak.0.into();
         #[expect(clippy::expect_used, reason = "a validating key is a curve point")]
-        let point = EpAffine::from_bytes(&ak_bytes)
-            .into_option()
-            .expect("ak bytes should be a valid curve point");
+        let point = EpAffine::from_bytes(ak_bytes).expect("ak bytes should be a valid curve point");
         #[expect(clippy::expect_used, reason = "a validating key is not the identity")]
-        let coords = point
-            .coordinates()
-            .into_option()
-            .expect("ak must not be the identity");
+        let coords = point.coordinates().expect("ak must not be the identity");
         Self(poseidon::payment_key(coords, nk.0))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -130,7 +141,7 @@ mod tests {
         let ak = SpendValidatingKey(
             reddsa::VerificationKey::try_from([0u8; 32]).expect("identity is a valid key"),
         );
-        let nk = NullifierKey(Fp::random(rng));
+        let nk = NullifierKey::random(rng);
 
         let _derived = PaymentKey::derive(&ak, &nk);
     }
@@ -138,7 +149,7 @@ mod tests {
     #[test]
     fn derive_note_private_deterministic() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
+        let nk = NullifierKey::random(rng);
         let psi = nullifier::Trapdoor::random(rng);
         let mk1 = nk.derive_note_private(psi);
         let mk2 = nk.derive_note_private(psi);
@@ -148,7 +159,7 @@ mod tests {
     #[test]
     fn different_psi_different_mk() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
+        let nk = NullifierKey::random(rng);
         let psi1 = nullifier::Trapdoor::random(rng);
         let psi2 = nullifier::Trapdoor::random(rng);
         let mk1 = nk.derive_note_private(psi1);
@@ -159,7 +170,7 @@ mod tests {
     #[test]
     fn different_epochs_different_nullifiers() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
+        let nk = NullifierKey::random(rng);
         let psi = nullifier::Trapdoor::random(rng);
         let mk = nk.derive_note_private(psi);
         assert_ne!(

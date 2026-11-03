@@ -3,11 +3,14 @@
 use alloc::vec::Vec;
 
 use derive_more::{Display, Eq as TotalEq, Error, PartialEq};
-use ff::PrimeField as _;
-use pasta_curves::{Fp, Fq};
+use udon::field::Field as _;
 
 use super::{Action, Bundle, NoteOpening, Partial, Slot};
-use crate::{primitives::Effect, stamp::StampState as _};
+use crate::{
+    pasta::{Fp, Fq},
+    primitives::Effect,
+    stamp::StampState as _,
+};
 
 /// Errors from the combiner role.
 #[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
@@ -159,7 +162,7 @@ fn combine_action<E: Effect>(
         rcv: merge(
             left.rcv,
             right.rcv,
-            |ours, theirs| Fq::from(*ours).to_repr() == Fq::from(*theirs).to_repr(),
+            |ours, theirs| Fq::from(*ours).to_bytes() == Fq::from(*theirs).to_bytes(),
             conflict,
         )?,
         cv: merge(left.cv, right.cv, PartialEq::eq, conflict)?,

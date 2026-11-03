@@ -1,7 +1,14 @@
-use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+use core::cmp::Ordering;
 
-use crate::{digest::poseidon, keys::public, value};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
+use udon::curve::Affine as _;
+
+use crate::{
+    digest::poseidon,
+    keys::public,
+    pasta::{EpAffine, Fp},
+    value,
+};
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -9,8 +16,20 @@ use crate::{digest::poseidon, keys::public, value};
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type. A fee digest
 /// $d_\mathsf{fee}$ joins the same action set.
-#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
+
+impl PartialOrd for ActionDigest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ActionDigest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.as_inner().reduce().cmp(&other.0.as_inner().reduce())
+    }
+}
 
 /// Errors from action digest computation.
 #[derive(Clone, Copy, Debug, Display, Error)]
@@ -36,11 +55,9 @@ impl ActionDigest {
     ) -> Result<Self, ActionDigestError> {
         let cv_coords = EpAffine::from(cv)
             .coordinates()
-            .into_option()
             .ok_or(ActionDigestError::IdentityCv)?;
         let rk_coords = EpAffine::from(rk)
             .coordinates()
-            .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
     }

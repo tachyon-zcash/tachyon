@@ -2,8 +2,6 @@ extern crate alloc;
 
 use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -783,8 +781,8 @@ fn verify_proof_action_multiset_invariants() {
 fn read_rejects_duplicate_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
 
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let tg = Tachygram::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
+    let tg = Tachygram::random(rng);
     let tg_set = [tg, tg];
 
     let mut buf = Vec::new();
@@ -816,7 +814,7 @@ fn read_rejects_duplicate_tachygrams() {
 fn read_rejects_empty_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
 
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
 
     let mut buf = Vec::new();
     {
@@ -843,7 +841,7 @@ fn read_rejects_empty_tachygrams() {
 fn read_rejects_too_many_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
 
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let n_tachygrams = u64::try_from(ProductionRank::num_coeffs()).expect("rank fits u64");
 
     let mut buf = Vec::new();
@@ -926,7 +924,7 @@ fn verify_proof_rejects_mismatched_commitment() {
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     // Publish the real tachygrams under a commitment to a different set.
-    let other = Tachygram::from(Fp::random(&mut *rng));
+    let other = Tachygram::random(rng);
     let forged = ProofStamp {
         tachygram_set: TachygramSetPoly::from_iter([other]).commit(),
         ..honest
@@ -961,7 +959,7 @@ fn proof_alone_does_not_bind_the_published_list() {
     let mut tampered_list = honest.tachygrams.clone();
     let dropped = *tampered_list.iter().next().expect("a published tachygram");
     tampered_list.remove(&dropped);
-    tampered_list.insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered_list.insert(Tachygram::random(rng));
 
     assert_eq!(tampered_list.len(), honest.tachygrams.len());
 

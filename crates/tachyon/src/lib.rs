@@ -20,12 +20,14 @@ pub mod fee;
 pub mod keys;
 pub mod note;
 pub mod nullifier;
+pub mod pasta;
 pub mod pczt;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;
 pub mod witness;
 
+mod arithmetic;
 mod collections;
 mod primitives;
 mod ragu_constraint;

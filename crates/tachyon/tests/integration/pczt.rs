@@ -2,12 +2,12 @@ extern crate alloc;
 
 use alloc::{collections::BTreeSet, vec, vec::Vec};
 
-use pasta_curves::Fp;
 use ragu::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, Note,
     keys::{SpendValidatingKey, private},
+    pasta::Fp,
     pczt::{self, CombineError, ExtractError, NoteOpening, Slot},
     stamp::proof::{delegation, spendable},
     value,
