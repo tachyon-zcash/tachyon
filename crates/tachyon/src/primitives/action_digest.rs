@@ -1,6 +1,7 @@
 use core::cmp::Ordering;
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
+use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
@@ -52,15 +53,13 @@ impl ActionDigest {
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
     ) -> Result<Self, ActionDigestError> {
-        let cv_affine = *EpAffine::from(cv)
-            .as_inner()
-            .as_affine()
+        let cv_coords = EpAffine::from(cv)
+            .coordinates()
             .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_affine = *EpAffine::from(rk)
-            .as_inner()
-            .as_affine()
+        let rk_coords = EpAffine::from(rk)
+            .coordinates()
             .ok_or(ActionDigestError::IdentityRk)?;
-        Ok(Self(poseidon::action_digest(cv_affine, rk_affine)))
+        Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
     }
 }
 

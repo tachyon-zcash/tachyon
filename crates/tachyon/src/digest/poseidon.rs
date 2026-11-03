@@ -19,10 +19,7 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{
-    curve::{Affine as _, PallasAffine},
-    field::Field as _,
-};
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
 
@@ -91,46 +88,27 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
 /// \mathsf{fee})$.
 #[must_use]
-pub fn fee_digest(cv_max_fee: PallasAffine, fee: u64) -> Fp {
-    let (x, y) = cv_max_fee.coordinates();
-    hash::<3>(
-        FEE_DIGEST_DOMAIN,
-        [
-            Fp::new(x.into_loose()),
-            Fp::new(y.into_loose()),
-            Fp::from(fee),
-        ],
-    )
+pub fn fee_digest(cv_max_fee: (Fp, Fp), fee: u64) -> Fp {
+    let (x, y) = cv_max_fee;
+    hash::<3>(FEE_DIGEST_DOMAIN, [x, y, Fp::from(fee)])
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from action fields.
 #[must_use]
-pub fn action_digest(cv: PallasAffine, rk: PallasAffine) -> Fp {
-    let (cv_x, cv_y) = cv.coordinates();
-    let (rk_x, rk_y) = rk.coordinates();
-    hash::<4>(
-        ACTION_DIGEST_DOMAIN,
-        [
-            Fp::new(cv_x.into_loose()),
-            Fp::new(cv_y.into_loose()),
-            Fp::new(rk_x.into_loose()),
-            Fp::new(rk_y.into_loose()),
-        ],
-    )
+pub fn action_digest(cv: (Fp, Fp), rk: (Fp, Fp)) -> Fp {
+    let ((cv_x, cv_y), (rk_x, rk_y)) = (cv, rk);
+    hash::<4>(ACTION_DIGEST_DOMAIN, [cv_x, cv_y, rk_x, rk_y])
 }
 
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 #[must_use]
-pub fn payment_key(ak: PallasAffine, nk: Fp) -> Fp {
-    let (x, y) = ak.coordinates();
-    hash::<3>(
-        PAYMENT_KEY_DOMAIN,
-        [Fp::new(x.into_loose()), Fp::new(y.into_loose()), nk],
-    )
+pub fn payment_key(ak: (Fp, Fp), nk: Fp) -> Fp {
+    let (x, y) = ak;
+    hash::<3>(PAYMENT_KEY_DOMAIN, [x, y, nk])
 }
 
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
