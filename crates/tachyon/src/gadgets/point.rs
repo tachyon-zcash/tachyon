@@ -19,6 +19,7 @@ use ragu_primitives::{
 use udon::{curve::Affine as _, field::Field};
 
 use crate::pasta::Fp;
+
 /// Complete affine arithmetic with an explicit infinity flag.
 ///
 /// Externally witnessed/exported points still use `Point`, which
