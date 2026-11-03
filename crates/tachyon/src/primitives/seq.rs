@@ -9,7 +9,8 @@ use ragu_core::{Cycle as _, pasta::Pasta};
 use udon::field::Field as _;
 
 use crate::{
-    collections::{arithmetic, indexed_multiset},
+    arithmetic,
+    collections::indexed_multiset,
     nullifier::Nullifier,
     pasta,
     pasta::{Eq, Fp},
