@@ -286,13 +286,15 @@ mod tests {
         h: &Polynomial<Fp, ProductionRank>,
     ) {
         let q = multiset::encode(abscissas_of(points));
-        let mut lhs = dense(&super::super::poly_mul(u, u));
+        let mut lhs = Vec::new();
+        arithmetic::poly_mul(&dense(u), &dense(u), &mut lhs);
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
         lhs[0] -= class * shift;
         lhs[1] -= class;
-        let rhs = dense(&super::super::poly_mul(&q, h));
+        let mut rhs = Vec::new();
+        arithmetic::poly_mul(&dense(&q), &dense(h), &mut rhs);
         assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
         for &(abscissa, root) in points {
             assert_eq!(u.eval(abscissa), root);

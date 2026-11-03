@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
@@ -8,7 +9,7 @@ use ragu_core::{Cycle as _, pasta::Pasta};
 use udon::field::Field as _;
 
 use crate::{
-    collections::{indexed_multiset, poly_mul},
+    collections::{arithmetic, indexed_multiset},
     nullifier::Nullifier,
     pasta,
     pasta::{Eq, Fp},
@@ -62,6 +63,18 @@ impl Mul for NfSeqPoly {
     ///
     /// If the product exceeds the polynomial coefficient cap.
     fn mul(self, rhs: Self) -> Self {
-        Self(poly_mul(&self.0, &rhs.0))
+        let [left, right] = [self.0, rhs.0].map(|poly| {
+            let mut coeffs: Vec<Fp> = poly.iter_coeffs().collect();
+            coeffs.truncate(
+                coeffs
+                    .iter()
+                    .rposition(|coeff| coeff != &Fp::ZERO)
+                    .map_or(0, |idx| idx + 1),
+            );
+            coeffs
+        });
+        let mut product = Vec::new();
+        arithmetic::poly_mul(&left, &right, &mut product);
+        Self(Polynomial::from_coeffs(product))
     }
 }
