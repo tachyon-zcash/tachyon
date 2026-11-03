@@ -4,9 +4,11 @@ use core::mem;
 use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
-    field::Fp,
+    field::Field as _,
     polynomial::vanishing_polynomial,
 };
+
+use crate::pasta::Fp;
 
 /// Roots per leaf of the [`poly_with_roots`] product tree.
 const ROOT_CHUNK: usize = 128;
@@ -31,10 +33,10 @@ pub(super) fn poly_mul(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
 
 #[expect(clippy::indexing_slicing, reason = "the output spans the convolution")]
 fn poly_mul_schoolbook(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
-    out.resize(left.len() + right.len() - 1, <Fp>::ZERO);
+    out.resize(left.len() + right.len() - 1, Fp::ZERO);
     for (i, ai) in left.iter().enumerate() {
         for (j, bj) in right.iter().enumerate() {
-            out[i + j] = out[i + j].add(&ai.mul(bj));
+            out[i + j] += *ai * bj;
         }
     }
 }
@@ -54,11 +56,11 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
     let expansion = Expansion::new(transform, transform.domain(), None)
         .expect("a subgroup expands onto itself");
 
-    out.resize(2 * n, <Fp>::ZERO);
-    let (product, factor) = out.split_at_mut(n);
+    out.resize(2 * n, Fp::ZERO);
+    let (product, factor) = Fp::as_slice_mut(out).split_at_mut(n);
     expansion
         .coefficients(
-            right,
+            Fp::as_slice(right),
             factor,
             ExecutionOptions::default(),
             &SerialExecutor,
@@ -67,7 +69,7 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
         .expect("factor fits the FFT domain");
     expansion
         .short_product(
-            left,
+            Fp::as_slice(left),
             expansion.view(factor),
             product,
             ExecutionOptions::default(),
@@ -92,14 +94,15 @@ fn poly_mul_fft(left: &[Fp], right: &[Fp], out: &mut Vec<Fp>) {
 )]
 pub(super) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     if roots.is_empty() {
-        return vec![<Fp>::ONE];
+        return vec![Fp::ONE];
     }
 
     let mut polys: Vec<Vec<Fp>> = roots
         .chunks(ROOT_CHUNK)
         .map(|chunk| {
-            let mut leaf = vec![<Fp>::ZERO; chunk.len() + 1];
-            vanishing_polynomial(chunk, &mut leaf).expect("leaf spans its roots and leading one");
+            let mut leaf = vec![Fp::ZERO; chunk.len() + 1];
+            vanishing_polynomial(Fp::as_slice(chunk), Fp::as_slice_mut(&mut leaf))
+                .expect("leaf spans its roots and leading one");
             leaf
         })
         .collect();

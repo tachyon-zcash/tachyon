@@ -10,12 +10,14 @@ use ragu_core::{
     pasta::{self, Eq, EqAffine},
 };
 use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
+
+use crate::pasta::Fp;
 
 /// Enforces `value == 0`.
 pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
     let mut driver = Simulator::<pasta::Fp>::new();
-    let element = Element::constant(&mut driver, value.into());
+    let element = Element::constant(&mut driver, value);
 
     element
         .enforce_zero(&mut driver)
@@ -25,7 +27,7 @@ pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
 /// Enforces `value != 0`, returning `value`.
 pub(crate) fn enforce_nonzero(value: Fp, err: &'static str) -> Result<Fp> {
     let mut driver = Simulator::<pasta::Fp>::new();
-    let element = Element::constant(&mut driver, value.into());
+    let element = Element::constant(&mut driver, value);
 
     element
         .enforce_nonzero(&mut driver)

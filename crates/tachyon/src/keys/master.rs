@@ -2,17 +2,17 @@
 
 use core::array;
 
-use derive_more::{Debug, Into};
+use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
 use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 #[cfg(test)]
 use rand_core::CryptoRng;
 #[cfg(test)]
-use udon::field;
-use udon::field::Fp;
+use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
     nullifier::{NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     primitives::EpochIndex,
 };
 
@@ -25,21 +25,13 @@ use crate::{
 ///
 /// `mk` grants derivation over the whole epoch space; a delegate receives
 /// proven value windows.
-#[derive(Clone, Copy, Debug, Into)]
+#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
-
-impl PartialEq for NoteMasterKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl Eq for NoteMasterKey {}
 
 impl NoteMasterKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the nullifier for a single epoch.

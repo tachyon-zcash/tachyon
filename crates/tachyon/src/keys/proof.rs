@@ -2,6 +2,7 @@
 
 use derive_more::Debug;
 use ff::PrimeField as _;
+use udon::field::Field as _;
 
 use super::{
     note::{NullifierKey, PaymentKey},

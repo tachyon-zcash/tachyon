@@ -8,9 +8,13 @@ use core::{any::type_name, marker::PhantomData};
 
 use derive_more::{Debug, Into};
 use rand_core::CryptoRng;
-use udon::field::{self, Fp, Fq};
+use udon::field::Field as _;
 
-use crate::{note, primitives::Effect};
+use crate::{
+    note,
+    pasta::{Fp, Fq},
+    primitives::Effect,
+};
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
@@ -39,7 +43,7 @@ impl ActionEntropy {
 
     /// Sample fresh per-action entropy.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
@@ -89,7 +93,7 @@ mod tests {
         let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
         let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
 
-        assert_ne!(spend_alpha.reduce(), output_alpha.reduce());
+        assert_ne!(spend_alpha, output_alpha);
     }
 
     #[test]
@@ -102,11 +106,11 @@ mod tests {
         // Deterministic: same theta twice
         let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
         let second: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
-        assert_eq!(first.reduce(), second.reduce());
+        assert_eq!(first, second);
 
         // Sensitive: different theta
         let other: Fq = theta_b.randomizer::<effect::Spend>(cm).into();
-        assert_ne!(first.reduce(), other.reduce());
+        assert_ne!(first, other);
     }
 
     /// The scalar alpha has the same encoding as the Poseidon output, so the
@@ -136,7 +140,7 @@ mod tests {
         let Some(parsed) = ActionEntropy::from_bytes(theta.0.to_bytes()) else {
             panic!("canonical encoding must parse");
         };
-        assert_eq!(parsed.0.reduce(), theta.0.reduce());
+        assert_eq!(parsed.0, theta.0);
     }
 
     #[test]

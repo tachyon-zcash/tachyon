@@ -21,15 +21,15 @@ use ragu_primitives::{
 };
 use udon::{
     curve::{Affine as _, PallasAffine},
-    field::Fp,
+    field::Field as _,
 };
 
-use crate::{constants::EVIDENCE_TREE_ARITY, pasta};
+use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
 /// squeeze compute field values without building constraints.
-type Emu = Emulator<Wireless<Always<()>, pasta::Fp>>;
+type Emu = Emulator<Wireless<Always<()>, Fp>>;
 
 #[expect(
     clippy::expect_used,
@@ -37,7 +37,7 @@ type Emu = Emulator<Wireless<Always<()>, pasta::Fp>>;
 )]
 fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
     let squeezed = sponge.squeeze(emulator).expect("infallible");
-    squeezed.value().take().into_inner()
+    *squeezed.value().take()
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
@@ -47,16 +47,16 @@ fn tagged_sponge<const L: usize>(
     input: [Fp; L],
 ) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
-    let capacity = <Fp>::from_u128(u128::from_le_bytes(*domain));
+    let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
 
     let mut emulator = Emu::execute();
     let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
         let value = if index == PoseidonFp::RATE {
             capacity
         } else {
-            <Fp>::ZERO
+            Fp::ZERO
         };
-        Element::constant(&mut emulator, value.into())
+        Element::constant(&mut emulator, value)
     }));
     let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
     #[expect(
@@ -64,7 +64,7 @@ fn tagged_sponge<const L: usize>(
         reason = "sponge absorb cannot fail in wireless `Always` mode"
     )]
     for value in input {
-        let element = Element::constant(&mut emulator, value.into());
+        let element = Element::constant(&mut emulator, value);
         sponge.absorb(&mut emulator, &element).expect("infallible");
     }
     (emulator, sponge)
@@ -95,7 +95,11 @@ pub fn fee_digest(cv_max_fee: PallasAffine, fee: u64) -> Fp {
     let (x, y) = cv_max_fee.coordinates();
     hash::<3>(
         FEE_DIGEST_DOMAIN,
-        [x.into_loose(), y.into_loose(), Fp::from_u64(fee)],
+        [
+            Fp::new(x.into_loose()),
+            Fp::new(y.into_loose()),
+            Fp::from(fee),
+        ],
     )
 }
 
@@ -109,10 +113,10 @@ pub fn action_digest(cv: PallasAffine, rk: PallasAffine) -> Fp {
     hash::<4>(
         ACTION_DIGEST_DOMAIN,
         [
-            cv_x.into_loose(),
-            cv_y.into_loose(),
-            rk_x.into_loose(),
-            rk_y.into_loose(),
+            Fp::new(cv_x.into_loose()),
+            Fp::new(cv_y.into_loose()),
+            Fp::new(rk_x.into_loose()),
+            Fp::new(rk_y.into_loose()),
         ],
     )
 }
@@ -123,7 +127,10 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 #[must_use]
 pub fn payment_key(ak: PallasAffine, nk: Fp) -> Fp {
     let (x, y) = ak.coordinates();
-    hash::<3>(PAYMENT_KEY_DOMAIN, [x.into_loose(), y.into_loose(), nk])
+    hash::<3>(
+        PAYMENT_KEY_DOMAIN,
+        [Fp::new(x.into_loose()), Fp::new(y.into_loose()), nk],
+    )
 }
 
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
@@ -131,7 +138,7 @@ const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 /// Derives a note commitment from note fields.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
-    hash::<4>(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from_u64(value), psi])
+    hash::<4>(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi])
 }
 
 const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
@@ -144,7 +151,7 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// observer pair them off and recover the output count.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
-    hash::<4>(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from_u64(value), psi])
+    hash::<4>(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi])
 }
 
 const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";

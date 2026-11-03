@@ -10,7 +10,7 @@ use core::{array, iter};
 use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::field::Fp;
+use udon::field::Field as _;
 use zcash_tachyon::{
     ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
     Note, Tachygram, TachygramSetPoly, action,
@@ -19,6 +19,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
     value, witness,
 };
@@ -1356,16 +1357,16 @@ fn note_seed_carries_the_note() {
     assert_eq!(mk, user.mk(&note));
     assert_eq!(
         (
-            Fp::from(opening.rcm).reduce(),
-            Fp::from(opening.pk).reduce(),
+            Fp::from(opening.rcm),
+            Fp::from(opening.pk),
             u64::from(opening.value),
-            Fp::from(opening.psi).reduce(),
+            Fp::from(opening.psi),
         ),
         (
-            Fp::from(note.rcm).reduce(),
-            Fp::from(note.pk).reduce(),
+            Fp::from(note.rcm),
+            Fp::from(note.pk),
             u64::from(note.value),
-            Fp::from(note.psi).reduce(),
+            Fp::from(note.psi),
         ),
         "the seed emits the opening `cm` commits to"
     );
@@ -1390,8 +1391,8 @@ fn note_seed_derives_the_payment_key_from_pak() {
 
     let (cm, opening, _) = *secret.data();
     assert_eq!(
-        Fp::from(opening.pk).reduce(),
-        Fp::from(stranger.pak.derive_payment_key()).reduce(),
+        Fp::from(opening.pk),
+        Fp::from(stranger.pak.derive_payment_key()),
         "the opening carries the payment key of the witnessed pak"
     );
     assert_ne!(

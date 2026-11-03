@@ -1,15 +1,18 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
 use derive_more::{AsRef, Debug, From, Into};
-use ragu_core::pasta::EpAffine;
 #[cfg(test)]
 use rand_core::CryptoRng;
+use udon::curve::Affine as _;
 #[cfg(test)]
-use udon::field;
-use udon::{curve::Affine as _, field::Fp};
+use udon::field::Field as _;
 
 use super::{master::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, nullifier};
+use crate::{
+    digest::poseidon,
+    nullifier,
+    pasta::{EpAffine, Fp},
+};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -41,7 +44,7 @@ pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 impl NullifierKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive a note's master key from its nullifier trapdoor `psi`.
@@ -97,7 +100,7 @@ pub struct PaymentKey(#[debug(skip)] Fp);
 impl PaymentKey {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the payment key from `ak` and `nk`:

@@ -2,12 +2,13 @@
 
 use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::field::Fp;
+use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
+    pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
     witness,
 };
@@ -590,7 +591,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
     .expect("a full descent");
     let (_sides, ref mut children) = path[0];
     children[EVIDENCE_TREE_ARITY - 1] =
-        EvidenceTreeRoot(Fp::from(children[EVIDENCE_TREE_ARITY - 1]).add(&<Fp>::ONE));
+        EvidenceTreeRoot(Fp::from(children[EVIDENCE_TREE_ARITY - 1]) + Fp::ONE);
 
     let err = PROOF_SYSTEM
         .fuse(

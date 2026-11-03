@@ -3,20 +3,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::pasta;
-use udon::field::Fp;
 
 use super::arithmetic::poly_with_roots;
+use crate::pasta::Fp;
 
 /// Encode the provided members as roots.
-pub(crate) fn encode(
-    members: impl IntoIterator<Item = Fp>,
-) -> Polynomial<pasta::Fp, ProductionRank> {
+pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, ProductionRank> {
     let roots: Vec<Fp> = members.into_iter().collect();
-    Polynomial::from_coeffs(
-        poly_with_roots(&roots)
-            .into_iter()
-            .map(pasta::Fp::new)
-            .collect(),
-    )
+    Polynomial::from_coeffs(poly_with_roots(&roots))
 }

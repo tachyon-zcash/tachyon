@@ -5,8 +5,6 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use ragu_core::pasta::{self, Ep, Eq};
-use udon::field::Fp;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
@@ -14,6 +12,7 @@ use crate::{
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
+    pasta::{self, Ep, Eq, Fp},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
@@ -46,15 +45,15 @@ impl Header for SpendHeader {
 
     const SUFFIX: Suffix = Suffix::new(5);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm)),
-                pasta::Fp::new(Fp::from(nf_current)),
-                pasta::Fp::new(Fp::from(nf_next)),
-                pasta::Fp::new(Fp::from(anchor)),
-                pasta::Fp::new(Fp::from(pk)),
+                Fp::from(cm),
+                Fp::from(nf_current),
+                Fp::from(nf_next),
+                Fp::from(anchor),
+                Fp::from(pk),
             ],
             Vec::new(),
             vec![Ep::from(cv)],
@@ -105,7 +104,7 @@ impl Step for SpendBind {
         (secret_cm, note, mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(secret_cm).sub(&Fp::from(spendable_cm)),
+            Fp::from(secret_cm) - Fp::from(spendable_cm),
             "SpendBind: secret does not match note",
         )?;
         if u64::from(note.value) > MAX_MONEY {

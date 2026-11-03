@@ -5,12 +5,15 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use ragu_core::pasta::{self, Ep, Eq};
-use udon::field::Fp;
 
 use crate::{
-    Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note,
-    ragu_constraint::enforce_nonzero, value,
+    Tachygram,
+    constants::MAX_MONEY,
+    digest::poseidon,
+    note::Note,
+    pasta::{self, Ep, Eq, Fp},
+    ragu_constraint::enforce_nonzero,
+    value,
 };
 
 /// Header binding an output's tachygram pair and value to one note
@@ -28,10 +31,10 @@ impl Header for OutputHeader {
 
     const SUFFIX: Suffix = Suffix::new(7);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad, cv) = *data;
         (
-            vec![pasta::Fp::new(Fp::from(cm)), pasta::Fp::new(Fp::from(pad))],
+            vec![Fp::from(cm), Fp::from(pad)],
             Vec::new(),
             vec![Ep::from(cv)],
             Vec::new(),

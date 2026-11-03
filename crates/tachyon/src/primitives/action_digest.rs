@@ -1,10 +1,13 @@
 use core::cmp::Ordering;
 
-use derive_more::{Debug, Display, Error, From, Into};
-use ragu_core::pasta::EpAffine;
-use udon::field::Fp;
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 
-use crate::{digest::poseidon, keys::public, value};
+use crate::{
+    digest::poseidon,
+    keys::public,
+    pasta::{EpAffine, Fp},
+    value,
+};
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -12,16 +15,8 @@ use crate::{digest::poseidon, keys::public, value};
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type. A fee digest
 /// $d_\mathsf{fee}$ joins the same action set.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
-
-impl PartialEq for ActionDigest {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl Eq for ActionDigest {}
 
 impl PartialOrd for ActionDigest {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -31,7 +26,7 @@ impl PartialOrd for ActionDigest {
 
 impl Ord for ActionDigest {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.reduce().cmp(&other.0.reduce())
+        self.0.as_inner().reduce().cmp(&other.0.as_inner().reduce())
     }
 }
 

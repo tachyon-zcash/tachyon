@@ -12,7 +12,6 @@ use core::cmp::Reverse;
 use corez::io;
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::field::Fp;
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
     bundle::{Plan, PlanError, Signature},
@@ -21,6 +20,7 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     keys::private,
+    pasta::Fp,
     stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
     value, *,
 };
@@ -1654,7 +1654,7 @@ fn auth_digest_invariants() {
         extra_tachygram
             .stamp
             .tachygrams
-            .insert(Tachygram::from(Fp::from_u64(7)));
+            .insert(Tachygram::from(Fp::from(7)));
         // Tachygrams must stay canonically sorted for the stamp digest.
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());

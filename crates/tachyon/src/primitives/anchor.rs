@@ -1,17 +1,17 @@
-use core::cmp::{self, Ordering};
+use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
-use ragu_core::pasta::Eq;
 use rand_core::CryptoRng;
-use udon::{
-    curve::Projective as _,
-    field::{self, Fp},
-};
+use udon::{curve::Projective as _, field::Field as _};
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::{digest::poseidon, serialization};
+use crate::{
+    digest::poseidon,
+    pasta::{Eq, Fp},
+    serialization,
+};
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -32,16 +32,8 @@ pub enum AnchorError {
 }
 
 /// Running anchor over the consensus state.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
-
-impl PartialEq for Anchor {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl cmp::Eq for Anchor {}
 
 impl PartialOrd for Anchor {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -51,14 +43,14 @@ impl PartialOrd for Anchor {
 
 impl Ord for Anchor {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.reduce().cmp(&other.0.reduce())
+        self.0.as_inner().reduce().cmp(&other.0.as_inner().reduce())
     }
 }
 
 impl Anchor {
     /// Sample a uniformly random anchor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Advance the anchor by absorbing one stamp and the epoch of the block
@@ -132,11 +124,10 @@ impl Default for Anchor {
 
 #[cfg(test)]
 mod tests {
-    use ragu_core::pasta::Eq;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{Tachygram, TachygramSetPoly};
+    use crate::{Tachygram, TachygramSetPoly, pasta::Eq};
 
     #[test]
     fn order_matters() {

@@ -6,9 +6,15 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use udon::field::{Fp, Fq};
+use udon::field::Field as _;
 
-use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
+use crate::{
+    digest::poseidon,
+    entropy::ActionEntropy,
+    note,
+    pasta::{Fp, Fq},
+    value,
+};
 
 /// Embeds a base-field element in the scalar field, which is larger.
 #[expect(

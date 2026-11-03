@@ -35,9 +35,16 @@
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
-use udon::field::{self, Fp, Fq};
+use udon::field::Field as _;
 
-use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
+use crate::{
+    digest::poseidon,
+    keys::PaymentKey,
+    nullifier,
+    pasta::{Fp, Fq},
+    primitives::Tachygram,
+    value,
+};
 
 /// Note commitment trapdoor ($rcm$): randomness that blinds the note
 /// commitment.
@@ -49,7 +56,7 @@ pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 
@@ -94,8 +101,9 @@ impl Note {
     /// Panics if the note commitment trapdoor is zero.
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        assert!(
-            !self.rcm.0.is_zero(),
+        assert_ne!(
+            self.rcm.0,
+            Fp::ZERO,
             "note commitment trapdoor should not be zero"
         );
 

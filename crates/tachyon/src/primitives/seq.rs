@@ -5,26 +5,24 @@ use core::ops::Mul;
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, pasta::Pasta};
-use udon::{
-    curve::{ProjectiveAdapter, Vesta},
-    field::Fp,
-};
+use udon::field::Field as _;
 
 use crate::{
     collections::{indexed_multiset, poly_mul},
     nullifier::Nullifier,
     pasta,
+    pasta::{Eq, Fp},
     primitives::EpochIndex,
 };
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct NfSeqCommit(ProjectiveAdapter<Vesta>);
+pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct NfSeqPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
 
 impl NfSeqPoly {
     /// Build the sequence polynomial for one contiguous run: the members of
@@ -45,13 +43,13 @@ impl NfSeqPoly {
     /// Evaluate the sequence polynomial at a given point.
     #[must_use]
     pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x.into()).into_inner()
+        self.0.eval(x)
     }
 }
 
 impl Default for NfSeqPoly {
     fn default() -> Self {
-        Self(Polynomial::from_coeffs(alloc::vec![<Fp>::ONE.into()]))
+        Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
     }
 }
 

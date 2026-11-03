@@ -40,9 +40,8 @@
 use ragu::StepCtx;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, Error, Result, pasta::Pasta};
-use udon::field::Fp;
 
-use crate::pasta;
+use crate::{pasta, pasta::Fp};
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -62,9 +61,9 @@ use crate::pasta;
 /// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product(
     ctx: &mut StepCtx<'_>,
-    multiplicand: &Polynomial<pasta::Fp, ProductionRank>,
-    multiplier: &Polynomial<pasta::Fp, ProductionRank>,
-    product: &Polynomial<pasta::Fp, ProductionRank>,
+    multiplicand: &Polynomial<Fp, ProductionRank>,
+    multiplier: &Polynomial<Fp, ProductionRank>,
+    product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
     let generators = Pasta::host_generators(pasta::baked());
@@ -108,7 +107,7 @@ pub(crate) fn enforce_poly_product(
 /// `N` fixes the root count at compile time.
 pub(crate) fn enforce_poly_roots<const N: usize>(
     ctx: &mut StepCtx<'_>,
-    accumulator: &Polynomial<pasta::Fp, ProductionRank>,
+    accumulator: &Polynomial<Fp, ProductionRank>,
     roots: &[Fp; N],
     err: &'static str,
 ) -> Result<()> {
@@ -116,7 +115,7 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
     let z = ctx.derive_challenge(&[accumulator_com])?;
 
     let accumulator_at_z = accumulator.eval(z);
-    let factors_at_z: pasta::Fp = roots.iter().map(|&root| z - pasta::Fp::new(root)).product();
+    let factors_at_z: Fp = roots.iter().map(|&root| z - root).product();
     if accumulator_at_z != factors_at_z {
         return Err(Error::InvalidWitness(err.into()));
     }

@@ -1,11 +1,11 @@
 use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, From, Into};
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
-use udon::field::{self, Fp};
+use udon::field::Field as _;
 
-use crate::serialization;
+use crate::{pasta::Fp, serialization};
 
 /// A field element ($\mathbb{F}_p$) in the Tachyon polynomial accumulator.
 ///
@@ -20,21 +20,13 @@ use crate::serialization;
 /// Consensus rejects a published tachygram that has already appeared in
 /// any block of the current or immediately preceding epoch. See the
 /// Tachygrams book chapter for why the window spans two epochs.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Tachygram(Fp);
-
-impl PartialEq for Tachygram {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl Eq for Tachygram {}
 
 impl Tachygram {
     /// Sample a uniformly random tachygram.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Read as a field element from the consensus wire format.

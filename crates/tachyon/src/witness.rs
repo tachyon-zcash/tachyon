@@ -9,7 +9,6 @@
 use alloc::collections::BTreeSet;
 
 use ragu::{Header, Step};
-use udon::field::Fp;
 
 use crate::{
     collections,
@@ -19,6 +18,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::Nullifier,
+    pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
         QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,

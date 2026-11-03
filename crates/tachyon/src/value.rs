@@ -6,14 +6,16 @@ use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, Partial
 use group::GroupEncoding as _;
 use lazy_static::lazy_static;
 use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
-use ragu_core::pasta::{self, Ep, EpAffine};
 use rand_core::CryptoRng;
 use udon::{
-    curve::{Affine as _, AffineAdapter, Pallas, Projective as _, ProjectiveAdapter},
-    field::{self, Fq},
+    curve::{Affine as _, Projective as _},
+    field::{Field as _, PastaField},
 };
 
-use crate::constants::MAX_MONEY;
+use crate::{
+    constants::MAX_MONEY,
+    pasta::{Ep, EpAffine, Fq},
+};
 
 /// Alias for [`ValueTrapdoor`].
 pub type Trapdoor = ValueTrapdoor;
@@ -69,7 +71,7 @@ impl Trapdoor {
 
     /// Generate a random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// A trapdoor derived from other secret data, such as a max fee note's
@@ -88,8 +90,8 @@ impl Trapdoor {
     /// Orchard (§5.4.8.3).
     #[must_use]
     pub fn commit<const MIN: i64, const MAX: i64>(self, value: Value<MIN, MAX>) -> Commitment {
-        let commit_value = *VALUE_COMMIT_V * pasta::Fq::new(Fq::from(value));
-        let commit_trapdoor = *VALUE_COMMIT_R * pasta::Fq::new(self.0);
+        let commit_value = *VALUE_COMMIT_V * Fq::from(value);
+        let commit_trapdoor = *VALUE_COMMIT_R * self.0;
         ValueCommitment(commit_value + commit_trapdoor)
     }
 }
@@ -104,15 +106,15 @@ impl Trapdoor {
 /// shared with Orchard (§5.4.8.3).
 #[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueCommitment(#[debug(skip)] ProjectiveAdapter<Pallas>);
+pub struct ValueCommitment(#[debug(skip)] Ep);
 
-impl From<AffineAdapter<Pallas>> for Commitment {
-    fn from(value: AffineAdapter<Pallas>) -> Self {
+impl From<EpAffine> for Commitment {
+    fn from(value: EpAffine) -> Self {
         Self(value.into())
     }
 }
 
-impl From<Commitment> for AffineAdapter<Pallas> {
+impl From<Commitment> for EpAffine {
     fn from(value: Commitment) -> Self {
         value.0.to_affine()
     }
@@ -241,7 +243,7 @@ impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
     /// Signed value as a Pallas scalar, for use as the `V`-component
     /// exponent in a value commitment.
     fn from(value: Value<MIN, MAX>) -> Self {
-        Self::from_i64(value.0)
+        Self::new(PastaField::from_i64(value.0))
     }
 }
 
@@ -292,17 +294,14 @@ mod tests {
 
         let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
-        let rcv_sum = Into::<Fq>::into(rcv_a).add(&Into::<Fq>::into(rcv_b));
+        let rcv_sum = Fq::from(rcv_a) + Fq::from(rcv_b);
 
-        assert_eq!(
-            remainder,
-            ValueCommitment(*VALUE_COMMIT_R * pasta::Fq::new(rcv_sum))
-        );
+        assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
     }
 
     #[test]
     fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from_u64(0xFACE));
+        let rcv = ValueTrapdoor(Fq::from(0xFACE));
         assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
     }
 

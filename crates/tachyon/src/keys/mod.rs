@@ -96,13 +96,14 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
-    use udon::field::Fp;
+    use udon::field::Field as _;
 
     use crate::{
         entropy::ActionEntropy,
         keys::{NoteMasterKey, NullifierKey, PaymentKey, private},
         note::{self, Note},
         nullifier,
+        pasta::Fp,
         primitives::{EpochIndex, effect},
         value,
     };
@@ -121,10 +122,7 @@ mod tests {
         assert_ne!(nk.0.to_bytes(), Fp::from(pk).to_bytes());
 
         let pak = sk.derive_proof_private();
-        assert_eq!(
-            Fp::from(pak.derive_payment_key()).reduce(),
-            Fp::from(pk).reduce()
-        );
+        assert_eq!(Fp::from(pak.derive_payment_key()), Fp::from(pk));
     }
 
     /// pk must bind to nk: varying nk (with ak fixed) must produce a
@@ -138,9 +136,9 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let pk = PaymentKey::derive(&ak, &nk);
 
-        let nk_other = NullifierKey(nk.0.add(&<Fp>::ONE));
+        let nk_other = NullifierKey(nk.0 + Fp::ONE);
         let pk_other = PaymentKey::derive(&ak, &nk_other);
-        assert_ne!(Fp::from(pk).reduce(), Fp::from(pk_other).reduce());
+        assert_ne!(Fp::from(pk), Fp::from(pk_other));
     }
 
     /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for
@@ -204,7 +202,7 @@ mod tests {
 
     #[test]
     fn debug_nullifier_key_redacts_value() {
-        let nk = NullifierKey(Fp::from_u64(0xDEAD));
+        let nk = NullifierKey(Fp::from(0xDEAD));
         let dbg = alloc::format!("{nk:?}");
         assert!(dbg.contains("NullifierKey"), "must name the type");
         assert!(!dbg.contains("DEAD"), "must not leak field element");

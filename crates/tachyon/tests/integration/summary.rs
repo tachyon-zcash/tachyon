@@ -7,9 +7,10 @@ use core::array;
 
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::field::Fp;
+use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly,
+    pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, summary},
     witness,
 };
@@ -106,8 +107,9 @@ fn summary_over_an_anchor_span_matches_the_pool() {
     assert_eq!(members.len(), 12, "every published tachygram accumulates");
     assert_eq!(acc_commit, acc.commit());
     for &tg in &members {
-        assert!(
-            acc.eval(Fp::from(tg)).is_zero(),
+        assert_eq!(
+            acc.eval(Fp::from(tg)),
+            Fp::ZERO,
             "each member is a root of the accumulator"
         );
     }

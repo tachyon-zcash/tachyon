@@ -20,13 +20,13 @@ pub mod fee;
 pub mod keys;
 pub mod note;
 pub mod nullifier;
+pub mod pasta;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;
 pub mod witness;
 
 mod collections;
-mod pasta;
 mod primitives;
 mod ragu_constraint;
 mod relations;

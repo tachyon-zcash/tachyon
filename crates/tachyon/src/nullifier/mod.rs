@@ -2,9 +2,9 @@
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
-use udon::field::{self, Fp};
+use udon::field::Field as _;
 
-use crate::primitives::Tachygram;
+use crate::{pasta::Fp, primitives::Tachygram};
 
 /// Epochs covered per nullifier derivation step.
 pub const NF_DERIVATION_WIDTH: usize = 16;
@@ -37,21 +37,13 @@ impl Nullifier {
 /// Used to derive the note's master key $\mathsf{mk} =
 /// \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$, which
 /// evaluates every epoch. Delegation carries proven value windows.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Trapdoor(#[debug(skip)] Fp);
-
-impl PartialEq for Trapdoor {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl Eq for Trapdoor {}
 
 impl Trapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 
@@ -61,7 +53,7 @@ mod tests {
 
     #[test]
     fn debug_nullifier_trapdoor_redacts_value() {
-        let psi = Trapdoor::from(Fp::from_u64(0xCAFE));
+        let psi = Trapdoor::from(Fp::from(0xCAFE));
         let dbg = alloc::format!("{psi:?}");
         assert!(dbg.contains("Trapdoor"), "must name the type");
         assert!(!dbg.contains("CAFE"), "must not leak field element");

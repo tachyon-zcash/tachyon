@@ -13,7 +13,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
-    field::Fp,
+    field::Field as _,
 };
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
@@ -28,6 +28,7 @@ use zcash_tachyon::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
@@ -1790,18 +1791,18 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     }
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
-    Fp::from_wide_bytes_reduced(&wide)
+    Fp::from_uniform_bytes(&wide)
 }
 
 /// Another member at `epoch` whose indexed factor
 /// $(m + (i+1)X)^3 - 2$ agrees with `member`'s at `z`.
 pub fn cube_root_twin(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
-    <Fp>::ZETA.mul(&member.add(&shift)).sub(&shift)
+    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
+    (Fp::ZETA * (member + shift)) - shift
 }
 
 /// The indexed factor of `member` at `epoch`, evaluated at `z`.
 pub fn indexed_factor(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
-    member.add(&shift).pow_u64(3).sub(&<Fp>::from_u64(2))
+    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
+    (member + shift).pow_u64(3) - Fp::from(2)
 }

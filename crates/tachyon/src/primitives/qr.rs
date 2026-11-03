@@ -4,12 +4,13 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, pasta::Pasta};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{ProjectiveAdapter, Vesta},
-    field::{self, Fp},
-};
+use udon::field::Field as _;
 
-use crate::{collections::qr, pasta};
+use crate::{
+    collections::qr,
+    pasta,
+    pasta::{Eq, Fp},
+};
 
 /// A routing network's first discriminant $R_0$.
 ///
@@ -23,34 +24,26 @@ use crate::{collections::qr, pasta};
 /// and a wallet can use any valid network.
 ///
 /// Depth $j$ classifies at $R_j = R_0 + j$.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
-
-impl PartialEq for QrDiscriminant {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.reduce() == other.0.reduce()
-    }
-}
-
-impl Eq for QrDiscriminant {}
 
 impl QrDiscriminant {
     /// Sample a uniformly random first discriminant.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(field::random(|bytes| rng.fill_bytes(bytes)))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// The discriminant a split at `depth` classifies at.
     #[must_use]
     pub fn at(self, depth: u32) -> Fp {
-        self.0.add(&<Fp>::from_u64(u64::from(depth)))
+        self.0 + Fp::from(u64::from(depth))
     }
 }
 
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
 /// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrInterpolantPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
 impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
@@ -62,18 +55,18 @@ impl QrInterpolantPoly {
     /// Evaluate the interpolant at a given point.
     #[must_use]
     pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at.into()).into_inner()
+        self.0.eval(at)
     }
 }
 
 /// Pedersen commitment to a class interpolant.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrInterpolantCommit(ProjectiveAdapter<Vesta>);
+pub struct QrInterpolantCommit(Eq);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c \cdot (X + s) = q \cdot h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrQuotientPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
 impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
@@ -85,13 +78,13 @@ impl QrQuotientPoly {
     /// Evaluate the quotient at a given point.
     #[must_use]
     pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at.into()).into_inner()
+        self.0.eval(at)
     }
 }
 
 /// Pedersen commitment to a class-decomposition quotient.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrQuotientCommit(ProjectiveAdapter<Vesta>);
+pub struct QrQuotientCommit(Eq);
 
 /// A QR profile: the number of splits taken and the side taken at each.
 ///
@@ -148,16 +141,8 @@ impl QrProfile {
 /// A value's side and square root at one discriminant: `(true, r)` with
 /// $r^2 = s$, or `(false, r)` with $r^2 = c \cdot s$, for $s$ the shifted
 /// value.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(pub bool, pub Fp);
-
-impl PartialEq for QrClassRoot {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0 && self.1.reduce() == other.1.reduce()
-    }
-}
-
-impl Eq for QrClassRoot {}
 
 impl QrClassRoot {
     /// Classify `value` at `discriminant`.
@@ -170,10 +155,10 @@ impl QrClassRoot {
     /// `discriminant`, in depth order.
     #[must_use]
     pub fn along(value: Fp, discriminant: QrDiscriminant) -> [Self; QrProfile::MAX_DEPTH] {
-        let mut shifted = value.add(&discriminant.0);
+        let mut shifted = value + discriminant.0;
         array::from_fn(|_| {
             let class = Self::of(shifted, Fp::ZERO);
-            shifted = shifted.add(&<Fp>::ONE);
+            shifted += Fp::ONE;
             class
         })
     }
@@ -227,38 +212,31 @@ mod tests {
 
     #[test]
     fn the_discriminants_progress_by_one() {
-        let first = QrDiscriminant::from(Fp::from_u64(7));
-        assert_eq!(first.at(0).reduce(), Fp::from_u64(7));
-        assert_eq!(first.at(1).reduce(), Fp::from_u64(8));
-        assert_eq!(first.at(u32::BITS).reduce(), Fp::from_u64(7 + 32));
-        assert!(QrDiscriminant::from(<Fp>::ONE.neg()).at(1).is_zero());
+        let first = QrDiscriminant::from(Fp::from(7));
+        assert_eq!(first.at(0), Fp::from(7));
+        assert_eq!(first.at(1), Fp::from(8));
+        assert_eq!(first.at(u32::BITS), Fp::from(7 + 32));
+        assert_eq!(QrDiscriminant::from(-Fp::ONE).at(1), Fp::ZERO);
     }
 
     #[test]
     fn class_roots_square_to_the_shifted_value() {
-        let discriminant = QrDiscriminant::from(Fp::from_u64(11));
-        for value in [
-            Fp::from_u64(3),
-            Fp::from_u64(1_000_003),
-            <Fp>::from_u64(9).neg(),
-        ] {
+        let discriminant = QrDiscriminant::from(Fp::from(11));
+        for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
             for (depth, QrClassRoot(side, root)) in
                 (0..).zip(QrClassRoot::along(value, discriminant))
             {
-                let shifted = value.add(&discriminant.at(depth));
-                assert_eq!(
-                    root.square().reduce(),
-                    qr::class_multiplier(side).mul(&shifted).reduce()
-                );
+                let shifted = value + discriminant.at(depth);
+                assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
             }
         }
     }
 
     #[test]
     fn the_fixed_point_takes_the_residue_side_with_root_zero() {
-        let discriminant = QrDiscriminant::from(Fp::from_u64(13));
+        let discriminant = QrDiscriminant::from(Fp::from(13));
         let position = 5;
-        let value = discriminant.at(position).neg();
+        let value = -discriminant.at(position);
         let classes = QrClassRoot::along(value, discriminant);
         assert_eq!(
             classes[usize::try_from(position).unwrap()],

@@ -25,11 +25,10 @@ use proof::{
 };
 use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::pasta::Eq;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
-    field::Fp,
+    field::Field as _,
 };
 
 use crate::{
@@ -40,6 +39,7 @@ use crate::{
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
+    pasta::{Eq, Fp},
     primitives::{
         ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
     },

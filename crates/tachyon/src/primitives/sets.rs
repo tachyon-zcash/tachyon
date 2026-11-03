@@ -3,21 +3,20 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{
-    Cycle as _, FixedGenerators as _,
-    pasta::{Eq, Pasta},
-};
-use udon::{
-    curve::{Projective as _, ProjectiveAdapter, Vesta},
-    field::Fp,
-};
+use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
+use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, Tachygram};
-use crate::{collections::multiset, pasta, serialization};
+use crate::{
+    collections::multiset,
+    pasta,
+    pasta::{Eq, Fp},
+    serialization,
+};
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct TachygramSetCommit(ProjectiveAdapter<Vesta>);
+pub struct TachygramSetCommit(Eq);
 
 impl TachygramSetCommit {
     /// Read as an affine point from the consensus wire format.
@@ -51,7 +50,7 @@ impl Default for TachygramSetCommit {
 
 /// Pedersen commitment to a stamp's action-digest set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct ActionSetCommit(ProjectiveAdapter<Vesta>);
+pub struct ActionSetCommit(Eq);
 
 impl ActionSetCommit {
     /// Read as an affine point from the consensus wire format.
@@ -85,7 +84,7 @@ impl Default for ActionSetCommit {
 
 /// Pedersen commitment to an anchor span's member set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct AnchorSetCommit(ProjectiveAdapter<Vesta>);
+pub struct AnchorSetCommit(Eq);
 
 impl AnchorSetCommit {
     /// Commitment to the one-member set $\\{\mathsf{anchor}\\}$, the
@@ -101,23 +100,23 @@ impl AnchorSetCommit {
     )]
     pub fn singleton(anchor: Anchor) -> Self {
         let generators = Pasta::host_generators(pasta::baked()).g();
-        Self(Eq::from(generators[1]) - generators[0] * pasta::Fp::new(Fp::from(anchor)))
+        Self(Eq::from(generators[1]) - generators[0] * Fp::from(anchor))
     }
 }
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct TachygramSetPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct ActionSetPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct AnchorSetPoly(Polynomial<pasta::Fp, ProductionRank>);
+pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
 
 impl AnchorSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
@@ -129,7 +128,7 @@ impl AnchorSetPoly {
     /// Evaluate the set polynomial at a given point.
     #[must_use]
     pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x.into()).into_inner()
+        self.0.eval(x)
     }
 }
 
@@ -149,7 +148,7 @@ impl TachygramSetPoly {
     /// Evaluate the set polynomial at a given point.
     #[must_use]
     pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x.into()).into_inner()
+        self.0.eval(x)
     }
 }
 
@@ -163,7 +162,7 @@ impl ActionSetPoly {
     /// Evaluate the set polynomial at a given point.
     #[must_use]
     pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x.into()).into_inner()
+        self.0.eval(x)
     }
 }
 

@@ -16,7 +16,7 @@ use ragu_core::{
     PoseidonPermutation as _,
     pasta::{self, Ep, Eq, PoseidonFp},
 };
-use udon::field::Fp;
+use udon::field::Field as _;
 
 use crate::{
     collections::indexed_multiset,
@@ -24,6 +24,7 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
+    pasta::Fp,
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -50,12 +51,12 @@ impl Header for NoteSecret {
         let (cm, note, mk) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm)),
-                pasta::Fp::new(Fp::from(note.rcm)),
-                pasta::Fp::new(Fp::from(note.pk)),
+                Fp::from(cm),
+                Fp::from(note.rcm),
+                Fp::from(note.pk),
                 pasta::Fp::from(u64::from(note.value)),
-                pasta::Fp::new(Fp::from(note.psi)),
-                pasta::Fp::new(mk.0),
+                Fp::from(note.psi),
+                mk.0,
             ],
             Vec::new(),
             Vec::new(),
@@ -92,11 +93,7 @@ impl Header for NoteNullifiers {
     fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
-            vec![
-                pasta::Fp::new(Fp::from(cm)),
-                pasta::Fp::new(Fp::from(epoch_start)),
-                pasta::Fp::new(Fp::from(epoch_end)),
-            ],
+            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(nf_commit)],
@@ -209,7 +206,7 @@ impl Step for NullifierDerive {
             reason = "the group width is a small constant"
         )]
         enforce_zero(
-            Fp::from_u64(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
+            Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
             "NullifierDerive: epoch_start is not group-aligned",
         )?;
 
@@ -238,9 +235,9 @@ impl Step for NullifierDerive {
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
         // is not vacuous.
-        let z = ctx.derive_challenge(&[seq.commit().into()])?.into_inner();
+        let z = ctx.derive_challenge(&[seq.commit().into()])?;
         let seq_at_z = seq.eval(z);
-        ctx.enforce_poly_query(seq.commit().into(), z.into(), seq_at_z.into())?;
+        ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
 
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.
@@ -248,7 +245,7 @@ impl Step for NullifierDerive {
             indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
 
         enforce_zero(
-            seq_at_z.sub(&window_at_z),
+            seq_at_z - window_at_z,
             "NullifierDerive: sequence does not match the derived window",
         )?;
 
@@ -297,13 +294,11 @@ impl Step for NullifierFuse {
         (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_cm).sub(&Fp::from(right_cm)),
+            Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start)
-                .sub(&Fp::from(left_epoch_end))
-                .sub(&<Fp>::ONE),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
             "NullifierFuse: ranges not contiguous",
         )?;
         enforce_equal_point(

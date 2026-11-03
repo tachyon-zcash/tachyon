@@ -3,10 +3,9 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use ragu_core::pasta::EpAffine;
-use udon::curve::{Affine as _, AffineAdapter, Pallas};
+use udon::curve::Affine as _;
 
-use crate::{action, bundle, reddsa, value};
+use crate::{action, bundle, pasta::EpAffine, reddsa, value};
 
 /// The randomized action verification key `rk`: per-action, public.
 ///
@@ -49,16 +48,16 @@ impl ActionVerificationKey {
     }
 }
 
-impl TryFrom<AffineAdapter<Pallas>> for ActionVerificationKey {
+impl TryFrom<EpAffine> for ActionVerificationKey {
     type Error = reddsa::Error;
 
-    fn try_from(point: AffineAdapter<Pallas>) -> Result<Self, Self::Error> {
+    fn try_from(point: EpAffine) -> Result<Self, Self::Error> {
         let bytes = point.to_bytes();
         reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map(Self)
     }
 }
 
-impl From<ActionVerificationKey> for AffineAdapter<Pallas> {
+impl From<ActionVerificationKey> for EpAffine {
     fn from(key: ActionVerificationKey) -> Self {
         let bytes: [u8; 32] = key.0.into();
         #[expect(clippy::expect_used, reason = "a verification key is a curve point")]
@@ -140,8 +139,8 @@ impl BindingVerificationKey {
     }
 }
 
-impl From<AffineAdapter<Pallas>> for BindingVerificationKey {
-    fn from(point: AffineAdapter<Pallas>) -> Self {
+impl From<EpAffine> for BindingVerificationKey {
+    fn from(point: EpAffine) -> Self {
         let bvk_bytes: [u8; 32] = point.to_bytes();
 
         #[expect(clippy::expect_used, reason = "specified behavior")]

@@ -3,11 +3,11 @@
 use core::cmp;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use ragu_core::pasta::EpAffine;
 use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
+    pasta::EpAffine,
     primitives::{ActionDigest, ActionDigestError},
     value,
 };

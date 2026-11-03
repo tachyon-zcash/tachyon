@@ -28,7 +28,6 @@ use ragu_core::{
     Cycle as _, FixedGenerators as _,
     pasta::{Ep, Eq, Pasta},
 };
-use udon::field::Fp;
 
 use super::{
     delegation::NoteNullifiers,
@@ -38,6 +37,7 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     pasta,
+    pasta::Fp,
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -83,14 +83,14 @@ impl Header for ArbitraryUnspent {
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(anchor_start)),
-                pasta::Fp::new(Fp::from(epoch_start)),
-                pasta::Fp::new(Fp::from(epoch_next)),
-                pasta::Fp::new(Fp::from(anchor_next)),
+                Fp::from(anchor_start),
+                Fp::from(epoch_start),
+                Fp::from(epoch_next),
+                Fp::from(anchor_next),
             ],
             Vec::new(),
             Vec::new(),
@@ -111,15 +111,15 @@ impl Header for NoteUnspent {
 
     const SUFFIX: Suffix = Suffix::new(3);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(cm)),
-                pasta::Fp::new(Fp::from(anchor_start)),
-                pasta::Fp::new(Fp::from(epoch_start)),
-                pasta::Fp::new(Fp::from(epoch_next)),
-                pasta::Fp::new(Fp::from(anchor_next)),
+                Fp::from(cm),
+                Fp::from(anchor_start),
+                Fp::from(epoch_start),
+                Fp::from(epoch_next),
+                Fp::from(anchor_next),
             ],
             Vec::new(),
             Vec::new(),
@@ -156,13 +156,10 @@ impl Header for AnchorSpan {
 
     const SUFFIX: Suffix = Suffix::new(14);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_start, members, anchor_end) = *data;
         (
-            vec![
-                pasta::Fp::new(Fp::from(anchor_start)),
-                pasta::Fp::new(Fp::from(anchor_end)),
-            ],
+            vec![Fp::from(anchor_start), Fp::from(anchor_end)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(members)],
@@ -249,7 +246,7 @@ impl Step for AnchorSpanFuse {
         (right_anchor_start, right_members_commit, right_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_anchor_end).sub(&Fp::from(right_anchor_start)),
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
             "AnchorSpanFuse: spans do not share a vertex",
         )?;
         enforce_equal_point(
@@ -311,11 +308,11 @@ impl Step for UnspentFuse {
             "UnspentFuse: right polynomial does not match header",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_next).sub(&Fp::from(right_anchor_start)),
+            Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
             "UnspentFuse: left.anchor_next must equal right.anchor_start",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start).sub(&Fp::from(left_epoch_next)),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
             "UnspentFuse: halves do not meet at one epoch",
         )?;
         enforce_poly_product(
@@ -401,11 +398,11 @@ impl Step for UnspentLift {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(unspent_anchor_next).sub(&Fp::from(bucket_anchor_start)),
+            Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),
             "UnspentLift: the bucket does not start where the segment ends",
         )?;
         enforce_zero(
-            Fp::from(unspent_epoch_next).sub(&Fp::from(bucket_epoch)),
+            Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch),
             "UnspentLift: the bucket is not the segment's next epoch",
         )?;
         enforce_equal_point(
@@ -425,8 +422,8 @@ impl Step for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
         })?;
 
-        let z = ctx
-            .derive_challenge(
+        let z =
+            ctx.derive_challenge(
                 &[elapsed_seq.commit().into(), extended_seq.commit().into(), {
                     // The mock absorbs only points, so absorb `[value]·G_0`.
                     #[expect(clippy::expect_used, reason = "constant size")]
@@ -434,28 +431,22 @@ impl Step for UnspentLift {
                         .g()
                         .first()
                         .expect("at least one generator");
-                    g0 * pasta::Fp::new(Fp::from(value))
+                    g0 * Fp::from(value)
                 }],
-            )?
-            .into_inner();
+            )?;
         let elapsed_at_z = elapsed_seq.eval(z);
         let extended_at_z = extended_seq.eval(z);
-        ctx.enforce_poly_query(elapsed_seq.commit().into(), z.into(), elapsed_at_z.into())?;
-        ctx.enforce_poly_query(extended_seq.commit().into(), z.into(), extended_at_z.into())?;
+        ctx.enforce_poly_query(elapsed_seq.commit().into(), z, elapsed_at_z)?;
+        ctx.enforce_poly_query(extended_seq.commit().into(), z, extended_at_z)?;
         enforce_zero(
-            extended_at_z.sub(&elapsed_at_z.mul(&indexed_multiset::direct_eval(
-                [(u64::from(bucket_epoch), value.into())],
-                z,
-            ))),
+            extended_at_z
+                - elapsed_at_z
+                    * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z),
             "UnspentLift: extended is not elapsed with the tested pair",
         )?;
 
         let contents_at_value = contents.eval(value.into());
-        ctx.enforce_poly_query(
-            contents_commit.into(),
-            Fp::from(value).into(),
-            contents_at_value.into(),
-        )?;
+        ctx.enforce_poly_query(contents_commit.into(), Fp::from(value), contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "UnspentLift: found nullifier in the bucket",

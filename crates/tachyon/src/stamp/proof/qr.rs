@@ -28,7 +28,7 @@ use ragu_core::{
     Cycle as _, FixedGenerators as _,
     pasta::{Ep, Eq, Pasta},
 };
-use udon::field::Fp;
+use udon::field::Field as _;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -36,6 +36,7 @@ use crate::{
     collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
     digest::poseidon,
     pasta,
+    pasta::Fp,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -66,16 +67,16 @@ impl Header for QrIntake {
 
     const SUFFIX: Suffix = Suffix::new(4);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch)),
-                pasta::Fp::new(Fp::from(anchor_prev)),
-                pasta::Fp::new(Fp::from(anchor_end)),
-                pasta::Fp::new(Fp::from(discriminant)),
-                pasta::Fp::from(u64::from(profile.depth)),
-                pasta::Fp::from(u64::from(profile.bits)),
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_end),
+                Fp::from(discriminant),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
             ],
             Vec::new(),
             Vec::new(),
@@ -106,16 +107,16 @@ impl Header for QrIntakeSides {
 
     const SUFFIX: Suffix = Suffix::new(10);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch)),
-                pasta::Fp::new(Fp::from(anchor_prev)),
-                pasta::Fp::new(Fp::from(anchor_end)),
-                pasta::Fp::new(Fp::from(discriminant)),
-                pasta::Fp::from(u64::from(profile.depth)),
-                pasta::Fp::from(u64::from(profile.bits)),
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_end),
+                Fp::from(discriminant),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
             ],
             Vec::new(),
             Vec::new(),
@@ -295,25 +296,23 @@ impl Step for QrIntakeMerge {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_epoch).sub(&Fp::from(right_epoch)),
+            Fp::from(left_epoch) - Fp::from(right_epoch),
             "QrIntakeMerge: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_discriminant).sub(&Fp::from(right_discriminant)),
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
             "QrIntakeMerge: inputs derive from different discriminants",
         )?;
         enforce_zero(
-            <Fp>::from_u64(u64::from(left_profile.depth))
-                .sub(&<Fp>::from_u64(u64::from(right_profile.depth))),
+            Fp::from(u64::from(left_profile.depth)) - Fp::from(u64::from(right_profile.depth)),
             "QrIntakeMerge: inputs sit at different depths",
         )?;
         enforce_zero(
-            <Fp>::from_u64(u64::from(left_profile.bits))
-                .sub(&<Fp>::from_u64(u64::from(right_profile.bits))),
+            Fp::from(u64::from(left_profile.bits)) - Fp::from(u64::from(right_profile.bits)),
             "QrIntakeMerge: inputs sit at different profiles",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_end).sub(&Fp::from(right_anchor_prev)),
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_prev),
             "QrIntakeMerge: left.anchor_end must equal right.anchor_prev",
         )?;
         enforce_equal_point(
@@ -389,12 +388,12 @@ impl Step for QrIntakeSplit {
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
-        let exceptional = discriminant.at(profile.depth).neg();
+        let exceptional = -discriminant.at(profile.depth);
         let non_residue_at_exceptional = non_residue.eval(exceptional);
         ctx.enforce_poly_query(
             non_residue.commit().into(),
-            exceptional.into(),
-            non_residue_at_exceptional.into(),
+            exceptional,
+            non_residue_at_exceptional,
         )?;
         enforce_nonzero(
             non_residue_at_exceptional,
@@ -478,50 +477,43 @@ impl Step for QrSideDescend {
         // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
         let sibling_commit = sibling_contents.commit();
         let sibling = Eq::from(residue)
-            + ((Eq::from(non_residue) - Eq::from(residue)) * pasta::Fp::from(u64::from(bit)));
+            + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
         enforce_equal_point(
             Eq::from(sibling_commit),
             sibling,
             "QrSideDescend: sibling does not match the header",
         )?;
         let selected = Eq::from(non_residue)
-            + ((Eq::from(residue) - Eq::from(non_residue)) * pasta::Fp::from(u64::from(bit)));
+            + ((Eq::from(residue) - Eq::from(non_residue)) * Fp::from(u64::from(bit)));
 
         let interpolant_commit = interpolant.commit();
         let quotient_commit = quotient.commit();
-        let z = ctx
-            .derive_challenge(&[
-                sibling_commit.into(),
-                interpolant_commit.into(),
-                quotient_commit.into(),
-                {
-                    // The mock absorbs only points, so absorb `[R]·G_0`.
-                    #[expect(clippy::expect_used, reason = "constant size")]
-                    let &g0 = Pasta::host_generators(pasta::baked())
-                        .g()
-                        .first()
-                        .expect("at least one generator");
-                    g0 * pasta::Fp::new(discriminant.at(profile.depth))
-                },
-            ])?
-            .into_inner();
+        let z = ctx.derive_challenge(&[
+            sibling_commit.into(),
+            interpolant_commit.into(),
+            quotient_commit.into(),
+            {
+                // The mock absorbs only points, so absorb `[R]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * discriminant.at(profile.depth)
+            },
+        ])?;
         let sibling_at_z = sibling_contents.eval(z);
         let interpolant_at_z = interpolant.eval(z);
         let quotient_at_z = quotient.eval(z);
-        ctx.enforce_poly_query(sibling_commit.into(), z.into(), sibling_at_z.into())?;
-        ctx.enforce_poly_query(interpolant_commit.into(), z.into(), interpolant_at_z.into())?;
-        ctx.enforce_poly_query(quotient_commit.into(), z.into(), quotient_at_z.into())?;
-        let shifted = z.add(&discriminant.at(profile.depth));
-        let class_residual = interpolant_at_z
-            .square()
-            .sub(&sibling_at_z.mul(&quotient_at_z));
-        let sibling_multiplier = <Fp>::ONE.add(
-            &QUADRATIC_NON_RESIDUE
-                .sub(&<Fp>::ONE)
-                .mul(&<Fp>::from_u64(u64::from(bit))),
-        );
+        ctx.enforce_poly_query(sibling_commit.into(), z, sibling_at_z)?;
+        ctx.enforce_poly_query(interpolant_commit.into(), z, interpolant_at_z)?;
+        ctx.enforce_poly_query(quotient_commit.into(), z, quotient_at_z)?;
+        let shifted = z + discriminant.at(profile.depth);
+        let class_residual = interpolant_at_z.square() - (sibling_at_z * quotient_at_z);
+        let sibling_multiplier =
+            Fp::ONE + ((QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit)));
         enforce_zero(
-            class_residual.sub(&sibling_multiplier.mul(&shifted)),
+            class_residual - (sibling_multiplier * shifted),
             "QrSideDescend: the sibling fails its class decomposition",
         )?;
 
@@ -562,16 +554,16 @@ impl Header for QrBucket {
 
     const SUFFIX: Suffix = Suffix::new(11);
 
-    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, profile, contents) = *data;
         (
             vec![
-                pasta::Fp::new(Fp::from(epoch)),
-                pasta::Fp::new(Fp::from(anchor_start)),
-                pasta::Fp::new(Fp::from(anchor_next)),
-                pasta::Fp::new(Fp::from(discriminant)),
-                pasta::Fp::from(u64::from(profile.depth)),
-                pasta::Fp::from(u64::from(profile.bits)),
+                Fp::from(epoch),
+                Fp::from(anchor_start),
+                Fp::from(anchor_next),
+                Fp::from(discriminant),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
             ],
             Vec::new(),
             Vec::new(),
@@ -634,10 +626,8 @@ impl Step for QrBucketSeal {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(anchor_prev).sub(&poseidon::anchor_next_epoch(
-                Fp::from(anchor_final_prev),
-                Fp::from(epoch),
-            )),
+            Fp::from(anchor_prev)
+                - poseidon::anchor_next_epoch(Fp::from(anchor_final_prev), Fp::from(epoch)),
             "QrBucketSeal: witnessed boundary digest does not match intake's first anchor",
         )?;
         let epoch_next = epoch.next().ok_or_else(|| {
@@ -675,43 +665,40 @@ pub(super) fn enforce_value_profile(
 ) -> ragu_core::Result<()> {
     // TODO: a real circuit must constrain every side and mask bit boolean;
     // the types carry it under mock ragu.
-    let mut shifted = Fp::from(value).add(&Fp::from(discriminant));
-    let mut position_fp = <Fp>::ZERO;
-    let mut depth_acc = <Fp>::ZERO;
-    let mut index_acc = <Fp>::ZERO;
-    let mut bits_acc = <Fp>::ZERO;
+    let mut shifted = Fp::from(value) + Fp::from(discriminant);
+    let mut position_fp = Fp::ZERO;
+    let mut depth_acc = Fp::ZERO;
+    let mut index_acc = Fp::ZERO;
+    let mut bits_acc = Fp::ZERO;
     for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
-        let side_fp = <Fp>::from_u64(u64::from(side));
-        let multiplier =
-            QUADRATIC_NON_RESIDUE.sub(&QUADRATIC_NON_RESIDUE.sub(&<Fp>::ONE).mul(&side_fp));
+        let side_fp = Fp::from(u64::from(side));
+        let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
         enforce_zero(
-            root.square().sub(&multiplier.mul(&shifted)),
+            root.square() - (multiplier * shifted),
             "QR profile: root does not square to the claimed class",
         )?;
         enforce_nonzero(
-            shifted.mul(&<Fp>::ONE.sub(&side_fp)).add(&side_fp),
+            (shifted * (Fp::ONE - side_fp)) + side_fp,
             "QR profile: exceptional discriminant claimed the non-residue class",
         )?;
 
-        let selected_fp = <Fp>::from_u64(u64::from(selected));
-        depth_acc = depth_acc.add(&selected_fp);
-        index_acc = index_acc.add(&selected_fp.mul(&position_fp));
-        bits_acc = bits_acc.add(&selected_fp.mul(&bits_acc.add(&side_fp)));
-        shifted = shifted.add(&<Fp>::ONE);
-        position_fp = position_fp.add(&<Fp>::ONE);
+        let selected_fp = Fp::from(u64::from(selected));
+        depth_acc += selected_fp;
+        index_acc += selected_fp * position_fp;
+        bits_acc += selected_fp * (bits_acc + side_fp);
+        shifted += Fp::ONE;
+        position_fp += Fp::ONE;
     }
     enforce_zero(
-        depth_acc.sub(&<Fp>::from_u64(u64::from(profile.depth))),
+        depth_acc - Fp::from(u64::from(profile.depth)),
         "QR profile: depth mask does not match the bucket's depth",
     )?;
     enforce_zero(
-        index_acc
-            .double()
-            .sub(&depth_acc.mul(&depth_acc.sub(&<Fp>::ONE))),
+        index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
         "QR profile: depth mask is not a prefix",
     )?;
     enforce_zero(
-        bits_acc.sub(&<Fp>::from_u64(u64::from(profile.bits))),
+        bits_acc - Fp::from(u64::from(profile.bits)),
         "QR profile: value does not take the bucket's profile",
     )?;
     Ok(())
@@ -817,33 +804,27 @@ impl Step for QrUnspentInit {
         })?;
 
         let sequence_commit = sequence.commit();
-        let z = ctx
-            .derive_challenge(&[sequence_commit.into(), {
-                // The mock absorbs only points, so absorb `[value]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * pasta::Fp::new(Fp::from(value))
-            }])?
-            .into_inner();
+        let z = ctx.derive_challenge(&[sequence_commit.into(), {
+            // The mock absorbs only points, so absorb `[value]·G_0`.
+            #[expect(clippy::expect_used, reason = "constant size")]
+            let &g0 = Pasta::host_generators(pasta::baked())
+                .g()
+                .first()
+                .expect("at least one generator");
+            g0 * Fp::from(value)
+        }])?;
         let sequence_at_z = sequence.eval(z);
-        ctx.enforce_poly_query(sequence_commit.into(), z.into(), sequence_at_z.into())?;
+        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
         let member_at_z =
             indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z);
         enforce_zero(
-            sequence_at_z.sub(&member_at_z),
+            sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested pair",
         )?;
 
         let contents_at_value = contents.eval(value.into());
-        ctx.enforce_poly_query(
-            contents_commit.into(),
-            Fp::from(value).into(),
-            contents_at_value.into(),
-        )?;
+        ctx.enforce_poly_query(contents_commit.into(), Fp::from(value), contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "QrUnspentInit: found nullifier in the bucket",
