@@ -11,32 +11,7 @@ pub(crate) mod indexed_multiset;
 pub(crate) mod multiset;
 pub(crate) mod qr;
 
-mod arithmetic;
-
-fn trim(coeffs: &mut Vec<Fp>) {
-    if let Some(last_nonzero_idx) = coeffs.iter().rposition(|co| co != &Fp::ZERO) {
-        coeffs.truncate(last_nonzero_idx + 1);
-    }
-}
-
-pub(super) fn poly_mul(
-    input_a: &Polynomial<Fp, ProductionRank>,
-    input_b: &Polynomial<Fp, ProductionRank>,
-) -> Polynomial<Fp, ProductionRank> {
-    let mut a_coeffs = input_a.iter_coeffs().collect::<Vec<_>>();
-    let mut b_coeffs = input_b.iter_coeffs().collect::<Vec<_>>();
-
-    trim(&mut a_coeffs);
-    trim(&mut b_coeffs);
-
-    let mut out_coeffs = Vec::new();
-
-    arithmetic::poly_mul(&a_coeffs, &b_coeffs, &mut out_coeffs);
-
-    trim(&mut out_coeffs);
-
-    Polynomial::from_coeffs(out_coeffs)
-}
+pub(crate) mod arithmetic;
 
 #[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
 fn derivative(coeffs: &[Fp]) -> Polynomial<Fp, ProductionRank> {
