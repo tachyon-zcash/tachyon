@@ -3,13 +3,16 @@
 use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use pasta_curves::Fp;
-use ragu_arithmetic::PoseidonPermutation as _;
-use ragu_pasta::PoseidonFp;
+use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
+#[cfg(test)]
+use rand_core::CryptoRng;
+#[cfg(test)]
+use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
     nullifier::{NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     primitives::EpochIndex,
 };
 
@@ -26,6 +29,11 @@ use crate::{
 pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
 
 impl NoteMasterKey {
+    #[cfg(test)]
+    pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// Derive the nullifier for a single epoch.
     #[must_use]
     #[expect(

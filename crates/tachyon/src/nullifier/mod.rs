@@ -1,11 +1,10 @@
 //! Nullifiers and nullifier operations.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::Fp;
 use rand_core::CryptoRng;
+use udon::field::Field as _;
 
-use crate::primitives::Tachygram;
+use crate::{pasta::Fp, primitives::Tachygram};
 
 /// Epochs covered per nullifier derivation step.
 pub const NF_DERIVATION_WIDTH: usize = 16;
@@ -37,7 +36,7 @@ pub struct Trapdoor(#[debug(skip)] Fp);
 impl Trapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 

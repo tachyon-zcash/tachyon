@@ -2,8 +2,6 @@ extern crate alloc;
 
 use alloc::vec;
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
@@ -28,7 +26,7 @@ use crate::fixtures::{
 fn unmerge_removes_one_contributor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
@@ -106,7 +104,7 @@ fn unmerge_removes_one_contributor() {
 fn unmerge_keeps_the_dividend_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let alice_fee = value::Positive::try_from(40u64).expect("fee within MAX_MONEY");
     let bob_fee = value::Positive::try_from(70u64).expect("fee within MAX_MONEY");
     let carol_fee = value::Positive::try_from(90u64).expect("fee within MAX_MONEY");
@@ -231,7 +229,7 @@ fn unmerge_keeps_the_dividend_fee() {
 fn unmerge_by_a_divisor_across_merge_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
@@ -399,7 +397,7 @@ fn unmerge_by_a_lifted_divisor() {
 fn unmerge_by_itself_leaves_no_leaves() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
 
     let quotient = alice
@@ -451,7 +449,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
 fn unmerge_splitting_a_bundle() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
 
     let (_, _, kept_plan) = build_output_plan(rng, wallet.random_note(300));
     let removed_note = wallet.random_note(300);
@@ -524,7 +522,7 @@ fn unmerge_splitting_a_bundle() {
 fn unmerge_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
