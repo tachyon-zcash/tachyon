@@ -10,7 +10,7 @@ use core::array;
 
 use ragu::{
     Cycle as _, PoseidonPermutation as _,
-    pasta::{EqAffine, Pasta, PoseidonFp},
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
@@ -23,7 +23,11 @@ use ragu_primitives::{
 };
 use udon::{curve::Affine as _, field::Field as _};
 
-use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
+use crate::{
+    constants::EVIDENCE_TREE_ARITY,
+    pasta,
+    pasta::{EqAffine, Fp},
+};
 
 #[expect(
     clippy::expect_used,

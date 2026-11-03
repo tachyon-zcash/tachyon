@@ -4,7 +4,8 @@ use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 
-use crate::{arithmetic::poly_with_roots, pasta::Fp};
+use super::arithmetic::poly_with_roots;
+use crate::pasta::Fp;
 
 /// Encode the provided members as roots.
 pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, ProductionRank> {

@@ -1,13 +1,12 @@
 //! Evidence trees: folding sealed QR buckets under one root and replaying them.
 
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit,
     constants::EVIDENCE_TREE_ARITY,
-    nullifier::Nullifier,
     pasta::Fp,
     stamp::proof::{HEADER_SIZE, PROOF_SYSTEM, evidence, qr},
     witness,
@@ -257,7 +256,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let value = Fp::from(Nullifier::random(rng));
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let first = qr_bucket_for(
         rng,
@@ -291,7 +290,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
 fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let value = Fp::from(Nullifier::random(rng));
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
     let span = (Anchor::default(), final_anchor);
 
     let first = qr_bucket_for(
@@ -334,7 +333,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let value = Fp::from(Nullifier::random(rng));
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let whole = qr_bucket_at(
         rng,
@@ -371,7 +370,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
     let discriminant = QrDiscriminant::random(rng);
-    let value = Fp::from(Nullifier::random(rng));
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let genuine = qr_bucket_at(
         rng,
@@ -425,7 +424,7 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let value = Fp::from(Nullifier::random(rng));
+    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let bucket0 = qr_bucket_for(
         rng,

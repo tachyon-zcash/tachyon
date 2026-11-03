@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn debug_nullifier_key_redacts_value() {
-        let nk = NullifierKey(Fp::from(0xDEAD));
+        let nk = NullifierKey(Fp::from(0xDEADu64));
         let dbg = alloc::format!("{nk:?}");
         assert!(dbg.contains("NullifierKey"), "must name the type");
         assert!(!dbg.contains("DEAD"), "must not leak field element");

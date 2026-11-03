@@ -28,7 +28,8 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use udon::field::Field as _;
 
-use crate::{arithmetic, pasta::Fp};
+use super::arithmetic;
+use crate::pasta::Fp;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
@@ -90,6 +91,22 @@ pub(crate) fn split(
     (residue, non_residue)
 }
 
+/// Divides `coeffs` by $(X - \mathsf{root})$ in place, exactly.
+///
+/// Returns `None` when the division leaves a remainder.
+fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
+    let mut carry = Fp::ZERO;
+    for coeff in coeffs.iter_mut().rev() {
+        let quotient_coeff = carry;
+        carry = *coeff + (carry * root);
+        *coeff = quotient_coeff;
+    }
+    // After the pass, `carry` is the remainder and the vector holds the
+    // quotient with one trailing zero coefficient.
+    (carry == Fp::ZERO).then(|| coeffs.pop())?;
+    Some(())
+}
+
 /// Class decomposition $(u, h)$ of `points` at class multiplier $c$ and shift
 /// $s$:
 ///
@@ -114,7 +131,7 @@ pub(crate) fn decomposition(
     let mut interpolant_coeffs = if points.is_empty() {
         [Fp::ONE].to_vec()
     } else {
-        arithmetic::interpolate(points)?
+        super::interpolate(points)?
     };
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
         let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
@@ -131,7 +148,7 @@ pub(crate) fn decomposition(
         *coeff -= translate_coeff;
     }
     for &(abscissa, _) in points {
-        arithmetic::divide_by_root(&mut h_coeffs, abscissa)?;
+        divide_by_root(&mut h_coeffs, abscissa)?;
     }
 
     Some((
@@ -269,15 +286,13 @@ mod tests {
         h: &Polynomial<Fp, ProductionRank>,
     ) {
         let q = multiset::encode(abscissas_of(points));
-        let mut lhs = Vec::new();
-        arithmetic::poly_mul(&dense(u), &dense(u), &mut lhs);
+        let mut lhs = dense(&super::super::poly_mul(u, u));
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
         lhs[0] -= class * shift;
         lhs[1] -= class;
-        let mut rhs = Vec::new();
-        arithmetic::poly_mul(&dense(&q), &dense(h), &mut rhs);
+        let rhs = dense(&super::super::poly_mul(&q, h));
         assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
         for &(abscissa, root) in points {
             assert_eq!(u.eval(abscissa), root);
@@ -361,7 +376,7 @@ mod tests {
             }
         }
         let interpolant_coeffs =
-            arithmetic::interpolate(&points).expect("distinct abscissas interpolate");
+            super::super::interpolate(&points).expect("distinct abscissas interpolate");
         assert_eq!(interpolant_coeffs.len(), count);
         assert!(
             interpolant_coeffs

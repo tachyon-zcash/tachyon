@@ -1654,7 +1654,7 @@ fn auth_digest_invariants() {
         extra_tachygram
             .stamp
             .tachygrams
-            .insert(Tachygram::from(Fp::from(7)));
+            .insert(Tachygram::from(Fp::from(7u64)));
         // Tachygrams must stay canonically sorted for the stamp digest.
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
