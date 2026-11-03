@@ -14,9 +14,9 @@ use ragu_primitives::{
     allocator::Allocator,
     io::{Buffer, Write},
 };
-use udon::field::{Field, Fp};
+use udon::field::Field;
 
-use crate::pasta;
+use crate::pasta::Fp;
 
 /// Header point coordinates with an explicit internal infinity flag.
 #[derive(Gadget, Debug)]
@@ -43,7 +43,7 @@ impl<F: Field> Write<F> for CurvePoint<'static, PhantomData<F>> {
     }
 }
 
-impl<'dr, D: Driver<'dr, F = pasta::Fp>> CurvePoint<'dr, D> {
+impl<'dr, D: Driver<'dr, F = Fp>> CurvePoint<'dr, D> {
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -55,7 +55,7 @@ impl<'dr, D: Driver<'dr, F = pasta::Fp>> CurvePoint<'dr, D> {
         let [x, y]: [Element<'dr, D>; 2] = coordinates
             .try_into()
             .map_err(|_err| Error::InvalidWitness("point must write two coordinates".into()))?;
-        let one = Element::constant(dr, <Fp>::ONE.into());
+        let one = Element::constant(dr, Fp::ONE);
         let infinity = one.is_zero(dr, allocator)?;
         Ok(Self { x, y, infinity })
     }

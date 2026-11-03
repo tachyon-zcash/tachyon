@@ -1,19 +1,19 @@
 //! Semantic headers for summary steps.
-use ragu::{Header, Suffix, pasta::Eq};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
 
 use crate::{
     gadgets::{
         anchor::AnchorGadget, commitment::HostCommitment, epoch::EpochIndexGadget,
         sets::TachygramSetCommitGadget,
     },
-    pasta,
+    pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetCommit},
 };
 /// One summarized run of an epoch's stamps.
@@ -33,11 +33,11 @@ output_gadget!(SummaryOutput, "SummaryOutput(..)", {
 
 impl Header for Summary {
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
-    type Output = Kind![pasta::Fp; SummaryOutput<'_, _>];
+    type Output = Kind![Fp; SummaryOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -46,25 +46,19 @@ impl Header for Summary {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             acc_commit: HostCommitment::alloc(

@@ -1,12 +1,12 @@
 //! Semantic headers for delegation steps.
-use ragu::{Header, Suffix, pasta::Eq};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
 
 use crate::{
     gadgets::{
@@ -16,7 +16,8 @@ use crate::{
         note::{NoteCommitmentGadget, NoteGadget},
         sets::NfSeqCommitGadget,
     },
-    keys, note, pasta,
+    keys, note,
+    pasta::{Eq, Fp},
     primitives::{EpochIndex, NfSeqCommit},
 };
 /// A note's certified record: its commitment, its opening, and its master key
@@ -39,11 +40,11 @@ output_gadget!(NoteSecretOutput, "NoteSecretOutput(..)", {
 
 impl Header for NoteSecret {
     type Data = (note::Commitment, note::Note, keys::NoteMasterKey);
-    type Output = Kind![pasta::Fp; NoteSecretOutput<'_, _>];
+    type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(8);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -52,26 +53,20 @@ impl Header for NoteSecret {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             note: NoteGadget {
                 rcm: Element::alloc(
                     dr,
                     allocator,
-                    witness
-                        .as_ref()
-                        .map(|fields| Fp::from(fields.1.rcm).into_loose().into()),
+                    witness.as_ref().map(|fields| Fp::from(fields.1.rcm)),
                 )?
                 .into(),
                 pk: Element::alloc(
                     dr,
                     allocator,
-                    witness
-                        .as_ref()
-                        .map(|fields| Fp::from(fields.1.pk).into_loose().into()),
+                    witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
                 )?
                 .into(),
                 value: Element::alloc(
@@ -79,26 +74,17 @@ impl Header for NoteSecret {
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.1.value))),
+                        .map(|fields| Fp::from(u64::from(fields.1.value))),
                 )?
                 .into(),
                 psi: Element::alloc(
                     dr,
                     allocator,
-                    witness
-                        .as_ref()
-                        .map(|fields| Fp::from(fields.1.psi).into_loose().into()),
+                    witness.as_ref().map(|fields| Fp::from(fields.1.psi)),
                 )?
                 .into(),
             },
-            mk: Element::alloc(
-                dr,
-                allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| fields.2.0.into_loose().into()),
-            )?
-            .into(),
+            mk: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?.into(),
         })
     }
 }
@@ -134,11 +120,11 @@ output_gadget!(NoteNullifiersOutput, "NoteNullifiersOutput(..)", {
 
 impl Header for NoteNullifiers {
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
-    type Output = Kind![pasta::Fp; NoteNullifiersOutput<'_, _>];
+    type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -147,25 +133,19 @@ impl Header for NoteNullifiers {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             epoch_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             epoch_end: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             nf_commit: HostCommitment::alloc(

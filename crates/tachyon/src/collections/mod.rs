@@ -126,9 +126,9 @@ mod tests {
         assert_eq!(vanishing.len(), capacity + 1);
         let normalizers = derivative(&vanishing);
         assert_eq!(normalizers.iter_coeffs().count(), capacity);
-        let interpolant = interpolate(&points).expect("distinct interpolation abscissas");
-        assert_eq!(interpolant.len(), capacity);
-        let interpolant = Polynomial::<Fp, ProductionRank>::from_coeffs(interpolant);
+        let coeffs = interpolate(&points).expect("distinct interpolation abscissas");
+        assert_eq!(coeffs.len(), capacity);
+        let interpolant = Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs);
         for index in [0, capacity >> 1, capacity - 1] {
             let x = Fp::from(u64::try_from(index).expect("rank fits in u64"));
             assert_eq!(interpolant.eval(x), x.square());

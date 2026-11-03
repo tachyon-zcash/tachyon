@@ -6,14 +6,13 @@ use ragu_core::{
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::field::Fp;
 
 use crate::{
     gadgets::{
         anchor::AnchorGadget, epoch::EpochIndexGadget, evidence::EvidenceTreeRootGadget,
         profile::QrDiscriminantGadget,
     },
-    pasta,
+    pasta::Fp,
     primitives::{Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant},
 };
 /// A Poseidon Merkle root over one network's sealed buckets.
@@ -43,11 +42,11 @@ output_gadget!(EvidenceTreeOutput, "EvidenceTreeOutput(..)", {
 
 impl Header for EvidenceTree {
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
-    type Output = Kind![pasta::Fp; EvidenceTreeOutput<'_, _>];
+    type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(12);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -56,41 +55,31 @@ impl Header for EvidenceTree {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             root: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.4).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
         })
@@ -125,11 +114,11 @@ impl Header for EvidenceTreePair {
         EvidenceTreeRoot,
         EvidenceTreeRoot,
     );
-    type Output = Kind![pasta::Fp; EvidenceTreePairOutput<'_, _>];
+    type Output = Kind![Fp; EvidenceTreePairOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(13);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -138,49 +127,37 @@ impl Header for EvidenceTreePair {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             first: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.4).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
             second: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.5).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.5)),
             )?
             .into(),
         })
