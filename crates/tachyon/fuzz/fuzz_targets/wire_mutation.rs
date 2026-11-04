@@ -5,13 +5,13 @@
 //!
 //! The input draws a proof-stamped aggregate and zero to four pointer-stamped
 //! adjuncts it covers ([`build_wire`]), then up to four edits to their
-//! concatenated encoding outside the memos and the proof blob: a byte flipped,
-//! inserted or deleted, or the encoding truncated. Every bundle that decodes
-//! passes [`check_bundle_wire`], and the decoded aggregate is verified against
-//! the decoded adjuncts. The aggregate carries the proof of another stamp, so
-//! no wire verifies. Without an edit, every bundle decodes completely to the
-//! one built, each adjunct signs its own commitment, and `verify` rejects only
-//! at the proof.
+//! concatenated encoding: a byte flipped, inserted or deleted outside the memos
+//! and the proof blob, or the encoding truncated anywhere. Every bundle that
+//! decodes passes [`check_bundle_wire`], and the decoded aggregate is verified
+//! against the decoded adjuncts. The aggregate carries the proof of another
+//! stamp, so no wire verifies. Without an edit, every bundle decodes completely
+//! to the one built, each adjunct signs its own commitment, and `verify`
+//! rejects only at the proof.
 //!
 //! The proof is of one action-free stamp, proved at initialization, so the
 //! input never pays for proving.
@@ -56,16 +56,21 @@ static PROOF: LazyLock<ProofStamp> = LazyLock::new(|| {
     .expect("an action-free stamp proves")
 });
 
+/// The length of `PROOF`'s proof blob, the tail of every built aggregate.
+static PROOF_LEN: LazyLock<usize> = LazyLock::new(|| proof_len(&PROOF));
+
 fuzz_target!(
     init: {
-        LazyLock::force(&PROOF);
+        LazyLock::force(&PROOF_LEN);
     },
     |data: &[u8]| {
         let mut input = Unstructured::new(data);
         let (aggregate, adjuncts) = build_wire(&mut input, &PROOF);
 
-        // Edits land outside the memos and the proof blob: a memo byte only
-        // moves the commitment, and the proof blob is ragu's encoding.
+        // Flips, deletions and insertions land outside the memos and the proof
+        // blob: a memo byte only moves the commitment, and the proof blob is
+        // ragu's encoding. An insertion may also follow the last byte, and a
+        // truncation may cut anywhere.
         let mut built = Vec::new();
         let mut editable = Vec::new();
         let mut append = |encoding: Vec<u8>, memo: usize, trailer: usize, proof: usize| {
@@ -82,7 +87,7 @@ fuzz_target!(
             encode(|writer| aggregate.write(writer)),
             aggregate.memo.len(),
             encode(|writer| aggregate.stamp.write(writer)).len(),
-            proof_len(&aggregate.stamp),
+            *PROOF_LEN,
         );
         for adjunct in &adjuncts {
             append(
@@ -97,11 +102,20 @@ fuzz_target!(
         // was drawn.
         let mut edits: Vec<(usize, u8, u8)> = (0..draw(input.int_in_range(0..=MAX_EDITS)))
             .map(|_| {
-                (
-                    editable[draw(input.choose_index(editable.len()))],
-                    draw(input.int_in_range(0u8..=3)),
-                    draw(input.arbitrary::<u8>()),
-                )
+                let kind = draw(input.int_in_range(0u8..=3));
+                let at = match kind {
+                    1 => {
+                        let index = draw(input.int_in_range(0..=editable.len()));
+                        if index == editable.len() {
+                            built.len()
+                        } else {
+                            editable[index]
+                        }
+                    },
+                    3 => draw(input.int_in_range(0..=built.len())),
+                    _ => editable[draw(input.choose_index(editable.len()))],
+                };
+                (at, kind, draw(input.arbitrary::<u8>()))
             })
             .collect();
         edits.sort_unstable_by_key(|&(at, ..)| cmp::Reverse(at));
@@ -113,7 +127,9 @@ fuzz_target!(
                 2 if at < wire.len() => {
                     wire.remove(at);
                 },
-                _ => wire.truncate(at),
+                3 => wire.truncate(at),
+                // A flip or deletion past an earlier truncation.
+                _ => {},
             }
         }
         let edited = wire != built;

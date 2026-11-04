@@ -63,8 +63,14 @@ fuzz-cmin *TARGETS: _fuzz_setup
     done
 
 # minimize a crashing INPUT to TARGET
+[positional-arguments]
 fuzz-tmin TARGET INPUT: _fuzz_setup
-    cargo +{{_nightly}} fuzz tmin --fuzz-dir "{{_fuzz_dir}}" "{{TARGET}}" "{{INPUT}}"
+    cargo +{{_nightly}} fuzz tmin --fuzz-dir "{{_fuzz_dir}}" "$1" "$2"
+
+# check the fuzz crate's formatting and lints as CI does; clippy builds libFuzzer's C++
+fuzz-lint:
+    cargo +{{_nightly}} fmt --all --manifest-path {{_fuzz_dir}}/Cargo.toml -- --check
+    cargo clippy --manifest-path {{_fuzz_dir}}/Cargo.toml --all-targets --locked -- -D warnings
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
@@ -76,8 +82,8 @@ _book_setup: _install_binstall
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
 
-# the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
-ci_local:
+# the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix and the fuzz replay
+ci_local: fuzz-lint
     cargo +{{_nightly}} fmt --all -- --check
     cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings

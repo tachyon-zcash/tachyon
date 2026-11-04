@@ -23,7 +23,7 @@ proof stamps.
 `wire_mutation`'s input is a shape, not wire bytes. It chooses:
 - the aggregate's actions, their kinds and wire order, its fees and memo length;
 - each adjunct's actions and fees;
-- up to four edits outside the memos and the proof blob: a byte flipped, inserted or deleted, or the encoding truncated.
+- up to four edits: a byte flipped, inserted or deleted outside the memos and the proof blob, or the encoding truncated anywhere.
 
 The built aggregate covers its adjuncts:
 - its coverage digests all their descriptors and fees;
@@ -47,29 +47,29 @@ just fuzz
 ```
 
 - `just fuzz` runs every target for five minutes each, one after another, and stops at the first crash. Arguments starting with `-` go to libFuzzer for every target, for example `just fuzz -runs=0` to replay the corpora once.
-- `just fuzz TARGET` runs one target on `corpus/TARGET`, for example `just fuzz bundle_read -max_total_time=60`.
+- `just fuzz TARGET` runs one target on `corpus/TARGET`, also for five minutes unless the arguments say otherwise: `just fuzz bundle_read -max_total_time=0` runs until a crash.
 - Crashes land in `artifacts/TARGET`.
 - `just fuzz-cmin [TARGET...]` minimizes every corpus, or the named ones. It may drop a committed regression seed; restore it with `git restore`.
 - `just fuzz-tmin TARGET INPUT` minimizes a crashing input.
-
-The crate is linted with clippy's default lints, not the library's lint table.
+- `just fuzz-lint` checks this crate's formatting, and lints it with clippy's default lints rather than the library's lint table. `just ci_local` runs it.
 
 ## CI
 
-The `fuzz` job in `rust.yml` runs with the other Rust jobs, on every push to
-`main` and on pull requests that change Rust sources, manifests, toolchain or
-lint configuration, this crate or the justfile. It is part of `ci-required`.
-It lints this crate, then builds every target and replays its committed corpus
-once with `just fuzz -runs=0`. It does not explore, so it fails only on a
-committed input. The `fmt` job checks this crate's formatting.
+The `fuzz` job in `rust.yml` runs on every push to `main`, and on pull
+requests that change what the other Rust jobs watch, this crate or the
+justfile. It is part of `ci-required`. It lints this crate, then builds every
+target and replays its committed corpus once with `just fuzz -runs=0`. It does
+not explore, so it fails only on a committed input. The `fmt` job checks this
+crate's formatting.
 
-`fuzz-cron.yml` runs a campaign twice a week, or on dispatch:
-- `just fuzz` runs each target for an hour, or the dispatched duration, and stops at the first crash.
-- The corpora persist in the Actions cache between campaigns and are minimized at the end of each one.
-- Crashes upload as the `fuzz-artifacts` artifact.
+`fuzz-cron.yml` runs a campaign twice a week, or on dispatch, with one job per
+`[[bin]]` target in `Cargo.toml`:
+- Each job fuzzes its target for an hour, or the dispatched duration.
+- Each corpus persists in the Actions cache between campaigns and is minimized at the end of each one.
+- Crashes upload as the `fuzz-artifacts-TARGET` artifact.
 
 To keep a crash found by a campaign:
-1. Download the `fuzz-artifacts` artifact.
+1. Download its `fuzz-artifacts-TARGET` artifact.
 2. Minimize the input with `just fuzz-tmin TARGET <crash file>`, with the path given from the repository root.
 3. Commit the result as `corpus/TARGET/regression_<name>` with the fix, so every later run replays it.
 

@@ -123,23 +123,11 @@ pub fn assert_bundle_invariants<S: StampState + 'static>(bundle: &Bundle<S>) {
     hint::black_box(bundle.auth_digest());
 }
 
-/// Assert the proof stamp invariants a canonical encoding does not imply.
-///
-/// # Panics
-///
-/// Panics if the stamp publishes no tachygram.
-pub fn assert_proof_stamp_invariants(stamp: &ProofStamp) {
-    assert!(
-        !stamp.tachygrams.is_empty(),
-        "a proof stamp publishes at least one tachygram"
-    );
-}
-
 /// Read a bundle off the front of `data` through [`TachyonBundle::read`].
 ///
 /// Returns the bundle with the unread tail if it decodes. An accepted bundle
 /// is canonical, with the proof blob as an opaque tail, and holds the bundle
-/// invariants.
+/// invariants. An accepted proof stamp publishes a tachygram.
 ///
 /// # Panics
 ///
@@ -159,7 +147,10 @@ pub fn check_bundle_wire(data: &[u8]) -> Option<(TachyonBundle, &[u8])> {
         TachyonBundle::NoBundle => {},
         TachyonBundle::Proven(proven) => {
             assert_bundle_invariants(proven);
-            assert_proof_stamp_invariants(&proven.stamp);
+            assert!(
+                !proven.stamp.tachygrams.is_empty(),
+                "a proof stamp publishes at least one tachygram"
+            );
         },
         TachyonBundle::Adjunct(adjunct) => assert_bundle_invariants(adjunct),
     }
