@@ -10,38 +10,25 @@ use core::iter;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, ProofStamp, Tachygram, TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, ProofStamp, Tachygram,
+    TachygramSetPoly, action,
     bundle::{self, PlanError},
     constants::MAX_MONEY,
+    digest::blake2b,
     entropy::ActionEntropy,
     fee,
     note::Note,
-    stamp::{self, ProveError},
+    stamp::{
+        self, ProveError,
+        proof::{
+            PROOF_SYSTEM,
+            stamp::{Stamp, StampMerge},
+        },
+    },
     value,
 };
 
-use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, build_output_stamp, fee_digests,
-    forge_overlapping_merge, random_block, random_block_with, stamp_coverage, tachygrams,
-};
-
-fn fee_descriptor(max_fee_note: &Note, fee: value::Positive) -> fee::Descriptor {
-    fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee,
-    }
-}
-
-fn digests_of<'desc>(
-    descriptors: impl IntoIterator<Item = &'desc action::Descriptor>,
-    fees: impl IntoIterator<Item = fee::Descriptor>,
-) -> Vec<ActionDigest> {
-    descriptors
-        .into_iter()
-        .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests(fees))
-        .collect()
-}
+use crate::fixtures::{PoolSim, WalletSim, build_anchor_span_pcd};
 
 fn coverage_of<'desc>(
     descriptors: impl IntoIterator<Item = &'desc action::Descriptor>,
@@ -49,12 +36,12 @@ fn coverage_of<'desc>(
 ) -> [u8; 32] {
     let mut bytes: Vec<[u8; 64]> = descriptors.into_iter().copied().collect();
     bytes.sort_unstable();
-    stamp_coverage(&bytes, fees)
-}
-
-fn foreign_descriptor(rng: &mut StdRng) -> action::Descriptor {
-    let note = WalletSim::random(rng).random_note(400);
-    build_output_plan(rng, note).2.descriptor()
+    let mut fee_bytes: Vec<[u8; 40]> = fees.iter().copied().map(Into::into).collect();
+    fee_bytes.sort_unstable();
+    blake2b::stamp_coverage_digest(
+        &blake2b::action_descriptor_digest(&bytes),
+        &blake2b::stamp_fees_digest(&fee_bytes),
+    )
 }
 
 fn output_stamp(
@@ -66,7 +53,9 @@ fn output_stamp(
     let outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)> =
         iter::repeat_with(|| {
             let note = WalletSim::random(rng).random_note(200);
-            let (rcv, theta, plan) = build_output_plan(rng, note);
+            let rcv = value::Trapdoor::random(rng);
+            let theta = ActionEntropy::random(rng);
+            let plan = action::Plan::output(note, theta, rcv);
             (plan.descriptor(), theta, note, rcv)
         })
         .take(count)
@@ -79,7 +68,11 @@ fn output_stamp(
     let stamp = stamp::Plan::new(vec![], outputs, anchor, max_fee_note, fee)
         .prove(rng, &wallet.pak, vec![])
         .unwrap();
-    (stamp, descriptors, fee_descriptor(&max_fee_note, fee))
+    let fee_desc = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: fee,
+    };
+    (stamp, descriptors, fee_desc)
 }
 
 fn assert_plan_proves_its_actions(
@@ -93,26 +86,36 @@ fn assert_plan_proves_its_actions(
     let spent: Vec<Note> = iter::repeat_with(|| wallet.random_note(300))
         .take(spends)
         .collect();
-    let mut pool = PoolSim::genesis(rng);
-    pool.mine(random_block_with(
-        rng,
-        &[spent.iter().map(Note::commitment).collect()],
-        1,
-    ));
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
+    pool.mine(vec![
+        spent
+            .iter()
+            .map(|note| Tachygram::from(note.commitment()))
+            .collect(),
+    ]);
     let cm_height = pool.height();
     let lift_blocks = spans.last().map_or(0, |&(_, end)| end);
     for _ in 0..lift_blocks {
-        pool.mine(random_block(rng, 1, 2));
+        pool.mine(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(2)
+                .collect(),
+        );
     }
-    let plan_anchor = pool.anchor();
+    let plan_anchor = pool.block(pool.height()).anchor();
     let lift: Vec<_> = spans
         .iter()
         .map(|&(start, end)| {
-            build_lift_span(
+            let (span, members) = build_anchor_span_pcd(
                 rng,
                 &pool,
                 BlockHeight(cm_height.0 + start)..=BlockHeight(cm_height.0 + end),
-            )
+            );
+            (span, AnchorSetPoly::from_iter(members))
         })
         .collect();
 
@@ -120,7 +123,7 @@ fn assert_plan_proves_its_actions(
     let mut spend_pcds = Vec::new();
     let mut descriptors = BTreeSet::new();
     for note in &spent {
-        let spendable = wallet.fresh_spend(rng, &pool, cm_height, note);
+        let spendable = wallet.spendable_init(rng, note, &pool, cm_height);
         assert_eq!(
             spendable.data().2,
             pool.block(cm_height).anchor(),
@@ -139,7 +142,9 @@ fn assert_plan_proves_its_actions(
     let mut output_cms = Vec::new();
     for _ in 0..outputs {
         let note = WalletSim::random(rng).random_note(200);
-        let (rcv, theta, plan) = build_output_plan(rng, note);
+        let rcv = value::Trapdoor::random(rng);
+        let theta = ActionEntropy::random(rng);
+        let plan = action::Plan::output(note, theta, rcv);
         descriptors.insert(plan.descriptor());
         output_cms.push(Tachygram::from(note.commitment()));
         output_plans.push((plan.descriptor(), theta, note, rcv));
@@ -154,7 +159,10 @@ fn assert_plan_proves_its_actions(
     let proved = stamp::Plan::new(spend_plans, output_plans, plan_anchor, max_fee_note, fee)
         .prove(rng, &wallet.pak, spend_pcds)
         .unwrap_or_else(|err| panic!("{label}: the plan proves: {err:?}"));
-    let fee_desc = fee_descriptor(&max_fee_note, fee);
+    let fee_desc = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: fee,
+    };
     assert_eq!(proved.anchor, plan_anchor, "{label}");
     assert_eq!(proved.fee, fee, "{label}");
     assert_eq!(
@@ -183,7 +191,13 @@ fn assert_plan_proves_its_actions(
     );
     assert!(
         proved
-            .verify_proof(rng, digests_of(&descriptors, [fee_desc]))
+            .verify_proof(
+                rng,
+                descriptors
+                    .iter()
+                    .map(|desc| desc.digest().unwrap())
+                    .chain([fee_desc.digest().unwrap()])
+            )
             .expect("proof system verification"),
         "{label}: the stamp verifies"
     );
@@ -238,19 +252,25 @@ fn misassigned_spend_inputs_never_verify() {
     let wallet = WalletSim::random(rng);
     let stranger = WalletSim::random(rng);
     let notes = [wallet.random_note(300), wallet.random_note(300)];
-    let mut pool = PoolSim::genesis(rng);
-    pool.mine(random_block_with(
-        rng,
-        &[notes.iter().map(Note::commitment).collect()],
-        2,
-    ));
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
+    pool.mine(vec![
+        notes
+            .iter()
+            .map(|note| Tachygram::from(note.commitment()))
+            .collect(),
+        vec![Tachygram::random(rng)],
+    ]);
     let height = pool.height();
     let inputs: Vec<_> = notes
         .iter()
         .map(|note| {
             (
                 wallet.secret_pcd(rng, *note),
-                wallet.fresh_spend(rng, &pool, height, note),
+                wallet.spendable_init(rng, note, &pool, height),
                 vec![],
             )
         })
@@ -267,7 +287,10 @@ fn misassigned_spend_inputs_never_verify() {
         })
     };
     let max_fee_note = wallet.random_note(0);
-    let fee_desc = fee_descriptor(&max_fee_note, value::Positive::ZERO);
+    let fee_desc = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: value::Positive::ZERO,
+    };
     let prove_and_verify = |prove_rng: &mut StdRng, plans: &[action::Plan<_>], pcds| {
         let spends = plans
             .iter()
@@ -277,10 +300,14 @@ fn misassigned_spend_inputs_never_verify() {
         let proved = stamp::Plan::new(spends, vec![], anchor, max_fee_note, value::Positive::ZERO)
             .prove(prove_rng, &wallet.pak, pcds)
             .unwrap();
-        let descriptors: Vec<action::Descriptor> =
-            plans.iter().map(action::Plan::descriptor).collect();
         proved
-            .verify_proof(prove_rng, digests_of(&descriptors, [fee_desc]))
+            .verify_proof(
+                prove_rng,
+                plans
+                    .iter()
+                    .map(|plan| plan.descriptor().digest().unwrap())
+                    .chain([fee_desc.digest().unwrap()]),
+            )
             .unwrap()
     };
 
@@ -349,17 +376,26 @@ fn merge_requires_a_shared_anchor_and_covers_the_union() {
             .copied()
             .collect::<BTreeSet<Tachygram>>(),
     );
+    let digests: Vec<ActionDigest> = union()
+        .map(|desc| desc.digest().unwrap())
+        .chain(fees.map(|fee| fee.digest().unwrap()))
+        .collect();
     assert!(
         merged
-            .verify_proof(rng, digests_of(union(), fees))
+            .verify_proof(rng, digests.clone())
             .expect("proof system verification")
     );
 
-    let foreign = BTreeSet::from([foreign_descriptor(rng)]);
+    let foreign_note = WalletSim::random(rng).random_note(400);
+    let foreign_rcv = value::Trapdoor::random(rng);
+    let foreign_theta = ActionEntropy::random(rng);
+    let foreign = BTreeSet::from([
+        action::Plan::output(foreign_note, foreign_theta, foreign_rcv).descriptor(),
+    ]);
     let mismatched = merge(rng, left_side, (&right, &foreign, right_fee)).unwrap();
     assert!(
         !mismatched
-            .verify_proof(rng, digests_of(union(), fees))
+            .verify_proof(rng, digests)
             .expect("proof system verification")
     );
 }
@@ -372,11 +408,74 @@ fn overlapping_merges_never_verify() {
         |forge_rng: &mut StdRng,
          left: &(ProofStamp, Vec<action::Descriptor>, Vec<fee::Descriptor>),
          right: &(ProofStamp, Vec<action::Descriptor>, Vec<fee::Descriptor>)| {
-            let pcd = forge_overlapping_merge(
-                forge_rng,
-                (&left.0, &left.1, &left.2),
-                (&right.0, &right.1, &right.2),
-            );
+            // `StampMerge` proves a multiset union, so intersecting stamps still merge.
+            let left_acts = left
+                .1
+                .iter()
+                .map(|desc| desc.digest().unwrap())
+                .chain(left.2.iter().copied().map(|fee| fee.digest().unwrap()))
+                .collect::<ActionSetPoly>();
+            let right_acts = right
+                .1
+                .iter()
+                .map(|desc| desc.digest().unwrap())
+                .chain(right.2.iter().copied().map(|fee| fee.digest().unwrap()))
+                .collect::<ActionSetPoly>();
+            let left_tg = left
+                .0
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>();
+            let right_tg = right
+                .0
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>();
+            let left_pcd = left.0.proof.clone().carry::<Stamp>((
+                left_acts.commit(),
+                left_tg.commit(),
+                left.0.anchor,
+            ));
+            let right_pcd = right.0.proof.clone().carry::<Stamp>((
+                right_acts.commit(),
+                right_tg.commit(),
+                right.0.anchor,
+            ));
+            let merged_acts = left
+                .1
+                .iter()
+                .chain(right.1.iter())
+                .map(|desc| desc.digest().unwrap())
+                .chain(
+                    left.2
+                        .iter()
+                        .chain(&right.2)
+                        .copied()
+                        .map(|fee| fee.digest().unwrap()),
+                )
+                .collect::<ActionSetPoly>();
+            let merged_tg = left
+                .0
+                .tachygrams
+                .iter()
+                .chain(right.0.tachygrams.iter())
+                .copied()
+                .collect::<TachygramSetPoly>();
+            let (pcd, ()) = PROOF_SYSTEM
+                .fuse(
+                    forge_rng,
+                    StampMerge,
+                    (
+                        (left_acts, left_tg),
+                        (merged_acts, merged_tg),
+                        (right_acts, right_tg),
+                    ),
+                    left_pcd,
+                    right_pcd,
+                )
+                .unwrap();
             let descriptors: Vec<action::Descriptor> =
                 left.1.iter().chain(&right.1).copied().collect();
             let fees: Vec<fee::Descriptor> = left.2.iter().chain(&right.2).copied().collect();
@@ -395,23 +494,61 @@ fn overlapping_merges_never_verify() {
                 fee: left.0.fee,
             };
             published
-                .verify_proof(forge_rng, digests_of(&descriptors, fees))
+                .verify_proof(
+                    forge_rng,
+                    descriptors
+                        .iter()
+                        .map(|desc| desc.digest().unwrap())
+                        .chain(fees.iter().map(|fee| fee.digest().unwrap())),
+                )
                 .unwrap()
         };
 
-    let anchor = PoolSim::genesis(rng).anchor();
+    let genesis = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
+    let anchor = genesis.block(genesis.height()).anchor();
     let note = wallet.random_note(200);
-    let (first, first_plan, first_fee) = build_output_stamp(rng, anchor, note);
-    let (again, again_plan, again_fee) = build_output_stamp(rng, anchor, note);
-    let output_first = (first, vec![first_plan.descriptor()], vec![first_fee]);
-    let output_again = (again, vec![again_plan.descriptor()], vec![again_fee]);
+    let output_twice = |output_rng: &mut StdRng| {
+        let rcv = value::Trapdoor::random(output_rng);
+        let theta = ActionEntropy::random(output_rng);
+        let plan = action::Plan::output(note, theta, rcv);
+        // An output-only plan never reads the proof authorizing key.
+        let fee_wallet = WalletSim::random(output_rng);
+        let max_fee_note = fee_wallet.random_note(0);
+        let stamp = stamp::Plan::new(
+            vec![],
+            vec![(plan.descriptor(), theta, note, rcv)],
+            anchor,
+            max_fee_note,
+            value::Positive::ZERO,
+        )
+        .prove(output_rng, &fee_wallet.pak, vec![])
+        .unwrap();
+        let fee = fee::Descriptor {
+            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+            value: value::Positive::ZERO,
+        };
+        (stamp, vec![plan.descriptor()], vec![fee])
+    };
+    let output_first = output_twice(rng);
+    let output_again = output_twice(rng);
 
     let spent = wallet.random_note(1000);
-    let mut pool = PoolSim::genesis(rng);
-    pool.mine(random_block_with(rng, &[vec![spent.commitment()]], 2));
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
+    pool.mine(vec![
+        vec![Tachygram::from(spent.commitment())],
+        vec![Tachygram::random(rng)],
+    ]);
     let height = pool.height();
     let spend_twice = |spend_rng: &mut StdRng| {
-        let spendable = wallet.fresh_spend(spend_rng, &pool, height, &spent);
+        let spendable = wallet.spendable_init(spend_rng, &spent, &pool, height);
         let spend_anchor = spendable.data().2;
         let output = wallet.random_note(600);
         let bundle = wallet.autonome(
@@ -489,8 +626,18 @@ fn verify_proof_is_exact_on_the_action_multiset() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor = Anchor::random(rng);
     let (proved, descriptors, fee_desc) = output_stamp(rng, anchor, 3, (300, 100));
-    let digests = digests_of(&descriptors, [fee_desc]);
-    let foreign = digests_of(&[foreign_descriptor(rng)], [])[0];
+    let digests: Vec<ActionDigest> = descriptors
+        .iter()
+        .map(|desc| desc.digest().unwrap())
+        .chain([fee_desc.digest().unwrap()])
+        .collect();
+    let foreign_note = WalletSim::random(rng).random_note(400);
+    let foreign_rcv = value::Trapdoor::random(rng);
+    let foreign_theta = ActionEntropy::random(rng);
+    let foreign = action::Plan::output(foreign_note, foreign_theta, foreign_rcv)
+        .descriptor()
+        .digest()
+        .unwrap();
     let verifies = |verify_rng: &mut StdRng, handed: Vec<ActionDigest>| {
         proved.verify_proof(verify_rng, handed).unwrap()
     };
@@ -526,14 +673,21 @@ fn proof_binds_the_set_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor = Anchor::random(rng);
     let (honest, descriptors, fee_desc) = output_stamp(rng, anchor, 1, (300, 100));
-    let digests = digests_of(&descriptors, [fee_desc]);
+    let digests: Vec<ActionDigest> = descriptors
+        .iter()
+        .map(|desc| desc.digest().unwrap())
+        .chain([fee_desc.digest().unwrap()])
+        .collect();
     assert!(
         honest
             .verify_proof(rng, digests.clone())
             .expect("proof system verification")
     );
     let recommitted = ProofStamp {
-        tachygram_set: TachygramSetPoly::from_iter(tachygrams(rng, 3)).commit(),
+        tachygram_set: iter::repeat_with(|| Tachygram::random(rng))
+            .take(3)
+            .collect::<TachygramSetPoly>()
+            .commit(),
         ..honest.clone()
     };
     assert!(
@@ -543,7 +697,7 @@ fn proof_binds_the_set_commitment() {
     );
     let mut retold = honest.tachygrams.clone();
     retold.pop_first();
-    retold.extend(tachygrams(rng, 1));
+    retold.extend([Tachygram::random(rng)]);
     let tampered = ProofStamp {
         tachygrams: retold,
         ..honest
@@ -558,16 +712,32 @@ fn proof_binds_the_set_commitment() {
 #[test]
 fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut unrelated = PoolSim::genesis(rng);
+    let mut unrelated = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
     for _ in 0..3 {
-        unrelated.mine(random_block(rng, 1, 4));
+        unrelated.mine(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(4)
+                .collect(),
+        );
     }
     for (label, stamped_at, distance) in
         [("from genesis by a block", 0, 1), ("by four blocks", 3, 4)]
     {
-        let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+        let mut pool = PoolSim::genesis_with(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(2)
+                .collect(),
+        );
         for _ in 0..stamped_at + distance {
-            pool.mine(random_block(rng, 1, 2));
+            pool.mine(
+                iter::repeat_with(|| vec![Tachygram::random(rng)])
+                    .take(2)
+                    .collect(),
+            );
         }
         let stamped_height = BlockHeight(stamped_at);
         let (proved, descriptors, fee_desc) = output_stamp(
@@ -577,17 +747,27 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
             (MAX_MONEY, MAX_MONEY / 2),
         );
         let fees = BTreeSet::from([fee_desc]);
-        let mut span =
-            || build_lift_span(rng, &pool, stamped_height.next().unwrap()..=pool.height());
+        let mut span = || {
+            let (span, members) =
+                build_anchor_span_pcd(rng, &pool, stamped_height.next().unwrap()..=pool.height());
+            (span, AnchorSetPoly::from_iter(members))
+        };
         let lift_span = span();
         let foreign_span = span();
-        let (later, later_desc, later_fee) = output_stamp(rng, pool.anchor(), 1, (0, 0));
+        let (later, later_desc, later_fee) =
+            output_stamp(rng, pool.block(pool.height()).anchor(), 1, (0, 0));
         let later_side = (later, later_desc.clone(), BTreeSet::from([later_fee]));
 
-        let unrelated_span = build_lift_span(rng, &unrelated, BlockHeight(1)..=unrelated.height());
+        let (unrelated_span, unrelated_members) =
+            build_anchor_span_pcd(rng, &unrelated, BlockHeight(1)..=unrelated.height());
         let refused = proved
             .clone()
-            .lift(rng, &descriptors, &fees, vec![unrelated_span])
+            .lift(
+                rng,
+                &descriptors,
+                &fees,
+                vec![(unrelated_span, AnchorSetPoly::from_iter(unrelated_members))],
+            )
             .map(drop);
         let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner))) = refused else {
             panic!("{label}: expected InvalidWitness along an unrelated span, got {refused:?}");
@@ -602,14 +782,19 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
             .clone()
             .lift(rng, &descriptors, &fees, vec![lift_span])
             .expect("lift");
-        assert_eq!(lifted.anchor, pool.anchor(), "{label}");
+        assert_eq!(lifted.anchor, pool.block(pool.height()).anchor(), "{label}");
         assert_eq!(lifted.coverage, proved.coverage, "{label}");
         assert_eq!(lifted.tachygram_set, proved.tachygram_set, "{label}");
         assert_eq!(&lifted.tachygrams, &proved.tachygrams, "{label}");
         assert_eq!(lifted.fee, proved.fee, "{label}");
+        let digests: Vec<ActionDigest> = descriptors
+            .iter()
+            .map(|desc| desc.digest().unwrap())
+            .chain([fee_desc.digest().unwrap()])
+            .collect();
         assert!(
             lifted
-                .verify_proof(rng, digests_of(&descriptors, [fee_desc]))
+                .verify_proof(rng, digests.clone())
                 .expect("proof system verification"),
             "{label}: the lifted stamp verifies"
         );
@@ -621,19 +806,29 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
             merged
                 .verify_proof(
                     rng,
-                    digests_of(descriptors.iter().chain(&later_desc), [fee_desc, later_fee])
+                    descriptors
+                        .iter()
+                        .chain(&later_desc)
+                        .map(|desc| desc.digest().unwrap())
+                        .chain([fee_desc.digest().unwrap(), later_fee.digest().unwrap()])
                 )
                 .expect("proof system verification"),
             "{label}: the merge after the lift verifies"
         );
 
-        let foreign = BTreeSet::from([foreign_descriptor(rng)]);
+        let foreign_note = WalletSim::random(rng).random_note(400);
+        let foreign_rcv = value::Trapdoor::random(rng);
+        let foreign_theta = ActionEntropy::random(rng);
+        let foreign =
+            BTreeSet::from([
+                action::Plan::output(foreign_note, foreign_theta, foreign_rcv).descriptor(),
+            ]);
         let misdescribed = proved
             .lift(rng, &foreign, &fees, vec![foreign_span])
             .unwrap();
         assert!(
             !misdescribed
-                .verify_proof(rng, digests_of(&descriptors, [fee_desc]))
+                .verify_proof(rng, digests)
                 .expect("proof system verification"),
             "{label}: a lift under foreign descriptors verified"
         );
@@ -695,8 +890,14 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
         .collect();
     let mut missing = signatures.clone();
     missing.pop_first();
+    let foreign_note = WalletSim::random(rng).random_note(400);
+    let foreign_rcv = value::Trapdoor::random(rng);
+    let foreign_theta = ActionEntropy::random(rng);
     let mut extra = signatures;
-    extra.insert(foreign_descriptor(rng), signed.actions[0].sig);
+    extra.insert(
+        action::Plan::output(foreign_note, foreign_theta, foreign_rcv).descriptor(),
+        signed.actions[0].sig,
+    );
     for authorized in [missing, extra] {
         let Err(err) = planned.apply_signatures(rng, &sighash, authorized) else {
             panic!("signatures for other actions applied");
@@ -704,14 +905,22 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
         assert_eq!(err, PlanError::ActionSigMismatch);
     }
 
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
     let note = wallet.random_note(300);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 1));
+    pool.mine(vec![vec![Tachygram::from(note.commitment())]]);
     let cm_height = pool.height();
-    let spendable = wallet.fresh_spend(rng, &pool, cm_height, &note);
+    let spendable = wallet.spendable_init(rng, &note, &pool, cm_height);
     let anchor = spendable.data().2;
     for _ in 0..2 {
-        pool.mine(random_block(rng, 1, 2));
+        pool.mine(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(2)
+                .collect(),
+        );
     }
     let middle = cm_height.next().unwrap();
     let (plan, _, inputs) =
@@ -723,10 +932,14 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
     };
     let (secret, lifting, _) = inputs[0].clone();
     let along = |spans| vec![(secret.clone(), lifting.clone(), spans)];
-    let short = vec![build_lift_span(rng, &pool, cm_height..=middle)];
+    let (short_span, short_members) = build_anchor_span_pcd(rng, &pool, cm_height..=middle);
+    let short = vec![(short_span, AnchorSetPoly::from_iter(short_members))];
+    let (first_span, first_members) = build_anchor_span_pcd(rng, &pool, cm_height..=cm_height);
+    let (last_span, last_members) =
+        build_anchor_span_pcd(rng, &pool, pool.height()..=pool.height());
     let gapped = vec![
-        build_lift_span(rng, &pool, cm_height..=cm_height),
-        build_lift_span(rng, &pool, pool.height()..=pool.height()),
+        (first_span, AnchorSetPoly::from_iter(first_members)),
+        (last_span, AnchorSetPoly::from_iter(last_members)),
     ];
     let twice = [inputs[0].clone(), inputs[0].clone()].to_vec();
     let elsewhere = Anchor::random(rng);
@@ -752,7 +965,7 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
         ),
         (
             "a spend lifted along a span ending short",
-            prove(rng, pool.anchor(), along(short)),
+            prove(rng, pool.block(pool.height()).anchor(), along(short)),
             "spend 0 does not reach the plan's anchor",
         ),
         (
@@ -767,7 +980,7 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
         assert_eq!(reason.to_string(), expected, "{label}");
     }
 
-    let gapped_lift = prove(rng, pool.anchor(), along(gapped));
+    let gapped_lift = prove(rng, pool.block(pool.height()).anchor(), along(gapped));
     let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner))) = gapped_lift else {
         panic!("spans with a gap: expected InvalidWitness, got {gapped_lift:?}");
     };

@@ -1,3 +1,5 @@
+use core::iter;
+
 use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
@@ -12,7 +14,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use crate::fixtures::{WalletSim, assert_rejected, tachygrams};
+use crate::fixtures::{WalletSim, assert_rejected};
 
 #[test]
 fn output_steps_publish_the_note_pair() {
@@ -88,7 +90,9 @@ fn output_steps_reject_corruptions() {
     let (.., action_set, tachygram_set) = witness::output_action((*bind.data(), ()), theta, anchor);
     let (.., foreign_action_set, _) =
         witness::output_action((*bind.data(), ()), ActionEntropy::random(rng), anchor);
-    let foreign_tachygrams = tachygrams(rng, 2).into_iter().collect::<TachygramSetPoly>();
+    let foreign_tachygrams = iter::repeat_with(|| Tachygram::random(rng))
+        .take(2)
+        .collect::<TachygramSetPoly>();
     let fuse = |fuse_rng: &mut StdRng, action_witness| {
         PROOF_SYSTEM
             .fuse(

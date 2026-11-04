@@ -1,12 +1,14 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+use core::iter;
 
 use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
+    TachygramSetPoly,
     constants::{EPOCH_SIZE, EVIDENCE_TREE_ARITY},
     pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
@@ -14,17 +16,52 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, assert_rejected, build_evidence_tree,
-    build_qr_partition, descend_evidence_tree, mine_sparse, open_evidence_tree, qr_bucket_at,
-    qr_epoch_unspent, qr_profile_of, random_block, seal_qr_intake, small_epoch, tachygrams,
+    PoolSim, QrBucketEntry, WalletSim, assert_rejected, build_evidence_tree, build_qr_partition,
+    descend_evidence_tree, mine_sparse, qr_bucket_at,
 };
 
 fn small_network(rng: &mut StdRng) -> (Vec<QrBucketEntry>, Anchor, QrDiscriminant) {
-    let (pool, end) = small_epoch(rng);
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| {
+            iter::repeat_with(|| Tachygram::random(rng))
+                .take(3)
+                .collect()
+        })
+        .take(2)
+        .collect(),
+    );
+    for _ in 0..3 {
+        pool.mine(
+            iter::repeat_with(|| {
+                iter::repeat_with(|| Tachygram::random(rng))
+                    .take(3)
+                    .collect()
+            })
+            .take(2)
+            .collect(),
+        );
+    }
+    let end = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::random(rng);
     let sealed = build_qr_partition(rng, &pool, (Anchor::default(), end), discriminant, 24, 3)
         .into_iter()
-        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .map(|intake| {
+            let seal_witness =
+                witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
+            let (pcd, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrBucketSeal,
+                    seal_witness,
+                    intake.pcd,
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .unwrap();
+            QrBucketEntry {
+                pcd,
+                members: intake.members,
+            }
+        })
         .collect();
     (sealed, end, discriminant)
 }
@@ -37,13 +74,43 @@ fn trees_replay_their_buckets() {
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let (sealed, end, discriminant) = small_network(rng);
     let crossing = end.next_epoch(epoch1).unwrap();
-    let nf_profile = qr_profile_of(Fp::from(wallet.nf_at(&note, epoch0)), discriminant, 3);
+    let nf_value = Fp::from(
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch0),
+    );
+    let nf_profile = (0..3).fold(QrProfile::ROOT, |profile, level| {
+        profile.descend(qr::classify(nf_value, discriminant.at(level)).0)
+    });
     let held = sealed
         .iter()
         .position(|bucket| bucket.pcd.data().4 == nf_profile)
         .unwrap();
     let expected: Vec<_> = sealed.iter().map(|bucket| *bucket.pcd.data()).collect();
-    let direct = qr_epoch_unspent(rng, &wallet, &note, &sealed[held]);
+    let held_bucket = &sealed[held];
+    let (held_epoch, ..) = *held_bucket.pcd.data();
+    let init_witness = witness::qr_unspent_init(
+        (*held_bucket.pcd.data(), ()),
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(held_epoch)
+            .into(),
+        &held_bucket.members,
+    );
+    let (arbitrary, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            init_witness,
+            held_bucket.pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+    let direct = wallet.unspent_bind(rng, arbitrary, &note);
     assert_eq!(
         *direct.data(),
         (
@@ -62,10 +129,46 @@ fn trees_replay_their_buckets() {
         (epoch0, Anchor::default(), crossing, discriminant)
     );
     for index in [0, held, expected.len() - 1] {
-        let replayed = open_evidence_tree(rng, tree.pcd.clone(), &tree.leaves[index]);
+        let leaf = &tree.leaves[index];
+        let leaf_node = descend_evidence_tree(rng, tree.pcd.clone(), leaf);
+        let open_witness =
+            witness::evidence_tree_open((*leaf_node.data(), ()), leaf.profile, leaf.contents);
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeOpen,
+                open_witness,
+                leaf_node,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap();
+        let replayed = QrBucketEntry {
+            pcd,
+            members: leaf.members.clone(),
+        };
         assert_eq!(*replayed.pcd.data(), expected[index], "leaf {index}");
         if index == held {
-            let bound = qr_epoch_unspent(rng, &wallet, &note, &replayed);
+            let (replayed_epoch, ..) = *replayed.pcd.data();
+            let replayed_witness = witness::qr_unspent_init(
+                (*replayed.pcd.data(), ()),
+                wallet
+                    .pak
+                    .nk
+                    .derive_note_private(note.psi)
+                    .derive_nullifier(replayed_epoch)
+                    .into(),
+                &replayed.members,
+            );
+            let (replayed_segment, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrUnspentInit,
+                    replayed_witness,
+                    replayed.pcd.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .unwrap();
+            let bound = wallet.unspent_bind(rng, replayed_segment, &note);
             assert_eq!(*bound.data(), *direct.data());
         }
     }
@@ -91,7 +194,7 @@ fn trees_replay_their_buckets() {
 fn joins_reject_mismatched_networks() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
     mine_sparse(rng, &mut pool, EpochIndex::new(2), None);
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
@@ -125,7 +228,7 @@ fn joins_reject_mismatched_networks() {
         final0,
     );
     let invented = Anchor::random(rng);
-    let members = tachygrams(rng, 1);
+    let members = vec![Tachygram::random(rng)];
     let (intake, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -139,14 +242,20 @@ fn joins_reject_mismatched_networks() {
             ),
         )
         .expect("QrStampIntakeSeed");
-    let elsewhere = seal_qr_intake(
-        rng,
-        QrIntakeEntry {
-            pcd: intake,
-            members,
-        },
-        invented,
-    );
+    let seal_witness = witness::qr_bucket_seal((*intake.data(), ()), invented);
+    let (sealed, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrBucketSeal,
+            seal_witness,
+            intake,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+    let elsewhere = QrBucketEntry {
+        pcd: sealed,
+        members,
+    };
 
     let pair = |pair_rng: &mut StdRng,
                 left: &Pcd<evidence::EvidenceTree>,
@@ -283,7 +392,7 @@ fn descend_and_open_reject_forgeries() {
                 .map(drop)
         };
     let QrProfile { depth, bits } = leaf.profile;
-    let stranger = tachygrams(rng, 1)
+    let stranger = vec![Tachygram::random(rng)]
         .into_iter()
         .collect::<TachygramSetPoly>()
         .commit();

@@ -20,7 +20,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use crate::fixtures::{WalletSim, mock_sighash, random_action, tachygrams};
+use crate::fixtures::{WalletSim, mock_sighash};
 
 const TACHYGRAM_COUNT: usize = 3;
 
@@ -55,7 +55,8 @@ fn signed_bundle(
             )
         })
         .collect();
-    let memo = memo(rng, memo_len);
+    let mut memo = vec![0u8; memo_len];
+    rng.fill_bytes(&mut memo);
     let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note).with_memo(memo.clone());
 
     let canonical: Vec<action::Descriptor> = plan.descriptors().into_iter().collect();
@@ -69,13 +70,17 @@ fn signed_bundle(
     let signed = plan.sign(rng, &sighash, &ask).unwrap();
     let wire_actions = order.iter().map(|&at| signed.actions[at]).collect();
 
-    let published: BTreeSet<Tachygram> = tachygrams(rng, TACHYGRAM_COUNT).into_iter().collect();
+    let published: BTreeSet<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
+        .take(TACHYGRAM_COUNT)
+        .collect();
+    let mut coverage = [0u8; 32];
+    rng.fill_bytes(&mut coverage);
     Bundle {
         actions: wire_actions,
         ..signed
     }
     .stamp(ProofStamp {
-        coverage: random_bytes(rng),
+        coverage,
         anchor: Anchor::random(rng),
         tachygram_set: published
             .iter()
@@ -86,53 +91,6 @@ fn signed_bundle(
         proof: Box::new(Proof::bootstrap()),
         fee: value::Positive::try_from(fee).unwrap(),
     })
-}
-
-fn specimens(rng: &mut StdRng) -> [(&'static str, Bundle<ProofStamp>); 3] {
-    [
-        ("no actions", signed_bundle(rng, (&[], &[]), &[], (0, 0), 0)),
-        ("a spend and two outputs", ordinary(rng)),
-        (
-            "two outputs out of order",
-            signed_bundle(rng, (&[], &[300, 200]), &[1, 0], (100, 40), 0),
-        ),
-    ]
-}
-
-fn ordinary(rng: &mut StdRng) -> Bundle<ProofStamp> {
-    signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20)
-}
-
-fn random_bytes<const N: usize>(rng: &mut StdRng) -> [u8; N] {
-    let mut bytes = [0u8; N];
-    rng.fill_bytes(&mut bytes);
-    bytes
-}
-
-fn memo(rng: &mut StdRng, len: usize) -> Vec<u8> {
-    let mut memo = vec![0u8; len];
-    rng.fill_bytes(&mut memo);
-    memo
-}
-
-fn wtxid(rng: &mut StdRng) -> AggregateId {
-    AggregateId::try_from(random_bytes::<64>(rng)).unwrap()
-}
-
-fn other_binding_sig(rng: &mut StdRng) -> bundle::Signature {
-    let sighash = random_bytes(rng);
-    bundle::Plan::new(vec![], vec![], WalletSim::random(rng).random_note(0))
-        .derive_bsk_private()
-        .sign(rng, &sighash)
-}
-
-fn other_proof(rng: &mut StdRng) -> Box<Proof> {
-    let note = WalletSim::random(rng).random_note(0);
-    let anchor = Anchor::random(rng);
-    let (pcd, ()) = PROOF_SYSTEM
-        .seed(rng, FeeSeed, witness::fee_seed(((), ()), note, anchor))
-        .unwrap();
-    Box::new(pcd.proof().clone())
 }
 
 fn round_trip<S>(name: &str, original: &Bundle<S>) -> Bundle<S>
@@ -199,8 +157,20 @@ where
 #[test]
 fn bundles_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
-    for (name, stamped) in specimens(rng) {
-        let stripped = stamped.clone().strip(wtxid(rng));
+    for (name, stamped) in [
+        ("no actions", signed_bundle(rng, (&[], &[]), &[], (0, 0), 0)),
+        (
+            "a spend and two outputs",
+            signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20),
+        ),
+        (
+            "two outputs out of order",
+            signed_bundle(rng, (&[], &[300, 200]), &[1, 0], (100, 40), 0),
+        ),
+    ] {
+        let mut wtxid = [0u8; 64];
+        rng.fill_bytes(&mut wtxid);
+        let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
 
         let decoded = round_trip(name, &stamped);
         let adjunct = round_trip(name, &stripped);
@@ -270,7 +240,7 @@ fn bundles_round_trip_at_their_bounds() {
 #[test]
 fn commitment_binds_effecting_data_only() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamped = ordinary(rng);
+    let stamped = signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20);
     let commitment = stamped.commitment();
     let edit = |change: &dyn Fn(&mut Bundle<ProofStamp>)| {
         let mut edited = stamped.clone();
@@ -278,10 +248,26 @@ fn commitment_binds_effecting_data_only() {
         edited.commitment()
     };
 
-    let foreign = random_action(rng);
+    let foreign_wallet = WalletSim::random(rng);
+    let foreign_note = foreign_wallet.random_note(400);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let foreign_output = action::Plan::output(foreign_note, theta, rcv);
+    let foreign_plan =
+        bundle::Plan::new(vec![], vec![foreign_output], foreign_wallet.random_note(0));
+    let foreign_sighash = mock_sighash(foreign_plan.commitment().unwrap());
+    let foreign = foreign_plan
+        .sign(
+            rng,
+            &foreign_sighash,
+            &foreign_wallet.sk.derive_auth_private(),
+        )
+        .unwrap()
+        .actions[0];
     let balance = value::Balance::try_from(i64::from(stamped.value_balance) + 1).unwrap();
     let max_commitment = value::Trapdoor::random(rng).commit(value::Balance::ZERO);
-    let other_memo = memo(rng, stamped.memo.len());
+    let mut other_memo = vec![0u8; stamped.memo.len()];
+    rng.fill_bytes(&mut other_memo);
     for (label, edited) in [
         (
             "the first cv",
@@ -309,13 +295,31 @@ fn commitment_binds_effecting_data_only() {
     }
 
     let fee = value::Positive::try_from(1).unwrap();
-    let coverage = random_bytes(rng);
+    let mut coverage = [0u8; 32];
+    rng.fill_bytes(&mut coverage);
     let anchor = Anchor::random(rng);
     let extra = Tachygram::random(rng);
     let tachygram_set = iter::once(extra).collect::<TachygramSetPoly>().commit();
-    let proof = other_proof(rng);
-    let binding_sig = other_binding_sig(rng);
-    let mut repointed = stamped.clone().strip(wtxid(rng));
+    let proof_note = WalletSim::random(rng).random_note(0);
+    let proof_anchor = Anchor::random(rng);
+    let (proof_pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            FeeSeed,
+            witness::fee_seed(((), ()), proof_note, proof_anchor),
+        )
+        .unwrap();
+    let proof = Box::new(proof_pcd.proof().clone());
+    let mut sighash = [0u8; 32];
+    rng.fill_bytes(&mut sighash);
+    let binding_sig = bundle::Plan::new(vec![], vec![], WalletSim::random(rng).random_note(0))
+        .derive_bsk_private()
+        .sign(rng, &sighash);
+    let mut repointed_wtxid = [0u8; 64];
+    rng.fill_bytes(&mut repointed_wtxid);
+    let mut repointed = stamped
+        .clone()
+        .strip(AggregateId::try_from(repointed_wtxid).unwrap());
     repointed.stamp.fee = fee;
     for (label, edited) in [
         (
@@ -351,7 +355,9 @@ fn commitment_binds_effecting_data_only() {
         assert_eq!(edited, commitment, "{label}");
     }
 
-    let stripped = stamped.clone().strip(wtxid(rng));
+    let mut wtxid = [0u8; 64];
+    rng.fill_bytes(&mut wtxid);
+    let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
     assert_eq!(stripped.commitment(), commitment);
     assert_eq!(stripped.memo, stamped.memo);
 }
@@ -359,8 +365,10 @@ fn commitment_binds_effecting_data_only() {
 #[test]
 fn auth_digest_binds_authorizing_data_only() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamped = ordinary(rng);
-    let stripped = stamped.clone().strip(wtxid(rng));
+    let stamped = signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20);
+    let mut wtxid = [0u8; 64];
+    rng.fill_bytes(&mut wtxid);
+    let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
     let (stamped_digest, stripped_digest) = (stamped.auth_digest(), stripped.auth_digest());
 
     // A pointer repeating the proof stamp's digest isolates the state byte.
@@ -382,13 +390,43 @@ fn auth_digest_binds_authorizing_data_only() {
     };
 
     let fee = value::Positive::try_from(1).unwrap();
-    let other_wtxid = wtxid(rng);
+    let mut other_wtxid_bytes = [0u8; 64];
+    rng.fill_bytes(&mut other_wtxid_bytes);
+    let other_wtxid = AggregateId::try_from(other_wtxid_bytes).unwrap();
     let anchor = Anchor::random(rng);
     let extra = Tachygram::random(rng);
     let tachygram_set = iter::once(extra).collect::<TachygramSetPoly>().commit();
-    let proof = other_proof(rng);
-    let binding_sig = other_binding_sig(rng);
-    let foreign = random_action(rng);
+    let proof_note = WalletSim::random(rng).random_note(0);
+    let proof_anchor = Anchor::random(rng);
+    let (proof_pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            FeeSeed,
+            witness::fee_seed(((), ()), proof_note, proof_anchor),
+        )
+        .unwrap();
+    let proof = Box::new(proof_pcd.proof().clone());
+    let mut sighash = [0u8; 32];
+    rng.fill_bytes(&mut sighash);
+    let binding_sig = bundle::Plan::new(vec![], vec![], WalletSim::random(rng).random_note(0))
+        .derive_bsk_private()
+        .sign(rng, &sighash);
+    let foreign_wallet = WalletSim::random(rng);
+    let foreign_note = foreign_wallet.random_note(400);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let foreign_output = action::Plan::output(foreign_note, theta, rcv);
+    let foreign_plan =
+        bundle::Plan::new(vec![], vec![foreign_output], foreign_wallet.random_note(0));
+    let foreign_sighash = mock_sighash(foreign_plan.commitment().unwrap());
+    let foreign = foreign_plan
+        .sign(
+            rng,
+            &foreign_sighash,
+            &foreign_wallet.sk.derive_auth_private(),
+        )
+        .unwrap()
+        .actions[0];
     for (label, edited, digest) in [
         (
             "the fee",
@@ -456,7 +494,8 @@ fn auth_digest_binds_authorizing_data_only() {
         assert_ne!(edited, digest, "{label}");
     }
 
-    let other_memo = memo(rng, stamped.memo.len());
+    let mut other_memo = vec![0u8; stamped.memo.len()];
+    rng.fill_bytes(&mut other_memo);
     let balance = value::Balance::try_from(i64::from(stamped.value_balance) + 1).unwrap();
     for (label, edited, digest) in [
         (
@@ -494,8 +533,20 @@ fn no_bundle_round_trips_and_digests_apart() {
     assert_eq!(rewritten.as_slice(), no_bundle_wire.as_slice());
 
     let rng = &mut StdRng::seed_from_u64(0);
-    for (name, stamped) in specimens(rng) {
-        let stripped = stamped.clone().strip(wtxid(rng));
+    for (name, stamped) in [
+        ("no actions", signed_bundle(rng, (&[], &[]), &[], (0, 0), 0)),
+        (
+            "a spend and two outputs",
+            signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20),
+        ),
+        (
+            "two outputs out of order",
+            signed_bundle(rng, (&[], &[300, 200]), &[1, 0], (100, 40), 0),
+        ),
+    ] {
+        let mut wtxid = [0u8; 64];
+        rng.fill_bytes(&mut wtxid);
+        let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
         for erased in [TachyonBundle::from(stamped), TachyonBundle::from(stripped)] {
             assert_ne!(erased.commitment(), no_bundle.commitment(), "{name}");
             assert_ne!(erased.auth_digest(), no_bundle.auth_digest(), "{name}");
@@ -532,8 +583,10 @@ fn readers_reject_malformed_wire() {
     let over_rank = [&[0xFD][..], &rank_coeffs.to_le_bytes()].concat();
 
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamped = ordinary(rng);
-    let stripped = stamped.clone().strip(wtxid(rng));
+    let stamped = signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20);
+    let mut wtxid = [0u8; 64];
+    rng.fill_bytes(&mut wtxid);
+    let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
     let mut stamped_wire = Vec::new();
     stamped.write(&mut stamped_wire).unwrap();
     let mut stripped_wire = Vec::new();
@@ -755,8 +808,10 @@ fn readers_reject_truncated_wire() {
     let dispatching: fn(&[u8]) -> io::Result<()> = |wire| TachyonBundle::read(wire).map(drop);
 
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamped = ordinary(rng);
-    let stripped = stamped.clone().strip(wtxid(rng));
+    let stamped = signed_bundle(rng, (&[1_000], &[300, 200]), &[0, 1, 2], (100, 40), 20);
+    let mut wtxid = [0u8; 64];
+    rng.fill_bytes(&mut wtxid);
+    let stripped = stamped.clone().strip(AggregateId::try_from(wtxid).unwrap());
     let mut stamped_wire = Vec::new();
     stamped.write(&mut stamped_wire).unwrap();
     let mut stripped_wire = Vec::new();

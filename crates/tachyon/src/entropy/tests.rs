@@ -3,13 +3,6 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::{digest::poseidon, note, primitives::effect};
 
-fn modulus() -> [u8; 32] {
-    let mut modulus = (-Fp::ONE).to_bytes();
-    assert_eq!(modulus[0], 0);
-    modulus[0] = 1;
-    modulus
-}
-
 #[test]
 fn randomizers_are_domain_separated_functions_of_theta_and_cm() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -43,6 +36,9 @@ fn randomizers_are_domain_separated_functions_of_theta_and_cm() {
 #[test]
 fn from_bytes_accepts_exactly_canonical_encodings() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let mut modulus = (-Fp::ONE).to_bytes();
+    assert_eq!(modulus[0], 0);
+    modulus[0] = 1;
     for (label, bytes, canonical) in [
         ("zero", [0u8; 32], true),
         (
@@ -51,7 +47,7 @@ fn from_bytes_accepts_exactly_canonical_encodings() {
             true,
         ),
         ("the modulus minus one", (-Fp::ONE).to_bytes(), true),
-        ("the modulus", modulus(), false),
+        ("the modulus", modulus, false),
         ("all ones", [0xFF; 32], false),
     ] {
         let parsed = ActionEntropy::from_bytes(bytes);

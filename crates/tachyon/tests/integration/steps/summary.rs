@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::iter;
 
 use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -13,7 +14,7 @@ use zcash_tachyon::{
     witness,
 };
 
-use crate::fixtures::{assert_rejected, tachygrams};
+use crate::fixtures::assert_rejected;
 
 #[test]
 fn summary_accumulates_its_run() {
@@ -25,7 +26,14 @@ fn summary_accumulates_its_run() {
     ] {
         let epoch = EpochIndex::new(epoch_index);
         let start = Anchor::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-        let stamps: Vec<Vec<Tachygram>> = sizes.iter().map(|&size| tachygrams(rng, size)).collect();
+        let stamps: Vec<Vec<Tachygram>> = sizes
+            .iter()
+            .map(|&size| {
+                iter::repeat_with(|| Tachygram::random(rng))
+                    .take(size)
+                    .collect()
+            })
+            .collect();
 
         let (first, rest) = stamps.split_first().unwrap();
         let (mut pcd, ()) = PROOF_SYSTEM
@@ -68,8 +76,17 @@ fn summary_steps_reject_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(EPOCH_MAX / 2);
     let start = Anchor::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-    let (stamp_a, stamp_b) = (tachygrams(rng, 2), tachygrams(rng, 3));
-    let foreign = tachygrams(rng, 2);
+    let (stamp_a, stamp_b) = (
+        iter::repeat_with(|| Tachygram::random(rng))
+            .take(2)
+            .collect::<Vec<_>>(),
+        iter::repeat_with(|| Tachygram::random(rng))
+            .take(3)
+            .collect::<Vec<_>>(),
+    );
+    let foreign = iter::repeat_with(|| Tachygram::random(rng))
+        .take(2)
+        .collect::<Vec<_>>();
 
     let (seeded, ()) = PROOF_SYSTEM
         .seed(

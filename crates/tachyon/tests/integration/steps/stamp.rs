@@ -16,9 +16,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use crate::fixtures::{
-    PoolSim, WalletSim, assert_rejected, build_anchor_span_pcd, random_block, recarry, tachygrams,
-};
+use crate::fixtures::{PoolSim, WalletSim, assert_rejected, build_anchor_span_pcd};
 
 fn output_actions(
     rng: &mut StdRng,
@@ -99,42 +97,6 @@ fn apply_fee(
     (stamp, stamp_digests, stamp_tachygrams)
 }
 
-fn polys(
-    digests: &BTreeSet<ActionDigest>,
-    tachygrams: &BTreeSet<Tachygram>,
-) -> (ActionSetPoly, TachygramSetPoly) {
-    (
-        digests.iter().copied().collect(),
-        tachygrams.iter().copied().collect(),
-    )
-}
-
-fn merge_witness(
-    (left_digests, left_tachygrams): (&BTreeSet<ActionDigest>, &BTreeSet<Tachygram>),
-    (right_digests, right_tachygrams): (&BTreeSet<ActionDigest>, &BTreeSet<Tachygram>),
-) -> (
-    (ActionSetPoly, TachygramSetPoly),
-    (ActionSetPoly, TachygramSetPoly),
-    (ActionSetPoly, TachygramSetPoly),
-) {
-    (
-        polys(left_digests, left_tachygrams),
-        polys(
-            &left_digests.union(right_digests).copied().collect(),
-            &left_tachygrams.union(right_tachygrams).copied().collect(),
-        ),
-        polys(right_digests, right_tachygrams),
-    )
-}
-
-fn random_output(rng: &mut StdRng, amount: u64) -> (Note, ActionEntropy, value::Trapdoor) {
-    (
-        WalletSim::random(rng).random_note(amount),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    )
-}
-
 #[test]
 fn lifts_reach_the_span_end() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -147,9 +109,13 @@ fn lifts_reach_the_span_end() {
         (whole_epoch.as_slice(), 0, whole_epoch.len() / 2),
     ];
     for (stamps_per_block, first, at) in rows {
-        let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+        let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
         for &stamps in stamps_per_block {
-            pool.mine(random_block(rng, 1, stamps));
+            pool.mine(
+                iter::repeat_with(|| vec![Tachygram::random(rng)])
+                    .take(stamps)
+                    .collect(),
+            );
         }
         let start = BlockHeight(u32::try_from(first).unwrap() + 1);
         let (span, members) = build_anchor_span_pcd(rng, &pool, start..=pool.height());
@@ -165,7 +131,11 @@ fn lifts_reach_the_span_end() {
                 "{} blocks from block {first}, anchored at {position}",
                 stamps_per_block.len()
             );
-            let planned = random_output(rng, 300);
+            let planned = (
+                WalletSim::random(rng).random_note(300),
+                ActionEntropy::random(rng),
+                value::Trapdoor::random(rng),
+            );
             let (actions, digests, published) = output_actions(rng, planned, anchor);
             let max_fee_note = WalletSim::random(rng).random_note(100);
             let (stamp_pcd, ..) = apply_fee(
@@ -209,45 +179,37 @@ fn lifts_reach_the_span_end() {
     }
 }
 
-fn stamped(
-    rng: &mut StdRng,
-    content: &(
-        Pcd<stamp::Actions>,
-        BTreeSet<ActionDigest>,
-        BTreeSet<Tachygram>,
-    ),
-) -> (
-    Pcd<stamp::Stamp>,
-    BTreeSet<ActionDigest>,
-    BTreeSet<Tachygram>,
-) {
-    let max_fee_note = WalletSim::random(rng).random_note(300);
-    apply_fee(
-        rng,
-        (&content.0, &content.1, &content.2),
-        max_fee_note,
-        value::Positive::ZERO,
-    )
-}
-
 #[test]
 fn lift_steps_reject_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.mine(random_block(rng, 1, 2));
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
+    pool.mine(vec![
+        vec![Tachygram::random(rng)],
+        vec![Tachygram::random(rng)],
+    ]);
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (anchor_start, ..) = *span.data();
-    let fork_set = TachygramSetPoly::from_iter(tachygrams(rng, 1)).commit();
+    let fork_set = TachygramSetPoly::from_iter(vec![Tachygram::random(rng)]).commit();
     let fork = anchor_start
         .next_stamp(EpochIndex::new(0), &fork_set)
         .unwrap();
     let foreign_members: Vec<Anchor> = members.iter().copied().chain([fork]).collect();
 
     let content = |content_rng: &mut StdRng, anchor| {
-        let planned = random_output(content_rng, 300);
-        let actions = output_actions(content_rng, planned, anchor);
-        let (stamp_pcd, ..) = stamped(content_rng, &actions);
-        (actions.0, stamp_pcd)
+        let planned = (
+            WalletSim::random(content_rng).random_note(300),
+            ActionEntropy::random(content_rng),
+            value::Trapdoor::random(content_rng),
+        );
+        let (actions, digests, published) = output_actions(content_rng, planned, anchor);
+        let max_fee_note = WalletSim::random(content_rng).random_note(300);
+        let (stamp_pcd, ..) = apply_fee(
+            content_rng,
+            (&actions, &digests, &published),
+            max_fee_note,
+            value::Positive::ZERO,
+        );
+        (actions, stamp_pcd)
     };
     let action_lift =
         |lift_rng: &mut StdRng, actions: &Pcd<stamp::Actions>, witnessed: &[Anchor]| {
@@ -294,33 +256,34 @@ fn lift_steps_reject_corruptions() {
     );
 }
 
-fn merge_halves(
-    rng: &mut StdRng,
-) -> [(
-    Pcd<stamp::Actions>,
-    BTreeSet<ActionDigest>,
-    BTreeSet<Tachygram>,
-); 5] {
+#[test]
+fn action_merge_rejects_corruptions() {
+    let rng = &mut StdRng::seed_from_u64(0);
     let anchor = Anchor::random(rng);
     let elsewhere = Anchor::random(rng);
-    let planned = random_output(rng, 300);
-    let (note, theta, rcv) = planned;
-    let right_output = random_output(rng, 300);
-    let displaced_output = random_output(rng, 300);
+    let (note, theta, rcv) = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let right_output = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let displaced_output = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
     let rerandomized = (note, ActionEntropy::random(rng), rcv);
-    [
-        output_actions(rng, planned, anchor),
+    let [left, right, displaced, reused, repeated] = [
+        output_actions(rng, (note, theta, rcv), anchor),
         output_actions(rng, right_output, anchor),
         output_actions(rng, displaced_output, elsewhere),
         output_actions(rng, rerandomized, anchor),
         output_actions(rng, (note, theta, rcv), anchor),
-    ]
-}
-
-#[test]
-fn action_merge_rejects_corruptions() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let [left, right, displaced, reused, repeated] = merge_halves(rng);
+    ];
     let merge = |merge_rng: &mut StdRng, merge, right_half: &Pcd<stamp::Actions>| {
         PROOF_SYSTEM.fuse(
             merge_rng,
@@ -330,28 +293,46 @@ fn action_merge_rejects_corruptions() {
             right_half.clone(),
         )
     };
-    let honest = merge_witness((&left.1, &left.2), (&right.1, &right.2));
+    let honest = (
+        (
+            left.1.iter().copied().collect(),
+            left.2.iter().copied().collect(),
+        ),
+        (
+            left.1.union(&right.1).copied().collect(),
+            left.2.union(&right.2).copied().collect(),
+        ),
+        (
+            right.1.iter().copied().collect(),
+            right.2.iter().copied().collect(),
+        ),
+    );
     let ((left_actions, left_tachygrams), merged, (right_actions, right_tachygrams)) =
         honest.clone();
 
     let (merged_actions, ()) = merge(rng, honest, &right.0).unwrap();
-    let (union_actions, union_tachygrams) = polys(
-        &left.1.union(&right.1).copied().collect(),
-        &left.2.union(&right.2).copied().collect(),
-    );
     assert_eq!(
         *merged_actions.data(),
-        (
-            union_actions.commit(),
-            union_tachygrams.commit(),
-            left.0.data().2
-        )
+        (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&displaced.1, &displaced.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&displaced.1).copied().collect(),
+                    left.2.union(&displaced.2).copied().collect(),
+                ),
+                (
+                    displaced.1.iter().copied().collect(),
+                    displaced.2.iter().copied().collect(),
+                ),
+            ),
             &displaced.0,
         )
         .map(drop),
@@ -413,7 +394,20 @@ fn action_merge_rejects_corruptions() {
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&reused.1, &reused.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&reused.1).copied().collect(),
+                    left.2.union(&reused.2).copied().collect(),
+                ),
+                (
+                    reused.1.iter().copied().collect(),
+                    reused.2.iter().copied().collect(),
+                ),
+            ),
             &reused.0,
         )
         .map(drop),
@@ -422,7 +416,20 @@ fn action_merge_rejects_corruptions() {
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&repeated.1, &repeated.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&repeated.1).copied().collect(),
+                    left.2.union(&repeated.2).copied().collect(),
+                ),
+                (
+                    repeated.1.iter().copied().collect(),
+                    repeated.2.iter().copied().collect(),
+                ),
+            ),
             &repeated.0,
         )
         .map(drop),
@@ -433,8 +440,40 @@ fn action_merge_rejects_corruptions() {
 #[test]
 fn stamp_merge_rejects_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let [left, right, displaced, reused, repeated] =
-        merge_halves(rng).map(|content| stamped(rng, &content));
+    let anchor = Anchor::random(rng);
+    let elsewhere = Anchor::random(rng);
+    let (note, theta, rcv) = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let right_output = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let displaced_output = (
+        WalletSim::random(rng).random_note(300),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let rerandomized = (note, ActionEntropy::random(rng), rcv);
+    let [left, right, displaced, reused, repeated] = [
+        output_actions(rng, (note, theta, rcv), anchor),
+        output_actions(rng, right_output, anchor),
+        output_actions(rng, displaced_output, elsewhere),
+        output_actions(rng, rerandomized, anchor),
+        output_actions(rng, (note, theta, rcv), anchor),
+    ]
+    .map(|(actions, digests, published)| {
+        let max_fee_note = WalletSim::random(rng).random_note(300);
+        apply_fee(
+            rng,
+            (&actions, &digests, &published),
+            max_fee_note,
+            value::Positive::ZERO,
+        )
+    });
     let merge = |merge_rng: &mut StdRng, merge, right_half: &Pcd<stamp::Stamp>| {
         PROOF_SYSTEM.fuse(
             merge_rng,
@@ -444,28 +483,46 @@ fn stamp_merge_rejects_corruptions() {
             right_half.clone(),
         )
     };
-    let honest = merge_witness((&left.1, &left.2), (&right.1, &right.2));
+    let honest = (
+        (
+            left.1.iter().copied().collect(),
+            left.2.iter().copied().collect(),
+        ),
+        (
+            left.1.union(&right.1).copied().collect(),
+            left.2.union(&right.2).copied().collect(),
+        ),
+        (
+            right.1.iter().copied().collect(),
+            right.2.iter().copied().collect(),
+        ),
+    );
     let ((left_actions, left_tachygrams), merged, (right_actions, right_tachygrams)) =
         honest.clone();
 
     let (merged_stamp, ()) = merge(rng, honest, &right.0).unwrap();
-    let (union_actions, union_tachygrams) = polys(
-        &left.1.union(&right.1).copied().collect(),
-        &left.2.union(&right.2).copied().collect(),
-    );
     assert_eq!(
         *merged_stamp.data(),
-        (
-            union_actions.commit(),
-            union_tachygrams.commit(),
-            left.0.data().2
-        )
+        (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&displaced.1, &displaced.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&displaced.1).copied().collect(),
+                    left.2.union(&displaced.2).copied().collect(),
+                ),
+                (
+                    displaced.1.iter().copied().collect(),
+                    displaced.2.iter().copied().collect(),
+                ),
+            ),
             &displaced.0,
         )
         .map(drop),
@@ -526,7 +583,20 @@ fn stamp_merge_rejects_corruptions() {
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&reused.1, &reused.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&reused.1).copied().collect(),
+                    left.2.union(&reused.2).copied().collect(),
+                ),
+                (
+                    reused.1.iter().copied().collect(),
+                    reused.2.iter().copied().collect(),
+                ),
+            ),
             &reused.0,
         )
         .map(drop),
@@ -535,7 +605,20 @@ fn stamp_merge_rejects_corruptions() {
     assert_rejected(
         merge(
             rng,
-            merge_witness((&left.1, &left.2), (&repeated.1, &repeated.2)),
+            (
+                (
+                    left.1.iter().copied().collect(),
+                    left.2.iter().copied().collect(),
+                ),
+                (
+                    left.1.union(&repeated.1).copied().collect(),
+                    left.2.union(&repeated.2).copied().collect(),
+                ),
+                (
+                    repeated.1.iter().copied().collect(),
+                    repeated.2.iter().copied().collect(),
+                ),
+            ),
             &repeated.0,
         )
         .map(drop),
@@ -548,15 +631,37 @@ fn unmerge_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor = Anchor::random(rng);
     let [alice, bob, carol] = [(); 3].map(|()| {
-        let planned = random_output(rng, 300);
-        let content = output_actions(rng, planned, anchor);
-        stamped(rng, &content)
+        let planned = (
+            WalletSim::random(rng).random_note(300),
+            ActionEntropy::random(rng),
+            value::Trapdoor::random(rng),
+        );
+        let (actions, digests, published) = output_actions(rng, planned, anchor);
+        let max_fee_note = WalletSim::random(rng).random_note(300);
+        apply_fee(
+            rng,
+            (&actions, &digests, &published),
+            max_fee_note,
+            value::Positive::ZERO,
+        )
     });
+    let alice_sets: (ActionSetPoly, TachygramSetPoly) = (
+        alice.1.iter().copied().collect(),
+        alice.2.iter().copied().collect(),
+    );
+    let bob_sets: (ActionSetPoly, TachygramSetPoly) = (
+        bob.1.iter().copied().collect(),
+        bob.2.iter().copied().collect(),
+    );
+    let union_sets: (ActionSetPoly, TachygramSetPoly) = (
+        alice.1.union(&bob.1).copied().collect(),
+        alice.2.union(&bob.2).copied().collect(),
+    );
     let (alice_bob, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::StampMerge,
-            merge_witness((&alice.1, &alice.2), (&bob.1, &bob.2)),
+            (alice_sets.clone(), union_sets.clone(), bob_sets.clone()),
             alice.0.clone(),
             bob.0.clone(),
         )
@@ -572,17 +677,11 @@ fn unmerge_binds_its_sets() {
             )
             .map(drop)
     };
-    let valid = (
-        polys(
-            &alice.1.union(&bob.1).copied().collect(),
-            &alice.2.union(&bob.2).copied().collect(),
-        ),
-        polys(&alice.1, &alice.2),
-        polys(&bob.1, &bob.2),
-    );
+    let valid = (union_sets, alice_sets, bob_sets);
     unmerge(rng, valid.clone()).unwrap();
 
-    let (carol_actions, carol_tachygrams) = polys(&carol.1, &carol.2);
+    let carol_actions: ActionSetPoly = carol.1.iter().copied().collect();
+    let carol_tachygrams: TachygramSetPoly = carol.2.iter().copied().collect();
     let mut wrong_dividend_actions = valid.clone();
     wrong_dividend_actions.0.0 = carol_actions.clone();
     assert_rejected(
@@ -638,12 +737,17 @@ fn fee_steps_prove_their_singletons() {
         let case = format!("a fee of {fee_amount} out of {max_fee}");
         let max_fee_note = WalletSim::random(rng).random_note(max_fee);
         let fee = value::Positive::try_from(fee_amount).unwrap();
-        let planned = random_output(rng, 500);
+        let planned = (
+            WalletSim::random(rng).random_note(500),
+            ActionEntropy::random(rng),
+            value::Trapdoor::random(rng),
+        );
         let (actions, digests, published) = output_actions(rng, planned, anchor);
         let (stamp_pcd, stamp_digests, stamp_tachygrams) =
             apply_fee(rng, (&actions, &digests, &published), max_fee_note, fee);
         let (fee_digest, change) = fee_singletons(max_fee_note, fee);
-        let (action_set, tachygram_set) = polys(&stamp_digests, &stamp_tachygrams);
+        let action_set: ActionSetPoly = stamp_digests.iter().copied().collect();
+        let tachygram_set: TachygramSetPoly = stamp_tachygrams.iter().copied().collect();
         assert_eq!(stamp_digests.len(), 2, "{case}: the digest count");
         assert!(
             stamp_digests.contains(&fee_digest),
@@ -685,7 +789,11 @@ fn fee_fuse_binds_its_header() {
     let anchor = Anchor::random(rng);
     let elsewhere = Anchor::random(rng);
     let max_fee_note = WalletSim::random(rng).random_note(100);
-    let planned = random_output(rng, 500);
+    let planned = (
+        WalletSim::random(rng).random_note(500),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
     let (actions, digests, published) = output_actions(rng, planned, anchor);
     let (stamp_pcd, ..) = apply_fee(
         rng,
@@ -699,17 +807,32 @@ fn fee_fuse_binds_its_header() {
     };
 
     assert!(verifies(rng, &stamp_pcd));
+    let mut actions_set_data = *stamp_pcd.data();
+    actions_set_data.0 = actions_commit;
     assert!(!verifies(
         rng,
-        &recarry(&stamp_pcd, |data| data.0 = actions_commit)
+        &stamp_pcd
+            .proof()
+            .clone()
+            .carry::<stamp::Stamp>(actions_set_data)
     ));
+    let mut actions_tachygrams_data = *stamp_pcd.data();
+    actions_tachygrams_data.1 = actions_tachygrams;
     assert!(!verifies(
         rng,
-        &recarry(&stamp_pcd, |data| data.1 = actions_tachygrams)
+        &stamp_pcd
+            .proof()
+            .clone()
+            .carry::<stamp::Stamp>(actions_tachygrams_data)
     ));
+    let mut elsewhere_data = *stamp_pcd.data();
+    elsewhere_data.2 = elsewhere;
     assert!(!verifies(
         rng,
-        &recarry(&stamp_pcd, |data| data.2 = elsewhere)
+        &stamp_pcd
+            .proof()
+            .clone()
+            .carry::<stamp::Stamp>(elsewhere_data)
     ));
     assert!(!verifies(
         rng,
@@ -731,7 +854,11 @@ fn fee_fuse_rejects_corruptions() {
         value::Positive::try_from(MAX_MONEY - 1).unwrap(),
         value::Positive::try_from(MAX_MONEY).unwrap(),
     );
-    let planned = random_output(rng, 500);
+    let planned = (
+        WalletSim::random(rng).random_note(500),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
     let (actions, digests, published) = output_actions(rng, planned, anchor);
     let fee_witness = |applied| {
         witness::fee_fuse(

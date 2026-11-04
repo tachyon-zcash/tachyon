@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::iter;
 
 use ragu::{Pcd, Proof};
@@ -8,8 +8,8 @@ use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, QrDiscriminant, Tachygram, TachygramSetPoly,
-    action,
+    ActionSetPoly, Anchor, BlockHeight, EpochIndex, QrDiscriminant, QrProfile, Tachygram,
+    TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     entropy::ActionEntropy,
     note::{self, Note},
@@ -20,9 +20,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, assert_rejected,
-    build_unspent_pcd_over_epochs, detached_segment, mine_sparse, qr_bucket_at, qr_epoch_unspent,
-    qr_profile_of, random_block, random_block_with, seal_qr_intake, tachygrams,
+    PoolSim, QrBucketEntry, WalletSim, assert_rejected, build_unspent_pcd_over_epochs,
+    detached_segment, mine_sparse, qr_bucket_at,
 };
 
 fn pool_with(
@@ -32,10 +31,14 @@ fn pool_with(
     through: EpochIndex,
     silent: Option<EpochIndex>,
 ) -> (PoolSim, BlockHeight) {
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
     mine_sparse(rng, &mut pool, creation, None);
-    let commitments: Vec<note::Commitment> = notes.iter().map(Note::commitment).collect();
-    pool.mine(random_block_with(rng, &[commitments], 1));
+    pool.mine(vec![
+        notes
+            .iter()
+            .map(|note| Tachygram::from(note.commitment()))
+            .collect(),
+    ]);
     let cm_height = pool.height();
     mine_sparse(rng, &mut pool, through, silent);
     (pool, cm_height)
@@ -77,6 +80,7 @@ fn spendable_lineage_binds_the_live_pair() {
 
     for (creation_index, silent_offset) in [(0, 1), (2, 2), (rate - 1, 3)] {
         let note = wallet.random_note(500);
+        let note_key = wallet.pak.nk.derive_note_private(note.psi);
         let swapped = wallet.random_note(500);
         let creation = EpochIndex::new(creation_index);
         let silent = EpochIndex::new(creation_index + silent_offset);
@@ -108,10 +112,14 @@ fn spendable_lineage_binds_the_live_pair() {
                     let segment = build_unspent_pcd_over_epochs(
                         rng,
                         &pool,
-                        |covered| wallet.nf_at(&note, covered),
+                        |covered| note_key.derive_nullifier(covered),
                         (EpochIndex::new(epoch), EpochIndex::new(epoch + 1)),
                     );
-                    lineage = wallet.lift(rng, lineage, segment, &note);
+                    let unspent = wallet.unspent_bind(rng, segment, &note);
+                    let (lifted, ()) = PROOF_SYSTEM
+                        .fuse(rng, spendable::SpendableLift, (), lineage, unspent)
+                        .unwrap();
+                    lineage = lifted;
                 }
                 lineage
             } else {
@@ -132,7 +140,10 @@ fn spendable_lineage_binds_the_live_pair() {
             let (bound, (action_set, tachygram_set, action_anchor)) =
                 bind_and_spend(rng, &wallet, note, spendable_pcd, (theta, rcv));
             let next = target.next().unwrap();
-            let (nf_current, nf_next) = (wallet.nf_at(&note, target), wallet.nf_at(&note, next));
+            let (nf_current, nf_next) = (
+                note_key.derive_nullifier(target),
+                note_key.derive_nullifier(next),
+            );
             let (cm, bound_current, bound_next, bound_anchor, pk, cv) = bound;
             assert_eq!(cm, note.commitment(), "{case}: the bound commitment");
             assert_eq!(
@@ -175,11 +186,19 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let mut pool = PoolSim::genesis_with([[Tachygram::from(note.commitment())].to_vec()].to_vec());
     mine_sparse(rng, &mut pool, epoch2, None);
 
+    let note_key = wallet.pak.nk.derive_note_private(note.psi);
     let cm_value = Fp::from(Tachygram::from(note.commitment()));
-    let nf_value = Fp::from(wallet.nf_at(&note, epoch0));
+    let nf_value = Fp::from(note_key.derive_nullifier(epoch0));
     let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
         .take(1024)
-        .find(|&drawn| qr_profile_of(cm_value, drawn, 2) != qr_profile_of(nf_value, drawn, 2))
+        .find(|&drawn| {
+            let profile_of = |value: Fp| {
+                (0..2).fold(QrProfile::ROOT, |profile, level| {
+                    profile.descend(qr::classify(value, drawn.at(level)).0)
+                })
+            };
+            profile_of(cm_value) != profile_of(nf_value)
+        })
         .unwrap();
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
     let capacity = usize::try_from(EPOCH_SIZE).unwrap();
@@ -200,7 +219,21 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
             nf_value,
             Anchor::from(Fp::ZERO),
         );
-        let unspent = qr_epoch_unspent(init_rng, &wallet, &note, &nf_bucket);
+        let (nf_epoch, ..) = *nf_bucket.pcd.data();
+        let (segment, ()) = PROOF_SYSTEM
+            .fuse(
+                init_rng,
+                qr::QrUnspentInit,
+                witness::qr_unspent_init(
+                    (*nf_bucket.pcd.data(), ()),
+                    note_key.derive_nullifier(nf_epoch).into(),
+                    &nf_bucket.members,
+                ),
+                nf_bucket.pcd.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap();
+        let unspent = wallet.unspent_bind(init_rng, segment, &note);
         PROOF_SYSTEM
             .fuse(
                 init_rng,
@@ -232,7 +265,10 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     assert_eq!(cm, note.commitment());
     assert_eq!(
         (nf_current, nf_next),
-        (wallet.nf_at(&note, epoch2), wallet.nf_at(&note, epoch3))
+        (
+            note_key.derive_nullifier(epoch2),
+            note_key.derive_nullifier(epoch3)
+        )
     );
     assert_eq!(anchor, pool.block(epoch2.first_block()).prev);
 }
@@ -256,7 +292,9 @@ fn spend_steps_reject_corruptions() {
             Proof::bootstrap().carry::<()>(()),
         )
     };
-    let absent = tachygrams(rng, 2);
+    let absent: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
+        .take(2)
+        .collect();
     assert_rejected(
         init(rng, &absent, creation).map(drop),
         "SpendableInit: commitment not in set",
@@ -298,7 +336,9 @@ fn spend_steps_reject_corruptions() {
         witness::spend_action((*bind.data(), ()), theta, wallet.pak);
     let (.., foreign_action_set, _) =
         witness::spend_action((*bind.data(), ()), ActionEntropy::random(rng), wallet.pak);
-    let foreign_tachygrams = tachygrams(rng, 2).into_iter().collect::<TachygramSetPoly>();
+    let foreign_tachygrams = iter::repeat_with(|| Tachygram::random(rng))
+        .take(2)
+        .collect::<TachygramSetPoly>();
     let stranger = WalletSim::random(rng);
     let act = |act_rng: &mut StdRng, action_witness| {
         PROOF_SYSTEM
@@ -351,7 +391,7 @@ fn lineage_steps_reject_corruptions() {
         EpochIndex::new(3),
     );
     let mut pool = PoolSim::genesis_with([[Tachygram::from(note.commitment())].to_vec()].to_vec());
-    let short_end = pool.anchor();
+    let short_end = pool.block(pool.height()).anchor();
     mine_sparse(rng, &mut pool, epoch3, None);
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
@@ -369,14 +409,37 @@ fn lineage_steps_reject_corruptions() {
             prev,
         )
     };
-    let nf = |epoch| Fp::from(wallet.nf_at(&note, epoch));
+    let note_key = wallet.pak.nk.derive_note_private(note.psi);
+    let nf = |epoch| Fp::from(note_key.derive_nullifier(epoch));
+    let bucket_unspent = |unspent_rng: &mut StdRng, of: &Note, target: &QrBucketEntry| {
+        let (epoch, ..) = *target.pcd.data();
+        let (segment, ()) = PROOF_SYSTEM
+            .fuse(
+                unspent_rng,
+                qr::QrUnspentInit,
+                witness::qr_unspent_init(
+                    (*target.pcd.data(), ()),
+                    wallet
+                        .pak
+                        .nk
+                        .derive_note_private(of.psi)
+                        .derive_nullifier(epoch)
+                        .into(),
+                    &target.members,
+                ),
+                target.pcd.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap();
+        wallet.unspent_bind(unspent_rng, segment, of)
+    };
 
     let lineage = wallet.spendable_at(rng, &pool, &note, epoch1);
     let segment = |segment_rng: &mut StdRng, from: EpochIndex, to: EpochIndex| {
         build_unspent_pcd_over_epochs(
             segment_rng,
             &pool,
-            |covered| wallet.nf_at(&note, covered),
+            |covered| note_key.derive_nullifier(covered),
             (from, to),
         )
     };
@@ -387,7 +450,7 @@ fn lineage_steps_reject_corruptions() {
     };
     let phantom_segment = segment(rng, epoch1, epoch2);
     let phantom_unspent = wallet.unspent_bind(rng, phantom_segment, &phantom);
-    let detached = detached_segment(rng, epoch1, |covered| wallet.nf_at(&note, covered));
+    let detached = detached_segment(rng, epoch1, |covered| note_key.derive_nullifier(covered));
     let detached_unspent = wallet.unspent_bind(rng, detached, &note);
     let later_segment = segment(rng, epoch2, epoch3);
     let later_unspent = wallet.unspent_bind(rng, later_segment, &note);
@@ -398,7 +461,7 @@ fn lineage_steps_reject_corruptions() {
         Fp::from(Tachygram::from(note.commitment())),
         Anchor::from(Fp::ZERO),
     );
-    let short_unspent = qr_epoch_unspent(rng, &wallet, &note, &short_bucket);
+    let short_unspent = bucket_unspent(rng, &note, &short_bucket);
     let (short_lineage, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -444,11 +507,17 @@ fn lineage_steps_reject_corruptions() {
     let unpublished_bucket = bucket(
         rng,
         epoch0_span,
-        Fp::from(wallet.nf_at(&unpublished, epoch0)),
+        Fp::from(
+            wallet
+                .pak
+                .nk
+                .derive_note_private(unpublished.psi)
+                .derive_nullifier(epoch0),
+        ),
         Anchor::from(Fp::ZERO),
     );
-    let unpublished_unspent = qr_epoch_unspent(rng, &wallet, &unpublished, &unpublished_bucket);
-    let whole_unspent = qr_epoch_unspent(rng, &wallet, &note, &nf_bucket);
+    let unpublished_unspent = bucket_unspent(rng, &unpublished, &unpublished_bucket);
+    let whole_unspent = bucket_unspent(rng, &note, &nf_bucket);
     let prefix_bucket = bucket(
         rng,
         (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
@@ -463,7 +532,7 @@ fn lineage_steps_reject_corruptions() {
     );
 
     let epoch1_nf_bucket = bucket(rng, epoch1_span, nf(epoch1), final0);
-    let epoch1_unspent = qr_epoch_unspent(rng, &wallet, &note, &epoch1_nf_bucket);
+    let epoch1_unspent = bucket_unspent(rng, &note, &epoch1_nf_bucket);
     let fake_prev = Anchor::from(Fp::ONE);
     let elsewhere = {
         let members = [Tachygram::from(note.commitment())];
@@ -480,16 +549,21 @@ fn lineage_steps_reject_corruptions() {
                 ),
             )
             .expect("QrStampIntakeSeed");
-        seal_qr_intake(
-            rng,
-            QrIntakeEntry {
-                pcd: intake,
-                members: members.to_vec(),
-            },
-            fake_prev,
-        )
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrBucketSeal,
+                witness::qr_bucket_seal((*intake.data(), ()), fake_prev),
+                intake,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap();
+        QrBucketEntry {
+            pcd,
+            members: members.to_vec(),
+        }
     };
-    let foreign_members = tachygrams(rng, 1);
+    let foreign_members = [Tachygram::random(rng)];
 
     assert_rejected(
         lift(rng, lineage.clone(), phantom_unspent),

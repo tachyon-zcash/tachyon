@@ -1,12 +1,13 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::iter;
 
 use ragu::{Pcd, Proof};
 use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    EpochIndex, NfSeqPoly, Note,
+    EpochIndex, NfSeqPoly, Note, Tachygram,
     constants::EPOCH_MAX,
     nullifier::{NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
@@ -14,58 +15,13 @@ use zcash_tachyon::{
     witness,
 };
 
-use crate::fixtures::{WalletSim, assert_rejected, tachygrams};
-
-fn width() -> u32 {
-    u32::try_from(NF_DERIVATION_WIDTH).unwrap()
-}
-
-fn group() -> u32 {
-    u32::try_from(PoseidonFp::RATE).unwrap()
-}
-
-fn window_start(index: u32, windows: u32) -> EpochIndex {
-    let room = EPOCH_MAX + 1 - (windows * width());
-    EpochIndex::new(index.min(room) & !(group() - 1))
-}
-
-fn secret(rng: &mut StdRng, wallet: &WalletSim, note: Note) -> Pcd<delegation::NoteSecret> {
-    PROOF_SYSTEM
-        .seed(
-            rng,
-            delegation::NoteSeed,
-            witness::note_seed(((), ()), note, wallet.pak),
-        )
-        .unwrap()
-        .0
-}
-
-fn window(
-    rng: &mut StdRng,
-    secret: &Pcd<delegation::NoteSecret>,
-    start: EpochIndex,
-) -> Pcd<delegation::NoteNullifiers> {
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NullifierDerive,
-            witness::nullifier_derive((*secret.data(), ()), start),
-            secret.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap()
-        .0
-}
-
-fn nullifiers(wallet: &WalletSim, note: &Note, start: EpochIndex, count: u32) -> Vec<Nullifier> {
-    (u32::from(start)..u32::from(start) + count)
-        .map(|epoch| wallet.nf_at(note, EpochIndex::new(epoch)))
-        .collect()
-}
+use crate::fixtures::{WalletSim, assert_rejected};
 
 #[test]
 fn derivation_chain_exports_its_windows() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let width = u32::try_from(NF_DERIVATION_WIDTH).unwrap();
+    let group = u32::try_from(PoseidonFp::RATE).unwrap();
     for (start, windows) in [(0, 1), (EPOCH_MAX / 2, 2), (EPOCH_MAX, 3)] {
         let case = format!("{windows} windows from epoch {start}");
         let wallet = WalletSim::random(rng);
@@ -74,7 +30,14 @@ fn derivation_chain_exports_its_windows() {
         let stranger_pk = stranger.random_note(0).pk;
 
         for (signer, pk) in [(&wallet, note.pk), (&stranger, stranger_pk)] {
-            let (cm, opening, mk) = *secret(rng, signer, note).data();
+            let (signer_secret, ()) = PROOF_SYSTEM
+                .seed(
+                    rng,
+                    delegation::NoteSeed,
+                    witness::note_seed(((), ()), note, signer.pak),
+                )
+                .unwrap();
+            let (cm, opening, mk) = *signer_secret.data();
             assert_eq!(
                 (
                     Fp::from(opening.pk),
@@ -90,29 +53,61 @@ fn derivation_chain_exports_its_windows() {
                 ),
                 "{case}: opening"
             );
-            assert_eq!(mk, signer.mk(&note), "{case}: master key");
+            assert_eq!(
+                mk,
+                signer.pak.nk.derive_note_private(note.psi),
+                "{case}: master key"
+            );
             assert_eq!(cm, Note { pk, ..note }.commitment(), "{case}: commitment");
         }
 
-        let secret_pcd = secret(rng, &wallet, note);
-        let first = window_start(start, windows);
-        let mut chain = window(rng, &secret_pcd, first);
+        let (secret_pcd, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                delegation::NoteSeed,
+                witness::note_seed(((), ()), note, wallet.pak),
+            )
+            .unwrap();
+        let mk = wallet.pak.nk.derive_note_private(note.psi);
+        let first = EpochIndex::new(start.min(EPOCH_MAX + 1 - windows * width) & !(group - 1));
+        let (mut chain, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NullifierDerive,
+                witness::nullifier_derive((*secret_pcd.data(), ()), first),
+                secret_pcd.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap();
         for index in 1..windows {
-            let next_start = EpochIndex::new(u32::from(first) + index * width());
-            let next = window(rng, &secret_pcd, next_start);
-            let fuse_witness = witness::nullifier_fuse(
-                (*chain.data(), *next.data()),
-                &nullifiers(&wallet, &note, first, index * width()),
-                &nullifiers(&wallet, &note, next_start, width()),
-            );
+            let next_start = EpochIndex::new(u32::from(first) + index * width);
+            let (next, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    delegation::NullifierDerive,
+                    witness::nullifier_derive((*secret_pcd.data(), ()), next_start),
+                    secret_pcd.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .unwrap();
+            let chain_nfs: Vec<Nullifier> = (u32::from(first)..u32::from(next_start))
+                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                .collect();
+            let next_nfs: Vec<Nullifier> = (u32::from(next_start)..u32::from(next_start) + width)
+                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                .collect();
+            let fuse_witness =
+                witness::nullifier_fuse((*chain.data(), *next.data()), &chain_nfs, &next_nfs);
             chain = PROOF_SYSTEM
                 .fuse(rng, delegation::NullifierFuse, fuse_witness, chain, next)
                 .unwrap()
                 .0;
         }
 
-        let last = EpochIndex::new(u32::from(first) + windows * width() - 1);
-        let members = nullifiers(&wallet, &note, first, windows * width());
+        let last = EpochIndex::new(u32::from(first) + windows * width - 1);
+        let members: Vec<Nullifier> = (u32::from(first)..=u32::from(last))
+            .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+            .collect();
         let commit = NfSeqPoly::new(first, &members).commit();
         assert_eq!(
             *chain.data(),
@@ -125,44 +120,81 @@ fn derivation_chain_exports_its_windows() {
 #[test]
 fn delegation_steps_reject_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let width = u32::try_from(NF_DERIVATION_WIDTH).unwrap();
+    let group = u32::try_from(PoseidonFp::RATE).unwrap();
     let wallet = WalletSim::random(rng);
     let (note, other) = (wallet.random_note(500), wallet.random_note(700));
-    let secret_pcd = secret(rng, &wallet, note);
-    let other_secret = secret(rng, &wallet, other);
+    let (secret_pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), note, wallet.pak),
+        )
+        .unwrap();
+    let (other_secret, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), other, wallet.pak),
+        )
+        .unwrap();
+    let mk = wallet.pak.nk.derive_note_private(note.psi);
+    let other_mk = wallet.pak.nk.derive_note_private(other.psi);
 
-    let left_start = window_start(EPOCH_MAX / 2, 3);
-    let right_start = EpochIndex::new(u32::from(left_start) + width());
-    let gapped_start = EpochIndex::new(u32::from(right_start) + width());
-    let left = window(rng, &secret_pcd, left_start);
-    let right = window(rng, &secret_pcd, right_start);
-    let gapped = window(rng, &secret_pcd, gapped_start);
-    let foreign_right = window(rng, &other_secret, right_start);
+    let left_start = EpochIndex::new((EPOCH_MAX / 2).min(EPOCH_MAX + 1 - 3 * width) & !(group - 1));
+    let right_start = EpochIndex::new(u32::from(left_start) + width);
+    let gapped_start = EpochIndex::new(u32::from(right_start) + width);
+    let [left, right, gapped, foreign_right] = [
+        (&secret_pcd, left_start),
+        (&secret_pcd, right_start),
+        (&secret_pcd, gapped_start),
+        (&other_secret, right_start),
+    ]
+    .map(|(secret, start)| {
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NullifierDerive,
+                witness::nullifier_derive((*secret.data(), ()), start),
+                secret.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0
+    });
 
-    let left_nfs = nullifiers(&wallet, &note, left_start, width());
-    let right_nfs = nullifiers(&wallet, &note, right_start, width());
+    let left_nfs: Vec<Nullifier> = (u32::from(left_start)..u32::from(right_start))
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+        .collect();
+    let right_nfs: Vec<Nullifier> = (u32::from(right_start)..u32::from(gapped_start))
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+        .collect();
     let (left_seq, merged_seq, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
     let reversed: Vec<Nullifier> = right_nfs.iter().rev().copied().collect();
-    let junk: Vec<Nullifier> = tachygrams(rng, 2 * NF_DERIVATION_WIDTH)
-        .into_iter()
+    let junk: Vec<Nullifier> = iter::repeat_with(|| Tachygram::random(rng))
+        .take(2 * NF_DERIVATION_WIDTH)
         .map(Nullifier::from)
         .collect();
-    let past_the_end = EpochIndex::new(EPOCH_MAX + 1 - group());
+    let past_the_end = EpochIndex::new(EPOCH_MAX + 1 - group);
     let misaligned = EpochIndex::new(u32::from(left_start) + 1);
-    let foreign_seq = NfSeqPoly::new(
-        left_start,
-        &nullifiers(&wallet, &other, left_start, width()),
-    );
+    let foreign_nfs: Vec<Nullifier> = (u32::from(left_start)..u32::from(right_start))
+        .map(|epoch| other_mk.derive_nullifier(EpochIndex::new(epoch)))
+        .collect();
+    let foreign_seq = NfSeqPoly::new(left_start, &foreign_nfs);
     let (_, honest_seq) = witness::nullifier_derive((*secret_pcd.data(), ()), left_start);
-    let gapped_witness = witness::nullifier_fuse(
-        (*left.data(), *gapped.data()),
-        &left_nfs,
-        &nullifiers(&wallet, &note, gapped_start, width()),
-    );
+    let gapped_nfs: Vec<Nullifier> = (u32::from(gapped_start)..u32::from(gapped_start) + width)
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+        .collect();
+    let gapped_witness =
+        witness::nullifier_fuse((*left.data(), *gapped.data()), &left_nfs, &gapped_nfs);
+    let foreign_right_nfs: Vec<Nullifier> = (u32::from(right_start)..u32::from(gapped_start))
+        .map(|epoch| other_mk.derive_nullifier(EpochIndex::new(epoch)))
+        .collect();
     let foreign_witness = witness::nullifier_fuse(
         (*left.data(), *foreign_right.data()),
         &left_nfs,
-        &nullifiers(&wallet, &other, right_start, width()),
+        &foreign_right_nfs,
     );
 
     let derive = |derive_rng: &mut StdRng, at: EpochIndex, seq: NfSeqPoly| {

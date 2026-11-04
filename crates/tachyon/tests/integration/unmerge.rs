@@ -1,48 +1,19 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeSet, vec, vec::Vec};
+use alloc::{collections::BTreeSet, vec};
+use core::iter;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, Bundle, ProofStamp, TachygramSetPoly, VerificationError,
+    Anchor, AnchorSetPoly, Bundle, ProofStamp, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, action, bundle,
     constants::MAX_MONEY,
-    fee,
+    entropy::ActionEntropy,
     stamp::{self, ProveError},
     value,
 };
 
-use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, fee_digests, mock_sighash, mock_wtxid,
-    random_block,
-};
-
-fn claims(
-    bundles: &[&Bundle<ProofStamp>],
-) -> (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>) {
-    (
-        bundles
-            .iter()
-            .flat_map(|bundle| bundle.descriptors())
-            .collect(),
-        bundles
-            .iter()
-            .map(|bundle| bundle.fee_descriptor())
-            .collect(),
-    )
-}
-
-fn side(
-    stamp: ProofStamp,
-    bundles: &[&Bundle<ProofStamp>],
-) -> (
-    ProofStamp,
-    BTreeSet<action::Descriptor>,
-    BTreeSet<fee::Descriptor>,
-) {
-    let (descriptors, fees) = claims(bundles);
-    (stamp, descriptors, fees)
-}
+use crate::fixtures::{PoolSim, WalletSim, build_anchor_span_pcd, mock_sighash, mock_wtxid};
 
 fn autonome_paying(
     rng: &mut StdRng,
@@ -63,14 +34,6 @@ fn autonome_paying(
     )
 }
 
-fn digests_of(bundle: &Bundle<ProofStamp>) -> Vec<ActionDigest> {
-    bundle
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests([bundle.fee_descriptor()]))
-        .collect()
-}
-
 #[test]
 fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -81,29 +44,78 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let alice_bob = alice
         .stamp
         .clone()
-        .merge(rng, claims(&[&alice]), side(bob.stamp.clone(), &[&bob]))
+        .merge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                bob.stamp.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
         .expect("merge A and B");
     let mined = bob
         .stamp
         .clone()
-        .merge(rng, claims(&[&bob]), side(carol.stamp.clone(), &[&carol]))
+        .merge(
+            rng,
+            (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
+            (
+                carol.stamp.clone(),
+                carol.descriptors().collect(),
+                [carol.fee_descriptor()].into(),
+            ),
+        )
         .expect("merge B and C");
     let all_three = alice_bob
         .merge(
             rng,
-            claims(&[&alice, &bob]),
-            side(carol.stamp.clone(), &[&carol]),
+            (
+                alice.descriptors().chain(bob.descriptors()).collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (
+                carol.stamp.clone(),
+                carol.descriptors().collect(),
+                [carol.fee_descriptor()].into(),
+            ),
         )
         .expect("merge AB and C");
     let divide = |divide_rng: &mut StdRng, divisor| Bundle {
         stamp: all_three
             .clone()
-            .unmerge(divide_rng, claims(&[&alice, &bob, &carol]), divisor)
+            .unmerge(
+                divide_rng,
+                (
+                    alice
+                        .descriptors()
+                        .chain(bob.descriptors())
+                        .chain(carol.descriptors())
+                        .collect(),
+                    [
+                        alice.fee_descriptor(),
+                        bob.fee_descriptor(),
+                        carol.fee_descriptor(),
+                    ]
+                    .into(),
+                ),
+                divisor,
+            )
             .unwrap(),
         ..alice.clone()
     };
 
-    let without_bob = divide(rng, side(bob.stamp.clone(), &[&bob]));
+    let without_bob = divide(
+        rng,
+        (
+            bob.stamp.clone(),
+            bob.descriptors().collect(),
+            [bob.fee_descriptor()].into(),
+        ),
+    );
     let with_carol = mock_wtxid(&without_bob);
     without_bob
         .verify(
@@ -114,7 +126,14 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         )
         .unwrap();
 
-    let without_mined = divide(rng, side(mined, &[&bob, &carol]));
+    let without_mined = divide(
+        rng,
+        (
+            mined,
+            bob.descriptors().chain(carol.descriptors()).collect(),
+            [bob.fee_descriptor(), carol.fee_descriptor()].into(),
+        ),
+    );
     let alone = mock_wtxid(&without_mined);
     without_mined
         .verify(
@@ -136,7 +155,18 @@ fn unmerge_keeps_the_dividend_fee() {
     let on_alice = alice
         .stamp
         .clone()
-        .merge(rng, claims(&[&alice]), side(bob.stamp.clone(), &[&bob]))
+        .merge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                bob.stamp.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
         .expect("merge B into A");
 
     let divide = |divide_rng: &mut StdRng, divisor: &Bundle<ProofStamp>| {
@@ -144,8 +174,15 @@ fn unmerge_keeps_the_dividend_fee() {
             .clone()
             .unmerge(
                 divide_rng,
-                claims(&[&alice, &bob]),
-                side(divisor.stamp.clone(), &[divisor]),
+                (
+                    alice.descriptors().chain(bob.descriptors()).collect(),
+                    [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+                ),
+                (
+                    divisor.stamp.clone(),
+                    divisor.descriptors().collect(),
+                    [divisor.fee_descriptor()].into(),
+                ),
             )
             .unwrap()
     };
@@ -163,7 +200,13 @@ fn unmerge_keeps_the_dividend_fee() {
         assert_eq!(quotient.tachygram_set, other.stamp.tachygram_set, "{label}");
         assert!(
             quotient
-                .verify_proof(rng, digests_of(other))
+                .verify_proof(
+                    rng,
+                    other
+                        .descriptors()
+                        .map(|desc| desc.digest().unwrap())
+                        .chain([other.fee_descriptor().digest().unwrap()])
+                )
                 .expect("proof system verification"),
             "{label}: the quotient verifies against the other side's actions"
         );
@@ -188,21 +231,61 @@ fn unmerge_refuses_a_non_divisor() {
     let alice_bob = alice
         .stamp
         .clone()
-        .merge(rng, claims(&[&alice]), side(bob.stamp.clone(), &[&bob]))
+        .merge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                bob.stamp.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
         .expect("merge B into A");
     let bob_carol = bob
         .stamp
         .clone()
-        .merge(rng, claims(&[&bob]), side(carol.stamp.clone(), &[&carol]))
+        .merge(
+            rng,
+            (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
+            (
+                carol.stamp.clone(),
+                carol.descriptors().collect(),
+                [carol.fee_descriptor()].into(),
+            ),
+        )
         .unwrap();
 
     for (label, divisor) in [
-        ("sharing no actions", side(carol.stamp.clone(), &[&carol])),
-        ("sharing some actions", side(bob_carol, &[&bob, &carol])),
+        (
+            "sharing no actions",
+            (
+                carol.stamp.clone(),
+                carol.descriptors().collect(),
+                BTreeSet::from([carol.fee_descriptor()]),
+            ),
+        ),
+        (
+            "sharing some actions",
+            (
+                bob_carol,
+                bob.descriptors().chain(carol.descriptors()).collect(),
+                BTreeSet::from([bob.fee_descriptor(), carol.fee_descriptor()]),
+            ),
+        ),
     ] {
         let err = alice_bob
             .clone()
-            .unmerge(rng, claims(&[&alice, &bob]), divisor)
+            .unmerge(
+                rng,
+                (
+                    alice.descriptors().chain(bob.descriptors()).collect(),
+                    [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+                ),
+                divisor,
+            )
             .expect_err("a non-divisor must not unmerge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
             panic!("{label}: expected ProofFailed(InvalidWitness), got {err:?}");
@@ -237,12 +320,30 @@ fn unmerge_of_the_receiver_leaves_its_fee() {
             stamp: alice
                 .stamp
                 .clone()
-                .merge(rng, claims(&[&alice]), side(bob.stamp.clone(), &[&bob]))
+                .merge(
+                    rng,
+                    (
+                        alice.descriptors().collect(),
+                        [alice.fee_descriptor()].into(),
+                    ),
+                    (
+                        bob.stamp.clone(),
+                        bob.descriptors().collect(),
+                        [bob.fee_descriptor()].into(),
+                    ),
+                )
                 .unwrap()
                 .unmerge(
                     rng,
-                    claims(&[&alice, &bob]),
-                    side(alice.stamp.clone(), &[&alice]),
+                    (
+                        alice.descriptors().chain(bob.descriptors()).collect(),
+                        [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+                    ),
+                    (
+                        alice.stamp.clone(),
+                        alice.descriptors().collect(),
+                        [alice.fee_descriptor()].into(),
+                    ),
                 )
                 .unwrap(),
             ..bob.clone()
@@ -271,7 +372,18 @@ fn unmerge_of_the_receiver_leaves_its_fee() {
         carol.stamp = carol
             .stamp
             .clone()
-            .merge(rng, claims(&[&carol]), side(hostless.stamp, &[&bob]))
+            .merge(
+                rng,
+                (
+                    carol.descriptors().collect(),
+                    [carol.fee_descriptor()].into(),
+                ),
+                (
+                    hostless.stamp,
+                    bob.descriptors().collect(),
+                    [bob.fee_descriptor()].into(),
+                ),
+            )
             .expect("merge the quotient into C");
         assert_eq!(carol.stamp.fee, carol_fee, "{case}");
         let carol_wtxid = mock_wtxid(&carol);
@@ -292,38 +404,81 @@ fn unmerge_of_the_receiver_leaves_its_fee() {
 fn unmerge_by_a_lifted_divisor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(
+        iter::repeat_with(|| vec![Tachygram::random(rng)])
+            .take(50)
+            .collect(),
+    );
 
     for _ in 0..3 {
-        pool.mine(random_block(rng, 1, 4));
+        pool.mine(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(4)
+                .collect(),
+        );
     }
-    let bob = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+    let bob = wallet.autonome(
+        rng,
+        pool.block(pool.height()).anchor(),
+        vec![],
+        vec![wallet.random_note(300)],
+    );
     let stamped_at = pool.height();
 
     for _ in 0..2 {
-        pool.mine(random_block(rng, 1, 4));
+        pool.mine(
+            iter::repeat_with(|| vec![Tachygram::random(rng)])
+                .take(4)
+                .collect(),
+        );
     }
-    let mut alice = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+    let mut alice = wallet.autonome(
+        rng,
+        pool.block(pool.height()).anchor(),
+        vec![],
+        vec![wallet.random_note(300)],
+    );
 
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-    let (bob_descriptors, bob_fees) = claims(&[&bob]);
+    let (span, members) =
+        build_anchor_span_pcd(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let bob_descriptors: BTreeSet<action::Descriptor> = bob.descriptors().collect();
+    let bob_fees = BTreeSet::from([bob.fee_descriptor()]);
     let lifted_bob = bob
         .stamp
         .clone()
-        .lift(rng, &bob_descriptors, &bob_fees, vec![span])
+        .lift(
+            rng,
+            &bob_descriptors,
+            &bob_fees,
+            vec![(span, AnchorSetPoly::from_iter(members))],
+        )
         .expect("lift B onto A's anchor");
     let alice_bob = alice
         .stamp
         .clone()
-        .merge(rng, claims(&[&alice]), side(lifted_bob.clone(), &[&bob]))
+        .merge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                lifted_bob.clone(),
+                bob_descriptors.clone(),
+                bob_fees.clone(),
+            ),
+        )
         .expect("merge A and the lifted B");
 
     let err = alice_bob
         .clone()
         .unmerge(
             rng,
-            claims(&[&alice, &bob]),
-            side(bob.stamp.clone(), &[&bob]),
+            (
+                alice.descriptors().chain(bob.descriptors()).collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (bob.stamp.clone(), bob_descriptors.clone(), bob_fees.clone()),
         )
         .expect_err("an unlifted divisor must not unmerge");
     let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
@@ -332,7 +487,14 @@ fn unmerge_by_a_lifted_divisor() {
     assert_eq!(inner.to_string(), "StampUnmerge: anchors must match");
 
     alice.stamp = alice_bob
-        .unmerge(rng, claims(&[&alice, &bob]), side(lifted_bob, &[&bob]))
+        .unmerge(
+            rng,
+            (
+                alice.descriptors().chain(bob.descriptors()).collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (lifted_bob, bob_descriptors, bob_fees),
+        )
         .expect("divide the lifted B out");
     let wtxid = mock_wtxid(&alice);
     alice
@@ -350,7 +512,18 @@ fn unmerge_by_itself_leaves_no_leaves() {
     let quotient = alice
         .stamp
         .clone()
-        .unmerge(rng, claims(&[&alice]), side(alice.stamp.clone(), &[&alice]))
+        .unmerge(
+            rng,
+            (
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+            (
+                alice.stamp.clone(),
+                alice.descriptors().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+        )
         .expect("divide A by itself");
     assert!(
         quotient.tachygrams.is_empty(),
@@ -385,9 +558,14 @@ fn unmerge_splitting_a_bundle() {
     let wallet = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
 
-    let (_, _, kept_plan) = build_output_plan(rng, wallet.random_note(300));
+    let kept_note = wallet.random_note(300);
+    let kept_rcv = value::Trapdoor::random(rng);
+    let kept_theta = ActionEntropy::random(rng);
+    let kept_plan = action::Plan::output(kept_note, kept_theta, kept_rcv);
     let removed_note = wallet.random_note(300);
-    let (removed_rcv, removed_theta, removed_plan) = build_output_plan(rng, removed_note);
+    let removed_rcv = value::Trapdoor::random(rng);
+    let removed_theta = ActionEntropy::random(rng);
+    let removed_plan = action::Plan::output(removed_note, removed_theta, removed_rcv);
     let removed_descriptor = removed_plan.descriptor();
     let kept_descriptor = kept_plan.descriptor();
 
@@ -421,7 +599,10 @@ fn unmerge_splitting_a_bundle() {
         .clone()
         .unmerge(
             rng,
-            claims(&[&whole]),
+            (
+                whole.descriptors().collect(),
+                [whole.fee_descriptor()].into(),
+            ),
             (
                 part,
                 [removed_descriptor].into(),

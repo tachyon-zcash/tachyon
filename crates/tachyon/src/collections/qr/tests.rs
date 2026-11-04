@@ -9,28 +9,15 @@ use udon::field::Field;
 use super::*;
 use crate::collections::multiset;
 
-fn values_at(count: usize) -> (Vec<Fp>, Fp) {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let values = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
-        .take(count)
-        .collect();
-    (values, discriminant)
-}
-
-fn half_order() -> [u64; 4] {
+fn chi(x: Fp) -> Fp {
     let half = -Fp::ONE * Fp::TWO_INVERSE;
     let repr = half.to_bytes();
-    let mut limbs = [0u64; 4];
-    for (limb, bytes) in limbs.iter_mut().zip(repr.as_ref().chunks(8)) {
+    let mut half_order = [0u64; 4];
+    for (limb, bytes) in half_order.iter_mut().zip(repr.as_ref().chunks(8)) {
         *limb = u64::from_le_bytes(bytes.try_into().unwrap());
     }
-    limbs
-}
-
-fn chi(x: Fp) -> Fp {
     let mut result = Fp::ONE;
-    for limb in half_order().iter().rev() {
+    for limb in half_order.iter().rev() {
         for bit in (0..u64::BITS).rev() {
             result = result.square();
             if (limb >> bit) & 1 == 1 {
@@ -85,7 +72,11 @@ fn classification_matches_the_euler_criterion() {
 #[test]
 fn splits_are_exhaustive_and_disjoint() {
     for count in [0, 1, 17, 48] {
-        let (values, discriminant) = values_at(count);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
+            .take(count)
+            .collect();
         let (residue, non_residue) = split(values.iter().copied(), discriminant);
         let mut filed: Vec<[u8; 32]> = residue
             .iter()
@@ -130,36 +121,16 @@ fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
     coeffs
 }
 
-fn abscissas_of(points: &[(Fp, Fp)]) -> Vec<Fp> {
-    points.iter().map(|&(abscissa, _)| abscissa).collect()
-}
-
-fn verify_side(
-    points: &[(Fp, Fp)],
-    class: Fp,
-    shift: Fp,
-    u: &Polynomial<Fp, ProductionRank>,
-    h: &Polynomial<Fp, ProductionRank>,
-) {
-    let q = multiset::encode(abscissas_of(points));
-    let mut lhs = arithmetic::poly_mul(&dense(u), &dense(u));
-    if lhs.len() < 2 {
-        lhs.resize(2, Fp::ZERO);
-    }
-    lhs[0] -= class * shift;
-    lhs[1] -= class;
-    let rhs = arithmetic::poly_mul(&dense(&q), &dense(h));
-    assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
-    for &(abscissa, root) in points {
-        assert_eq!(u.eval(abscissa), root);
-    }
-}
-
 #[test]
 fn the_decomposition_holds_on_both_sides() {
     for count in [0, 1, 24] {
         for exceptional in [false, true] {
-            let (mut values, discriminant) = values_at(count);
+            let rng = &mut StdRng::seed_from_u64(0);
+            let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
+            let mut values: Vec<Fp> =
+                iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
+                    .take(count)
+                    .collect();
             if exceptional {
                 values.push(-discriminant);
             }
@@ -170,7 +141,8 @@ fn the_decomposition_holds_on_both_sides() {
                     "{count} values: the exceptional value files residue-side"
                 );
                 assert_ne!(
-                    multiset::encode(abscissas_of(&non_residue)).eval(-discriminant),
+                    multiset::encode(non_residue.iter().map(|&(abscissa, _)| abscissa))
+                        .eval(-discriminant),
                     Fp::ZERO,
                     "{count} values: the non-residue side opens nonzero"
                 );
@@ -178,7 +150,18 @@ fn the_decomposition_holds_on_both_sides() {
             for (points, side) in [(&residue, true), (&non_residue, false)] {
                 let class = class_multiplier(side);
                 let (u, h) = decomposition(points, class, discriminant).unwrap();
-                verify_side(points, class, discriminant, &u, &h);
+                let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
+                let mut lhs = arithmetic::poly_mul(&dense(&u), &dense(&u));
+                if lhs.len() < 2 {
+                    lhs.resize(2, Fp::ZERO);
+                }
+                lhs[0] -= class * discriminant;
+                lhs[1] -= class;
+                let rhs = arithmetic::poly_mul(&dense(&q), &dense(&h));
+                assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
+                for &(abscissa, root) in points {
+                    assert_eq!(u.eval(abscissa), root);
+                }
             }
         }
     }
@@ -197,7 +180,7 @@ fn the_decomposition_holds_at_the_polynomial_capacity() {
         (&non_residue, class_multiplier(false)),
     ] {
         let (u, h) = decomposition(points, class, discriminant).unwrap();
-        let q = multiset::encode(abscissas_of(points));
+        let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
         // Random points avoid the quadratic full coefficient compare.
         for _ in 0..4 {
             let z = Fp::random(|bytes| rng.fill_bytes(bytes));
@@ -242,17 +225,35 @@ fn a_misfiled_or_repeated_value_has_no_decomposition() {
 
 #[test]
 fn an_all_zero_side_takes_the_vanishing_polynomial() {
-    let (_, discriminant) = values_at(0);
+    let rng = &mut StdRng::seed_from_u64(0);
+    let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
     let points = [(-discriminant, Fp::ZERO)];
-    let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+    let class = class_multiplier(true);
+    let (u, h) = decomposition(&points, class, discriminant).unwrap();
     assert_eq!(dense(&u), [discriminant, Fp::ONE]);
-    verify_side(&points, class_multiplier(true), discriminant, &u, &h);
+    let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
+    let mut lhs = arithmetic::poly_mul(&dense(&u), &dense(&u));
+    if lhs.len() < 2 {
+        lhs.resize(2, Fp::ZERO);
+    }
+    lhs[0] -= class * discriminant;
+    lhs[1] -= class;
+    let rhs = arithmetic::poly_mul(&dense(&q), &dense(&h));
+    assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
+    for &(abscissa, root) in &points {
+        assert_eq!(u.eval(abscissa), root);
+    }
 }
 
 #[test]
 fn the_decomposition_reads_as_a_profile_over_discriminants() {
     for count in [0, 1, 16] {
-        let (discriminants, value) = values_at(count);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let value = Fp::random(|bytes| rng.fill_bytes(bytes));
+        let discriminants: Vec<Fp> =
+            iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
+                .take(count)
+                .collect();
         let (residue, non_residue): (Vec<_>, Vec<_>) = discriminants
             .iter()
             .map(|&discriminant| (discriminant, classify(value, discriminant)))
@@ -264,7 +265,18 @@ fn the_decomposition_reads_as_a_profile_over_discriminants() {
                 .collect();
             let class = class_multiplier(side);
             let (u, h) = decomposition(&points, class, value).unwrap();
-            verify_side(&points, class, value, &u, &h);
+            let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
+            let mut lhs = arithmetic::poly_mul(&dense(&u), &dense(&u));
+            if lhs.len() < 2 {
+                lhs.resize(2, Fp::ZERO);
+            }
+            lhs[0] -= class * value;
+            lhs[1] -= class;
+            let rhs = arithmetic::poly_mul(&dense(&q), &dense(&h));
+            assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
+            for &(abscissa, root) in &points {
+                assert_eq!(u.eval(abscissa), root);
+            }
             for &(discriminant, _) in &points {
                 assert_eq!(
                     u.eval(discriminant).square(),

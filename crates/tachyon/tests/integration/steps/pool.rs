@@ -1,6 +1,7 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+use core::iter;
 
 use ragu::Pcd;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -17,7 +18,7 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, assert_rejected, build_anchor_span_pcd, build_unspent_pcd_over_epochs,
-    detached_segment, epoch_bucket, mine_sparse, random_block, recarry, tachygrams,
+    detached_segment, epoch_bucket, mine_sparse,
 };
 
 #[test]
@@ -31,9 +32,13 @@ fn anchor_spans_hold_their_folds() {
         (&[2, 3, 1][..], 1),
     ] {
         let case = format!("blocks of {stamps_per_block:?} from block {first}");
-        let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+        let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
         for &stamps in stamps_per_block {
-            pool.mine(random_block(rng, 2, stamps));
+            pool.mine(
+                iter::repeat_with(|| vec![Tachygram::random(rng), Tachygram::random(rng)])
+                    .take(stamps)
+                    .collect(),
+            );
         }
         let start = BlockHeight(u32::try_from(first).unwrap() + 1);
         let end = pool.height();
@@ -61,15 +66,21 @@ fn anchor_spans_hold_their_folds() {
 fn anchor_span_fuse_rejects_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch1 = EpochIndex::new(1);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.mine(random_block(rng, 1, 2));
-    pool.mine(random_block(rng, 1, 2));
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
+    pool.mine(vec![
+        vec![Tachygram::random(rng)],
+        vec![Tachygram::random(rng)],
+    ]);
+    pool.mine(vec![
+        vec![Tachygram::random(rng)],
+        vec![Tachygram::random(rng)],
+    ]);
     let (left, left_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (right, right_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(2)..=BlockHeight(2));
 
     let bogus_start = Anchor::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let bogus_witness =
-        witness::anchor_span_seed(((), ()), bogus_start, epoch1, &tachygrams(rng, 1));
+        witness::anchor_span_seed(((), ()), bogus_start, epoch1, &[Tachygram::random(rng)]);
     let bogus_members = [bogus_start
         .next_stamp(bogus_witness.1, &bogus_witness.2)
         .unwrap()];
@@ -87,9 +98,9 @@ fn anchor_span_fuse_rejects_corruptions() {
         "invalid anchor step",
     );
 
-    let mut crossing_pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    let mut crossing_pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
     mine_sparse(rng, &mut crossing_pool, epoch1, None);
-    crossing_pool.mine(random_block(rng, 1, 1));
+    crossing_pool.mine(vec![vec![Tachygram::random(rng)]]);
     let last0 = BlockHeight(EPOCH_SIZE - 1);
     let (before, before_members) =
         build_anchor_span_pcd(rng, &crossing_pool, BlockHeight(0)..=last0);
@@ -99,7 +110,7 @@ fn anchor_span_fuse_rejects_corruptions() {
         epoch1.first_block()..=crossing_pool.height(),
     );
 
-    let fork_set = TachygramSetPoly::from_iter(tachygrams(rng, 1)).commit();
+    let fork_set = TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
     let fork = left.data().2.next_stamp(epoch1, &fork_set).unwrap();
     let (left_poly, _, right_poly) =
         witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
@@ -198,7 +209,13 @@ fn unspent_segments_compose() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let note = wallet.random_note(500);
-    let nf = |epoch| wallet.nf_at(&note, epoch);
+    let nf = |epoch| {
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    };
     let members = |from: EpochIndex, to: EpochIndex| -> Vec<Nullifier> {
         (u32::from(from)..u32::from(to))
             .map(|epoch| nf(EpochIndex::new(epoch)))
@@ -281,9 +298,13 @@ fn unspent_segments_compose() {
         EpochIndex::new(EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap());
     let last_window =
         wallet.derivation_pcd(rng, note, last_window_start, EpochIndex::new(EPOCH_MAX));
+    let (_, covering_start, _, covering_last) = *last_window.data();
+    let last_covering: Vec<Nullifier> = (u32::from(covering_start)..=u32::from(covering_last))
+        .map(|epoch| nf(EpochIndex::new(epoch)))
+        .collect();
     let last_witness = witness::unspent_bind(
         (*last_segment.data(), *last_window.data()),
-        &wallet.covering_window(&note, &last_window),
+        &last_covering,
         &[nf(penultimate)],
     );
     let (last_bound, ()) = PROOF_SYSTEM
@@ -310,13 +331,19 @@ fn unspent_segments_compose() {
 fn segments(rng: &mut StdRng) -> (WalletSim, Note, PoolSim, [Pcd<pool::ArbitraryUnspent>; 3]) {
     let wallet = WalletSim::random(rng);
     let note = wallet.random_note(500);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
     mine_sparse(rng, &mut pool, EpochIndex::new(4), None);
     let segments = [0, 1, 2].map(|from| {
         build_unspent_pcd_over_epochs(
             rng,
             &pool,
-            |epoch| wallet.nf_at(&note, epoch),
+            |epoch| {
+                wallet
+                    .pak
+                    .nk
+                    .derive_note_private(note.psi)
+                    .derive_nullifier(epoch)
+            },
             (EpochIndex::new(from), EpochIndex::new(from + 1)),
         )
     });
@@ -327,7 +354,13 @@ fn segments(rng: &mut StdRng) -> (WalletSim, Note, PoolSim, [Pcd<pool::Arbitrary
 fn unspent_fuse_rejects_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (wallet, note, _, [segment0, segment1, segment2]) = segments(rng);
-    let nf = |epoch| wallet.nf_at(&note, epoch);
+    let nf = |epoch| {
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    };
     let [epoch0, epoch1, epoch2] = [0, 1, 2].map(EpochIndex::new);
     let (nf0, nf1) = (nf(epoch0), nf(epoch1));
     let fuse = |fuse_rng: &mut StdRng, fuse_witness, right: &Pcd<pool::ArbitraryUnspent>| {
@@ -358,7 +391,14 @@ fn unspent_fuse_rejects_corruptions() {
                 NfSeqPoly::new(epoch0, &[nf0, nf1]),
                 NfSeqPoly::new(epoch1, &[nf1]),
             ),
-            &recarry(&segment1, |data| data.1 = epoch2),
+            &{
+                let mut data = *segment1.data();
+                data.1 = epoch2;
+                segment1
+                    .proof()
+                    .clone()
+                    .carry::<pool::ArbitraryUnspent>(data)
+            },
         ),
         "UnspentFuse: halves do not meet at one epoch",
     );
@@ -405,14 +445,23 @@ fn unspent_bind_rejects_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (wallet, note, pool, [segment0, ..]) = segments(rng);
     let other = wallet.random_note(700);
-    let nf = |epoch| wallet.nf_at(&note, epoch);
+    let nf = |epoch| {
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    };
     let [epoch0, epoch1, epoch2] = [0, 1, 2].map(EpochIndex::new);
     let nf0 = nf(epoch0);
     let forged_nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let junk = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let window = wallet.derivation_pcd(rng, note, epoch0, epoch1);
-    let covering = wallet.covering_window(&note, &window);
+    let (_, window_start, _, window_last) = *window.data();
+    let covering: Vec<Nullifier> = (u32::from(window_start)..=u32::from(window_last))
+        .map(|epoch| nf(EpochIndex::new(epoch)))
+        .collect();
     let bind = |bind_rng: &mut StdRng,
                 unspent: &Pcd<pool::ArbitraryUnspent>,
                 bind_witness,
@@ -433,7 +482,14 @@ fn unspent_bind_rejects_corruptions() {
     assert_rejected(
         bind(
             rng,
-            &recarry(&segment0, |data| data.3 = data.1),
+            &{
+                let mut data = *segment0.data();
+                data.3 = data.1;
+                segment0
+                    .proof()
+                    .clone()
+                    .carry::<pool::ArbitraryUnspent>(data)
+            },
             honest_bind,
             &window,
         ),
@@ -458,7 +514,15 @@ fn unspent_bind_rejects_corruptions() {
             &segment0,
             witness::unspent_bind(
                 (*segment0.data(), *window.data()),
-                &wallet.covering_window(&other, &window),
+                &(u32::from(window_start)..=u32::from(window_last))
+                    .map(|epoch| {
+                        wallet
+                            .pak
+                            .nk
+                            .derive_note_private(other.psi)
+                            .derive_nullifier(EpochIndex::new(epoch))
+                    })
+                    .collect::<Vec<Nullifier>>(),
                 &[nf0],
             ),
             &window,
@@ -481,7 +545,10 @@ fn unspent_bind_rejects_corruptions() {
     );
     let far = EpochIndex::new(64);
     let far_window = wallet.derivation_pcd(rng, note, far, far);
-    let far_covering = wallet.covering_window(&note, &far_window);
+    let (_, far_start, _, far_last) = *far_window.data();
+    let far_covering: Vec<Nullifier> = (u32::from(far_start)..=u32::from(far_last))
+        .map(|epoch| nf(EpochIndex::new(epoch)))
+        .collect();
     assert_rejected(
         bind(
             rng,
@@ -498,7 +565,10 @@ fn unspent_bind_rejects_corruptions() {
     let past_window = EpochIndex::new(u32::try_from(NF_DERIVATION_WIDTH).unwrap());
     let past_segment = detached_segment(rng, past_window, nf);
     let near_window = wallet.derivation_pcd(rng, note, epoch0, epoch0);
-    let near_covering = wallet.covering_window(&note, &near_window);
+    let (_, near_start, _, near_last) = *near_window.data();
+    let near_covering: Vec<Nullifier> = (u32::from(near_start)..=u32::from(near_last))
+        .map(|epoch| nf(EpochIndex::new(epoch)))
+        .collect();
     assert_rejected(
         bind(
             rng,
@@ -558,7 +628,13 @@ fn unspent_bind_rejects_corruptions() {
 fn unspent_lift_rejects_corruptions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (wallet, note, pool, [segment0, ..]) = segments(rng);
-    let nf = |epoch| wallet.nf_at(&note, epoch);
+    let nf = |epoch| {
+        wallet
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    };
     let [epoch0, epoch1, epoch2] = [0, 1, 2].map(EpochIndex::new);
     let (nf0, nf1) = (nf(epoch0), nf(epoch1));
     let forged_nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
@@ -597,7 +673,13 @@ fn unspent_lift_rejects_corruptions() {
         ),
         "UnspentLift: the bucket does not start where the segment ends",
     );
-    let renumbered = recarry(&bucket1.pcd, |data| data.0 = epoch2);
+    let mut renumbered_data = *bucket1.pcd.data();
+    renumbered_data.0 = epoch2;
+    let renumbered = bucket1
+        .pcd
+        .proof()
+        .clone()
+        .carry::<qr::QrBucket>(renumbered_data);
     assert_rejected(
         lift(
             rng,
@@ -607,7 +689,7 @@ fn unspent_lift_rejects_corruptions() {
         ),
         "UnspentLift: the bucket is not the segment's next epoch",
     );
-    let foreign_contents = TachygramSetPoly::from_iter(tachygrams(rng, 1));
+    let foreign_contents = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
     assert_rejected(
         lift(
             rng,
@@ -692,8 +774,19 @@ fn unspent_lift_rejects_corruptions() {
         ),
         "UnspentLift: found nullifier in the bucket",
     );
-    let final_segment = recarry(&segment0, |data| data.3 = EpochIndex::new(EPOCH_MAX));
-    let final_bucket = recarry(&bucket1.pcd, |data| data.0 = EpochIndex::new(EPOCH_MAX));
+    let mut final_segment_data = *segment0.data();
+    final_segment_data.3 = EpochIndex::new(EPOCH_MAX);
+    let final_segment = segment0
+        .proof()
+        .clone()
+        .carry::<pool::ArbitraryUnspent>(final_segment_data);
+    let mut final_bucket_data = *bucket1.pcd.data();
+    final_bucket_data.0 = EpochIndex::new(EPOCH_MAX);
+    let final_bucket = bucket1
+        .pcd
+        .proof()
+        .clone()
+        .carry::<qr::QrBucket>(final_bucket_data);
     let final_witness = witness::unspent_lift(
         (*final_segment.data(), *final_bucket.data()),
         nf1.into(),
