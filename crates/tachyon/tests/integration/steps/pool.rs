@@ -1,5 +1,3 @@
-//! Mock ragu does not check recarried headers, so the step rejects them.
-
 extern crate alloc;
 
 use alloc::vec::Vec;

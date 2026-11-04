@@ -89,7 +89,6 @@ pub fn mock_auth_digest(bundle_auth_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-/// Distinct from [`mock_sighash`] to catch conflating sighash with txid.
 pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     let mut wtxid = [0u8; 64];
     wtxid[..32].copy_from_slice(&mock_txid(bundle.commitment()));
@@ -408,7 +407,6 @@ pub fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
     (pool, end)
 }
 
-/// Mock ragu doesn't bind a header to its proof; the consuming step rejects it.
 pub fn recarry<H: Header<Data: Copy>>(pcd: &Pcd<H>, alter: impl FnOnce(&mut H::Data)) -> Pcd<H> {
     let mut data = *pcd.data();
     alter(&mut data);
@@ -605,7 +603,6 @@ fn build_qr_roots<RNG: CryptoRng>(
     roots
 }
 
-/// Same-profile neighbours in a layer are exactly the pairs whose spans meet.
 fn merge_qr_run<RNG: CryptoRng>(
     rng: &mut RNG,
     intakes: Vec<QrIntakeEntry>,
