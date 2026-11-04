@@ -33,6 +33,11 @@ _fuzz_setup:
     rustup toolchain install {{_nightly}} --profile minimal
     cargo fuzz --version 2>/dev/null | grep -qx 'cargo-fuzz 0.13.2' || cargo install --locked cargo-fuzz@0.13.2
 
+# cargo-fuzz builds for the triple it was itself built for unless told
+# otherwise, and its release binaries are x86_64 and, on Linux, musl, which the
+# sanitizer rejects, so the fuzz recipes build for rustc's host
+_fuzz_host := "$(rustc +" + _nightly + " -vV | sed -n 's/^host: //p')"
+
 # fuzz every target, or the TARGET given first, with libFuzzer ARGS (default: 5 minutes each)
 [positional-arguments]
 fuzz *ARGS: _fuzz_setup
@@ -40,6 +45,7 @@ fuzz *ARGS: _fuzz_setup
     set -euo pipefail
     fuzz=(cargo +{{_nightly}} fuzz)
     dir=(--fuzz-dir "{{_fuzz_dir}}")
+    host="{{_fuzz_host}}"
     targets="$("${fuzz[@]}" list "${dir[@]}")"
     if [ $# -gt 0 ] && [[ $1 != -* ]]; then
         targets=$1
@@ -47,7 +53,7 @@ fuzz *ARGS: _fuzz_setup
     fi
     [ $# -gt 0 ] || set -- -max_total_time=300
     for target in $targets; do
-        "${fuzz[@]}" run "${dir[@]}" "$target" -- "$@"
+        "${fuzz[@]}" run "${dir[@]}" --target "$host" "$target" -- "$@"
     done
 
 # minimize every target's corpus, or the TARGETS'
@@ -57,15 +63,16 @@ fuzz-cmin *TARGETS: _fuzz_setup
     set -euo pipefail
     fuzz=(cargo +{{_nightly}} fuzz)
     dir=(--fuzz-dir "{{_fuzz_dir}}")
+    host="{{_fuzz_host}}"
     [ $# -gt 0 ] || set -- $("${fuzz[@]}" list "${dir[@]}")
     for target in "$@"; do
-        "${fuzz[@]}" cmin "${dir[@]}" "$target"
+        "${fuzz[@]}" cmin "${dir[@]}" --target "$host" "$target"
     done
 
 # minimize a crashing INPUT to TARGET
 [positional-arguments]
 fuzz-tmin TARGET INPUT: _fuzz_setup
-    cargo +{{_nightly}} fuzz tmin --fuzz-dir "{{_fuzz_dir}}" "$1" "$2"
+    cargo +{{_nightly}} fuzz tmin --fuzz-dir "{{_fuzz_dir}}" --target "{{_fuzz_host}}" "$1" "$2"
 
 # check the fuzz crate's formatting and lints as CI does; clippy builds libFuzzer's C++
 fuzz-lint:
