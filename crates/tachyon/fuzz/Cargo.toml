@@ -10,13 +10,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 rand = { version = "0.10", default-features = false, features = ["std_rng"] }
+zcash_tachyon = { path = ".." }
 
-[dependencies.zcash_tachyon]
-path = ".."
-features = ["std"]
-
-# Detach from the parent workspace: cargo-fuzz crates are built with an
-# unstable sanitizer flag and their own dependency set.
+# Detached from the parent workspace, as in cargo-fuzz's template, so
+# `cargo build --workspace` and `cargo test --workspace` leave the fuzz targets
+# alone.
 [workspace]
 
 [profile.release]
