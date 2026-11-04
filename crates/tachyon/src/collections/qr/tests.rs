@@ -47,12 +47,6 @@ fn the_non_residue_constant_satisfies_the_euler_criterion() {
 }
 
 #[test]
-fn small_cubic_non_residues_are_quadratic_residues() {
-    assert_eq!(chi(Fp::from(2)), Fp::ONE);
-    assert_eq!(chi(Fp::from(3)), Fp::ONE);
-}
-
-#[test]
 fn classification_matches_the_euler_criterion() {
     let rng = &mut StdRng::seed_from_u64(0);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));

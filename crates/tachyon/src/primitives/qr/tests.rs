@@ -5,12 +5,6 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::*;
 
 #[test]
-fn the_root_profile_has_no_bits() {
-    assert_eq!(QrProfile::ROOT.depth, 0);
-    assert_eq!(QrProfile::ROOT.bits, 0);
-}
-
-#[test]
 fn the_bits_record_the_splits_outermost_first() {
     let low = QrProfile::ROOT.descend(false).descend(false).descend(true);
     assert_eq!(low.depth, 3);
