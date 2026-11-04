@@ -17,23 +17,15 @@
     reason = "test code"
 )]
 
-//! Integration tests, exercising the crate through its public surface.
-
 #[cfg(test)]
 mod bundle;
 #[cfg(test)]
-mod evidence;
-#[cfg(test)]
-mod fee;
-#[cfg(test)]
 mod fixtures;
-#[cfg(test)]
-mod proof;
-#[cfg(test)]
-mod qr;
 #[cfg(test)]
 mod stamp;
 #[cfg(test)]
-mod summary;
+mod steps;
 #[cfg(test)]
 mod unmerge;
+#[cfg(test)]
+mod wire;
