@@ -27,11 +27,11 @@ check:
     cargo check --workspace --lib --no-default-features # no_std
     cargo check --workspace --all-targets --all-features
 
-# binstall falls back to x86_64 binaries on Apple Silicon, and cargo-fuzz then
-# builds for the triple it was built for, so it installs the host's build
-_fuzz_setup: _install_binstall
+# cargo-fuzz ships no Apple Silicon binary, so it is built from source unless
+# this version is already installed; CI installs the release binary first
+_fuzz_setup:
     rustup toolchain install {{_nightly}} --profile minimal
-    cargo binstall --no-confirm --targets "$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')" cargo-fuzz@0.13.2
+    cargo fuzz --version 2>/dev/null | grep -qx 'cargo-fuzz 0.13.2' || cargo install --locked cargo-fuzz@0.13.2
 
 # fuzz every target, or the TARGET given first, with libFuzzer ARGS (default: 5 minutes each)
 [positional-arguments]
