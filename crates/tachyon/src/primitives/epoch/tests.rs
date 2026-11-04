@@ -30,8 +30,8 @@ fn an_epoch_spans_its_blocks() {
                 "epoch {index}: the successor starts right after"
             );
         } else {
-            assert_eq!(index, EPOCH_MAX, "only the final epoch has no successor");
-            assert_eq!(last, BlockHeight(BLOCK_MAX), "the final epoch's last block");
+            assert_eq!(index, EPOCH_MAX);
+            assert_eq!(last, BlockHeight(BLOCK_MAX));
         }
     }
 }

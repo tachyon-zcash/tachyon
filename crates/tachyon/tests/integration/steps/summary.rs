@@ -27,7 +27,7 @@ fn summary_accumulates_its_run() {
         let start = Anchor::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
         let stamps: Vec<Vec<Tachygram>> = sizes.iter().map(|&size| tachygrams(rng, size)).collect();
 
-        let (first, rest) = stamps.split_first().expect("a nonempty run");
+        let (first, rest) = stamps.split_first().unwrap();
         let (mut pcd, ()) = PROOF_SYSTEM
             .seed(
                 rng,
@@ -52,9 +52,7 @@ fn summary_accumulates_its_run() {
 
         let end = stamps.iter().fold(start, |anchor, stamp| {
             let commit = stamp.iter().copied().collect::<TachygramSetPoly>().commit();
-            anchor
-                .next_stamp(epoch, &commit)
-                .expect("a nonempty stamp folds")
+            anchor.next_stamp(epoch, &commit).unwrap()
         });
         let union = acc.iter().copied().collect::<TachygramSetPoly>();
         assert_eq!(

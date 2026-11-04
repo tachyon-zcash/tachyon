@@ -62,11 +62,11 @@ fn signed_bundle(
     let wire: Vec<[u8; 64]> = order.iter().map(|&at| canonical[at]).collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&wire),
-        i64::from(plan.value_balance().expect("a balance within MAX_MONEY")),
+        i64::from(plan.value_balance().unwrap()),
         &max_fee_note.fee_blind().commit(-max_fee_note.value).into(),
         &blake2b::memo_digest(&memo),
     ));
-    let signed = plan.sign(rng, &sighash, &ask).expect("sign the plan");
+    let signed = plan.sign(rng, &sighash, &ask).unwrap();
     let wire_actions = order.iter().map(|&at| signed.actions[at]).collect();
 
     let published: BTreeSet<Tachygram> = tachygrams(rng, TACHYGRAM_COUNT).into_iter().collect();
@@ -84,7 +84,7 @@ fn signed_bundle(
             .commit(),
         tachygrams: published,
         proof: Box::new(Proof::bootstrap()),
-        fee: value::Positive::try_from(fee).expect("a fee within MAX_MONEY"),
+        fee: value::Positive::try_from(fee).unwrap(),
     })
 }
 
@@ -116,7 +116,7 @@ fn memo(rng: &mut StdRng, len: usize) -> Vec<u8> {
 }
 
 fn wtxid(rng: &mut StdRng) -> AggregateId {
-    AggregateId::try_from(random_bytes::<64>(rng)).expect("a random wtxid is nonzero")
+    AggregateId::try_from(random_bytes::<64>(rng)).unwrap()
 }
 
 fn other_binding_sig(rng: &mut StdRng) -> bundle::Signature {
@@ -131,7 +131,7 @@ fn other_proof(rng: &mut StdRng) -> Box<Proof> {
     let anchor = Anchor::random(rng);
     let (pcd, ()) = PROOF_SYSTEM
         .seed(rng, FeeSeed, witness::fee_seed(((), ()), note, anchor))
-        .expect("FeeSeed");
+        .unwrap();
     Box::new(pcd.proof().clone())
 }
 
@@ -215,8 +215,8 @@ fn bundles_round_trip() {
         );
 
         let mut stamp_wire = Vec::new();
-        stamped.stamp.write(&mut stamp_wire).expect("write stamp");
-        let alone = ProofStamp::read(&*stamp_wire).expect("read stamp");
+        stamped.stamp.write(&mut stamp_wire).unwrap();
+        let alone = ProofStamp::read(&*stamp_wire).unwrap();
         for read in [&decoded.stamp, &alone] {
             assert_eq!(read.fee, stamped.stamp.fee, "{name}");
             assert_eq!(read.coverage, stamped.stamp.coverage, "{name}");
@@ -230,12 +230,9 @@ fn bundles_round_trip() {
         }
 
         let mut pointer_wire = Vec::new();
-        stripped
-            .stamp
-            .write(&mut pointer_wire)
-            .expect("write pointer");
+        stripped.stamp.write(&mut pointer_wire).unwrap();
         assert_eq!(
-            PointerStamp::read(&*pointer_wire).expect("read pointer"),
+            PointerStamp::read(&*pointer_wire).unwrap(),
             stripped.stamp,
             "{name}"
         );
@@ -355,8 +352,8 @@ fn commitment_binds_effecting_data_only() {
     }
 
     let stripped = stamped.clone().strip(wtxid(rng));
-    assert_eq!(stripped.commitment(), commitment, "stripping");
-    assert!(stripped.memo == stamped.memo, "stripping keeps the memo");
+    assert_eq!(stripped.commitment(), commitment);
+    assert_eq!(stripped.memo, stamped.memo);
 }
 
 #[test]
@@ -368,11 +365,10 @@ fn auth_digest_binds_authorizing_data_only() {
 
     // A pointer repeating the proof stamp's digest isolates the state byte.
     let stamp_digest = stamped.stamp.stamp_digest();
-    let mirror = AggregateId::try_from(<[u8; 64]>::try_from(&stamp_digest[8..]).unwrap())
-        .expect("the coverage and data digest are nonzero");
+    let mirror = AggregateId::try_from(<[u8; 64]>::try_from(&stamp_digest[8..]).unwrap()).unwrap();
     let mirrored = stamped.clone().strip(mirror);
     assert_eq!(mirrored.stamp.stamp_digest(), stamp_digest);
-    assert_ne!(mirrored.auth_digest(), stamped_digest, "the state byte");
+    assert_ne!(mirrored.auth_digest(), stamped_digest);
 
     let edit_stamped = |change: &dyn Fn(&mut Bundle<ProofStamp>)| {
         let mut edited = stamped.clone();
@@ -491,10 +487,10 @@ fn auth_digest_binds_authorizing_data_only() {
 #[test]
 fn no_bundle_round_trips_and_digests_apart() {
     let no_bundle_wire = [u8::from(StateByte::NoBundle)];
-    let no_bundle = TachyonBundle::read(no_bundle_wire.as_slice()).expect("read");
+    let no_bundle = TachyonBundle::read(no_bundle_wire.as_slice()).unwrap();
     assert!(no_bundle.is_no_bundle());
     let mut rewritten = Vec::new();
-    no_bundle.write(&mut rewritten).expect("write");
+    no_bundle.write(&mut rewritten).unwrap();
     assert_eq!(rewritten.as_slice(), no_bundle_wire.as_slice());
 
     let rng = &mut StdRng::seed_from_u64(0);
@@ -539,9 +535,9 @@ fn readers_reject_malformed_wire() {
     let stamped = ordinary(rng);
     let stripped = stamped.clone().strip(wtxid(rng));
     let mut stamped_wire = Vec::new();
-    stamped.write(&mut stamped_wire).expect("write stamped");
+    stamped.write(&mut stamped_wire).unwrap();
     let mut stripped_wire = Vec::new();
-    stripped.write(&mut stripped_wire).expect("write stripped");
+    stripped.write(&mut stripped_wire).unwrap();
 
     // Three actions and a 20-byte memo keep both counts to one byte.
     let actions = stamped.actions.len();
@@ -562,12 +558,8 @@ fn readers_reject_malformed_wire() {
     let first_at = tachygram_count_at + 1;
     let last_at = first_at + 32 * (TACHYGRAM_COUNT - 1);
     let proof_at = first_at + 32 * TACHYGRAM_COUNT;
-    assert_eq!(wtxid_at + 64, stripped_wire.len(), "the pointer layout");
-    assert_eq!(
-        proof_at + PROOF_SIZE_COMPRESSED,
-        stamped_wire.len(),
-        "the proof stamp layout"
-    );
+    assert_eq!(wtxid_at + 64, stripped_wire.len());
+    assert_eq!(proof_at + PROOF_SIZE_COMPRESSED, stamped_wire.len());
     let first = &stamped_wire[first_at..first_at + 32];
 
     rejects(
@@ -766,9 +758,9 @@ fn readers_reject_truncated_wire() {
     let stamped = ordinary(rng);
     let stripped = stamped.clone().strip(wtxid(rng));
     let mut stamped_wire = Vec::new();
-    stamped.write(&mut stamped_wire).expect("write stamped");
+    stamped.write(&mut stamped_wire).unwrap();
     let mut stripped_wire = Vec::new();
-    stripped.write(&mut stripped_wire).expect("write stripped");
+    stripped.write(&mut stripped_wire).unwrap();
 
     let actions = stamped.actions.len();
     let body = [
@@ -812,6 +804,6 @@ fn readers_reject_truncated_wire() {
             }
             at += len;
         }
-        assert_eq!(at, wire.len(), "the fields span the wire");
+        assert_eq!(at, wire.len());
     }
 }

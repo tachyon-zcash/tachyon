@@ -254,7 +254,7 @@ fn unspent_segments_compose() {
         );
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, pool::UnspentLift, lift_witness, left, bucket.pcd)
-            .expect("UnspentLift");
+            .unwrap();
         let after = middle.next().unwrap();
         assert_eq!(
             *lifted.data(),
@@ -296,7 +296,7 @@ fn unspent_segments_compose() {
             last_segment,
             last_window,
         )
-        .expect("UnspentBind at the last window");
+        .unwrap();
     assert_eq!(
         *last_bound.data(),
         (

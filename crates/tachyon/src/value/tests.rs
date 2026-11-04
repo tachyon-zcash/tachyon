@@ -63,10 +63,6 @@ fn commitments_are_homomorphic() {
 fn debug_redacts_trapdoors_and_commitments() {
     let rcv = Trapdoor::random(&mut StdRng::seed_from_u64(0));
     let cv = rcv.commit(Positive::try_from(1000u64).unwrap());
-    assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)", "trapdoor");
-    assert_eq!(
-        alloc::format!("{cv:?}"),
-        "ValueCommitment(..)",
-        "commitment"
-    );
+    assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
+    assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
 }

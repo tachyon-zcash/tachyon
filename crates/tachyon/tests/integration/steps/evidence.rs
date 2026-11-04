@@ -41,7 +41,7 @@ fn trees_replay_their_buckets() {
     let held = sealed
         .iter()
         .position(|bucket| bucket.pcd.data().4 == nf_profile)
-        .expect("every profile has a bucket");
+        .unwrap();
     let expected: Vec<_> = sealed.iter().map(|bucket| *bucket.pcd.data()).collect();
     let direct = qr_epoch_unspent(rng, &wallet, &note, &sealed[held]);
     assert_eq!(
@@ -52,23 +52,21 @@ fn trees_replay_their_buckets() {
             epoch0,
             epoch1,
             crossing
-        ),
-        "the direct segment"
+        )
     );
 
     let tree = build_evidence_tree(rng, sealed);
     let (tree_epoch, anchor_start, anchor_next, network, root) = *tree.pcd.data();
     assert_eq!(
         (tree_epoch, anchor_start, anchor_next, network),
-        (epoch0, Anchor::default(), crossing, discriminant),
-        "the tree"
+        (epoch0, Anchor::default(), crossing, discriminant)
     );
     for index in [0, held, expected.len() - 1] {
         let replayed = open_evidence_tree(rng, tree.pcd.clone(), &tree.leaves[index]);
         assert_eq!(*replayed.pcd.data(), expected[index], "leaf {index}");
         if index == held {
             let bound = qr_epoch_unspent(rng, &wallet, &note, &replayed);
-            assert_eq!(*bound.data(), *direct.data(), "the replayed segment");
+            assert_eq!(*bound.data(), *direct.data());
         }
     }
 
@@ -84,10 +82,9 @@ fn trees_replay_their_buckets() {
     let (capped_epoch, capped_start, capped_next, capped_network, raised) = *capped.data();
     assert_eq!(
         (capped_epoch, capped_start, capped_next, capped_network),
-        (tree_epoch, anchor_start, anchor_next, network),
-        "the capped tree"
+        (tree_epoch, anchor_start, anchor_next, network)
     );
-    assert_ne!(raised, root, "the capped root");
+    assert_ne!(raised, root);
 }
 
 #[test]
@@ -170,8 +167,13 @@ fn joins_reject_mismatched_networks() {
         foreign_tree,
         later_tree,
         elsewhere_tree,
-    ] = [&whole, &short, &foreign, &later, &elsewhere]
-        .map(|held| build_evidence_tree(rng, [held.clone()].to_vec()).pcd);
+    ] = [&whole, &short, &foreign, &later, &elsewhere].map(|held| {
+        let entry = QrBucketEntry {
+            pcd: held.pcd.clone(),
+            members: held.members.clone(),
+        };
+        build_evidence_tree(rng, Vec::from([entry])).pcd
+    });
     let [
         whole_pair,
         short_pair,
@@ -185,7 +187,7 @@ fn joins_reject_mismatched_networks() {
         &later_tree,
         &elsewhere_tree,
     ]
-    .map(|tree| pair(rng, tree, tree).expect("one tree twice is a pair"));
+    .map(|tree| pair(rng, tree, tree).unwrap());
     let leaves = |leaves_rng: &mut StdRng, left: &QrBucketEntry, right: &QrBucketEntry| {
         PROOF_SYSTEM
             .fuse(

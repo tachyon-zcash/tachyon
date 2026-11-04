@@ -38,7 +38,7 @@ fn digests_of<'desc>(
 ) -> Vec<ActionDigest> {
     descriptors
         .into_iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(fees))
         .collect()
 }
@@ -78,7 +78,7 @@ fn output_stamp(
     // An output-only plan never reads the proof authorizing key.
     let stamp = stamp::Plan::new(vec![], outputs, anchor, max_fee_note, fee)
         .prove(rng, &wallet.pak, vec![])
-        .expect("an output stamp");
+        .unwrap();
     (stamp, descriptors, fee_descriptor(&max_fee_note, fee))
 }
 
@@ -276,28 +276,23 @@ fn misassigned_spend_inputs_never_verify() {
             .collect();
         let proved = stamp::Plan::new(spends, vec![], anchor, max_fee_note, value::Positive::ZERO)
             .prove(prove_rng, &wallet.pak, pcds)
-            .expect("misassigned inputs still prove");
+            .unwrap();
         let descriptors: Vec<action::Descriptor> =
             plans.iter().map(action::Plan::descriptor).collect();
         proved
             .verify_proof(prove_rng, digests_of(&descriptors, [fee_desc]))
-            .expect("proof system verification")
+            .unwrap()
     };
 
     let planned = [plan_under(&wallet, 0), plan_under(&wallet, 1)];
     let swapped = vec![inputs[1].clone(), inputs[0].clone()];
-    assert!(
-        prove_and_verify(rng, &planned, inputs.clone()),
-        "the honest pairing verifies"
-    );
-    assert!(
-        !prove_and_verify(rng, &planned, swapped),
-        "swapped secrets verified"
-    );
-    assert!(
-        !prove_and_verify(rng, &[plan_under(&stranger, 0)], vec![inputs[0].clone()]),
-        "another wallet's ak verified"
-    );
+    assert!(prove_and_verify(rng, &planned, inputs.clone()));
+    assert!(!prove_and_verify(rng, &planned, swapped));
+    assert!(!prove_and_verify(
+        rng,
+        &[plan_under(&stranger, 0)],
+        vec![inputs[0].clone()]
+    ));
 }
 
 #[test]
@@ -337,8 +332,8 @@ fn merge_requires_a_shared_anchor_and_covers_the_union() {
     };
     assert_eq!(inner.to_string(), "StampMerge: anchors must match");
 
-    let merged = merge(rng, left_side, right_side).expect("merge");
-    let reversed = merge(rng, right_side, left_side).expect("merge");
+    let merged = merge(rng, left_side, right_side).unwrap();
+    let reversed = merge(rng, right_side, left_side).unwrap();
     let fees = [left_fee, right_fee];
     let union = || left_desc.union(&right_desc);
     assert_eq!(merged.anchor, shared);
@@ -357,18 +352,15 @@ fn merge_requires_a_shared_anchor_and_covers_the_union() {
     assert!(
         merged
             .verify_proof(rng, digests_of(union(), fees))
-            .expect("proof system verification"),
-        "the merge verifies"
+            .expect("proof system verification")
     );
 
     let foreign = BTreeSet::from([foreign_descriptor(rng)]);
-    let mismatched = merge(rng, left_side, (&right, &foreign, right_fee))
-        .expect("merge performs no coverage check");
+    let mismatched = merge(rng, left_side, (&right, &foreign, right_fee)).unwrap();
     assert!(
         !mismatched
             .verify_proof(rng, digests_of(union(), fees))
-            .expect("proof system verification"),
-        "a merge under foreign descriptors verified"
+            .expect("proof system verification")
     );
 }
 
@@ -404,7 +396,7 @@ fn overlapping_merges_never_verify() {
             };
             published
                 .verify_proof(forge_rng, digests_of(&descriptors, fees))
-                .expect("proof system verification")
+                .unwrap()
         };
 
     let anchor = PoolSim::genesis(rng).anchor();
@@ -500,9 +492,7 @@ fn verify_proof_is_exact_on_the_action_multiset() {
     let digests = digests_of(&descriptors, [fee_desc]);
     let foreign = digests_of(&[foreign_descriptor(rng)], [])[0];
     let verifies = |verify_rng: &mut StdRng, handed: Vec<ActionDigest>| {
-        proved
-            .verify_proof(verify_rng, handed)
-            .expect("proof system verification")
+        proved.verify_proof(verify_rng, handed).unwrap()
     };
 
     let mut rotated = digests.clone();
@@ -513,7 +503,7 @@ fn verify_proof_is_exact_on_the_action_multiset() {
         assert!(verifies(rng, permuted), "the {label} digests verify");
     }
     let extended: Vec<ActionDigest> = digests.iter().copied().chain([foreign]).collect();
-    assert!(!verifies(rng, extended), "an added digest verified");
+    assert!(!verifies(rng, extended));
     for index in [0, digests.len() - 1] {
         let mut dropped = digests.clone();
         dropped.remove(index);
@@ -540,8 +530,7 @@ fn proof_binds_the_set_commitment() {
     assert!(
         honest
             .verify_proof(rng, digests.clone())
-            .expect("proof system verification"),
-        "the honest stamp verifies"
+            .expect("proof system verification")
     );
     let recommitted = ProofStamp {
         tachygram_set: TachygramSetPoly::from_iter(tachygrams(rng, 3)).commit(),
@@ -550,8 +539,7 @@ fn proof_binds_the_set_commitment() {
     assert!(
         !recommitted
             .verify_proof(rng, digests.clone())
-            .expect("proof system verification"),
-        "a commitment to other tachygrams verified"
+            .expect("proof system verification")
     );
     let mut retold = honest.tachygrams.clone();
     retold.pop_first();
@@ -563,8 +551,7 @@ fn proof_binds_the_set_commitment() {
     assert!(
         tampered
             .verify_proof(rng, digests)
-            .expect("proof system verification"),
-        "a list tampered under the honest commitment verifies"
+            .expect("proof system verification")
     );
 }
 
@@ -629,7 +616,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
 
         let merged = lifted
             .merge(rng, (descriptors.clone(), fees.clone()), later_side)
-            .expect("a lifted stamp merges at its new anchor");
+            .unwrap();
         assert!(
             merged
                 .verify_proof(
@@ -643,7 +630,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         let foreign = BTreeSet::from([foreign_descriptor(rng)]);
         let misdescribed = proved
             .lift(rng, &foreign, &fees, vec![foreign_span])
-            .expect("a lift cannot see the descriptors");
+            .unwrap();
         assert!(
             !misdescribed
                 .verify_proof(rng, digests_of(&descriptors, [fee_desc]))
@@ -700,7 +687,7 @@ fn planners_refuse_inputs_that_cannot_make_the_stamp() {
         vec![output(rng, wallet.random_note(200))],
         wallet.random_note(100),
     );
-    let signed = planned.sign(rng, &sighash, &ask).expect("sign the plan");
+    let signed = planned.sign(rng, &sighash, &ask).unwrap();
     let signatures: BTreeMap<action::Descriptor, action::Signature> = signed
         .actions
         .iter()

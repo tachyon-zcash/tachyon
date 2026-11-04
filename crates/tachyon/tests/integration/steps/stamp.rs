@@ -56,8 +56,7 @@ fn fee_singletons(max_fee_note: Note, fee: value::Positive) -> (ActionDigest, Ta
     .digest()
     .expect("fee digest");
     let change = Note {
-        value: value::Positive::try_from(u64::from(max_fee_note.value) - u64::from(fee))
-            .expect("the fee is within the maximum"),
+        value: value::Positive::try_from(u64::from(max_fee_note.value) - u64::from(fee)).unwrap(),
         ..max_fee_note
     };
     (digest, Tachygram::from(change.commitment()))
@@ -91,7 +90,7 @@ fn apply_fee(
             actions.clone(),
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("FeeFuse");
+        .unwrap();
     let (fee_digest, change) = fee_singletons(max_fee_note, fee);
     let mut stamp_digests = digests.clone();
     stamp_digests.insert(fee_digest);
@@ -186,7 +185,7 @@ fn lifts_reach_the_span_end() {
                     actions,
                     span.clone(),
                 )
-                .expect("ActionLift");
+                .unwrap();
             let (lifted_stamp, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -195,7 +194,7 @@ fn lifts_reach_the_span_end() {
                     stamp_pcd,
                     span.clone(),
                 )
-                .expect("StampLift");
+                .unwrap();
             assert_eq!(
                 *lifted_actions.data(),
                 (actions_commit, actions_tachygrams, anchor_end),
@@ -335,7 +334,7 @@ fn action_merge_rejects_corruptions() {
     let ((left_actions, left_tachygrams), merged, (right_actions, right_tachygrams)) =
         honest.clone();
 
-    let (merged_actions, ()) = merge(rng, honest, &right.0).expect("ActionMerge");
+    let (merged_actions, ()) = merge(rng, honest, &right.0).unwrap();
     let (union_actions, union_tachygrams) = polys(
         &left.1.union(&right.1).copied().collect(),
         &left.2.union(&right.2).copied().collect(),
@@ -346,8 +345,7 @@ fn action_merge_rejects_corruptions() {
             union_actions.commit(),
             union_tachygrams.commit(),
             left.0.data().2
-        ),
-        "the merged actions"
+        )
     );
 
     assert_rejected(
@@ -450,7 +448,7 @@ fn stamp_merge_rejects_corruptions() {
     let ((left_actions, left_tachygrams), merged, (right_actions, right_tachygrams)) =
         honest.clone();
 
-    let (merged_stamp, ()) = merge(rng, honest, &right.0).expect("StampMerge");
+    let (merged_stamp, ()) = merge(rng, honest, &right.0).unwrap();
     let (union_actions, union_tachygrams) = polys(
         &left.1.union(&right.1).copied().collect(),
         &left.2.union(&right.2).copied().collect(),
@@ -461,8 +459,7 @@ fn stamp_merge_rejects_corruptions() {
             union_actions.commit(),
             union_tachygrams.commit(),
             left.0.data().2
-        ),
-        "the merged stamp"
+        )
     );
 
     assert_rejected(
@@ -563,7 +560,7 @@ fn unmerge_binds_its_sets() {
             alice.0.clone(),
             bob.0.clone(),
         )
-        .expect("StampMerge");
+        .unwrap();
     let unmerge = |unmerge_rng: &mut StdRng, unmerge_witness| {
         PROOF_SYSTEM
             .fuse(
@@ -583,7 +580,7 @@ fn unmerge_binds_its_sets() {
         polys(&alice.1, &alice.2),
         polys(&bob.1, &bob.2),
     );
-    unmerge(rng, valid.clone()).expect("honest operands prove");
+    unmerge(rng, valid.clone()).unwrap();
 
     let (carol_actions, carol_tachygrams) = polys(&carol.1, &carol.2);
     let mut wrong_dividend_actions = valid.clone();
@@ -616,8 +613,8 @@ fn unmerge_binds_its_sets() {
         unmerge(rng, wrong_action_quotient),
         "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
     );
-    let alice_tachygram = *alice.2.first().expect("A has tachygrams");
-    let bob_tachygram = *bob.2.first().expect("B has tachygrams");
+    let alice_tachygram = *alice.2.first().unwrap();
+    let bob_tachygram = *bob.2.first().unwrap();
     let mut wrong_tachygram_quotient = valid;
     wrong_tachygram_quotient.1.1 = alice
         .2
@@ -671,15 +668,14 @@ fn fee_steps_prove_their_singletons() {
             stamp::FeeSeed,
             witness::fee_seed(((), ()), seed_note, anchor),
         )
-        .expect("FeeSeed");
+        .unwrap();
     assert_eq!(
         *seed_pcd.data(),
         (
             ActionSetPoly::from_iter([seed_digest]).commit(),
             TachygramSetPoly::from_iter([seed_change]).commit(),
             anchor,
-        ),
-        "the seed"
+        )
     );
 }
 
@@ -699,37 +695,29 @@ fn fee_fuse_binds_its_header() {
     );
     let (actions_commit, actions_tachygrams, _) = *actions.data();
     let verifies = |verify_rng: &mut StdRng, pcd: &Pcd<stamp::Stamp>| {
-        PROOF_SYSTEM
-            .verify(pcd, &mut *verify_rng)
-            .expect("proof system verification")
+        PROOF_SYSTEM.verify(pcd, &mut *verify_rng).unwrap()
     };
 
-    assert!(verifies(rng, &stamp_pcd), "the stamp verifies");
-    assert!(
-        !verifies(rng, &recarry(&stamp_pcd, |data| data.0 = actions_commit)),
-        "the stamp under the actions' action set"
-    );
-    assert!(
-        !verifies(
-            rng,
-            &recarry(&stamp_pcd, |data| data.1 = actions_tachygrams)
-        ),
-        "the stamp under the actions' tachygram set"
-    );
-    assert!(
-        !verifies(rng, &recarry(&stamp_pcd, |data| data.2 = elsewhere)),
-        "the stamp at another anchor"
-    );
-    assert!(
-        !verifies(
-            rng,
-            &actions
-                .proof()
-                .clone()
-                .carry::<stamp::Stamp>(*actions.data())
-        ),
-        "the actions as a stamp"
-    );
+    assert!(verifies(rng, &stamp_pcd));
+    assert!(!verifies(
+        rng,
+        &recarry(&stamp_pcd, |data| data.0 = actions_commit)
+    ));
+    assert!(!verifies(
+        rng,
+        &recarry(&stamp_pcd, |data| data.1 = actions_tachygrams)
+    ));
+    assert!(!verifies(
+        rng,
+        &recarry(&stamp_pcd, |data| data.2 = elsewhere)
+    ));
+    assert!(!verifies(
+        rng,
+        &actions
+            .proof()
+            .clone()
+            .carry::<stamp::Stamp>(*actions.data())
+    ));
 }
 
 #[test]

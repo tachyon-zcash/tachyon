@@ -74,7 +74,7 @@ fn classed_members(rng: &mut StdRng, shift: Fp) -> (Vec<Tachygram>, Vec<Tachygra
     let non_square = (2u64..=64)
         .map(Fp::from)
         .find(|&candidate| !qr::classify(candidate, Fp::ZERO).0)
-        .expect("a non-residue among the small integers");
+        .unwrap();
     let mut residue = Vec::new();
     let mut non_residue = Vec::new();
     for _ in 0..2 {
@@ -152,9 +152,7 @@ fn intakes_root_on_summaries_and_stamps() {
         let discriminant = QrDiscriminant::random(rng);
         let members = tachygrams(rng, size);
         let contents = set(&members).commit();
-        let end = start
-            .next_stamp(epoch, &contents)
-            .expect("a nonempty stamp folds");
+        let end = start.next_stamp(epoch, &contents).unwrap();
 
         let (summary, ()) = PROOF_SYSTEM
             .seed(
@@ -305,7 +303,7 @@ fn intake_split_rejects_corruptions() {
     let intake = stamp_intake(rng, start, epoch, discriminant, &members);
 
     let honest = witness::qr_intake_split((*intake.pcd.data(), ()), &members);
-    let sides = split(rng, honest.clone(), &intake.pcd).expect("QrIntakeSplit");
+    let sides = split(rng, honest.clone(), &intake.pcd).unwrap();
     assert_eq!(
         *sides.data(),
         (
@@ -316,8 +314,7 @@ fn intake_split_rejects_corruptions() {
             QrProfile::ROOT,
             set(&non_residue).commit(),
             set(&residue_class).commit()
-        ),
-        "the honest split"
+        )
     );
     let (contents, honest_non_residue, honest_residue) = honest;
     let strangers = set(&tachygrams(rng, 2));
@@ -380,7 +377,7 @@ fn side_descend_rejects_corruptions() {
     let anchor_end = intake.pcd.data().2;
     let honest = witness::qr_intake_split((*intake.pcd.data(), ()), &members);
     let contents = honest.0.clone();
-    let sides = split(rng, honest, &intake.pcd).expect("QrIntakeSplit");
+    let sides = split(rng, honest, &intake.pcd).unwrap();
     let residue_child = witness::qr_side_descend((*sides.data(), ()), &members, true);
     let non_residue_child = witness::qr_side_descend((*sides.data(), ()), &members, false);
 
@@ -391,8 +388,7 @@ fn side_descend_rejects_corruptions() {
         .copied()
         .filter(|&member| member != smuggled)
         .collect();
-    let misfiled = split(rng, (contents, set(&padded), set(&short)), &intake.pcd)
-        .expect("the split's product holds for a misfiled member");
+    let misfiled = split(rng, (contents, set(&padded), set(&short)), &intake.pcd).unwrap();
     let (_, _, short_interpolant, short_quotient) =
         witness::qr_side_descend((*misfiled.data(), ()), &members, true);
     let unsmuggled: Vec<Tachygram> = members
@@ -405,7 +401,7 @@ fn side_descend_rejects_corruptions() {
         witness::qr_side_descend((*misfiled.data(), ()), &unsmuggled, false),
         &misfiled,
     )
-    .expect("an impure child is complete for its class");
+    .unwrap();
     assert_eq!(
         *impure.data(),
         (
@@ -415,8 +411,7 @@ fn side_descend_rejects_corruptions() {
             discriminant,
             QrProfile::ROOT.descend(false),
             set(&padded).commit()
-        ),
-        "the impure child"
+        )
     );
 
     assert_rejected(
@@ -549,8 +544,7 @@ fn side_descend_binds_the_discriminant() {
     assert!(
         members
             .iter()
-            .any(|&member| !qr::classify(Fp::from(member), solved.at(0)).0),
-        "the solved discriminant misfiles a member"
+            .any(|&member| !qr::classify(Fp::from(member), solved.at(0)).0)
     );
 
     let solved_intake = stamp_intake(rng, start, epoch, solved, &members);
@@ -596,7 +590,7 @@ fn intake_merge_rejects_corruptions() {
         )
     };
 
-    let merged = merge(rng, honest((&left, &right)), (&left, &right)).expect("QrIntakeMerge");
+    let merged = merge(rng, honest((&left, &right)), (&left, &right)).unwrap();
     let union = left_members
         .iter()
         .chain(&right_members)
@@ -611,8 +605,7 @@ fn intake_merge_rejects_corruptions() {
             discriminant,
             QrProfile::ROOT,
             union.commit()
-        ),
-        "the honest merge"
+        )
     );
 
     let gap = Anchor::random(rng);
@@ -624,7 +617,7 @@ fn intake_merge_rejects_corruptions() {
     let later = stamp_intake(
         rng,
         junction,
-        epoch.next().expect("epoch zero has a successor"),
+        epoch.next().unwrap(),
         discriminant,
         &right_members,
     );
@@ -637,8 +630,20 @@ fn intake_merge_rejects_corruptions() {
         merge(rng, honest((&left, &foreign)), (&left, &foreign)).map(drop),
         "QrIntakeMerge: inputs derive from different discriminants",
     );
-    let (_, left_residue) = split_qr_intake(rng, left.clone());
-    let (right_non_residue, _) = split_qr_intake(rng, right.clone());
+    let (_, left_residue) = split_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd: left.pcd.clone(),
+            members: left.members.clone(),
+        },
+    );
+    let (right_non_residue, _) = split_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd: right.pcd.clone(),
+            members: right.members.clone(),
+        },
+    );
     assert_rejected(
         merge(
             rng,
@@ -700,7 +705,7 @@ fn bucket_seal_crosses_the_boundary() {
         [(0, &[&[1]], 0, 1), (1, &[&[3, 3], &[2], &[1, 3]], 2, 3)];
     for (epoch_index, blocks, depth, capacity) in rows {
         let epoch = EpochIndex::new(epoch_index);
-        let next = epoch.next().expect("an early epoch has a successor");
+        let next = epoch.next().unwrap();
         for silent in [true, false] {
             let published_or_not = if silent { "silent" } else { "published" };
             let case = format!("epoch {epoch_index} {published_or_not}");
@@ -786,7 +791,7 @@ fn bucket_seal_rejects_corruptions() {
     let root = |root_rng: &mut StdRng, start: Anchor| {
         build_qr_partition(root_rng, &pool, (start, end), discriminant, 24, 0)
             .pop()
-            .expect("one root")
+            .unwrap()
             .pcd
     };
     let whole = root(rng, Anchor::default());
@@ -835,12 +840,19 @@ fn unspent_init_admits_absent_values() {
     let deep_value = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
         .take(1024)
         .find(|&value| qr::classify(value, discriminant.at(0)).0 != shallow_side)
-        .expect("a value on the other side in 1024 draws");
+        .unwrap();
 
     let root = build_qr_partition(rng, &pool, (Anchor::default(), end), discriminant, 24, 0)
         .pop()
         .expect("one root");
-    let root_bucket = seal_qr_intake(rng, root.clone(), Anchor::from(Fp::ZERO));
+    let root_bucket = seal_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd: root.pcd.clone(),
+            members: root.members.clone(),
+        },
+        Anchor::from(Fp::ZERO),
+    );
     let (non_residue, residue) = split_qr_intake(rng, root);
     let (shallow, other_side) = if shallow_side {
         (residue, non_residue)
@@ -904,7 +916,7 @@ fn unspent_init_rejects_corruptions() {
     let other = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
         .take(1024)
         .find(|&value| qr_profile_of(value, discriminant, 2) != profile)
-        .expect("a value of another profile in 1024 draws");
+        .unwrap();
 
     let stranger = set(&tachygrams(rng, 1));
     assert_rejected(
@@ -1055,8 +1067,7 @@ fn unspent_init_binds_the_value() {
     let twin = cube_root_twin(epoch, Fp::from(nf), challenge);
     assert_eq!(
         NfSeqPoly::new(epoch, &[Nullifier::from(twin)]).eval(challenge),
-        witness.3.eval(challenge),
-        "the twin's sequence agrees with the value's at the unbound challenge"
+        witness.3.eval(challenge)
     );
     assert_rejected(
         unspent_init(

@@ -21,15 +21,7 @@ fn tachygrams_and_their_set_commitments_round_trip() {
     tachygram.write(&mut wire).unwrap();
     commit.write(&mut wire).unwrap();
     let mut reader = wire.as_slice();
-    assert_eq!(
-        Tachygram::read(&mut reader).unwrap(),
-        tachygram,
-        "tachygram"
-    );
-    assert_eq!(
-        TachygramSetCommit::read(&mut reader).unwrap(),
-        commit,
-        "set commitment"
-    );
-    assert!(reader.is_empty(), "nothing left unread");
+    assert_eq!(Tachygram::read(&mut reader).unwrap(), tachygram);
+    assert_eq!(TachygramSetCommit::read(&mut reader).unwrap(), commit);
+    assert_eq!(reader, []);
 }

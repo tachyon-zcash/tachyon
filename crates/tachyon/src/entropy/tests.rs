@@ -5,7 +5,7 @@ use crate::{digest::poseidon, note, primitives::effect};
 
 fn modulus() -> [u8; 32] {
     let mut modulus = (-Fp::ONE).to_bytes();
-    assert_eq!(modulus[0], 0, "the modulus minus one ends in a zero byte");
+    assert_eq!(modulus[0], 0);
     modulus[0] = 1;
     modulus
 }
@@ -25,32 +25,18 @@ fn randomizers_are_domain_separated_functions_of_theta_and_cm() {
         Fq::from(entropy.randomizer::<effect::Output>(commitment))
     };
 
-    assert_ne!(spend(theta, cm), output(theta, cm), "spend against output");
-    assert_ne!(
-        spend(theta, cm),
-        spend(other_theta, cm),
-        "spend, other theta"
-    );
-    assert_ne!(spend(theta, cm), spend(theta, other_cm), "spend, other cm");
-    assert_ne!(
-        output(theta, cm),
-        output(other_theta, cm),
-        "output, other theta"
-    );
-    assert_ne!(
-        output(theta, cm),
-        output(theta, other_cm),
-        "output, other cm"
-    );
+    assert_ne!(spend(theta, cm), output(theta, cm));
+    assert_ne!(spend(theta, cm), spend(other_theta, cm));
+    assert_ne!(spend(theta, cm), spend(theta, other_cm));
+    assert_ne!(output(theta, cm), output(other_theta, cm));
+    assert_ne!(output(theta, cm), output(theta, other_cm));
     assert_eq!(
         spend(theta, cm).to_bytes(),
-        poseidon::alpha_spend(theta.0, cm.into()).to_bytes(),
-        "spend encoding"
+        poseidon::alpha_spend(theta.0, cm.into()).to_bytes()
     );
     assert_eq!(
         output(theta, cm).to_bytes(),
-        poseidon::alpha_output(theta.0, cm.into()).to_bytes(),
-        "output encoding"
+        poseidon::alpha_output(theta.0, cm.into()).to_bytes()
     );
 }
 

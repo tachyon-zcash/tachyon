@@ -64,14 +64,14 @@ fn bind_and_spend(
             bind,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("SpendAction");
+        .unwrap();
     (bound, *action.data())
 }
 
 #[test]
 fn spendable_lineage_binds_the_live_pair() {
-    let rate = u32::try_from(PoseidonFp::RATE).expect("the sponge rate fits u32");
-    let far = u32::try_from(NF_DERIVATION_WIDTH).expect("the window width fits u32") + 1;
+    let rate = u32::try_from(PoseidonFp::RATE).unwrap();
+    let far = u32::try_from(NF_DERIVATION_WIDTH).unwrap() + 1;
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
 
@@ -131,7 +131,7 @@ fn spendable_lineage_binds_the_live_pair() {
             let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
             let (bound, (action_set, tachygram_set, action_anchor)) =
                 bind_and_spend(rng, &wallet, note, spendable_pcd, (theta, rcv));
-            let next = target.next().expect("a spendable epoch has a successor");
+            let next = target.next().unwrap();
             let (nf_current, nf_next) = (wallet.nf_at(&note, target), wallet.nf_at(&note, next));
             let (cm, bound_current, bound_next, bound_anchor, pk, cv) = bound;
             assert_eq!(cm, note.commitment(), "{case}: the bound commitment");
@@ -147,8 +147,7 @@ fn spendable_lineage_binds_the_live_pair() {
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 wallet.pak.ak.derive_action_public(&alpha)
             });
-            let planned =
-                ActionSetPoly::from_iter([plan.digest().expect("action digest")]).commit();
+            let planned = ActionSetPoly::from_iter([plan.digest().unwrap()]).commit();
             let pair = TachygramSetPoly::from_iter([
                 Tachygram::from(nf_current),
                 Tachygram::from(nf_next),
@@ -181,7 +180,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
         .take(1024)
         .find(|&drawn| qr_profile_of(cm_value, drawn, 2) != qr_profile_of(nf_value, drawn, 2))
-        .expect("a network routing the commitment and the nullifier apart in 1024 draws");
+        .unwrap();
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
     let capacity = usize::try_from(EPOCH_SIZE).unwrap();
     let init = |init_rng: &mut StdRng, nf_depth: u32, cm_depth: u32| {
@@ -213,7 +212,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
                 unspent,
                 cm_bucket.pcd,
             )
-            .expect("QrSpendableInit")
+            .unwrap()
             .0
     };
     // The QR segment already crossed, so it rests at epoch one's entry anchor.
@@ -223,12 +222,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         pool.block(epoch1.first_block()).prev,
     );
     let spendable = init(rng, 2, 2);
-    assert_eq!(*spendable.data(), entry, "a depth-two segment and bucket");
-    assert_eq!(
-        *init(rng, 1, 0).data(),
-        entry,
-        "a depth-one segment and the root bucket"
-    );
+    assert_eq!(*spendable.data(), entry);
+    assert_eq!(*init(rng, 1, 0).data(), entry);
 
     let lifted = wallet.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
     let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -271,7 +266,7 @@ fn spend_steps_reject_corruptions() {
         &[Tachygram::from(note.commitment())],
         EpochIndex::new(EPOCH_MAX),
     )
-    .expect("SpendableInit in the final epoch");
+    .unwrap();
 
     let rcv = value::Trapdoor::random(rng);
     let bind_with =

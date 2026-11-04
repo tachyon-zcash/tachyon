@@ -23,12 +23,11 @@ fn child_keys_are_independent() {
     let pk = sk.derive_payment_key();
 
     let ak_bytes: [u8; 32] = ak.0.into();
-    assert_ne!(ak_bytes, nk.0.to_bytes(), "ak against nk");
-    assert_ne!(nk.0.to_bytes(), Fp::from(pk).to_bytes(), "nk against pk");
+    assert_ne!(ak_bytes, nk.0.to_bytes());
+    assert_ne!(nk.0.to_bytes(), Fp::from(pk).to_bytes());
     assert_eq!(
         Fp::from(sk.derive_proof_private().derive_payment_key()),
-        Fp::from(pk),
-        "pak derives the spending key's pk"
+        Fp::from(pk)
     );
 }
 
@@ -125,8 +124,8 @@ fn master_key_is_a_function_of_nk_and_psi() {
         nullifier::Trapdoor::random(rng),
     );
     let mk = nk.derive_note_private(psi);
-    assert_ne!(mk, nk.derive_note_private(other_psi), "another psi");
-    assert_ne!(mk, other_nk.derive_note_private(psi), "another nk");
+    assert_ne!(mk, nk.derive_note_private(other_psi));
+    assert_ne!(mk, other_nk.derive_note_private(psi));
 }
 
 #[test]

@@ -41,7 +41,7 @@ const ADJUNCT_FEES: [(u64, u64); 3] = [
 ];
 
 fn zat(amount: u64) -> value::Positive {
-    value::Positive::try_from(amount).expect("amount in range")
+    value::Positive::try_from(amount).unwrap()
 }
 
 fn spend_of(
@@ -73,7 +73,7 @@ fn proved_bundle(
     let proved = plan
         .stamp_plan(anchor, zat(fee))
         .prove(rng, &wallet.pak, pcds)
-        .expect("prove the bundle's stamp");
+        .unwrap();
     signed.stamp(proved)
 }
 
@@ -100,7 +100,7 @@ fn build_aggregate(
     (based, adjunct_count, premerged): (bool, usize, bool),
     spending: bool,
 ) -> (Bundle<ProofStamp>, Vec<Bundle<ProofStamp>>) {
-    assert!(adjunct_count <= ADJUNCT_FEES.len(), "one fee per adjunct");
+    assert!(adjunct_count <= ADJUNCT_FEES.len());
     let spenders = if spending {
         usize::from(based) + adjunct_count
     } else {
@@ -151,24 +151,24 @@ fn build_aggregate(
     let adjunct_dyns: Vec<&Bundle<dyn StampState>> = adjuncts.iter().map(Bundle::as_dyn).collect();
 
     if premerged {
-        let (first, rest) = adjuncts.split_first().expect("adjuncts");
+        let (first, rest) = adjuncts.split_first().unwrap();
         let mut combined = first.clone();
         for (index, next) in rest.iter().enumerate() {
             let (stamp, desc, fees) = merge_side(&combined, &adjunct_dyns[1..=index]);
             combined.stamp = stamp
                 .merge(rng, (desc, fees), merge_side(next, &[]))
-                .expect("merge the adjuncts");
+                .unwrap();
         }
         let (stamp, desc, fees) = merge_side(&receiver, &[]);
         receiver.stamp = stamp
             .merge(rng, (desc, fees), merge_side(&combined, &adjunct_dyns[1..]))
-            .expect("merge into the receiver");
+            .unwrap();
     } else {
         for (index, next) in adjuncts.iter().enumerate() {
             let (stamp, desc, fees) = merge_side(&receiver, &adjunct_dyns[..index]);
             receiver.stamp = stamp
                 .merge(rng, (desc, fees), merge_side(next, &[]))
-                .expect("merge into the receiver");
+                .unwrap();
         }
     }
     (receiver, adjuncts)
@@ -201,9 +201,9 @@ fn flipped<T>(
     read: impl FnOnce(&[u8]) -> io::Result<T>,
 ) -> T {
     let mut bytes = Vec::new();
-    write(&mut bytes).expect("write");
+    write(&mut bytes).unwrap();
     bytes[0] ^= 0xFF;
-    read(&bytes).expect("read")
+    read(&bytes).unwrap()
 }
 
 #[test]
@@ -291,18 +291,14 @@ fn signing_produces_the_planned_bundle() {
                     .sum::<i128>()
                 - i128::from(max_fee),
         )
-        .expect("balance in range");
+        .unwrap();
 
         let plan = bundle::Plan::new(spends.clone(), outputs.clone(), wallet.random_note(max_fee))
             .with_memo(memo.clone());
         assert_eq!(plan.value_balance(), Ok(expected), "{label}");
-        let sighash = mock_sighash(plan.commitment().expect("commitment"));
-        let signed = plan.sign(rng, &sighash, &ask).expect("sign");
-        assert_eq!(
-            signed.commitment(),
-            plan.commitment().expect("commitment"),
-            "{label}"
-        );
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let signed = plan.sign(rng, &sighash, &ask).unwrap();
+        assert_eq!(signed.commitment(), plan.commitment().unwrap(), "{label}");
         assert_eq!(signed.value_balance, expected, "{label}");
         assert_eq!(&signed.memo, &memo, "{label}");
         assert_eq!(
@@ -325,9 +321,7 @@ fn signing_produces_the_planned_bundle() {
             .iter()
             .map(|act| (act.descriptor(), act.sig))
             .collect();
-        let applied = plan
-            .apply_signatures(rng, &sighash, authorized)
-            .expect("apply the signatures");
+        let applied = plan.apply_signatures(rng, &sighash, authorized).unwrap();
         assert_eq!(applied.commitment(), signed.commitment(), "{label}");
         assert!(
             applied.verify_signatures(&sighash).is_ok(),
@@ -345,13 +339,13 @@ fn signature_tampering_fails_verify_signatures() {
     let spend = spend_of(rng, &ask, wallet.random_note(1000));
     let output = build_output_plan(rng, wallet.random_note(200)).2;
     let plan = bundle::Plan::new(vec![spend], vec![output], max_fee_note);
-    let sighash = mock_sighash(plan.commitment().expect("commitment"));
-    let signed = plan.sign(rng, &sighash, &ask).expect("sign");
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let signed = plan.sign(rng, &sighash, &ask).unwrap();
     let own_sighash = |tampered: &Bundle<_>| mock_sighash(tampered.commitment());
 
     let mut rebalanced = signed.clone();
     rebalanced.value_balance =
-        value::Balance::try_from(i64::from(signed.value_balance) + 1).expect("in range");
+        value::Balance::try_from(i64::from(signed.value_balance) + 1).unwrap();
     let mut permuted = signed.clone();
     permuted.actions.swap(0, 1);
     let mut rebound = signed.clone();
@@ -360,9 +354,9 @@ fn signature_tampering_fails_verify_signatures() {
         |mut bytes| Signature::read(&mut bytes),
     );
     let empty_plan = bundle::Plan::new(vec![], vec![], wallet.random_note(0));
-    let empty_sighash = mock_sighash(empty_plan.commitment().expect("commitment"));
-    let mut claiming = empty_plan.sign(rng, &empty_sighash, &ask).expect("sign");
-    claiming.value_balance = value::Balance::try_from(1i64).expect("in range");
+    let empty_sighash = mock_sighash(empty_plan.commitment().unwrap());
+    let mut claiming = empty_plan.sign(rng, &empty_sighash, &ask).unwrap();
+    claiming.value_balance = value::Balance::try_from(1i64).unwrap();
     for (label, result) in [
         (
             "a tampered balance under its own sighash",
@@ -398,16 +392,14 @@ fn signature_tampering_fails_verify_signatures() {
             &sighash,
             plan.descriptors().into_iter().zip(sigs).collect(),
         )
-        .expect("assembly takes any pairing");
+        .unwrap();
     let mut rekeyed = output;
     rekeyed.rk = build_output_plan(rng, wallet.random_note(50)).2.rk;
     let rekeyed_plan = bundle::Plan::new(vec![spend], vec![rekeyed], max_fee_note);
-    let rekeyed_sighash = mock_sighash(rekeyed_plan.commitment().expect("commitment"));
-    let misdirected = rekeyed_plan
-        .sign(rng, &rekeyed_sighash, &ask)
-        .expect("sign");
+    let rekeyed_sighash = mock_sighash(rekeyed_plan.commitment().unwrap());
+    let misdirected = rekeyed_plan.sign(rng, &rekeyed_sighash, &ask).unwrap();
     let stranger = WalletSim::random(rng).sk.derive_auth_private();
-    let forged = plan.sign(rng, &sighash, &stranger).expect("sign");
+    let forged = plan.sign(rng, &sighash, &stranger).unwrap();
     for (label, result) in [
         (
             "signatures shuffled among the actions",
@@ -472,7 +464,7 @@ fn autonome_lifecycle() {
                 signed.clone().stamp(
                     plan.stamp_plan(anchor, zat(fee))
                         .prove(prove_rng, &wallet.pak, pcds.clone())
-                        .expect("prove"),
+                        .unwrap(),
                 )
             };
 
@@ -517,7 +509,7 @@ fn autonome_lifecycle() {
 
             let middle = &proved[proved.len() / 2];
             let mut bytes = Vec::new();
-            middle.write(&mut bytes).expect("write");
+            middle.write(&mut bytes).unwrap();
             let decoded = Bundle::<ProofStamp>::read(&*bytes).expect("read");
             assert_eq!(decoded.auth_digest(), middle.auth_digest(), "{shape}");
             verify_alone(rng, &decoded).unwrap_or_else(|err| {
@@ -547,7 +539,7 @@ fn misapplied_fee_fails_verify() {
     let (max_fee, fee) = (MAX_MONEY / 2, MAX_MONEY / 4);
     let output_plan = build_output_plan(rng, wallet.random_note(500)).2;
     let plan = bundle::Plan::new(vec![], vec![output_plan], wallet.random_note(max_fee));
-    let sighash = mock_sighash(plan.commitment().expect("commitment"));
+    let sighash = mock_sighash(plan.commitment().unwrap());
     let mut foreign_fee = plan
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .expect("sign")
@@ -555,7 +547,7 @@ fn misapplied_fee_fails_verify() {
             bundle::Plan::new(vec![], vec![output_plan], wallet.random_note(max_fee))
                 .stamp_plan(anchor, zat(fee))
                 .prove(rng, &wallet.pak, vec![])
-                .expect("prove under another max fee note"),
+                .unwrap(),
         );
     let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
         verify_alone(rng, &foreign_fee)
@@ -698,10 +690,7 @@ fn aggregate_verify_rejects_adjunct_sets_it_does_not_cover() {
         aggregate.verify(verify_rng, &sighash, &id.into(), with)
     };
 
-    assert!(
-        !aggregate.is_covering(&adjunct_dyns[1..]),
-        "the aggregate covers a missing adjunct"
-    );
+    assert!(!aggregate.is_covering(&adjunct_dyns[1..]));
     let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
         verify(rng, &refs[1..])
     else {
@@ -716,8 +705,7 @@ fn aggregate_verify_rejects_adjunct_sets_it_does_not_cover() {
                 .copied()
                 .chain([adjunct_dyns[0]])
                 .collect::<Vec<_>>()
-        ),
-        "the aggregate covers a repeated adjunct"
+        )
     );
     let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateActions)) =
         verify(rng, &repeated)
@@ -752,8 +740,7 @@ fn aggregate_verify_rejects_adjunct_sets_it_does_not_cover() {
     assert!(
         !aggregate
             .verify_proof(rng, &uncovered_digests)
-            .expect("proof system verification"),
-        "the proof verified with an uncovered adjunct"
+            .expect("proof system verification")
     );
 }
 
@@ -884,11 +871,8 @@ fn aggregates_reaggregate_into_a_parent() {
     let (stamp, desc, fees) = merge_side(&parent, &[]);
     parent.stamp = stamp
         .merge(rng, (desc, fees), merge_side(&aggregate, &adjunct_dyns))
-        .expect("merge the aggregate into a parent");
-    assert!(
-        parent.is_covering(&covered),
-        "the parent covers the aggregate and its adjuncts"
-    );
+        .unwrap();
+    assert!(parent.is_covering(&covered));
     let parent_id = mock_wtxid(&parent);
     let parent_sighash = mock_sighash(parent.commitment());
     let stale: Vec<&Bundle<PointerStamp>> = iter::once(&itself).chain(&stripped).collect();
@@ -929,7 +913,7 @@ fn verify_rejects_each_edit_at_its_stage() {
     let (stamp, desc, fees) = merge_side(&aggregate, &[]);
     aggregate.stamp = stamp
         .merge(rng, (desc, fees), merge_side(&adjunct, &[]))
-        .expect("merge the adjunct");
+        .unwrap();
     let sighash = mock_sighash(aggregate.commitment());
     let id = mock_wtxid(&aggregate);
     let stripped = adjunct.clone().strip(id);
@@ -1103,7 +1087,7 @@ fn bundle_lift_keeps_coverage_and_verifies() {
         }
         let coverage = lifting.stamp.coverage;
         let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-        let lifted = lifting.lift(rng, &adjunct_dyns, vec![span]).expect("lift");
+        let lifted = lifting.lift(rng, &adjunct_dyns, vec![span]).unwrap();
         assert_eq!(lifted.stamp.anchor, pool.anchor(), "{label}");
         assert_eq!(lifted.stamp.coverage, coverage, "{label}");
         let id = mock_wtxid(&lifted);
@@ -1139,7 +1123,7 @@ fn aggregates_merge_with_aggregates_and_lift() {
     let (stamp, desc, fees) = merge_side(&receiver, &receiver_dyns);
     receiver.stamp = stamp
         .merge(rng, (desc, fees), merge_side(&other, &other_dyns))
-        .expect("merge an aggregate into an aggregate");
+        .unwrap();
     assert_eq!(receiver.stamp.fee, receiver_fee);
     let covered: Vec<Bundle<ProofStamp>> = receiver_adjuncts
         .into_iter()
@@ -1152,7 +1136,7 @@ fn aggregates_merge_with_aggregates_and_lift() {
     let stamped_at = pool.height();
     pool.mine(random_block(rng, 1, 2));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-    let lifted = receiver.lift(rng, &covered_dyns, vec![span]).expect("lift");
+    let lifted = receiver.lift(rng, &covered_dyns, vec![span]).unwrap();
     assert_eq!(lifted.stamp.anchor, pool.anchor());
     let id = mock_wtxid(&lifted);
     let stripped: Vec<Bundle<PointerStamp>> =
@@ -1164,5 +1148,5 @@ fn aggregates_merge_with_aggregates_and_lift() {
             &id.into(),
             &stripped.iter().collect::<Vec<_>>(),
         )
-        .expect("the lifted aggregate of aggregates verifies");
+        .unwrap();
 }

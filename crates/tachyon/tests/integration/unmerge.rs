@@ -57,19 +57,16 @@ fn autonome_paying(
         wallet.random_note(max_fee),
     );
     signed.stamp(
-        plan.stamp_plan(
-            anchor,
-            value::Positive::try_from(fee).expect("fee in range"),
-        )
-        .prove(rng, &wallet.pak, spend_pcds)
-        .expect("prove with the fee"),
+        plan.stamp_plan(anchor, value::Positive::try_from(fee).unwrap())
+            .prove(rng, &wallet.pak, spend_pcds)
+            .unwrap(),
     )
 }
 
 fn digests_of(bundle: &Bundle<ProofStamp>) -> Vec<ActionDigest> {
     bundle
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests([bundle.fee_descriptor()]))
         .collect()
 }
@@ -102,7 +99,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         stamp: all_three
             .clone()
             .unmerge(divide_rng, claims(&[&alice, &bob, &carol]), divisor)
-            .expect("divide out of the three"),
+            .unwrap(),
         ..alice.clone()
     };
 
@@ -115,7 +112,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             &with_carol.into(),
             &[&carol.clone().strip(with_carol)],
         )
-        .expect("dividing B out leaves A and its adjunct C");
+        .unwrap();
 
     let without_mined = divide(rng, side(mined, &[&bob, &carol]));
     let alone = mock_wtxid(&without_mined);
@@ -126,7 +123,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             &alone.into(),
             &[],
         )
-        .expect("dividing the mined BC out leaves A alone");
+        .unwrap();
 }
 
 #[test]
@@ -150,7 +147,7 @@ fn unmerge_keeps_the_dividend_fee() {
                 claims(&[&alice, &bob]),
                 side(divisor.stamp.clone(), &[divisor]),
             )
-            .expect("divide out of the aggregate on A")
+            .unwrap()
     };
     let kept = divide(rng, &bob);
     let hostless = divide(rng, &alice);
@@ -197,7 +194,7 @@ fn unmerge_refuses_a_non_divisor() {
         .stamp
         .clone()
         .merge(rng, claims(&[&bob]), side(carol.stamp.clone(), &[&carol]))
-        .expect("merge C into B");
+        .unwrap();
 
     for (label, divisor) in [
         ("sharing no actions", side(carol.stamp.clone(), &[&carol])),
@@ -241,13 +238,13 @@ fn unmerge_of_the_receiver_leaves_its_fee() {
                 .stamp
                 .clone()
                 .merge(rng, claims(&[&alice]), side(bob.stamp.clone(), &[&bob]))
-                .expect("merge B into A")
+                .unwrap()
                 .unmerge(
                     rng,
                     claims(&[&alice, &bob]),
                     side(alice.stamp.clone(), &[&alice]),
                 )
-                .expect("divide A out"),
+                .unwrap(),
             ..bob.clone()
         };
 

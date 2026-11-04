@@ -17,11 +17,11 @@ use zcash_tachyon::{
 use crate::fixtures::{WalletSim, assert_rejected, tachygrams};
 
 fn width() -> u32 {
-    u32::try_from(NF_DERIVATION_WIDTH).expect("the window width fits u32")
+    u32::try_from(NF_DERIVATION_WIDTH).unwrap()
 }
 
 fn group() -> u32 {
-    u32::try_from(PoseidonFp::RATE).expect("the sponge rate fits u32")
+    u32::try_from(PoseidonFp::RATE).unwrap()
 }
 
 fn window_start(index: u32, windows: u32) -> EpochIndex {
@@ -36,7 +36,7 @@ fn secret(rng: &mut StdRng, wallet: &WalletSim, note: Note) -> Pcd<delegation::N
             delegation::NoteSeed,
             witness::note_seed(((), ()), note, wallet.pak),
         )
-        .expect("NoteSeed")
+        .unwrap()
         .0
 }
 
@@ -53,7 +53,7 @@ fn window(
             secret.clone(),
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("NullifierDerive")
+        .unwrap()
         .0
 }
 
@@ -107,7 +107,7 @@ fn derivation_chain_exports_its_windows() {
             );
             chain = PROOF_SYSTEM
                 .fuse(rng, delegation::NullifierFuse, fuse_witness, chain, next)
-                .expect("NullifierFuse")
+                .unwrap()
                 .0;
         }
 

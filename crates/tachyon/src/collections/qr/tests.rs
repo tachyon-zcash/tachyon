@@ -221,7 +221,7 @@ fn a_misfiled_or_repeated_value_has_no_decomposition() {
         QUADRATIC_NON_RESIDUE * square() - discriminant,
     ];
     let (residue, non_residue) = split(values, discriminant);
-    assert_eq!((residue.len(), non_residue.len()), (2, 2), "the sides");
+    assert_eq!((residue.len(), non_residue.len()), (2, 2));
     for (name, side, points, others) in [
         ("residue", true, &residue, &non_residue),
         ("non-residue", false, &non_residue, &residue),
