@@ -37,14 +37,17 @@ and `wire_mutation` covers proof-stamped acceptance.
 ## Running
 
 The recipes call [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) on
-the pinned nightly. Install it with `cargo install cargo-fuzz`. From the
-repository root:
+the pinned nightly. From the repository root:
 
 ```sh
-just fuzz bundle_read -max_total_time=60
+just fuzz
 ```
 
-- `just fuzz TARGET` runs one target on `corpus/TARGET`. Any further arguments go to libFuzzer. Crashes land in `artifacts/TARGET`.
+The recipes install the pinned nightly, with `rustfmt`, and cargo-fuzz before they run, and skip whatever is already installed. CI uses the same recipes.
+
+- `just fuzz` runs every target for five minutes each, one after another, and stops at the first crash.
+- `just fuzz TARGET` runs one target on `corpus/TARGET`, for example `just fuzz bundle_read -max_total_time=60`. Any further arguments go to libFuzzer.
+- Crashes land in `artifacts/TARGET`.
 - `just fuzz-cmin TARGET` minimizes `corpus/TARGET`. It may drop a committed regression seed; restore it with `git restore`. The campaign workflow runs it after each campaign.
 
 `just lint` runs clippy on this crate with warnings denied.

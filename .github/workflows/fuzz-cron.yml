@@ -28,9 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         target: [bundle_read, stamp_read, wire_mutation]
-    defaults:
-      run:
-        working-directory: crates/tachyon
     env:
       TARGET: ${{ matrix.target }}
       DURATION: ${{ inputs.duration || '3600' }}
@@ -39,14 +36,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned nightly
-        id: nightly
-        uses: ./.github/actions/rust-nightly-setup
-
-      - name: Install cargo-fuzz
+      - name: Install just and cargo-binstall
         uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
         with:
-          tool: cargo-fuzz@0.13.2
+          tool: just,cargo-binstall
 
       - name: Restore corpus
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -56,16 +49,12 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
-        env:
-          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
-        run: cargo fuzz run "$TARGET" -- -max_total_time="$DURATION"
+        run: just fuzz "$TARGET" -max_total_time="$DURATION"
 
       - name: Minimize corpus
         if: always()
         timeout-minutes: 15
-        env:
-          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
-        run: cargo fuzz cmin "$TARGET"
+        run: just fuzz-cmin "$TARGET"
 
       - name: Save corpus
         if: always()

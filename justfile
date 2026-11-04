@@ -28,15 +28,24 @@ check:
 
 _fuzz_dir := justfile_directory() / "crates/tachyon/fuzz"
 
-# the fuzz recipes need cargo-fuzz: `cargo install cargo-fuzz`
+_fuzz_setup: _install_binstall
+    rustup toolchain install {{_nightly}} --profile minimal --component rustfmt
+    cargo binstall --no-confirm cargo-fuzz@0.13.2
 
-# fuzz TARGET on its corpus; ARGS go to libFuzzer, e.g.
-# `just fuzz bundle_read -max_total_time=60`
-fuzz TARGET *ARGS:
-    cd {{_fuzz_dir}}/.. && cargo +{{_nightly}} fuzz run {{TARGET}} -- {{ARGS}}
+# fuzz every target for 5 minutes each until a crash, or TARGET with libFuzzer ARGS
+fuzz TARGET="" *ARGS: _fuzz_setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{_fuzz_dir}}/..
+    if [ -n "{{TARGET}}" ]; then
+        exec cargo +{{_nightly}} fuzz run {{TARGET}} -- {{ARGS}}
+    fi
+    for target in $(cargo +{{_nightly}} fuzz list); do
+        cargo +{{_nightly}} fuzz run "$target" -- -max_total_time=300
+    done
 
 # minimize TARGET's corpus
-fuzz-cmin TARGET:
+fuzz-cmin TARGET: _fuzz_setup
     cd {{_fuzz_dir}}/.. && cargo +{{_nightly}} fuzz cmin {{TARGET}}
 
 _install_binstall:
