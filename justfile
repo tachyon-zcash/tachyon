@@ -9,10 +9,12 @@ _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-hea
 
 fmt:
     cargo +{{_nightly}} fmt --all
+    cargo +{{_nightly}} fmt --all --manifest-path {{_fuzz_dir}}/Cargo.toml
 
 lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
     cargo clippy --workspace --all-targets --all-features
+    cargo clippy --manifest-path {{_fuzz_dir}}/Cargo.toml --all-targets --locked -- -D warnings
 
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
@@ -23,6 +25,19 @@ doc *ARGS:
 check:
     cargo check --workspace --lib --no-default-features # no_std
     cargo check --workspace --all-targets --all-features
+
+_fuzz_dir := justfile_directory() / "crates/tachyon/fuzz"
+
+# the fuzz recipes need cargo-fuzz: `cargo install cargo-fuzz`
+
+# fuzz TARGET on its corpus; ARGS go to libFuzzer, e.g.
+# `just fuzz bundle_read -max_total_time=60`
+fuzz TARGET *ARGS:
+    cd {{_fuzz_dir}}/.. && cargo +{{_nightly}} fuzz run {{TARGET}} -- {{ARGS}}
+
+# minimize TARGET's corpus
+fuzz-cmin TARGET:
+    cd {{_fuzz_dir}}/.. && cargo +{{_nightly}} fuzz cmin {{TARGET}}
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall

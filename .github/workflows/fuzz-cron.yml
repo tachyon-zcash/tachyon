@@ -1,0 +1,84 @@
+name: Fuzz campaign
+
+on:
+  schedule:
+    - cron: "17 3 * * 0,3"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds to fuzz each target
+        type: choice
+        options: ["600", "1800", "3600"]
+        default: "3600"
+
+# Campaigns share each target's cached corpus, so they run one at a time.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [bundle_read, stamp_read, wire_mutation]
+    defaults:
+      run:
+        working-directory: crates/tachyon
+    env:
+      TARGET: ${{ matrix.target }}
+      DURATION: ${{ inputs.duration || '3600' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: cargo-fuzz@0.13.2
+
+      - name: Restore corpus
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: crates/tachyon/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fuzz run "$TARGET" -- -max_total_time="$DURATION"
+
+      - name: Minimize corpus
+        if: always()
+        timeout-minutes: 15
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fuzz cmin "$TARGET"
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: crates/tachyon/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: crates/tachyon/fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
