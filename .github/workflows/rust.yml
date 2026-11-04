@@ -174,18 +174,19 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      # The stable clippy the clippy job's rust-setup installs.
-      - name: Install stable clippy
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
         with:
-          toolchain: stable
-          components: clippy
+          cache-suffix: fuzz
       - name: Install just and cargo-binstall
         uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
         with:
           tool: just,cargo-binstall
-      # The justfile holds the nightly pin. fuzz-cron.yml restores this cache
-      # under the same key; keep the two in step.
+      - name: Read the nightly pin
+        id: pin
+        run: echo "nightly=$(just --evaluate _nightly)" >> "$GITHUB_OUTPUT"
+      # fuzz-cron.yml restores this cache under the same key; keep the two in
+      # step.
       - name: Cache fuzz build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -194,9 +195,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/tachyon/fuzz/target
-          key: ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
+          key: ${{ runner.os }}-fuzz-${{ steps.pin.outputs.nightly }}-${{ hashFiles('rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
           restore-keys: |
-            ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
+            ${{ runner.os }}-fuzz-${{ steps.pin.outputs.nightly }}-${{ hashFiles('rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
       - name: Lint the fuzz crate
         run: cargo clippy --manifest-path crates/tachyon/fuzz/Cargo.toml --locked --all-targets -- -D warnings
       # `just fuzz` installs the pinned nightly and cargo-fuzz first.

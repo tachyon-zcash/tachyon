@@ -24,6 +24,7 @@ jobs:
   targets:
     name: List fuzz targets
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       targets: ${{ steps.list.outputs.targets }}
     steps:
@@ -60,6 +61,10 @@ jobs:
         with:
           tool: just,cargo-binstall
 
+      - name: Read the nightly pin
+        id: pin
+        run: echo "nightly=$(just --evaluate _nightly)" >> "$GITHUB_OUTPUT"
+
       # Read-only, under the key the fuzz job in rust.yml saves; keep the two in
       # step.
       - name: Restore fuzz build
@@ -70,9 +75,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             crates/tachyon/fuzz/target
-          key: ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
+          key: ${{ runner.os }}-fuzz-${{ steps.pin.outputs.nightly }}-${{ hashFiles('rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
           restore-keys: |
-            ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
+            ${{ runner.os }}-fuzz-${{ steps.pin.outputs.nightly }}-${{ hashFiles('rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
 
       - name: Restore corpus
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
