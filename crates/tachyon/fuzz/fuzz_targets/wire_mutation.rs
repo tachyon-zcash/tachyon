@@ -5,17 +5,18 @@
 //!
 //! The input draws a proof-stamped aggregate and zero to four pointer-stamped
 //! adjuncts it covers ([`build_wire`]), then up to four edits to their
-//! concatenated encoding: a byte flipped, inserted or deleted, or the encoding
-//! truncated. Every bundle that decodes passes [`check_bundle_wire`], and the
-//! decoded aggregate is verified against the decoded adjuncts. The aggregate
-//! carries the proof of another stamp, so no wire verifies. Without an edit,
-//! every bundle decodes completely to the one built, each adjunct signs its
-//! own commitment, and `verify` rejects only at the proof.
+//! concatenated encoding outside the memos and the proof blob: a byte flipped,
+//! inserted or deleted, or the encoding truncated. Every bundle that decodes
+//! passes [`check_bundle_wire`], and the decoded aggregate is verified against
+//! the decoded adjuncts. The aggregate carries the proof of another stamp, so
+//! no wire verifies. Without an edit, every bundle decodes completely to the
+//! one built, each adjunct signs its own commitment, and `verify` rejects only
+//! at the proof.
 //!
 //! The proof is of one action-free stamp, proved at initialization, so the
 //! input never pays for proving.
 
-use std::sync::LazyLock;
+use std::{cmp, sync::LazyLock};
 
 use libfuzzer_sys::{arbitrary::Unstructured, fuzz_target};
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -25,10 +26,10 @@ use zcash_tachyon::{
     keys::private,
     note::{self, Note},
     nullifier,
-    stamp::{self, PointerStamp, ProofStamp},
+    stamp::{self, AggregateId, PointerStamp, ProofStamp},
     value,
 };
-use zcash_tachyon_fuzz::{build_wire, check_bundle_wire, draw, encode};
+use zcash_tachyon_fuzz::{build_wire, check_bundle_wire, draw, encode, proof_len};
 
 /// The most edits one input applies.
 const MAX_EDITS: u8 = 4;
@@ -62,31 +63,57 @@ fuzz_target!(
     |data: &[u8]| {
         let mut input = Unstructured::new(data);
         let (aggregate, adjuncts) = build_wire(&mut input, &PROOF);
-        let mut built = encode(|writer| aggregate.write(writer));
+
+        // Edits land outside the memos and the proof blob: a memo byte only
+        // moves the commitment, and the proof blob is ragu's encoding.
+        let mut built = Vec::new();
+        let mut editable = Vec::new();
+        let mut append = |encoding: Vec<u8>, memo: usize, trailer: usize, proof: usize| {
+            let memo_end = encoding.len() - trailer;
+            let base = built.len();
+            editable.extend(
+                (0..memo_end - memo)
+                    .chain(memo_end..encoding.len() - proof)
+                    .map(|at| base + at),
+            );
+            built.extend(encoding);
+        };
+        append(
+            encode(|writer| aggregate.write(writer)),
+            aggregate.memo.len(),
+            encode(|writer| aggregate.stamp.write(writer)).len(),
+            proof_len(&aggregate.stamp),
+        );
         for adjunct in &adjuncts {
-            built.extend(encode(|writer| adjunct.write(writer)));
+            append(
+                encode(|writer| adjunct.write(writer)),
+                adjunct.memo.len(),
+                encode(|writer| adjunct.stamp.write(writer)).len(),
+                0,
+            );
         }
 
+        // Applied from the highest offset down, so each edit lands where it
+        // was drawn.
+        let mut edits: Vec<(usize, u8, u8)> = (0..draw(input.int_in_range(0..=MAX_EDITS)))
+            .map(|_| {
+                (
+                    editable[draw(input.choose_index(editable.len()))],
+                    draw(input.int_in_range(0u8..=3)),
+                    draw(input.arbitrary::<u8>()),
+                )
+            })
+            .collect();
+        edits.sort_unstable_by_key(|&(at, ..)| cmp::Reverse(at));
         let mut wire = built.clone();
-        for _ in 0..draw(input.int_in_range(0..=MAX_EDITS)) {
-            let byte = draw(input.arbitrary::<u8>());
-            match draw(input.int_in_range(0u8..=3)) {
-                0 if !wire.is_empty() => {
-                    let at = draw(input.choose_index(wire.len()));
-                    wire[at] ^= byte.max(1);
-                },
-                1 => {
-                    let at = draw(input.int_in_range(0..=wire.len()));
-                    wire.insert(at, byte);
-                },
-                2 if !wire.is_empty() => {
-                    let at = draw(input.choose_index(wire.len()));
+        for (at, kind, byte) in edits {
+            match kind {
+                0 if at < wire.len() => wire[at] ^= byte.max(1),
+                1 => wire.insert(at, byte),
+                2 if at < wire.len() => {
                     wire.remove(at);
                 },
-                _ => {
-                    let at = draw(input.int_in_range(0..=wire.len()));
-                    wire.truncate(at);
-                },
+                _ => wire.truncate(at),
             }
         }
         let edited = wire != built;
@@ -113,9 +140,9 @@ fuzz_target!(
             })
             .collect();
 
-        let mut wtxid = [0u8; 64];
-        wtxid[..32].copy_from_slice(&head.commitment());
-        wtxid[32..].copy_from_slice(&head.auth_digest());
+        let wtxid: [u8; 64] = AggregateId::try_from((&head.commitment(), &head.auth_digest()))
+            .expect("a digest pair is not all zero")
+            .into();
         let verified = head.verify(
             &mut StdRng::seed_from_u64(0),
             &head.commitment(),

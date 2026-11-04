@@ -43,6 +43,8 @@ jobs:
               - 'clippy.toml'
               - '.cargo/config.toml'
               - 'crates/tachyon/katex-header.html'
+              - 'crates/tachyon/fuzz/**'
+              - 'justfile'
               - '.github/workflows/rust.yml'
               - '.github/actions/**'
 
@@ -66,6 +68,11 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
         run: cargo fmt --all -- --check
+
+      - name: Check fuzz crate formatting
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fmt --all --manifest-path crates/tachyon/fuzz/Cargo.toml -- --check
 
   clippy:
     name: clippy
@@ -152,6 +159,50 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
 
+  # Lints the fuzz crate, builds every target and replays its committed corpus
+  # once, without exploring, so the job fails only on a committed input. The
+  # campaigns are in fuzz-cron.yml.
+  fuzz:
+    name: fuzz
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install just and cargo-binstall
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: just,cargo-binstall
+      - name: Install the fuzz toolchain
+        run: just _fuzz_setup
+      # The justfile holds the nightly pin.
+      - name: Cache fuzz build
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/tachyon/fuzz/target
+          key: ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
+      - name: Lint the fuzz crate
+        run: cargo clippy --manifest-path crates/tachyon/fuzz/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Build and replay
+        run: just fuzz -runs=0
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts
+          path: crates/tachyon/fuzz/artifacts
+          if-no-files-found: ignore
+          retention-days: 30
+
   # Aggregate gate: a single, stable required status check. It always runs —
   # even on non-Rust PRs where every job below is skipped — and fails only if a
   # needed job actually failed or was cancelled (skipped counts as success).
@@ -169,6 +220,7 @@ jobs:
       - test
       - build-nostd
       - docs
+      - fuzz
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job failed or was cancelled

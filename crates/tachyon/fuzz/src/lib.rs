@@ -226,37 +226,29 @@ fn signed_bundle(
     let mut memo = vec![0u8; memo_len];
     rng.fill_bytes(&mut memo);
     let max_fee_note = note(rng, max_fee);
-    let plan = bundle::Plan::new(spends, outputs, max_fee_note).with_memo(memo.clone());
+    let plan = bundle::Plan::new(spends, outputs, max_fee_note).with_memo(memo);
 
-    let canonical: Vec<action::Descriptor> = plan.descriptors().into_iter().collect();
-    let mut order: Vec<usize> = (0..canonical.len()).collect();
+    let mut order: Vec<usize> = (0..count).collect();
     for at in (1..order.len()).rev() {
         order.swap(at, draw(input.int_in_range(0..=at)));
     }
-    let wire: Vec<[u8; 64]> = order.iter().map(|&at| canonical[at]).collect();
-    let value_balance = plan
-        .value_balance()
-        .expect("a value balance within MAX_MONEY");
-    let sighash = blake2b::bundle_commitment(
-        &blake2b::action_descriptor_digest(&wire),
-        i64::from(value_balance),
-        &max_fee_note.fee_blind().commit(-max_fee_note.value).into(),
-        &blake2b::memo_digest(&memo),
-    );
-    let signed = plan
-        .sign(rng, &sighash, &sk.derive_auth_private())
-        .expect("sign the plan");
-    let reordered = Bundle {
+    let ask = sk.derive_auth_private();
+    let in_wire_order = |signed: Bundle<stamp::Unproven>| Bundle {
         actions: order.iter().map(|&at| signed.actions[at]).collect(),
         ..signed
     };
+    // The commitment leaves out the signatures, so a bundle signed over any
+    // sighash yields the commitment it must sign.
+    let sighash =
+        in_wire_order(plan.sign(rng, &[0; 32], &ask).expect("sign the plan")).commitment();
+    let signed = in_wire_order(plan.sign(rng, &sighash, &ask).expect("sign the plan"));
     assert_eq!(
-        reordered.commitment(),
+        signed.commitment(),
         sighash,
         "the bundle signs its own commitment"
     );
     (
-        reordered,
+        signed,
         value::Positive::try_from(fee).expect("a fee within MAX_MONEY"),
     )
 }

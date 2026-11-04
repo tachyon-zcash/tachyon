@@ -2,10 +2,12 @@ default:
     @just --list
 
 # keep in step with .github/actions/rust-nightly-setup/action.yml, the pin the
-# `fmt` job checks against
+# `fmt` job checks against; the fuzz recipes install it too
 _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
+
+_fuzz_dir := justfile_directory() / "crates/tachyon/fuzz"
 
 fmt:
     cargo +{{_nightly}} fmt --all
@@ -14,7 +16,6 @@ fmt:
 lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
     cargo clippy --workspace --all-targets --all-features
-    cargo clippy --manifest-path {{_fuzz_dir}}/Cargo.toml --all-targets --locked -- -D warnings
 
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
@@ -26,27 +27,44 @@ check:
     cargo check --workspace --lib --no-default-features # no_std
     cargo check --workspace --all-targets --all-features
 
-_fuzz_dir := justfile_directory() / "crates/tachyon/fuzz"
-
+# binstall falls back to x86_64 binaries on Apple Silicon, and cargo-fuzz then
+# builds for the triple it was built for, so it installs the host's build
 _fuzz_setup: _install_binstall
-    rustup toolchain install {{_nightly}} --profile minimal --component rustfmt
-    cargo binstall --no-confirm cargo-fuzz@0.13.2
+    rustup toolchain install {{_nightly}} --profile minimal
+    cargo binstall --no-confirm --targets "$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')" cargo-fuzz@0.13.2
 
-# fuzz every target for 5 minutes each until a crash, or TARGET with libFuzzer ARGS
-fuzz TARGET="" *ARGS: _fuzz_setup
+# fuzz every target, or the TARGET given first, with libFuzzer ARGS (default: 5 minutes each)
+[positional-arguments]
+fuzz *ARGS: _fuzz_setup
     #!/usr/bin/env bash
     set -euo pipefail
-    cd {{_fuzz_dir}}/..
-    if [ -n "{{TARGET}}" ]; then
-        exec cargo +{{_nightly}} fuzz run {{TARGET}} -- {{ARGS}}
+    fuzz=(cargo +{{_nightly}} fuzz)
+    dir=(--fuzz-dir "{{_fuzz_dir}}")
+    targets="$("${fuzz[@]}" list "${dir[@]}")"
+    if [ $# -gt 0 ] && [[ $1 != -* ]]; then
+        targets=$1
+        shift
     fi
-    for target in $(cargo +{{_nightly}} fuzz list); do
-        cargo +{{_nightly}} fuzz run "$target" -- -max_total_time=300
+    [ $# -gt 0 ] || set -- -max_total_time=300
+    for target in $targets; do
+        "${fuzz[@]}" run "${dir[@]}" "$target" -- "$@"
     done
 
-# minimize TARGET's corpus
-fuzz-cmin TARGET: _fuzz_setup
-    cd {{_fuzz_dir}}/.. && cargo +{{_nightly}} fuzz cmin {{TARGET}}
+# minimize every target's corpus, or the TARGETS'
+[positional-arguments]
+fuzz-cmin *TARGETS: _fuzz_setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fuzz=(cargo +{{_nightly}} fuzz)
+    dir=(--fuzz-dir "{{_fuzz_dir}}")
+    [ $# -gt 0 ] || set -- $("${fuzz[@]}" list "${dir[@]}")
+    for target in "$@"; do
+        "${fuzz[@]}" cmin "${dir[@]}" "$target"
+    done
+
+# minimize a crashing INPUT to TARGET
+fuzz-tmin TARGET INPUT: _fuzz_setup
+    cargo +{{_nightly}} fuzz tmin --fuzz-dir "{{_fuzz_dir}}" "{{TARGET}}" "{{INPUT}}"
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall

@@ -11,7 +11,7 @@ on:
         options: ["600", "1800", "3600"]
         default: "3600"
 
-# Campaigns share each target's cached corpus, so they run one at a time.
+# Campaigns share the cached corpora, so they run one at a time.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -20,16 +20,12 @@ permissions:
   contents: read
 
 jobs:
+  # `just fuzz` runs every target in turn and stops at the first crash.
   fuzz:
-    name: Fuzz ${{ matrix.target }}
+    name: Fuzz campaign
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [bundle_read, stamp_read, wire_mutation]
+    timeout-minutes: 240
     env:
-      TARGET: ${{ matrix.target }}
       DURATION: ${{ inputs.duration || '3600' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -41,33 +37,49 @@ jobs:
         with:
           tool: just,cargo-binstall
 
-      - name: Restore corpus
+      - name: Install the fuzz toolchain
+        run: just _fuzz_setup
+
+      # Read-only: the pull-request fuzz job in rust.yml saves it.
+      - name: Restore fuzz build
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: crates/tachyon/fuzz/corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
-          restore-keys: fuzz-corpus-${{ matrix.target }}-
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/tachyon/fuzz/target
+          key: ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-${{ hashFiles('crates/tachyon/src/**/*.rs', 'crates/tachyon/fuzz/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-fuzz-${{ hashFiles('justfile', 'rust-toolchain.toml', 'crates/tachyon/fuzz/Cargo.lock') }}-
+
+      - name: Restore corpora
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: crates/tachyon/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
 
       - name: Fuzz
-        run: just fuzz "$TARGET" -max_total_time="$DURATION"
+        run: just fuzz -max_total_time="$DURATION"
 
-      - name: Minimize corpus
+      - name: Minimize corpora
         if: always()
-        timeout-minutes: 15
-        run: just fuzz-cmin "$TARGET"
+        timeout-minutes: 30
+        run: just fuzz-cmin
 
-      - name: Save corpus
+      - name: Save corpora
         if: always()
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: crates/tachyon/fuzz/corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/tachyon/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
 
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: fuzz-artifacts-${{ matrix.target }}
-          path: crates/tachyon/fuzz/artifacts/${{ matrix.target }}
+          name: fuzz-artifacts
+          path: crates/tachyon/fuzz/artifacts
           if-no-files-found: ignore
           retention-days: 30
