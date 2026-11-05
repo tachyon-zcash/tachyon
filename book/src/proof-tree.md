@@ -384,7 +384,7 @@ Every stamp's action set polynomial is a product of linear factors, one per leaf
 Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's.
 Once consensus checks the published [anchor](./anchor.md), every spend leaf beneath it derived its nullifier pair at that anchor's epoch, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
+`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-steps).
 
 ### Stamp anchor
 
