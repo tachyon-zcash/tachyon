@@ -8,6 +8,7 @@
 //! absorption.
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -38,21 +39,24 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-/// The `Summary` header gadget.
+/// `Summary` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("SummaryOutput(..)")]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_prev` field.
+    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// The `anchor_end` field.
+    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// The `acc_commit` field.
+    /// `acc_commit`.
     pub acc_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Summary {
+    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is a free
+    /// witness of the seed step, as `anchor_start` is for
+    /// [`AnchorSpan`](super::pool::AnchorSpan).
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
     type Output = Kind![Fp; SummaryOutput<'_, _>];
 

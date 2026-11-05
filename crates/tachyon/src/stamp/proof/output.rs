@@ -1,6 +1,7 @@
 //! Output tachygram-binding header and step.
 
 extern crate alloc;
+
 use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
@@ -30,19 +31,20 @@ use crate::{
 #[derive(Debug)]
 pub struct OutputHeader;
 
-/// The `OutputHeader` header gadget.
+/// `OutputHeader` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("OutputHeaderOutput(..)")]
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `pad` field.
+    /// `pad`.
     pub pad: Element<'dr, D>,
-    /// The `cv` field.
+    /// `cv`.
     pub cv: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for OutputHeader {
+    /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
 

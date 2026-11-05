@@ -8,6 +8,7 @@
 //! [`NoteNullifiers`].
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -27,7 +28,7 @@ use udon::{
 use crate::{
     collections::indexed_multiset,
     constants::EPOCH_MAX,
-    keys::{self, ProofAuthorizingKey},
+    keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
     pasta::{Eq, Fp},
@@ -47,26 +48,27 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-/// The `NoteSecret` header gadget.
+/// `NoteSecret` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteSecretOutput(..)")]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The note's `rcm` field.
+    /// `note.rcm`.
     pub rcm: Element<'dr, D>,
-    /// The note's `pk` field.
+    /// `note.pk`.
     pub pk: Element<'dr, D>,
-    /// The note's `value` field.
+    /// `note.value`.
     pub value: Element<'dr, D>,
-    /// The note's `psi` field.
+    /// `note.psi`.
     pub psi: Element<'dr, D>,
-    /// The `mk` field.
+    /// `mk`.
     pub mk: Element<'dr, D>,
 }
 
 impl Header<Fp> for NoteSecret {
-    type Data = (note::Commitment, Note, keys::NoteMasterKey);
+    /// `(cm, note, mk)`
+    type Data = (note::Commitment, Note, NoteMasterKey);
     type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(8);
@@ -128,21 +130,22 @@ impl Header<Fp> for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-/// The `NoteNullifiers` header gadget.
+/// `NoteNullifiers` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteNullifiersOutput(..)")]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `epoch_start` field.
+    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// The `epoch_end` field.
+    /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
-    /// The `nf_commit` field.
+    /// `nf_commit`.
     pub nf_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for NoteNullifiers {
+    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
@@ -386,6 +389,7 @@ impl Step<Pasta> for NullifierDerive {
                     )
                 })?;
 
+            // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
             let nullifiers = mk.derive_window(epoch_start);
             let output = (cm, epoch_start, seq.commit(), epoch_end);
             Ok((seq, output, nullifiers))
@@ -404,6 +408,8 @@ impl Step<Pasta> for NullifierDerive {
         let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
         let output = native.as_ref().map(|result| result.1);
         let z_value = z.value().map(|challenge| *challenge);
+        // The window's members at `z`, encoded natively from the
+        // sponge-derived nullifiers and their epochs.
         let window_at_z = D::try_just(|| {
             let challenge = z_value.take();
             let (_, output_data, nullifiers) = native.take();
@@ -530,13 +536,9 @@ impl Step<Pasta> for NullifierFuse {
             let (_, merged_seq, _) = witness.take();
             let (left_cm, left_epoch_start, ..) = left.take();
             let (_, _, _, right_epoch_end) = right.take();
+            let merged_nf_commit = merged_seq.commit();
             Ok((
-                (
-                    left_cm,
-                    left_epoch_start,
-                    merged_seq.commit(),
-                    right_epoch_end,
-                ),
+                (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
                 (),
             ))
         })?;

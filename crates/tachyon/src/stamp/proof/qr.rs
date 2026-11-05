@@ -25,6 +25,7 @@
 )]
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -60,27 +61,31 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
-/// The `QrIntake` header gadget.
+/// `QrIntake` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("QrIntakeOutput(..)")]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_prev` field.
+    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// The `anchor_end` field.
+    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// The `discriminant` field.
+    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// The profile's `depth` field.
+    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// The profile's `bits` field.
+    /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// The `contents` field.
+    /// `contents`.
     pub contents: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrIntake {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile, contents)`.
+    /// The contents were drawn from the folds the coverage extent
+    /// `(anchor_prev, anchor_end]` certifies; `discriminant` is the network's
+    /// $R_0$.
     type Data = (
         EpochIndex,
         Anchor,
@@ -164,29 +169,33 @@ impl Header<Fp> for QrIntake {
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
-/// The `QrIntakeSides` header gadget.
+/// `QrIntakeSides` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("QrIntakeSidesOutput(..)")]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_prev` field.
+    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// The `anchor_end` field.
+    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// The `discriminant` field.
+    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// The profile's `depth` field.
+    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// The profile's `bits` field.
+    /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// The `non_residue` field.
+    /// `non_residue`.
     pub non_residue: [Element<'dr, D>; 2],
-    /// The `residue` field.
+    /// `residue`.
     pub residue: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrIntakeSides {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile, non_residue,
+    /// residue)`, the fields of the intake that was split with its two sides
+    /// in place of its contents. The sides are ordered by the bit that selects
+    /// them: `0 = NQR, 1 = QR`.
     type Data = (
         EpochIndex,
         Anchor,
@@ -384,7 +393,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor_prev, epoch, discriminant, stamp_commit)`
+    /// `(anchor_prev, epoch, discriminant, stamp)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetPoly);
 
     const INDEX: Index = Index::new(21);
@@ -951,27 +960,28 @@ impl Step<Pasta> for QrSideDescend {
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
-/// The `QrBucket` header gadget.
+/// `QrBucket` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("QrBucketOutput(..)")]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `anchor_next` field.
+    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// The `discriminant` field.
+    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// The profile's `depth` field.
+    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// The profile's `bits` field.
+    /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// The `contents_digest` field.
+    /// Contents bridge digest.
     pub contents_digest: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrBucket {
+    /// `(epoch, anchor_start, anchor_next, discriminant, profile, contents)`
     type Data = (
         EpochIndex,
         Anchor,

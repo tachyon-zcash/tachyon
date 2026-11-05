@@ -1,6 +1,7 @@
 //! Spend nullifier-binding header and step.
 
 extern crate alloc;
+
 use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
@@ -14,7 +15,9 @@ use udon::curve::EndomorphismAffine;
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
     constants::MAX_MONEY,
-    keys, note, nullifier,
+    keys::PaymentKey,
+    note,
+    nullifier::Nullifier,
     pasta::{EpAffine, Fp},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
@@ -32,31 +35,35 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendHeader;
 
-/// The `SpendHeader` header gadget.
+/// `SpendHeader` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("SpendHeaderOutput(..)")]
 pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `nf_current` field.
+    /// `nf_current`.
     pub nf_current: Element<'dr, D>,
-    /// The `nf_next` field.
+    /// `nf_next`.
     pub nf_next: Element<'dr, D>,
-    /// The `anchor` field.
+    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// The `pk` field.
+    /// `pk`.
     pub pk: Element<'dr, D>,
-    /// The `cv` field.
+    /// `cv`.
     pub cv: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for SpendHeader {
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
+    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
+    /// one epoch on; `anchor` threads the spendable lineage's pool position;
+    /// `pk` and `cv` come from the certified note.
     type Data = (
         note::Commitment,
-        nullifier::Nullifier,
-        nullifier::Nullifier,
+        Nullifier,
+        Nullifier,
         Anchor,
-        keys::PaymentKey,
+        PaymentKey,
         value::Commitment,
     );
     type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
