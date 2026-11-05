@@ -1,6 +1,7 @@
 //! Stamp header and stamp-producing/transforming steps.
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -28,13 +29,14 @@ use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
     digest::poseidon,
-    effect,
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private, public::ACTION_AUTH_GENERATOR},
     note::{self, Note},
     pasta,
     pasta::{EpAffine, Eq, Fp},
-    primitives::{ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit},
+    primitives::{
+        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+    },
     relations::{
         arithmetic as circuit, curve,
         enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
@@ -61,19 +63,20 @@ use crate::{
 #[derive(Debug)]
 pub struct Actions;
 
-/// The `Actions` header gadget.
+/// `Actions` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("ActionsOutput(..)")]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
-    /// The `anchor` field.
+    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// The `action_commit` field.
+    /// `action_commit`.
     pub action_commit: [Element<'dr, D>; 2],
-    /// The `stamp_tg_commit` field.
+    /// `stamp_tg_commit`.
     pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Actions {
+    /// `(action_commit, stamp_tg_commit, anchor)`
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
     type Output = Kind![Fp; ActionsOutput<'_, _>];
 
@@ -162,19 +165,20 @@ impl Header<Fp> for Actions {
 #[derive(Debug)]
 pub struct Stamp;
 
-/// The `Stamp` header gadget.
+/// `Stamp` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("StampOutput(..)")]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
-    /// The `anchor` field.
+    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// The `action_commit` field.
+    /// `action_commit`.
     pub action_commit: [Element<'dr, D>; 2],
-    /// The `stamp_tg_commit` field.
+    /// `stamp_tg_commit`.
     pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Stamp {
+    /// `(action_commit, stamp_tg_commit, anchor)`
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
@@ -377,8 +381,12 @@ impl Step<Pasta> for OutputAction {
         let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
         let action_root = poseidon::with_driver::action_digest(dr, (&cv_x, &cv_y), (&rk_x, &rk_y))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
-        action_root.enforce_equal(dr, &oracles.staged()[0])?;
+        let staged_root = &oracles.staged()[0];
+        action_root.enforce_equal(dr, staged_root)?;
         let action_roots = [action_root];
+        // The action-set commitment commits to exactly the one action this
+        // step derives. `cv` carries the note's value; `rk` derives from
+        // `alpha`, and so from `cm`.
         enforce_poly_roots(
             dr,
             oracles,
@@ -387,6 +395,9 @@ impl Step<Pasta> for OutputAction {
             "OutputAction: action set does not commit to the action",
         )?;
         let tachygram_roots = [cm_root, pad_root];
+        // The stamp accumulator commits to exactly the tachygram pair on the
+        // bind header, both roots fixed by the recursive verification of the
+        // left PCD.
         enforce_poly_roots(
             dr,
             oracles,
@@ -542,7 +553,10 @@ impl Step<Pasta> for SpendAction {
         let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
         let action_root = poseidon::with_driver::action_digest(dr, (&cv_x, &cv_y), (&rk_x, &rk_y))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
-        action_root.enforce_equal(dr, &oracles.staged()[0])?;
+        let staged_root = &oracles.staged()[0];
+        action_root.enforce_equal(dr, staged_root)?;
+        // The action-set commitment commits to exactly the one action this
+        // step derives; the root is in-circuit from the certified note.
         enforce_poly_roots(
             dr,
             oracles,
@@ -552,6 +566,9 @@ impl Step<Pasta> for SpendAction {
         )?;
         let current_root = left_encoded.as_gadget().nf_current.clone();
         let next_root = left_encoded.as_gadget().nf_next.clone();
+        // The stamp accumulator commits to exactly the nullifier pair on the
+        // bind header, both roots fixed by the recursive verification of the
+        // left PCD.
         enforce_poly_roots(
             dr,
             oracles,
@@ -602,6 +619,8 @@ impl Step<Pasta> for StampMerge {
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        // Bind the witnessed left/right input sets to the public commitments on
+        // the headers.
         super::check_polynomial(
             witness.0.0.as_ref(),
             &left.polynomials[0],
@@ -657,6 +676,7 @@ impl Step<Pasta> for StampMerge {
         let merged_tachygram_handle = Slot::output(1);
         let right_action_handle = Slot::right(0);
         let right_tachygram_handle = Slot::right(1);
+        // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
@@ -675,6 +695,7 @@ impl Step<Pasta> for StampMerge {
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         let right_anchor_element = right_encoded.as_gadget().anchor.clone();
+        // Same-anchor constraint.
         left_anchor_element
             .enforce_equal(dr, &right_anchor_element)
             .map_err(|_err| {
@@ -732,6 +753,8 @@ impl Step<Pasta> for ActionMerge {
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        // Bind the witnessed left/right input sets to the public commitments on
+        // the headers.
         super::check_polynomial(
             witness.0.0.as_ref(),
             &left.polynomials[0],
@@ -787,6 +810,7 @@ impl Step<Pasta> for ActionMerge {
         let merged_tachygram_handle = Slot::output(1);
         let right_action_handle = Slot::right(0);
         let right_tachygram_handle = Slot::right(1);
+        // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
@@ -805,6 +829,7 @@ impl Step<Pasta> for ActionMerge {
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         let right_anchor_element = right_encoded.as_gadget().anchor.clone();
+        // Same-anchor constraint.
         left_anchor_element
             .enforce_equal(dr, &right_anchor_element)
             .map_err(|_err| {
@@ -1087,6 +1112,7 @@ impl Step<Pasta> for FeeFuse {
             "FeeFuse: left tachygram accumulator must commit to header commit",
         )?;
         let [digest, change] = fee_roots(witness.0, witness.1)?;
+        // Singleton references bind supplied fee polynomials to X - root.
         super::check_polynomial(
             witness.4.0.as_ref(),
             &[-digest, Fp::ONE],
@@ -1141,6 +1167,9 @@ impl Step<Pasta> for FeeFuse {
             witness.as_ref().map(|data| Fp::from(u64::from(data.1))),
         )?;
         circuit::bounded::<D, 51>(dr, &fee, MAX_MONEY)?;
+        // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
+        // field difference lies in [0, MAX_MONEY] exactly when the integer
+        // difference does.
         let change = maximum.sub(dr, &fee);
         circuit::bounded::<D, 51>(dr, &change, MAX_MONEY).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
@@ -1171,6 +1200,7 @@ impl Step<Pasta> for FeeFuse {
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let fee_digest = poseidon::with_driver::fee_digest(dr, (&cv_x, &cv_y), &fee)?;
         let fee_change = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &change, &psi)?;
+        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
         })?;
@@ -1317,6 +1347,7 @@ impl Step<Pasta> for FeeSeed {
         let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::with_driver::fee_digest(dr, (&cv_x, &cv_y), &zero)?;
         let fee_change = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &zero, &psi)?;
+        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
         })?;

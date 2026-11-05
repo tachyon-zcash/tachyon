@@ -1,8 +1,39 @@
-//! Polynomial identities over slots fixed before the framework's challenge.
+//! Each relation here is a convenience tool over the framework's
+//! [`Oracles::query_at_zeta`] hook. They share one shape: the result is
+//! prover-supplied (built off-circuit) rather than computed by the relation,
+//! the framework fixes each operand's slot before deriving a
+//! Fiat-Shamir challenge `z`, and the relation checks the defining
+//! algebraic identity at `z`, emitting one opening claim per operand at
+//! `(commitment, z, eval(z))`. These functions only *record* the openings;
+//! actually verifying them is the proof system's job, not done here.
 //!
-//! Child slots are bound by PCD; output slots are supplied by
-//! `Step::polynomials`. Callers preserve the correspondence between slots and
-//! semantic header fields.
+//! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
+//! into `z`, so the operands are fixed *before* `z` exists and the identity at
+//! a random `z` pins the corresponding polynomial identity (error `~deg/|F|`).
+//! An input that is **not** a committed operand (a raw scalar, say) is not
+//! pinned this way; a relation that takes such an input states its own
+//! precondition.
+//!
+//! # Caller obligation: binding
+//!
+//! These relations prove the identity among the polynomials in the slots;
+//! pinning *which* polynomials those are is the caller's job. Every operand the
+//! surrounding statement relies on must have its commitment grounded in a
+//! statement-fixed value -- a public input, a prior-step output, a
+//! transcript/header-absorbed value, or a consensus/output-checked commitment
+//! -- and the binding holds only once that chain actually terminates in such a
+//! value (a fresh witness, or a commitment merely threaded onward, is not
+//! itself enough). The binding target is the commitment *point*;
+//! trailing-zero coefficients collapse under commitment, so this is
+//! commitment-identity, not the literal coefficient vector.
+//!
+//! This principle is common to all of these relations; each states which
+//! operands it covers and any relation-specific nuance.
+//!
+//! Implementation invariant: the eval fed to each identity check is the same
+//! eval emitted in that operand's opening claim (one `query_at_zeta` call per
+//! operand). A refactor that recomputed or separately witnessed the evals could
+//! let the checked value diverge from the opened one and break soundness.
 
 use ragu::{Oracles, Slot};
 use ragu_core::{Error, Result, drivers::Driver};
@@ -54,7 +85,22 @@ pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
     left_value.enforce_equal(dr, &right_value)
 }
 
-/// Enforce `product(ζ) = multiplicand(ζ) * multiplier(ζ)`.
+/// Faithful polynomial product: confirm `product = multiplicand · multiplier`
+/// among three committed polynomials by opening all three at a Fiat-Shamir
+/// challenge.
+///
+/// `product` is prover-supplied and the relation works only from the three
+/// commitments and their openings at `z` -- it does not multiply the inputs.
+/// The point-wise identity `product(z) = multiplicand(z)·multiplier(z)` at a
+/// random `z` confirms the relation: with every operand committed and absorbed
+/// into `z`, the difference `product − multiplicand·multiplier` is a fixed
+/// polynomial pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// Every operand is committed and absorbed into `z`, so the module-level
+/// binding obligation -- here applying symmetrically to `multiplicand`,
+/// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     oracles: &mut Oracles<'_, 'dr, D>,
@@ -72,7 +118,27 @@ pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
         .map_err(|_err| Error::InvalidWitness(err.into()))
 }
 
-/// Enforce `accumulator(ζ) = ∏ᵢ (ζ - rootᵢ)` for a fixed root count.
+/// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
+/// given roots by opening the accumulator at a Fiat-Shamir challenge and
+/// comparing against the product of the root factors, computed in cheap field
+/// operations.
+///
+/// `accumulator` is prover-supplied and the relation works only from its
+/// commitment and opening at `z` -- it does not interpolate the roots. The
+/// point-wise identity `accumulator(z) = ∏ᵢ (z − rootᵢ)` at a random `z`
+/// confirms the relation: with the accumulator committed and absorbed into
+/// `z`, the difference `accumulator − ∏ᵢ (X − rootᵢ)` is a fixed polynomial
+/// pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// Only the accumulator is committed and absorbed into `z`; the module-level
+/// binding obligation applies to it. The roots are scalars: each must already
+/// be pinned before this relation contributes anything -- a header-bound value,
+/// a value derived in-circuit from bound values, or a free scalar staged before
+/// the framework's challenge. The call site states each root's pin.
+///
+/// `N` fixes the root count at compile time.
 pub(crate) fn enforce_poly_roots<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     dr: &mut D,
     oracles: &mut Oracles<'_, 'dr, D>,

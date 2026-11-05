@@ -19,6 +19,7 @@
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 extern crate alloc;
+
 use alloc::vec::Vec;
 use core::array;
 
@@ -41,7 +42,7 @@ use super::{
 };
 use crate::{
     digest::poseidon,
-    note,
+    note::{self},
     pasta::{Eq, Fp},
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
@@ -84,23 +85,24 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
-/// The `ArbitraryUnspent` header gadget.
+/// `ArbitraryUnspent` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("ArbitraryUnspentOutput(..)")]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `epoch_start` field.
+    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// The `epoch_next` field.
+    /// `epoch_next`.
     pub epoch_next: Element<'dr, D>,
-    /// The `anchor_next` field.
+    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// The `elapsed` field.
+    /// `elapsed`.
     pub elapsed: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for ArbitraryUnspent {
+    /// `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`
     type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
@@ -163,23 +165,25 @@ impl Header<Fp> for ArbitraryUnspent {
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
-/// The `NoteUnspent` header gadget.
+/// `NoteUnspent` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteUnspentOutput(..)")]
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `epoch_start` field.
+    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// The `epoch_next` field.
+    /// `epoch_next`.
     pub epoch_next: Element<'dr, D>,
-    /// The `anchor_next` field.
+    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
 }
 
 impl Header<Fp> for NoteUnspent {
+    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. `cm` leads;
+    /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed`.
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
 
@@ -242,19 +246,20 @@ impl Header<Fp> for NoteUnspent {
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
-/// The `AnchorSpan` header gadget.
+/// `AnchorSpan` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("AnchorSpanOutput(..)")]
 pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `anchor_end` field.
+    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// The `members` field.
+    /// `members`.
     pub members: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for AnchorSpan {
+    /// `(anchor_start, members, anchor_end)`
     type Data = (Anchor, AnchorSetCommit, Anchor);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
@@ -908,6 +913,8 @@ impl Step<Pasta> for UnspentBind {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        // The divisibility bind: `nf_seq = elapsed · complement`, so every
+        // elapsed member is a genuine derived pair.
         enforce_poly_product(
             dr,
             oracles,
@@ -916,6 +923,9 @@ impl Step<Pasta> for UnspentBind {
             &Slot::right(0),
             "UnspentBind: sequence does not match the derivation",
         )?;
+        // Defensive. `QrUnspentInit` emits `epoch_next = epoch_start + 1`, and
+        // every other producer only raises `epoch_next`, so every
+        // `ArbitraryUnspent` covers at least one epoch.
         let start = left_encoded.as_gadget().epoch_start.clone();
         let end = left_encoded.as_gadget().epoch_next.clone();
         let one = Element::constant(dr, Fp::ONE);

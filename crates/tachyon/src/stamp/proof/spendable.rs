@@ -9,6 +9,7 @@
 //! segments.
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -36,19 +37,22 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
-/// The `NoteSpendable` header gadget.
+/// `NoteSpendable` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteSpendableOutput(..)")]
 pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `epoch_current` field.
+    /// `epoch_current`.
     pub epoch_current: Element<'dr, D>,
-    /// The `anchor` field.
+    /// `anchor`.
     pub anchor: Element<'dr, D>,
 }
 
 impl Header<Fp> for NoteSpendable {
+    /// `(cm, epoch_current, anchor)`. `cm` threads unchanged; the rest
+    /// advances per lift. A lift checks continuity by meeting this point with
+    /// a [`NoteUnspent`] segment's near end.
     type Data = (note::Commitment, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
@@ -146,9 +150,14 @@ impl Step<Pasta> for SpendableInit {
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
         super::enforce_stamp_domain(dr, &epoch, oracles.bridge_hash())?;
+        // The anchor immediately after the creation stamp, computed in-circuit
+        // so the proof certifies the fold of `epoch` and `creation_commit`;
+        // consensus membership of the eventual spend anchor binds the rest
+        // (see the step doc).
         let anchor =
             poseidon::with_driver::anchor_next_stamp(dr, &previous, &epoch, oracles.bridge_hash())?;
         let x = left_encoded.as_gadget().cm.clone();
+        // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let evaluation = oracles.query(dr, Slot::output(1), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
@@ -271,12 +280,14 @@ impl Step<Pasta> for QrSpendableInit {
             ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
         })?;
         let unspent_next = left_encoded.as_gadget().epoch_next.clone();
+        // Defensive: the anchor equality already rejects a wrong epoch label.
         next.enforce_equal(dr, &unspent_next).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSpendableInit: segment does not end in the epoch after the bucket's".into(),
             )
         })?;
         let x = left_encoded.as_gadget().cm.clone();
+        // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let evaluation = oracles.query(dr, Slot::right(0), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())

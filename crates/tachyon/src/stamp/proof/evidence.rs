@@ -13,6 +13,7 @@
 //! takes unchanged.
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 use core::array;
 
@@ -67,23 +68,24 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
-/// The `EvidenceTree` header gadget.
+/// `EvidenceTree` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("EvidenceTreeOutput(..)")]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `anchor_next` field.
+    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// The `discriminant` field.
+    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// The `root` field.
+    /// `root`.
     pub root: Element<'dr, D>,
 }
 
 impl Header<Fp> for EvidenceTree {
+    /// `(epoch, anchor_start, anchor_next, discriminant, root)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
@@ -133,25 +135,26 @@ impl Header<Fp> for EvidenceTree {
 #[derive(Clone, Debug)]
 pub struct EvidenceTreePair;
 
-/// The `EvidenceTreePair` header gadget.
+/// `EvidenceTreePair` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("EvidenceTreePairOutput(..)")]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
-    /// The `epoch` field.
+    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// The `anchor_start` field.
+    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// The `anchor_next` field.
+    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// The `discriminant` field.
+    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// The `first` field.
+    /// `first`.
     pub first: Element<'dr, D>,
-    /// The `second` field.
+    /// `second`.
     pub second: Element<'dr, D>,
 }
 
 impl Header<Fp> for EvidenceTreePair {
+    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
     type Data = (
         EpochIndex,
         Anchor,

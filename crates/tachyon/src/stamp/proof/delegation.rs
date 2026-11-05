@@ -8,6 +8,7 @@
 //! [`NoteNullifiers`].
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
@@ -56,25 +57,26 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-/// The `NoteSecret` header gadget.
+/// `NoteSecret` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteSecretOutput(..)")]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The note's `rcm` field.
+    /// `note.rcm`.
     pub rcm: Element<'dr, D>,
-    /// The note's `pk` field.
+    /// `note.pk`.
     pub pk: Element<'dr, D>,
-    /// The note's `value` field.
+    /// `note.value`.
     pub value: Element<'dr, D>,
-    /// The note's `psi` field.
+    /// `note.psi`.
     pub psi: Element<'dr, D>,
-    /// The `mk` field.
+    /// `mk`.
     pub mk: Element<'dr, D>,
 }
 
 impl Header<Fp> for NoteSecret {
+    /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
     type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
@@ -137,21 +139,22 @@ impl Header<Fp> for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-/// The `NoteNullifiers` header gadget.
+/// `NoteNullifiers` gadget.
 #[derive(Gadget, Write, derive_more::Debug)]
 #[debug("NoteNullifiersOutput(..)")]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
-    /// The `cm` field.
+    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// The `epoch_start` field.
+    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// The `epoch_end` field.
+    /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
-    /// The `nf_commit` field.
+    /// `nf_commit`.
     pub nf_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for NoteNullifiers {
+    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
@@ -432,6 +435,10 @@ impl Step<Pasta> for NullifierDerive {
                 "NullifierDerive: epoch_start is not group-aligned".into(),
             )
         })?;
+        // The whole window must land inside the epoch range: an index past
+        // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
+        // through `EpochIndex`, which cannot hold such an index; a real
+        // circuit sees a raw field element and needs the check.
         let width = Element::constant(
             dr,
             Fp::from(u64::try_from(NF_DERIVATION_WIDTH - 1).map_err(|_err| {
@@ -447,9 +454,12 @@ impl Step<Pasta> for NullifierDerive {
         let mk = left_encoded.as_gadget().mk.clone();
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        // The window's members at `z`, encoded in-circuit from the
+        // sponge-derived nullifiers and their epochs.
         let mut window_at_z = Element::constant(dr, Fp::ONE);
         let mut offset = Element::constant(dr, Fp::ONE);
         let one = Element::constant(dr, Fp::ONE);
+        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             let group_offset = offset.sub(dr, &one);
             let group_start = epoch_start.add(dr, &group_offset);
@@ -567,11 +577,13 @@ impl Step<Pasta> for NullifierFuse {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_cm = left_encoded.as_gadget().cm.clone();
+        let left_cm_element = left_encoded.as_gadget().cm.clone();
         let right_cm = right_encoded.as_gadget().cm.clone();
-        left_cm.enforce_equal(dr, &right_cm).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
-        })?;
+        left_cm_element
+            .enforce_equal(dr, &right_cm)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
+            })?;
         let end = left_encoded.as_gadget().epoch_end.clone();
         let start = right_encoded.as_gadget().epoch_start.clone();
         let one = Element::constant(dr, Fp::ONE);
@@ -590,15 +602,11 @@ impl Step<Pasta> for NullifierFuse {
         )?;
         let output = D::try_just(|| {
             let (_, merged_seq, _) = witness.take();
-            let (output_cm, left_epoch_start, ..) = left.take();
+            let (left_cm, left_epoch_start, ..) = left.take();
             let (_, _, _, right_epoch_end) = right.take();
+            let merged_nf_commit = merged_seq.commit();
             Ok((
-                (
-                    output_cm,
-                    left_epoch_start,
-                    merged_seq.commit(),
-                    right_epoch_end,
-                ),
+                (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
                 (),
             ))
         })?;
