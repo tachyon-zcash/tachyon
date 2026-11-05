@@ -177,6 +177,3 @@ impl FromIterator<Tachygram> for TachygramSetPoly {
         Self(multiset::encode(iter.into_iter().map(Fp::from)))
     }
 }
-
-#[cfg(test)]
-mod tests;

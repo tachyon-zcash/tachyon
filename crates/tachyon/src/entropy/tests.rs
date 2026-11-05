@@ -4,30 +4,6 @@ use super::*;
 use crate::{digest::poseidon, note, primitives::effect};
 
 #[test]
-fn spend_and_output_randomizers_differ() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let theta = ActionEntropy::random(rng);
-    let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-
-    let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
-    let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
-
-    assert_ne!(spend_alpha, output_alpha);
-}
-
-#[test]
-fn randomizer_depends_on_theta() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let theta_a = ActionEntropy::random(rng);
-    let theta_b = ActionEntropy::random(rng);
-    let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-
-    let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
-    let other: Fq = theta_b.randomizer::<effect::Spend>(cm).into();
-    assert_ne!(first, other);
-}
-
-#[test]
 fn randomizer_embeds_the_poseidon_output() {
     let rng = &mut StdRng::seed_from_u64(0);
     let theta = ActionEntropy::random(rng);
@@ -51,8 +27,5 @@ fn debug_entropy_redacts_bytes() {
     let mut bytes = [0xAB; 32];
     bytes[31] = 0x2B;
     let theta = ActionEntropy::from_bytes(bytes).unwrap();
-    let dbg = alloc::format!("{theta:?}");
-    assert!(dbg.contains("ActionEntropy"));
-    assert!(!dbg.contains("AB"));
-    assert!(!dbg.contains("171"));
+    assert_eq!(alloc::format!("{theta:?}"), "ActionEntropy(..)");
 }

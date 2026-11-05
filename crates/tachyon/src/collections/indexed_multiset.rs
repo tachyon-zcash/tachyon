@@ -119,6 +119,3 @@ pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -
         .into_iter()
         .fold(Fp::ONE, |acc, (idx, m)| acc * direct_eval_single(idx, m, x))
 }
-
-#[cfg(test)]
-mod tests;

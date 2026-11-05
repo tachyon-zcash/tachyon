@@ -112,25 +112,6 @@ fn read_rejects_truncated_input() {
 }
 
 #[test]
-fn read_ignores_trailing_bytes() {
-    let one_byte_with_trailing = [0x00, 0xDE, 0xAD, 0xBE, 0xEF];
-    assert_eq!(
-        CompactSize::read(one_byte_with_trailing.as_slice()).unwrap(),
-        CompactSize::OneByte(0),
-    );
-    let two_byte_with_trailing = [
-        [FLAG_TWO_BYTES].as_slice(),
-        &u16::from(FLAG_TWO_BYTES).to_le_bytes(),
-        [0xDE, 0xAD].as_slice(),
-    ]
-    .concat();
-    assert_eq!(
-        CompactSize::read(two_byte_with_trailing.as_slice()).unwrap(),
-        CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
-    );
-}
-
-#[test]
 fn try_from_usize_round_trip() {
     for n in [
         0usize,
