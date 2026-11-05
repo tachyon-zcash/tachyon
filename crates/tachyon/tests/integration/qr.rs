@@ -549,9 +549,6 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     }
 }
 
-
-
-
 #[test]
 fn qr_side_descend_rejects_foreign_witness_parts() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -982,8 +979,6 @@ fn qr_intake_merge_joins_two_spans() {
     );
 }
 
-
-
 #[test]
 fn qr_intake_merge_rejects_mismatched_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1080,11 +1075,18 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
     if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
         rng,
         qr::QrIntakeMerge,
-        witness::qr_intake_merge((*deeper.data(), *right.data()), &deeper_members, &right_members),
+        witness::qr_intake_merge(
+            (*deeper.data(), *right.data()),
+            &deeper_members,
+            &right_members,
+        ),
         deeper,
         right,
     ) {
-        assert_eq!(err.to_string(), "QrIntakeMerge: inputs sit at different depths");
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeMerge: inputs sit at different depths"
+        );
     } else {
         panic!();
     }
@@ -1549,6 +1551,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(400);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
@@ -1571,12 +1574,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         span,
         EPOCH_MEMBERS,
         2,
-        Fp::from(
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch0),
-        ),
+        Fp::from(mk.derive_nullifier(epoch0)),
         Anchor::from(Fp::ZERO),
     );
     assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
@@ -1606,14 +1604,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     assert_eq!(
         (nf_current, nf_next),
         (
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch2),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(u32::from(epoch2) + 1))
+            mk.derive_nullifier(epoch2),
+            mk.derive_nullifier(EpochIndex::new(u32::from(epoch2) + 1))
         )
     );
 }
@@ -2418,8 +2410,6 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     }
 }
 
-
-
 #[test]
 fn qr_partition_routes_consecutive_values_by_profile() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2499,6 +2489,7 @@ fn unspent_lift_carries_a_spendable() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
@@ -2509,25 +2500,12 @@ fn unspent_lift_carries_a_spendable() {
 
     let spendable = user.spendable_at(rng, &pool, &note, epoch1);
     let first = epoch_bucket(rng, &pool, epoch1);
-    let segment = qr_bucket_segment(rng, &first, |epoch| {
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-    });
+    let segment = qr_bucket_segment(rng, &first, |epoch| mk.derive_nullifier(epoch));
     let bucket = epoch_bucket(rng, &pool, epoch2);
     let lift = witness::unspent_lift(
         (*segment.data(), *bucket.pcd.data()),
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch2)
-            .into(),
-        &[user
-            .pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch1)],
+        mk.derive_nullifier(epoch2).into(),
+        &[mk.derive_nullifier(epoch1)],
         &bucket.members,
     );
     let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();

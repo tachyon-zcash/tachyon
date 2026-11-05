@@ -26,8 +26,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block,
-    random_block_with, shared_sk, stamp_coverage,
+    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block, random_block_with,
+    shared_sk, stamp_coverage,
 };
 
 #[test]
@@ -390,7 +390,6 @@ fn zero_action_bundle_is_valid() {
     bundle.verify_signatures(&sighash).unwrap();
 }
 
-
 #[test]
 fn duplicated_spend_cannot_inflate() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -540,7 +539,6 @@ fn verify_proof_disproves_uncovered_adjunct() {
         .collect();
     assert!(!bundle.verify_proof(rng, &digests).unwrap());
 }
-
 
 #[test]
 fn innocent_aggregate_from_two_autonomes() {

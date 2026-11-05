@@ -127,6 +127,7 @@ fn same_epoch_honest_spend_accepted() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     while pool.height().0 < EPOCH_SIZE {
         pool.mine(random_block(rng, 1, 3));
     }
@@ -139,16 +140,8 @@ fn same_epoch_honest_spend_accepted() {
     let stamp = honest_spend_stamp(rng, &user, bind_pcd);
 
     let expected = TachygramSetPoly::from_iter([
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-            .into(),
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch.next().unwrap())
-            .into(),
+        mk.derive_nullifier(epoch).into(),
+        mk.derive_nullifier(epoch.next().unwrap()).into(),
     ])
     .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
@@ -550,6 +543,7 @@ fn spend_bind_honest() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -557,20 +551,8 @@ fn spend_bind_honest() {
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let (_cm, nf_current, nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
-    assert_eq!(
-        nf_current,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(spend_epoch)
-    );
-    assert_eq!(
-        nf_next,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(spend_epoch.next().unwrap())
-    );
+    assert_eq!(nf_current, mk.derive_nullifier(spend_epoch));
+    assert_eq!(nf_next, mk.derive_nullifier(spend_epoch.next().unwrap()));
 }
 
 #[test]
@@ -699,6 +681,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     mine_cm_block(rng, &mut pool, note.commitment());
     let epoch1 = EpochIndex::new(1);
     let epoch2 = EpochIndex::new(2);
@@ -708,16 +691,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let mut sync = SyncSim::new();
     sync.accept_delegation(
         0,
-        alloc::vec![
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch1),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch2)
-        ],
+        alloc::vec![mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2)],
         epoch1,
     );
     let unspent = sync.build_next_unspent(rng, 0, &pool, epoch2);
@@ -725,33 +699,13 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
     let (_cm, nf_current, _nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
-    assert_eq!(
-        nf_current,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch2)
-    );
-    assert_ne!(
-        nf_current,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch1)
-    );
+    assert_eq!(nf_current, mk.derive_nullifier(epoch2));
+    assert_ne!(nf_current, mk.derive_nullifier(epoch1));
 
     let stamp = honest_spend_stamp(rng, &user, bind_pcd);
     let expected = TachygramSetPoly::from_iter([
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch2)
-            .into(),
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(EpochIndex::new(3))
-            .into(),
+        mk.derive_nullifier(epoch2).into(),
+        mk.derive_nullifier(EpochIndex::new(3)).into(),
     ])
     .commit();
     assert_eq!(stamp.data().1, expected);
@@ -763,6 +717,7 @@ fn spend_stamp_assembles_tachygrams() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -772,18 +727,8 @@ fn spend_stamp_assembles_tachygrams() {
     let stamp_pcd = honest_spend_stamp(rng, &user, bind_pcd);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
-        Tachygram::from(
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(spend_epoch),
-        ),
-        Tachygram::from(
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(spend_epoch.next().unwrap()),
-        ),
+        Tachygram::from(mk.derive_nullifier(spend_epoch)),
+        Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap())),
     ])
     .commit();
     assert_eq!(tg_commit, expected);
@@ -795,6 +740,7 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     mine_cm_block(rng, &mut pool, note.commitment());
     let epoch1 = EpochIndex::new(1);
     let epoch2 = EpochIndex::new(2);
@@ -804,16 +750,7 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let mut sync = SyncSim::new();
     sync.accept_delegation(
         0,
-        alloc::vec![
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch1),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch2)
-        ],
+        alloc::vec![mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2)],
         epoch1,
     );
 
@@ -892,6 +829,50 @@ fn multi_epoch_fuse_setup(
 }
 
 #[test]
+fn unspent_fuse_rejects_wrong_sequences() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
+    for (fuse_witness, expected) in [
+        (
+            (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+            ),
+            "UnspentFuse: left polynomial does not match header",
+        ),
+        (
+            (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
+            ),
+            "UnspentFuse: right polynomial does not match header",
+        ),
+        (
+            (
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+            ),
+            "UnspentFuse: combined is not the concatenation of the halves",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            pool::UnspentFuse,
+            fuse_witness,
+            left.clone(),
+            right.clone(),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
+    }
+}
+
+#[test]
 fn unspent_fuse_composes() {
     let rng = &mut StdRng::seed_from_u64(0);
     let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
@@ -920,83 +901,12 @@ fn unspent_fuse_composes() {
 }
 
 #[test]
-fn unspent_fuse_rejects_wrong_left_seq() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentFuse,
-        (
-            NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
-            NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-            NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-        ),
-        left,
-        right,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentFuse: left polynomial does not match header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn unspent_fuse_rejects_wrong_right_seq() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentFuse,
-        (
-            NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-            NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-            NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
-        ),
-        left,
-        right,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentFuse: right polynomial does not match header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn unspent_fuse_rejects_wrong_combined() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3], left, right) = multi_epoch_fuse_setup(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentFuse,
-        (
-            NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-            NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-            NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-        ),
-        left,
-        right,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentFuse: combined is not the concatenation of the halves"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn lift_crosses_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(300);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
@@ -1011,12 +921,7 @@ fn lift_crosses_a_stampless_epoch() {
     let arbitrary = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        |epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch)
-        },
+        |epoch| mk.derive_nullifier(epoch),
         (epoch1, epoch3),
     );
     let (_, epoch_start, elapsed, epoch_next, _) = *arbitrary.data();
@@ -1026,16 +931,7 @@ fn lift_crosses_a_stampless_epoch() {
         elapsed,
         NfSeqPoly::new(
             epoch1,
-            &[
-                user.pak
-                    .nk
-                    .derive_note_private(note.psi)
-                    .derive_nullifier(epoch1),
-                user.pak
-                    .nk
-                    .derive_note_private(note.psi)
-                    .derive_nullifier(epoch2)
-            ],
+            &[mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2)],
         )
         .commit()
     );
@@ -1091,18 +987,14 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
 
     let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let epoch_end = EpochIndex::new(EPOCH_MAX);
     let range = user.derivation_pcd(rng, note, epoch_start, epoch_end);
 
     let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
@@ -1120,78 +1012,101 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
 
     assert_eq!(
         complement_seq.commit(),
-        NfSeqPoly::new(
-            epoch_end,
-            &[user
-                .pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch_end)]
-        )
-        .commit()
+        NfSeqPoly::new(epoch_end, &[mk.derive_nullifier(epoch_end)]).commit()
     );
 }
 
 #[test]
-fn unspent_bind_rejects_elapsed_mismatch() {
+fn unspent_bind_rejects_mismatched_sequences() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let other = user.random_note(700);
     let pool = pool_closing_epoch_zero(rng, &note);
-
     let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
+    let mk = user.pak.nk.derive_note_private(note.psi);
+
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (_honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
     );
-    let bogus_elapsed = NfSeqPoly::new(
-        EpochIndex::new(0),
-        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+    let wide = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
+    let (wide_elapsed_seq, wide_nf_seq, _) = witness::unspent_bind(
+        (*unspent.data(), *wide.data()),
+        &user.covering_window(&note, &wide),
+        &elapsed,
     );
+    let later = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentBind,
-        (bogus_elapsed, nf_seq, complement_seq),
-        unspent,
-        range,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: elapsed polynomial does not match header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn unspent_bind_rejects_uncovered_start() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let pool = pool_closing_epoch_zero(rng, &note);
-
-    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
-    let window = user.covering_window(&note, &range);
-    let witness = (
-        NfSeqPoly::new(EpochIndex::new(0), &elapsed),
-        NfSeqPoly::new(EpochIndex::new(64), &window),
-        NfSeqPoly::new(EpochIndex::new(64), &[]),
-    );
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, pool::UnspentBind, witness, unspent, range)
-    {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
+    for (bind_range, bind_witness, expected) in [
+        (
+            range.clone(),
+            (
+                NfSeqPoly::new(
+                    EpochIndex::new(0),
+                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+                ),
+                nf_seq.clone(),
+                complement_seq,
+            ),
+            "UnspentBind: elapsed polynomial does not match header",
+        ),
+        (
+            range.clone(),
+            witness::unspent_bind(
+                (*unspent.data(), *range.data()),
+                &user.covering_window(&other, &range),
+                &elapsed,
+            ),
+            "UnspentBind: covering sequence does not match header",
+        ),
+        (
+            range,
+            (
+                elapsed_seq,
+                nf_seq,
+                NfSeqPoly::new(
+                    EpochIndex::new(0),
+                    &[mk.derive_nullifier(EpochIndex::new(0))],
+                ),
+            ),
+            "UnspentBind: sequence does not match the derivation",
+        ),
+        (
+            wide,
+            (
+                wide_elapsed_seq,
+                wide_nf_seq,
+                NfSeqPoly::new(
+                    EpochIndex::new(1),
+                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+                ),
+            ),
+            "UnspentBind: sequence does not match the derivation",
+        ),
+        (
+            later.clone(),
+            (
+                NfSeqPoly::new(EpochIndex::new(0), &elapsed),
+                NfSeqPoly::new(EpochIndex::new(64), &user.covering_window(&note, &later)),
+                NfSeqPoly::new(EpochIndex::new(64), &[]),
+            ),
+            "UnspentBind: sequence does not match the derivation",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            pool::UnspentBind,
+            bind_witness,
+            unspent.clone(),
+            bind_range,
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 }
 
@@ -1200,25 +1115,14 @@ fn unspent_bind_rejects_uncovered_end() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32);
-    let unspent = detached_segment(rng, last, |epoch| {
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-    });
+    let unspent = detached_segment(rng, last, |epoch| mk.derive_nullifier(epoch));
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let window = user.covering_window(&note, &range);
     let witness = (
-        NfSeqPoly::new(
-            last,
-            &[user
-                .pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(last)],
-        ),
+        NfSeqPoly::new(last, &[mk.derive_nullifier(last)]),
         NfSeqPoly::new(EpochIndex::new(0), &window),
         NfSeqPoly::new(EpochIndex::new(0), &[]),
     );
@@ -1578,6 +1482,7 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     while pool.height().0 < 3 * EPOCH_SIZE {
@@ -1596,14 +1501,8 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
         (cm, nf_current, nf_next, bind_anchor),
         (
             note.commitment(),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(4)),
+            mk.derive_nullifier(epoch),
+            mk.derive_nullifier(EpochIndex::new(4)),
             anchor,
         )
     );
@@ -1673,38 +1572,12 @@ fn spend_stamp_rejects_a_foreign_action_set() {
 }
 
 #[test]
-fn unspent_bind_rejects_a_foreign_sequence() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let other = user.random_note(700);
-    let pool = pool_closing_epoch_zero(rng, &note);
-
-    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let witness = witness::unspent_bind(
-        (*unspent.data(), *range.data()),
-        &user.covering_window(&other, &range),
-        &elapsed,
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, pool::UnspentBind, witness, unspent, range)
-    {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: covering sequence does not match header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn multi_chunk_lift_uses_per_chunk_windows() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
     mine_through(rng, &mut pool, epoch2.first_block());
@@ -1714,18 +1587,9 @@ fn multi_chunk_lift_uses_per_chunk_windows() {
     sync.accept_delegation(
         0,
         alloc::vec![
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch1),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch2),
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch3),
+            mk.derive_nullifier(epoch1),
+            mk.derive_nullifier(epoch2),
+            mk.derive_nullifier(epoch3),
         ],
         epoch1,
     );
@@ -1968,24 +1832,15 @@ fn nullifier_fuse_composes() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
 
     let left = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(15));
     let right = user.derivation_pcd(rng, note, EpochIndex::new(16), EpochIndex::new(31));
     let left_nfs: Vec<Nullifier> = (0..16)
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let right_nfs: Vec<Nullifier> = (16..32)
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let fuse_witness =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
@@ -1997,12 +1852,7 @@ fn nullifier_fuse_composes() {
     assert_eq!(cm, note.commitment());
     assert_eq!((start, last), (EpochIndex::new(0), EpochIndex::new(31)));
     let members: Vec<Nullifier> = (0..32)
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let expected = NfSeqPoly::new(EpochIndex::new(0), &members);
     assert_eq!(commit, expected.commit());
@@ -2013,24 +1863,15 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
 
     let left = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(15));
     let right = user.derivation_pcd(rng, note, EpochIndex::new(16), EpochIndex::new(31));
     let left_nfs: Vec<Nullifier> = (0..16)
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let right_nfs: Vec<Nullifier> = (16..32)
-        .map(|epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(EpochIndex::new(epoch))
-        })
+        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
     let (left_seq, _merged, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
@@ -2092,109 +1933,29 @@ fn spendable_lift_rejects_a_wrong_start() {
 }
 
 #[test]
-fn unspent_bind_rejects_a_forged_complement() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let pool = pool_closing_epoch_zero(rng, &note);
-
-    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
-    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
-        (*unspent.data(), *range.data()),
-        &user.covering_window(&note, &range),
-        &elapsed,
-    );
-    let forged = NfSeqPoly::new(
-        EpochIndex::new(1),
-        &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentBind,
-        (elapsed_seq, nf_seq, forged),
-        unspent,
-        range,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn unspent_bind_rejects_a_wrong_epoch_member() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     mine_through(rng, &mut pool, epoch1.last_block());
 
-    let nf = |epoch: EpochIndex| {
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch })
-    };
+    let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch1, EpochIndex::new(2)));
     let range = user.derivation_pcd(rng, note, epoch0, epoch1);
     let elapsed_seq = NfSeqPoly::new(epoch1, &[nf(epoch1)]);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
-        &[user
-            .pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(EpochIndex::new(0))],
+        &[mk.derive_nullifier(EpochIndex::new(0))],
     );
     let nf_seq = NfSeqPoly::new(EpochIndex::new(0), &user.covering_window(&note, &range));
     if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
         rng,
         pool::UnspentBind,
         (elapsed_seq, nf_seq, complement_seq),
-        unspent,
-        range,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn unspent_bind_rejects_a_duplicating_complement() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let pool = pool_closing_epoch_zero(rng, &note);
-
-    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
-        (*unspent.data(), *range.data()),
-        &user.covering_window(&note, &range),
-        &elapsed,
-    );
-    let duplicating = NfSeqPoly::new(
-        EpochIndex::new(0),
-        &[user
-            .pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(EpochIndex::new(0))],
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentBind,
-        (elapsed_seq, nf_seq, duplicating),
         unspent,
         range,
     ) {
@@ -2251,6 +2012,7 @@ fn one_window_serves_init_and_matches_the_bind() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
 
@@ -2260,19 +2022,10 @@ fn one_window_serves_init_and_matches_the_bind() {
     assert_eq!(again.data(), window.data());
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
-    assert_eq!(
-        bind_pcd.data().1,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-    );
+    assert_eq!(bind_pcd.data().1, mk.derive_nullifier(epoch));
     assert_eq!(
         bind_pcd.data().2,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch.next().unwrap())
+        mk.derive_nullifier(epoch.next().unwrap())
     );
 }
 
@@ -2281,6 +2034,7 @@ fn bucket_spendable_syncs_to_a_spend() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     let epoch2 = EpochIndex::new(2);
     mine_through(rng, &mut pool, epoch2.first_block());
@@ -2288,18 +2042,6 @@ fn bucket_spendable_syncs_to_a_spend() {
     let lifted = user.spendable_at(rng, &pool, &note, epoch2);
     let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
 
-    assert_eq!(
-        bind_pcd.data().1,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch2)
-    );
-    assert_eq!(
-        bind_pcd.data().2,
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(EpochIndex::new(3))
-    );
+    assert_eq!(bind_pcd.data().1, mk.derive_nullifier(epoch2));
+    assert_eq!(bind_pcd.data().2, mk.derive_nullifier(EpochIndex::new(3)));
 }

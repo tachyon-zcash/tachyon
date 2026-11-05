@@ -180,11 +180,6 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch1));
 }
 
-
-
-
-
-
 #[test]
 fn evidence_tree_joins_reject_mismatched_trees() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -280,7 +275,11 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     );
 
     for (left, right, complaint) in [
-        (tree0.clone(), tree1.clone(), "inputs cover different epochs"),
+        (
+            tree0.clone(),
+            tree1.clone(),
+            "inputs cover different epochs",
+        ),
         (
             tree0.clone(),
             build_evidence_tree(rng, vec![foreign]).pcd,
@@ -298,17 +297,32 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         ),
     ] {
         let left_pair = PROOF_SYSTEM
-            .fuse(rng, evidence::EvidenceTreePairFuse, (), left.clone(), left.clone())
+            .fuse(
+                rng,
+                evidence::EvidenceTreePairFuse,
+                (),
+                left.clone(),
+                left.clone(),
+            )
             .unwrap()
             .0;
         let right_pair = PROOF_SYSTEM
-            .fuse(rng, evidence::EvidenceTreePairFuse, (), right.clone(), right.clone())
+            .fuse(
+                rng,
+                evidence::EvidenceTreePairFuse,
+                (),
+                right.clone(),
+                right.clone(),
+            )
             .unwrap()
             .0;
         if let Err(ragu_core::Error::InvalidWitness(err)) =
             PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
         {
-            assert_eq!(err.to_string(), format!("EvidenceTreePairFuse: {complaint}"));
+            assert_eq!(
+                err.to_string(),
+                format!("EvidenceTreePairFuse: {complaint}")
+            );
         } else {
             panic!("{complaint}");
         }
