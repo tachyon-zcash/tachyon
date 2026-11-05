@@ -273,11 +273,11 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             stamp_pcd,
             span.clone(),
         );
-        if let Some(expected) = expected {
+        if let Some(message) = expected {
             if let Err(ragu_core::Error::InvalidWitness(err)) = lifted {
-                assert_eq!(err.to_string(), expected);
+                assert_eq!(err.to_string(), message);
             } else {
-                panic!("{expected}");
+                panic!("{message}");
             }
         } else {
             assert_eq!(lifted.unwrap().0.data().2, anchor_end);

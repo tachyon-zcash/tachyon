@@ -1669,7 +1669,7 @@ fn qr_unspent_init_rejects_a_twin_value() {
         Fp::from(nf),
         Anchor::from(Fp::ZERO),
     );
-    let (epoch, _, _, discriminant, ..) = *bucket.pcd.data();
+    let (epoch, ..) = *bucket.pcd.data();
     let mut witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 

@@ -333,12 +333,14 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
 
     let mut node = tree.pcd.clone();
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-        let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
         node = PROOF_SYSTEM
             .fuse(
                 rng,
                 evidence::EvidenceTreeDescend,
-                witness::evidence_tree_descend((*node.data(), ()), path),
+                witness::evidence_tree_descend(
+                    (*node.data(), ()),
+                    <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap(),
+                ),
                 node,
                 Proof::bootstrap().carry::<()>(()),
             )

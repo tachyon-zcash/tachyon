@@ -399,9 +399,9 @@ fn verify_proof_action_multiset_invariants() {
     for edited in [
         digests[1..].to_vec(),
         digests[..digests.len() - 1].to_vec(),
-        [&digests[..], &digests[..1]].concat(),
+        [digests.as_slice(), &digests[..1]].concat(),
         [
-            &digests[..],
+            digests.as_slice(),
             &[random_action(rng).descriptor().digest().unwrap()],
         ]
         .concat(),

@@ -9,7 +9,7 @@ fn epoch_difference_counts_the_span() {
 #[test]
 #[should_panic(expected = "epoch difference is positive")]
 fn epoch_difference_rejects_reversed_operands() {
-    let _reversed = EpochIndex(3) - EpochIndex(7);
+    let _: EpochDiff = EpochIndex(3) - EpochIndex(7);
 }
 
 #[test]
