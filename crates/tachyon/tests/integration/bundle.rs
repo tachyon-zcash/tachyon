@@ -30,7 +30,6 @@ use crate::fixtures::{
     shared_sk, stamp_coverage,
 };
 
-
 #[test]
 fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1284,14 +1283,6 @@ fn spend_plan_at(
     })
 }
 
-
-
-
-
-
-
-
-
 #[test]
 fn plan_value_balance_is_bounded_by_max_money() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1459,9 +1450,6 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     );
 }
 
-
-
-
 #[test]
 fn memo_binds_the_commitment_but_not_the_auth_digest() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1519,8 +1507,6 @@ fn plan_memo_reaches_the_signed_bundle() {
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
     bundle.verify_signatures(&sighash).unwrap();
 }
-
-
 
 #[test]
 fn bundle_lift_preserves_coverage() {

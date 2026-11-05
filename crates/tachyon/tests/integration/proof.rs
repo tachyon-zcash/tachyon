@@ -7,7 +7,7 @@ use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
+    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
     Note, Tachygram, TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
@@ -733,7 +733,6 @@ fn spend_stamp_assembles_tachygrams() {
     assert_eq!(tg_commit, expected);
 }
 
-
 #[test]
 fn unspent_lift_spans_several_whole_epochs() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -757,7 +756,12 @@ fn unspent_lift_spans_several_whole_epochs() {
     let unspent = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        |epoch| user.pak.nk.derive_note_private(note.psi).derive_nullifier(epoch),
+        |epoch| {
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch)
+        },
         (epoch1, epoch4),
     );
 
@@ -1231,83 +1235,84 @@ fn note_seed_derives_the_payment_key_from_pak() {
 }
 
 #[test]
-fn nullifier_derive_rejects_a_foreign_sequence() {
+fn nullifier_derive_rejects_invalid_windows() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let note_a = user.random_note(500);
-    let note_b = user.random_note(700);
+    let note = user.random_note(500);
+    let other = user.random_note(700);
+    let secret = honest_secret(rng, &user, note);
+    let (cm, ..) = *secret.data();
+    let past_the_end = EpochIndex::new(EPOCH_MAX - 3);
 
-    let secret_a = honest_secret(rng, &user, note_a);
-    let (cm_a, ..) = *secret_a.data();
-    let (epoch_start, foreign_seq) = witness::nullifier_derive(
+    for (derive_witness, expected) in [
         (
-            (cm_a, note_a, user.pak.nk.derive_note_private(note_b.psi)),
-            (),
+            witness::nullifier_derive(
+                ((cm, note, user.pak.nk.derive_note_private(other.psi)), ()),
+                EpochIndex::new(16),
+            ),
+            "NullifierDerive: sequence does not match the derived window",
         ),
-        EpochIndex::new(16),
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        delegation::NullifierDerive,
-        (epoch_start, foreign_seq),
-        secret_a,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "NullifierDerive: sequence does not match the derived window"
-        );
-    } else {
-        panic!();
+        (
+            (
+                EpochIndex::new(14),
+                witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12)).1,
+            ),
+            "NullifierDerive: epoch_start is not group-aligned",
+        ),
+        (
+            (past_the_end, NfSeqPoly::new(past_the_end, &[])),
+            "NullifierDerive: window exceeds the epoch range",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            delegation::NullifierDerive,
+            derive_witness,
+            secret.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 }
 
 #[test]
-fn nullifier_derive_rejects_a_misaligned_epoch_start() {
+fn nullifier_fuse_rejects_unjoinable_ranges() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let other = user.random_note(700);
 
-    let secret = honest_secret(rng, &user, note);
-    let (_, seq) = witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12));
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        delegation::NullifierDerive,
-        (EpochIndex::new(14), seq),
-        secret,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "NullifierDerive: epoch_start is not group-aligned"
+    for (right_note, right_start, right_end, expected) in [
+        (
+            note,
+            EpochIndex::new(32),
+            EpochIndex::new(47),
+            "NullifierFuse: ranges not contiguous",
+        ),
+        (
+            other,
+            EpochIndex::new(16),
+            EpochIndex::new(31),
+            "NullifierFuse: note commitments differ",
+        ),
+    ] {
+        let left = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(15));
+        let right = user.derivation_pcd(rng, right_note, right_start, right_end);
+        let fuse_witness = witness::nullifier_fuse(
+            (*left.data(), *right.data()),
+            &user.covering_window(&note, &left),
+            &user.covering_window(&right_note, &right),
         );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let epoch_start = EpochIndex::new(EPOCH_MAX - 3);
-    let secret = honest_secret(rng, &user, note);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        delegation::NullifierDerive,
-        (epoch_start, NfSeqPoly::new(epoch_start, &[])),
-        secret,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "NullifierDerive: window exceeds the epoch range"
-        );
-    } else {
-        panic!();
+        if let Err(ragu_core::Error::InvalidWitness(err)) =
+            PROOF_SYSTEM.fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
+        {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 }
 
@@ -1367,55 +1372,6 @@ fn derivation_covers_with_whole_windows() {
 }
 
 #[test]
-fn nullifier_fuse_rejects_non_contiguous() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let (left_start, right_start) = (EpochIndex::new(0), EpochIndex::new(32));
-    let range_a = user.derivation_pcd(rng, note, left_start, EpochIndex::new(15));
-    let range_b = user.derivation_pcd(rng, note, right_start, EpochIndex::new(47));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &user.covering_window(&note, &range_a),
-        &user.covering_window(&note, &range_b),
-    );
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
-    {
-        assert_eq!(err.to_string(), "NullifierFuse: ranges not contiguous");
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn nullifier_fuse_rejects_wrong_cm() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note_a = user.random_note(500);
-    let note_b = user.random_note(700);
-
-    let (left_start, right_start) = (EpochIndex::new(0), EpochIndex::new(16));
-    let range_a = user.derivation_pcd(rng, note_a, left_start, EpochIndex::new(15));
-    let range_b = user.derivation_pcd(rng, note_b, right_start, EpochIndex::new(31));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &user.covering_window(&note_a, &range_a),
-        &user.covering_window(&note_b, &range_b),
-    );
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
-    {
-        assert_eq!(err.to_string(), "NullifierFuse: note commitments differ");
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn spend_bind_rejects_a_secret_for_another_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1469,69 +1425,6 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
 }
 
 #[test]
-fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
-    let height = pool.height();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-
-    let (_rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
-    let (.., action_set, _pair) = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
-    let forged = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        stamp::SpendAction,
-        (theta, user.pak, action_set, forged),
-        bind_pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "SpendAction: tachygram set does not commit to the nullifier pair"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn spend_stamp_rejects_a_foreign_action_set() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
-    let height = pool.height();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-
-    let (_rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
-    let (_, foreign_theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
-    let (.., foreign, tachygram_set) =
-        witness::spend_action((*bind_pcd.data(), ()), foreign_theta, user.pak);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        stamp::SpendAction,
-        (theta, user.pak, foreign, tachygram_set),
-        bind_pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "SpendAction: action set does not commit to the action"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn multi_chunk_lift_uses_per_chunk_windows() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1576,35 +1469,113 @@ fn expected_pad(note: &Note) -> Tachygram {
 }
 
 #[test]
-fn output_bind_publishes_the_note_pair() {
+fn spend_stamp_rejects_foreign_sets() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let note = user.random_note(500);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
+    let height = pool.height();
+    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
+    let theta = ActionEntropy::random(rng);
+    let (.., action_set, tachygram_set) =
+        witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
+    let (.., foreign_action_set, _) =
+        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
+
+    for (action_witness, expected) in [
+        (
+            (
+                theta,
+                user.pak,
+                action_set,
+                TachygramSetPoly::from_iter([Tachygram::random(rng)]),
+            ),
+            "SpendAction: tachygram set does not commit to the nullifier pair",
+        ),
+        (
+            (theta, user.pak, foreign_action_set, tachygram_set),
+            "SpendAction: action set does not commit to the action",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            stamp::SpendAction,
+            action_witness,
+            bind_pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
+    }
+}
+
+#[test]
+fn output_stamp_rejects_foreign_sets() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let note = WalletSim::new(shared_sk()).random_note(200);
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (note, rcv))
+        .unwrap();
+    let anchor = Anchor::random(rng);
+    let (.., action_set, tachygram_set) =
+        witness::output_action((*bind_pcd.data(), ()), theta, anchor);
+    let (.., foreign_action_set, _) =
+        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
+
+    for (action_witness, expected) in [
+        (
+            (
+                theta,
+                anchor,
+                action_set,
+                TachygramSetPoly::from_iter([Tachygram::random(rng)]),
+            ),
+            "OutputAction: tachygram set does not commit to the bound pair",
+        ),
+        (
+            (theta, anchor, foreign_action_set, tachygram_set),
+            "OutputAction: action set does not commit to the action",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            stamp::OutputAction,
+            action_witness,
+            bind_pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
+    }
+}
+
+#[test]
+fn output_steps_publish_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
     let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let anchor = Anchor::random(rng);
 
-    let (pcd, ()) = PROOF_SYSTEM
+    let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (note, rcv))
         .unwrap();
-
     assert_eq!(
-        *pcd.data(),
+        *bind_pcd.data(),
         (
             Tachygram::from(note.commitment()),
             expected_pad(&note),
             rcv.commit(-note.value),
         )
     );
-}
 
-#[test]
-fn output_stamp_publishes_the_note_pair() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let note = WalletSim::new(shared_sk()).random_note(200);
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
-    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
-
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
-        .unwrap();
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1614,130 +1585,31 @@ fn output_stamp_publishes_the_note_pair() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-
-    let (_action_commit, tachygram_commit, stamp_anchor) = *pcd.data();
     assert_eq!(
-        tachygram_commit,
-        TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), expected_pad(&note)])
-            .commit()
-    );
-    assert_eq!(stamp_anchor, anchor);
-}
-
-#[test]
-fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(200);
-
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
-        .unwrap();
-
-    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
-    let (.., action_set, _pair) = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
-    let forged = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        stamp::OutputAction,
-        (theta, anchor, action_set, forged),
-        bind_pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "OutputAction: tachygram set does not commit to the bound pair"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn pad_differs_from_commitment() {
-    let note = WalletSim::new(shared_sk()).random_note(200);
-
-    assert_ne!(Tachygram::from(note.commitment()), expected_pad(&note));
-}
-
-#[test]
-fn output_stamp_rejects_a_foreign_action_set() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(200);
-
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
-        .unwrap();
-
-    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
-    let (.., foreign, tachygram_set) =
-        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        stamp::OutputAction,
-        (theta, anchor, foreign, tachygram_set),
-        bind_pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "OutputAction: action set does not commit to the action"
-        );
-    } else {
-        panic!();
-    }
-}
-
-fn output_action_commit(
-    rng: &mut StdRng,
-    note: Note,
-    theta: ActionEntropy,
-    rcv: value::Trapdoor,
-) -> ActionSetCommit {
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
-        .unwrap();
-    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
-            bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
+        *pcd.data(),
+        (
+            ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv).digest().unwrap()])
+                .commit(),
+            TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), expected_pad(&note)])
+                .commit(),
+            anchor,
         )
-        .unwrap();
-    pcd.data().0
+    );
 }
 
 #[test]
-fn output_action_is_bound_to_its_note() {
+fn spend_action_is_bound_to_its_note() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let note = WalletSim::new(shared_sk()).random_note(200);
-    let diverted = WalletSim::random(rng).random_note(200);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
+    let height = pool.height();
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::output(note, theta, rcv);
-    let planned = ActionSetPoly::from_iter([plan.digest().unwrap()]).commit();
 
-    assert_eq!(output_action_commit(rng, note, theta, rcv), planned);
-    assert_ne!(output_action_commit(rng, diverted, theta, rcv), planned);
-}
-
-fn spend_action_commit(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    spendable: Pcd<spendable::NoteSpendable>,
-    note: Note,
-    theta: ActionEntropy,
-    rcv: value::Trapdoor,
-) -> ActionSetCommit {
-    let secret_pcd = honest_secret(rng, user, note);
+    let spendable = user.fresh_spend(rng, &pool, height, &note);
+    let secret_pcd = honest_secret(rng, &user, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
         .unwrap();
@@ -1750,40 +1622,20 @@ fn spend_action_commit(
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    pcd.data().0
-}
-
-#[test]
-fn spend_action_is_bound_to_its_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let swapped = user.random_note(500);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(
-        rng,
-        &[vec![note.commitment(), swapped.commitment()]],
-        4,
-    ));
-    let height = pool.height();
-
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
     let plan = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let planned = ActionSetPoly::from_iter([plan.digest().unwrap()]).commit();
-
-    let planned_spendable = user.fresh_spend(rng, &pool, height, &note);
     assert_eq!(
-        spend_action_commit(rng, &user, planned_spendable, note, theta, rcv),
-        planned
+        pcd.data().0,
+        ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()
     );
-    let swapped_spendable = user.fresh_spend(rng, &pool, height, &swapped);
-    assert_ne!(
-        spend_action_commit(rng, &user, swapped_spendable, swapped, theta, rcv),
-        planned
-    );
+}
+
+#[test]
+fn pad_differs_from_commitment() {
+    let note = WalletSim::new(shared_sk()).random_note(200);
+
+    assert_ne!(Tachygram::from(note.commitment()), expected_pad(&note));
 }
 
 #[test]
