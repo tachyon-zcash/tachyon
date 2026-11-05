@@ -39,7 +39,7 @@ use crate::{
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_factor, enforce_poly_product},
+    relations::enforce::{enforce_poly_member, enforce_poly_product},
 };
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
@@ -380,15 +380,10 @@ impl Step for UnspentFuse {
         )?;
         // The factor is not absorbed into the challenge. Its member is
         // `(left.epoch_next − 1, left.nf_last)`, both fields of the left header.
-        enforce_poly_factor(
+        enforce_poly_member(
             ctx,
             left_prefix_seq.as_ref(),
-            |z| {
-                indexed_multiset::direct_eval(
-                    [(u64::from(left_epoch_next) - 1, left_nf_last.into())],
-                    z,
-                )
-            },
+            (u64::from(left_epoch_next) - 1, left_nf_last.into()),
             left_elapsed_seq.as_ref(),
             "UnspentFuse: left does not end with its last member",
         )?;
@@ -517,15 +512,10 @@ impl Step for UnspentLift {
         )?;
         // The factor is not absorbed into the challenge. Its member is
         // `(epoch_next − 1, nf_last)`, both fields of the left header.
-        enforce_poly_factor(
+        enforce_poly_member(
             ctx,
             prefix_seq.as_ref(),
-            |z| {
-                indexed_multiset::direct_eval(
-                    [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
-                    z,
-                )
-            },
+            (u64::from(unspent_epoch_next) - 1, unspent_nf_last.into()),
             elapsed_seq.as_ref(),
             "UnspentLift: elapsed does not end with its last member",
         )?;
@@ -659,15 +649,10 @@ impl Step for UnspentBind {
         )?;
         // The factor is not absorbed into the challenge. Its member is
         // `(epoch_next − 1, nf_last)`, both fields of the left header.
-        enforce_poly_factor(
+        enforce_poly_member(
             ctx,
             prefix_seq.as_ref(),
-            |z| {
-                indexed_multiset::direct_eval(
-                    [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
-                    z,
-                )
-            },
+            (u64::from(unspent_epoch_next) - 1, unspent_nf_last.into()),
             elapsed_seq.as_ref(),
             "UnspentBind: elapsed does not end with its last member",
         )?;

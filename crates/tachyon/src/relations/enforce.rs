@@ -41,7 +41,7 @@ use ragu::StepCtx;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, Error, Result, pasta::Pasta};
 
-use crate::{pasta, pasta::Fp};
+use crate::{collections::indexed_multiset, pasta, pasta::Fp};
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -83,29 +83,27 @@ pub(crate) fn enforce_poly_product(
     Ok(())
 }
 
-/// Faithful factor: confirm `product = multiplicand · F` among two committed
-/// polynomials by opening both at a Fiat-Shamir challenge and evaluating `F`
-/// in cheap field operations.
+/// Faithful linear factor: confirm `product = multiplicand · (X − root)` among
+/// two committed polynomials by opening both at a Fiat-Shamir challenge and
+/// evaluating the factor in cheap field operations.
 ///
-/// `factor` maps the challenge to `F(z)`: `|z| z - root` for the linear factor
-/// `X − root`, or an indexed-multiset evaluation for one indexed member.
 /// `product` is prover-supplied and the relation works only from the
 /// two commitments and their openings at `z` -- it does not multiply the
-/// inputs. The point-wise identity `product(z) = multiplicand(z)·F(z)` at a
-/// random `z` confirms the relation: with both operands committed and absorbed
-/// into `z`, the difference `product − multiplicand·F` is a fixed polynomial
-/// pinned to zero by Schwartz-Zippel.
+/// inputs. The point-wise identity `product(z) = multiplicand(z)·(z − root)`
+/// at a random `z` confirms the relation: with both operands committed and
+/// absorbed into `z`, the difference `product − multiplicand·(X − root)` is a
+/// fixed polynomial pinned to zero by Schwartz-Zippel.
 ///
 /// # Caller obligation (soundness)
 ///
 /// `multiplicand` and `product` are committed and absorbed into `z`; the
-/// module-level binding obligation applies to both. `F` is *not* absorbed:
-/// as for the roots of [`enforce_poly_roots`], every scalar it is built from
-/// must already be pinned, and the call site states its pin.
-pub(crate) fn enforce_poly_factor(
+/// module-level binding obligation applies to both. `root` is *not* absorbed:
+/// as for the roots of [`enforce_poly_roots`], it must already be pinned, and
+/// the call site states its pin.
+pub(crate) fn enforce_poly_linear_factor(
     ctx: &mut StepCtx<'_>,
     multiplicand: &Polynomial<Fp, ProductionRank>,
-    factor: impl FnOnce(Fp) -> Fp,
+    root: Fp,
     product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
@@ -116,7 +114,48 @@ pub(crate) fn enforce_poly_factor(
 
     let multiplicand_at_z = multiplicand.eval(z);
     let product_at_z = product.eval(z);
-    if product_at_z != multiplicand_at_z * factor(z) {
+    if product_at_z != multiplicand_at_z * (z - root) {
+        return Err(Error::InvalidWitness(err.into()));
+    }
+
+    ctx.enforce_poly_query(multiplicand_com, z, multiplicand_at_z)?;
+    ctx.enforce_poly_query(product_com, z, product_at_z)?;
+
+    Ok(())
+}
+
+/// Faithful indexed member: confirm `product = multiplicand · F(index, value)`
+/// among two committed polynomials by opening both at a Fiat-Shamir challenge
+/// and evaluating the indexed-multiset member factor in cheap field operations.
+///
+/// `product` is prover-supplied and the relation works only from the
+/// two commitments and their openings at `z` -- it does not multiply the
+/// inputs. The point-wise identity `product(z) = multiplicand(z)·F(index, value)(z)`
+/// at a random `z` confirms the relation: with both operands committed and
+/// absorbed into `z`, the difference `product − multiplicand·F(index, value)` is
+/// a fixed polynomial pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// `multiplicand` and `product` are committed and absorbed into `z`; the
+/// module-level binding obligation applies to both. `index` and `value` are
+/// *not* absorbed: both must already be pinned, and the call site states their
+/// pin.
+pub(crate) fn enforce_poly_member(
+    ctx: &mut StepCtx<'_>,
+    multiplicand: &Polynomial<Fp, ProductionRank>,
+    (index, value): (u64, Fp),
+    product: &Polynomial<Fp, ProductionRank>,
+    err: &'static str,
+) -> Result<()> {
+    let generators = Pasta::host_generators(pasta::baked());
+    let multiplicand_com = multiplicand.commit(generators);
+    let product_com = product.commit(generators);
+    let z = ctx.derive_challenge(&[multiplicand_com, product_com])?;
+
+    let multiplicand_at_z = multiplicand.eval(z);
+    let product_at_z = product.eval(z);
+    if product_at_z != multiplicand_at_z * indexed_multiset::direct_eval([(index, value)], z) {
         return Err(Error::InvalidWitness(err.into()));
     }
 

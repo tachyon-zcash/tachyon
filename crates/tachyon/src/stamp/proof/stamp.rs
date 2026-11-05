@@ -20,7 +20,7 @@ use crate::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_factor, enforce_poly_product, enforce_poly_roots},
+    relations::enforce::{enforce_poly_linear_factor, enforce_poly_product, enforce_poly_roots},
     value,
 };
 
@@ -608,17 +608,17 @@ impl Step for FeeFuse {
         // Neither root is absorbed into a challenge. Each is a Poseidon output
         // over the witnessed max fee note and fee, so a root solved from a
         // challenge needs a Poseidon preimage.
-        enforce_poly_factor(
+        enforce_poly_linear_factor(
             ctx,
             left_action_set.as_ref(),
-            |z| z - fee_digest,
+            fee_digest,
             output_action_set.as_ref(),
             "FeeFuse: output action set is not the left action set with the fee digest",
         )?;
-        enforce_poly_factor(
+        enforce_poly_linear_factor(
             ctx,
             left_tachygram_set.as_ref(),
-            |z| z - fee_change_commitment,
+            fee_change_commitment,
             output_tachygram_set.as_ref(),
             "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
         )?;
