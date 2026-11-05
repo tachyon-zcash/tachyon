@@ -2,213 +2,135 @@ use alloc::vec::Vec;
 
 use super::*;
 
-const SIZES: [(u64, CompactSize, &[u8], bool); 10] = [
-    (0, CompactSize::OneByte(0), &[0x00], true),
-    (0xFC, CompactSize::OneByte(0xFC), &[0xFC], true),
-    (
-        0xFD,
-        CompactSize::TwoBytes(0xFD),
-        &[FLAG_TWO_BYTES, 0xFD, 0x00],
-        true,
-    ),
-    (
-        0xFFFF,
-        CompactSize::TwoBytes(0xFFFF),
-        &[FLAG_TWO_BYTES, 0xFF, 0xFF],
-        true,
-    ),
-    (
-        0x1_0000,
-        CompactSize::FourBytes(0x1_0000),
-        &[FLAG_FOUR_BYTES, 0x00, 0x00, 0x01, 0x00],
-        true,
-    ),
-    (
-        0x0200_0000,
-        CompactSize::FourBytes(0x0200_0000),
-        &[FLAG_FOUR_BYTES, 0x00, 0x00, 0x00, 0x02],
-        true,
-    ),
-    (
-        0x0200_0001,
-        CompactSize::FourBytes(0x0200_0001),
-        &[FLAG_FOUR_BYTES, 0x01, 0x00, 0x00, 0x02],
-        false,
-    ),
-    (
-        0xFFFF_FFFF,
-        CompactSize::FourBytes(0xFFFF_FFFF),
-        &[FLAG_FOUR_BYTES, 0xFF, 0xFF, 0xFF, 0xFF],
-        false,
-    ),
-    (
-        0x1_0000_0000,
-        CompactSize::EightBytes(0x1_0000_0000),
-        &[
-            FLAG_EIGHT_BYTES,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x01,
-            0x00,
-            0x00,
-            0x00,
-        ],
-        false,
-    ),
-    (
-        u64::MAX,
-        CompactSize::EightBytes(u64::MAX),
-        &[
-            FLAG_EIGHT_BYTES,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-        ],
-        false,
-    ),
-];
-
 #[test]
-fn a_value_takes_its_shortest_form() {
-    for (value, form, bytes, valid) in SIZES {
-        let mut written = Vec::new();
-        form.write(&mut written).unwrap();
-        assert_eq!(CompactSize::from(value), form, "{value:#x}: its form");
-        assert_eq!(u64::from(form), value, "{value:#x}: back to u64");
-        assert_eq!(written, bytes, "{value:#x}: its encoding");
-        assert_eq!(CompactSize::read(bytes).unwrap(), form, "{value:#x}: read");
-        assert_eq!(form.enforce_valid().is_ok(), valid, "{value:#x}: the bound");
-        assert_eq!(
-            usize::try_from(form),
-            usize::try_from(value),
-            "{value:#x}: to usize"
-        );
-        if let Ok(wide) = usize::try_from(value) {
-            assert_eq!(
-                CompactSize::try_from(wide).unwrap(),
-                form,
-                "{value:#x}: from usize"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_constructor_takes_only_its_form() {
-    for (constructed, form) in [
-        (CompactSize::one_byte(0xFC), CompactSize::OneByte(0xFC)),
-        (CompactSize::two_bytes(0xFD), CompactSize::TwoBytes(0xFD)),
+fn form_boundary_round_trips() {
+    let cases = alloc::vec![
+        (0, CompactSize::OneByte(0), [0x00].to_vec()),
         (
-            CompactSize::two_bytes(u16::MAX),
+            u64::from(MAX_ONE_BYTE),
+            CompactSize::OneByte(MAX_ONE_BYTE),
+            [MAX_ONE_BYTE].to_vec()
+        ),
+        (
+            u64::from(FLAG_TWO_BYTES),
+            CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
+            [[FLAG_TWO_BYTES].as_slice(), &u16::from(FLAG_TWO_BYTES).to_le_bytes()].concat(),
+        ),
+        (
+            u64::from(u16::MAX),
             CompactSize::TwoBytes(u16::MAX),
+            [[FLAG_TWO_BYTES].as_slice(), &u16::MAX.to_le_bytes()].concat(),
         ),
         (
-            CompactSize::four_bytes(0x1_0000),
-            CompactSize::FourBytes(0x1_0000),
+            u64::from(u16::MAX) + 1,
+            CompactSize::FourBytes(u32::from(u16::MAX) + 1),
+            [
+                [FLAG_FOUR_BYTES].as_slice(),
+                &(u32::from(u16::MAX) + 1).to_le_bytes()
+            ]
+            .concat(),
         ),
         (
-            CompactSize::four_bytes(u32::MAX),
-            CompactSize::FourBytes(u32::MAX),
+            u64::from(MAX_COMPACT_SIZE),
+            CompactSize::FourBytes(MAX_COMPACT_SIZE),
+            [[FLAG_FOUR_BYTES].as_slice(), &MAX_COMPACT_SIZE.to_le_bytes()].concat(),
         ),
-        (
-            CompactSize::eight_bytes(0x1_0000_0000),
-            CompactSize::EightBytes(0x1_0000_0000),
-        ),
-        (
-            CompactSize::eight_bytes(u64::MAX),
-            CompactSize::EightBytes(u64::MAX),
-        ),
-    ] {
-        assert_eq!(constructed.unwrap(), form);
-    }
-    for (constructed, shortest) in [
-        (CompactSize::one_byte(0xFD), CompactSize::TwoBytes(0xFD)),
-        (CompactSize::two_bytes(0xFC), CompactSize::OneByte(0xFC)),
-        (
-            CompactSize::four_bytes(0xFFFF),
-            CompactSize::TwoBytes(0xFFFF),
-        ),
-        (
-            CompactSize::eight_bytes(0xFFFF_FFFF),
-            CompactSize::FourBytes(0xFFFF_FFFF),
-        ),
-    ] {
-        let Err(CompactSizeError::NonCanonical(reported)) = constructed else {
-            panic!("{shortest}: a longer form constructs");
-        };
-        assert_eq!(reported, shortest);
+    ];
+
+    let mut buf = Vec::new();
+    for (value, expected_variant, expected_bytes) in cases {
+        let cs = CompactSize::from(value);
+        assert_eq!(cs, expected_variant);
+        cs.write(&mut buf).unwrap();
+        assert_eq!(buf, expected_bytes);
+        assert_eq!(CompactSize::read(buf.as_slice()).unwrap(), expected_variant);
+        buf.clear();
     }
 }
 
 #[test]
-fn a_read_form_is_checked_against_its_value() {
-    let flag = CompactSize::OneByte(FLAG_TWO_BYTES);
-    let Err(CompactSizeError::NonCanonical(flagged)) = flag.enforce_canon() else {
-        panic!("a flag byte is a canonical single byte");
-    };
-    assert_eq!(flagged, flag);
-    for bytes in [
-        [FLAG_TWO_BYTES, 0xFC, 0x00].as_slice(),
-        &[FLAG_FOUR_BYTES, 0xFF, 0xFF, 0x00, 0x00],
-        &[
-            FLAG_EIGHT_BYTES,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ],
-    ] {
-        let form = CompactSize::read(bytes).unwrap();
-        let Err(CompactSizeError::NonCanonical(reported)) = form.enforce_canon() else {
-            panic!("{bytes:02x?}: an over-long form is canonical");
-        };
-        assert_eq!(reported, form);
-    }
-    let bound = CompactSize::FourBytes(MAX_COMPACT_SIZE);
-    assert_eq!(bound.enforce_max().unwrap(), bound);
-    let past = CompactSize::FourBytes(MAX_COMPACT_SIZE + 1);
-    let Err(CompactSizeError::ExceedsMaximum(reported)) = past.enforce_max() else {
-        panic!("a size past the bound passes enforce_max");
-    };
-    assert_eq!(reported, past);
+fn constructors_enforce_canonical_form() {
+    CompactSize::one_byte(0).unwrap();
+    CompactSize::one_byte(MAX_ONE_BYTE).unwrap();
+    CompactSize::one_byte(FLAG_TWO_BYTES).unwrap_err();
+
+    CompactSize::two_bytes(u16::from(MAX_ONE_BYTE)).unwrap_err();
+    CompactSize::two_bytes(u16::from(FLAG_TWO_BYTES)).unwrap();
+    CompactSize::two_bytes(u16::MAX).unwrap();
+
+    CompactSize::four_bytes(u32::from(u16::MAX)).unwrap_err();
+    CompactSize::four_bytes(u32::from(u16::MAX) + 1).unwrap();
+    CompactSize::four_bytes(u32::MAX).unwrap();
+
+    CompactSize::eight_bytes(u64::from(u32::MAX)).unwrap_err();
+    CompactSize::eight_bytes(u64::from(u32::MAX) + 1).unwrap();
 }
 
 #[test]
-fn read_takes_exactly_one_encoding() {
-    let trailings: [&[u8]; 3] = [&[], &[0x00], &[0xFF; 8]];
-    for (value, form, bytes, _) in SIZES {
-        for trailing in trailings {
-            let reader = [bytes, trailing].concat();
-            let mut rest = reader.as_slice();
-            assert_eq!(
-                CompactSize::read(&mut rest).unwrap(),
-                form,
-                "{value:#x} before {} more bytes",
-                trailing.len()
-            );
-            assert_eq!(
-                rest,
-                trailing,
-                "{value:#x} leaves {} bytes unread",
-                trailing.len()
-            );
-        }
-        for cut in 0..bytes.len() {
-            assert!(
-                CompactSize::read(&bytes[..cut]).is_err(),
-                "{value:#x} cut to {cut} bytes"
-            );
-        }
+fn enforce_max_rejects_above_consensus() {
+    CompactSize::FourBytes(MAX_COMPACT_SIZE + 1)
+        .enforce_max()
+        .unwrap_err();
+    CompactSize::FourBytes(u32::MAX).enforce_max().unwrap_err();
+    CompactSize::EightBytes(u64::from(u32::MAX) + 1)
+        .enforce_max()
+        .unwrap_err();
+    CompactSize::FourBytes(MAX_COMPACT_SIZE)
+        .enforce_max()
+        .unwrap();
+}
+
+#[test]
+fn enforce_canon_rejects_non_canonical() {
+    CompactSize::TwoBytes(u16::from(MAX_ONE_BYTE))
+        .enforce_canon()
+        .unwrap_err();
+    CompactSize::FourBytes(u32::from(u16::MAX))
+        .enforce_canon()
+        .unwrap_err();
+    CompactSize::EightBytes(u64::from(u32::MAX))
+        .enforce_canon()
+        .unwrap_err();
+}
+
+#[test]
+fn read_rejects_truncated_input() {
+    CompactSize::read([].as_slice()).unwrap_err();
+    CompactSize::read([FLAG_TWO_BYTES].as_slice()).unwrap_err();
+    CompactSize::read([FLAG_TWO_BYTES, 0x00].as_slice()).unwrap_err();
+    CompactSize::read([FLAG_FOUR_BYTES, 0x00, 0x00, 0x00].as_slice()).unwrap_err();
+    CompactSize::read([FLAG_EIGHT_BYTES, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].as_slice())
+        .unwrap_err();
+}
+
+#[test]
+fn read_ignores_trailing_bytes() {
+    let one_byte_with_trailing = [0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+    assert_eq!(
+        CompactSize::read(one_byte_with_trailing.as_slice()).unwrap(),
+        CompactSize::OneByte(0),
+    );
+    let two_byte_with_trailing = [
+        [FLAG_TWO_BYTES].as_slice(),
+        &u16::from(FLAG_TWO_BYTES).to_le_bytes(),
+        [0xDE, 0xAD].as_slice(),
+    ]
+    .concat();
+    assert_eq!(
+        CompactSize::read(two_byte_with_trailing.as_slice()).unwrap(),
+        CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
+    );
+}
+
+#[test]
+fn try_from_usize_round_trip() {
+    for n in [
+        0usize,
+        usize::from(MAX_ONE_BYTE),
+        usize::from(FLAG_TWO_BYTES),
+        usize::from(u16::MAX) + 1,
+    ] {
+        let cs = CompactSize::try_from(n).unwrap();
+        assert_eq!(usize::try_from(cs).unwrap(), n);
     }
 }

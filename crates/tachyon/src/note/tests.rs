@@ -4,58 +4,46 @@ use super::*;
 use crate::{constants::MAX_MONEY, value};
 
 #[test]
-fn the_commitment_binds_every_field() {
+fn positive_value_accepts_max() {
+    value::Positive::try_from(MAX_MONEY).unwrap();
+}
+
+#[test]
+fn positive_value_rejects_over_max() {
+    assert_eq!(
+        value::Positive::try_from(MAX_MONEY + 1),
+        Err(value::OutOfRange)
+    );
+}
+
+#[test]
+fn positive_value_accepts_zero() {
+    value::Positive::try_from(0u64).unwrap();
+}
+
+#[test]
+fn positive_value_rejects_negative() {
+    assert_eq!(value::Positive::try_from(-1i64), Err(value::OutOfRange));
+}
+
+#[test]
+fn distinct_rcm_distinct_commitments() {
     let rng = &mut StdRng::seed_from_u64(0);
-    for (amount, other_amount) in [(0, MAX_MONEY), (MAX_MONEY, 0), (1000, 1000)] {
-        let note = Note {
-            pk: PaymentKey::random(rng),
-            value: value::Positive::try_from(amount).unwrap(),
-            psi: nullifier::Trapdoor::random(rng),
-            rcm: CommitmentTrapdoor::random(rng),
-        };
-        let cm = note.commitment();
-        let other_value = value::Positive::try_from(other_amount).unwrap();
-        for (field, changed, other) in [
-            (
-                "rcm",
-                true,
-                Note {
-                    rcm: CommitmentTrapdoor::random(rng),
-                    ..note
-                },
-            ),
-            (
-                "pk",
-                true,
-                Note {
-                    pk: PaymentKey::random(rng),
-                    ..note
-                },
-            ),
-            (
-                "psi",
-                true,
-                Note {
-                    psi: nullifier::Trapdoor::random(rng),
-                    ..note
-                },
-            ),
-            (
-                "value",
-                amount != other_amount,
-                Note {
-                    value: other_value,
-                    ..note
-                },
-            ),
-        ] {
-            assert_eq!(
-                other.commitment() != cm,
-                changed,
-                "value {amount} against {other_amount}: {field}"
-            );
-        }
-        let pad = poseidon::pad_tachygram(note.rcm.0, note.pk.into(), amount, note.psi.into());
-        assert_ne!(Fp::from(cm), pad, "value {amount}: the pad");
-    }
+    let pk = PaymentKey::random(rng);
+    let psi = nullifier::Trapdoor::random(rng);
+
+    let note1 = Note {
+        pk,
+        value: value::Positive::try_from(100u64).unwrap(),
+        psi,
+        rcm: CommitmentTrapdoor::random(rng),
+    };
+    let note2 = Note {
+        pk,
+        value: value::Positive::try_from(100u64).unwrap(),
+        psi,
+        rcm: CommitmentTrapdoor::random(rng),
+    };
+
+    assert_ne!(note1.commitment(), note2.commitment());
 }

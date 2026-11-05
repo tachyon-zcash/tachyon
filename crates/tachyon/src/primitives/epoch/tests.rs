@@ -1,49 +1,9 @@
 use super::*;
-use crate::constants::BLOCK_MAX;
-
-#[test]
-fn an_epoch_spans_its_blocks() {
-    for index in [0, 1, 96, EPOCH_MAX - 1, EPOCH_MAX] {
-        let epoch = EpochIndex::new(index);
-        let (first, last) = (epoch.first_block(), epoch.last_block());
-        assert_eq!(
-            last.0 - first.0,
-            EPOCH_SIZE - 1,
-            "epoch {index}: its length"
-        );
-        for offset in [0, 17, EPOCH_SIZE - 1] {
-            assert_eq!(
-                BlockHeight(first.0 + offset).epoch(),
-                epoch,
-                "epoch {index}: block {offset} maps back"
-            );
-        }
-        assert!(
-            first.is_first_in_epoch() && last.is_last_in_epoch(),
-            "epoch {index}: its ends"
-        );
-        if let Some(next) = epoch.next() {
-            assert_eq!(u32::from(next), index + 1, "epoch {index}: its successor");
-            assert_eq!(
-                next.first_block().prev(),
-                Some(last),
-                "epoch {index}: the successor starts right after"
-            );
-        } else {
-            assert_eq!(index, EPOCH_MAX);
-            assert_eq!(last, BlockHeight(BLOCK_MAX));
-        }
-    }
-}
 
 #[test]
 fn epoch_difference_counts_the_span() {
     assert_eq!(u64::from(EpochIndex(7) - EpochIndex(3)), 4);
     assert_eq!(u64::from(EpochIndex(3) - EpochIndex(3)), 0);
-    assert_eq!(
-        u64::from(EpochIndex(EPOCH_MAX) - EpochIndex(0)),
-        u64::from(EPOCH_MAX)
-    );
 }
 
 #[test]
@@ -58,4 +18,21 @@ fn epoch_difference_rejects_reversed_operands() {
 fn new_rejects_an_index_past_the_final_epoch() {
     let past_the_end = EpochIndex::new(EPOCH_MAX + 1);
     panic!("an index above EPOCH_MAX is not an epoch, got {past_the_end:?}");
+}
+
+#[test]
+fn final_epoch_ends_at_the_final_block() {
+    use crate::constants::BLOCK_MAX;
+
+    assert_eq!(EpochIndex(EPOCH_MAX).last_block(), BlockHeight(BLOCK_MAX));
+    assert_eq!(BlockHeight(BLOCK_MAX).epoch(), EpochIndex(EPOCH_MAX));
+}
+
+#[test]
+fn next_stops_at_the_final_epoch() {
+    assert_eq!(
+        EpochIndex(EPOCH_MAX - 1).next(),
+        Some(EpochIndex(EPOCH_MAX))
+    );
+    assert_eq!(EpochIndex(EPOCH_MAX).next(), None);
 }

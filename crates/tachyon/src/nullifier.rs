@@ -39,3 +39,6 @@ impl Trapdoor {
         Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
+
+#[cfg(test)]
+mod tests;
