@@ -749,7 +749,7 @@ pub(super) fn enforce_value_profile(
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's own `discriminant`, so the exclusion holds for the network
 /// the bucket belongs to. `value` is a free witness, written to `nf_last`
-/// over the empty `prefix`, the constant polynomial 1 committed as $G_0$. The
+/// over the empty `elapsed`, the constant polynomial 1 committed as $G_0$. The
 /// step that consumes the segment multiplies its member in at a challenge
 /// absorbing `nf_last`; [`UnspentBind`](super::pool::UnspentBind) forces that
 /// member against the note's genuine derivation.

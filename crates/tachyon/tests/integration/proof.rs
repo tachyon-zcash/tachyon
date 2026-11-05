@@ -587,7 +587,7 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
         Anchor::from(Fp::ZERO),
     );
 
-    let (_prefix_seq, _nf_seq, complement_seq) = witness::unspent_bind(
+    let (_elapsed_seq, _nf_seq, complement_seq) = witness::unspent_bind(
         (synthetic_unspent, *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -616,13 +616,13 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (prefix_seq, nf_seq, complement_seq) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
     );
     let wide = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
-    let (wide_prefix_seq, wide_nf_seq, _) = witness::unspent_bind(
+    let (wide_elapsed_seq, wide_nf_seq, _) = witness::unspent_bind(
         (*unspent.data(), *wide.data()),
         &user.covering_window(&note, &wide),
         &elapsed,
@@ -640,7 +640,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 nf_seq.clone(),
                 complement_seq,
             ),
-            "UnspentBind: prefix polynomial does not match header",
+            "UnspentBind: elapsed polynomial does not match header",
         ),
         (
             range.clone(),
@@ -654,7 +654,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
         (
             range,
             (
-                prefix_seq,
+                elapsed_seq,
                 nf_seq,
                 NfSeqPoly::new(
                     EpochIndex::new(0),
@@ -666,7 +666,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
         (
             wide,
             (
-                wide_prefix_seq,
+                wide_elapsed_seq,
                 wide_nf_seq,
                 NfSeqPoly::new(
                     EpochIndex::new(1),
@@ -1084,7 +1084,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch1, EpochIndex::new(2)));
     let range = user.derivation_pcd(rng, note, epoch0, epoch1);
-    let prefix_seq = NfSeqPoly::new(epoch1, &[]);
+    let elapsed_seq = NfSeqPoly::new(epoch1, &[]);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],
@@ -1095,7 +1095,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
             .fuse(
                 rng,
                 pool::UnspentBind,
-                (prefix_seq, nf_seq, complement_seq),
+                (elapsed_seq, nf_seq, complement_seq),
                 unspent,
                 range,
             )

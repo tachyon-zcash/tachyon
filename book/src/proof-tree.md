@@ -36,8 +36,7 @@ Once per epoch a builder routes every published tachygram into buckets by quadra
 A nullifier has one profile, so it can have been published in only one bucket, and one exclusion opening on that bucket proves it absent from the epoch (`QrUnspentInit`).
 Every `ArbitraryUnspent` starts that way and covers whole epochs, half-open: `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`.
 Both anchor bounds are entry anchors, and an entry anchor belongs to the epoch it opens, so `anchor_next` belongs to `epoch_next` and is excluded.
-A segment's `elapsed` holds one member per epoch in `[epoch_start, epoch_next)`; `epoch_next`'s nullifier is the next segment's to test.
-Its header carries `elapsed` as a `prefix` commitment and the last member, `nf_last`.
+A segment's `elapsed` holds one member per epoch in `[epoch_start, epoch_next − 1)`, and `nf_last` the member at `epoch_next − 1`; `epoch_next`'s nullifier is the next segment's to test.
 `UnspentFuse` composes two segments meeting on one boundary and concatenates their `elapsed` histories.
 An epoch that published nothing seals an empty bucket, so its segment is as cheap as any other.
 `QrSpendableInit` starts a wallet's spendable from the bucket holding its note's creation, over the note's own QR segment for that epoch.
@@ -177,24 +176,24 @@ It checks that the witnessed polynomial's commitment equals the header's `member
 
 ### ArbitraryUnspent composition
 
-An `ArbitraryUnspent` covers `[anchor_start, anchor_next)`, from the entry anchor of `epoch_start` up to the entry anchor of `epoch_next`, plus `elapsed`: the product of one indexed cubic factor per epoch in `[epoch_start, epoch_next)`[^nullifiers].
+An `ArbitraryUnspent` covers `[anchor_start, anchor_next)`, from the entry anchor of `epoch_start` up to the entry anchor of `epoch_next`, plus `elapsed`: the product of one indexed cubic factor per epoch in `[epoch_start, epoch_next − 1)`[^nullifiers], and `nf_last`, the member at `epoch_next − 1`.
 Each (anchor, epoch) pair names one boundary. The excluded bound belongs to the next epoch, whose nullifier the segment does not test.
 Each factor carries its own epoch, so the product is a multiset of `(epoch, nullifier)` pairs and needs no degree pin. Every producer holds the two properties that `UnspentBind` relies on: each factor's epoch lies in `[epoch_start, epoch_next)`, and each such epoch has exactly one factor.
-The header does not commit `elapsed` itself. It commits `prefix`, the factors below `epoch_next − 1`, and carries the last member `nf_last`:
+The segment's members are
 
-$$\texttt{elapsed}(X) = \texttt{prefix}(X) \cdot F_{(\mathsf{epoch\_next} - 1,\, \mathsf{nf\_last})}(X)$$
+$$\texttt{elapsed}(X) \cdot F_{(\mathsf{epoch\_next} - 1,\, \mathsf{nf\_last})}(X)$$
 
 Each step that consumes a segment multiplies the `nf_last` factor in at its challenge, and the challenge absorbs a scalar-binding point of `nf_last`. No commitment binds `nf_last`, so without that point a prover could choose it after the challenge, as the cube-root-of-unity twin of another value.
-`QrUnspentInit` is the only seed. It writes the value it tests to `nf_last` over the empty `prefix`, the constant polynomial $1$, committed as $G_0$.
+`QrUnspentInit` is the only seed. It writes the value it tests to `nf_last` over the empty `elapsed`, the constant polynomial $1$, committed as $G_0$.
 `UnspentFuse` composes two segments on one boundary (`left.anchor_next == right.anchor_start`, `left.epoch_next == right.epoch_start`), confirming
 
 $$C(X) = L(X) \cdot F_{(\mathsf{left.epoch\_next} - 1,\, \mathsf{left.nf\_last})}(X) \cdot R(X)$$
 
-for the witnessed `combined` prefix $C$, left prefix $L$, and right prefix $R$, and takes `nf_last` from the right. The halves hold disjoint epochs, so their product holds each epoch once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
+for the witnessed `combined` $C$, left $L$, and right $R$, and takes `nf_last` from the right. The halves hold disjoint epochs, so their product holds each epoch once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
 
 `UnspentLift` appends one epoch in one step. Its bucket starts on the segment's excluded bound (`unspent.anchor_next == bucket.anchor_start`, `unspent.epoch_next == bucket.epoch`), it tests a value $x$ against the bucket exactly as `QrUnspentInit` does, and it confirms
 $$E(X) = P(X) \cdot F_{(\mathsf{epoch\_next} - 1,\, \mathsf{nf\_last})}(X)$$
-for the witnessed `elapsed` $E$ and the header-bound `prefix` $P$. $E$ becomes the output's `prefix` and $x$ its `nf_last`. The new member's epoch is `epoch_next`, which the step advances by one, so both properties hold.
+for the witnessed `extended` $E$, the header-bound `elapsed` $P$, and the factor of the segment's `nf_last`. $E$ becomes the output's `elapsed` and $x$ its `nf_last`. The new member's epoch is `epoch_next`, which the step advances by one, so both properties hold.
 
 ### Summaries
 
@@ -322,13 +321,11 @@ for $K$ the window width. The sequence is committed before $z$ exists, and every
 ### Binding unspent to derivation
 
 `UnspentBind` consumes the sync's `ArbitraryUnspent` and any `NoteNullifiers`, comparing no bounds against the unspent span.
-It binds `prefix` and the derivation's sequence $g$ to their headers by commit-equality, then confirms the divisibility
+It binds `elapsed` and the derivation's sequence $g$ to their headers by commit-equality, then confirms the divisibility
 
-$$g(X) = \texttt{elapsed}(X) \cdot \texttt{complement}(X)$$
+$$g(X) = \texttt{elapsed}(X) \cdot F_{(\mathsf{epoch\_next} - 1,\, \mathsf{nf\_last})}(X) \cdot \texttt{complement}(X)$$
 
-with `elapsed` the header's `prefix` times the `nf_last` factor, at a challenge absorbing the scalar-binding point of `nf_last`.
-
-where the witnessed complement holds the derivation's factors outside the lineage. Every factor is irreducible, so divisibility is multiset containment: each `elapsed` factor, its epoch included, is a genuine derived pair, and an epoch the derivation lacks has no factor to divide out.
+at a challenge absorbing the scalar-binding point of `nf_last`, where the witnessed complement holds the derivation's factors outside the lineage. Every factor is irreducible, so divisibility is multiset containment: each segment factor, its epoch included, is a genuine derived pair, and an epoch the derivation lacks has no factor to divide out.
 With the provenance properties above, every epoch of the span was therefore tested with its own genuine nullifier.
 The derivation's `cm` is stamped onto the `NoteUnspent`.
 
@@ -524,10 +521,10 @@ flowchart LR
   bucket_next((QrBucket))
   w_next[/value, classes, mask, contents/]
   s_next[QrUnspentInit]
-  w_ufuse[/left_prefix_seq, combined_prefix_seq, right_prefix_seq/]
+  w_ufuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
   s_ufuse[UnspentFuse]
   bucket_after((QrBucket))
-  w_ulift[/value, classes, mask, prefix_seq, elapsed_seq, contents/]
+  w_ulift[/value, classes, mask, elapsed_seq, extended_seq, contents/]
   s_ulift[UnspentLift]
   unspent_out((ArbitraryUnspent))
 
@@ -555,7 +552,7 @@ flowchart LR
 | QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
 | EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) |
 | EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
-| ArbitraryUnspent | (anchor_start, epoch_start, prefix, nf_last, epoch_next, anchor_next) |
+| ArbitraryUnspent | (anchor_start, epoch_start, elapsed, nf_last, epoch_next, anchor_next) |
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) |
 | NoteSecret | (cm, note, mk) |
 | NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
@@ -588,9 +585,9 @@ flowchart LR
 | EvidenceTreeCap | EvidenceTree | — | — | EvidenceTree |
 | EvidenceTreeDescend | EvidenceTree | — | path | EvidenceTree |
 | EvidenceTreeOpen | EvidenceTree | — | profile, contents | QrBucket |
-| UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_prefix_seq, combined_prefix_seq, right_prefix_seq | ArbitraryUnspent |
-| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, prefix_seq, elapsed_seq, contents | ArbitraryUnspent |
-| UnspentBind | ArbitraryUnspent | NoteNullifiers | prefix_seq, nf_seq, complement_seq | NoteUnspent |
+| UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
+| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, elapsed_seq, extended_seq, contents | ArbitraryUnspent |
+| UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
 | NoteSeed | — | — | value, psi, rcm, pak | NoteSecret |
 | NullifierDerive | NoteSecret | — | epoch_start, seq | NoteNullifiers |
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |

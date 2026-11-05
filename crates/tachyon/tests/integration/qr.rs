@@ -896,12 +896,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .unwrap();
-    let (fused_anchor_start, _, prefix, nf_last, fused_epoch_next, fused_anchor_next) =
+    let (fused_anchor_start, _, elapsed, nf_last, fused_epoch_next, fused_anchor_next) =
         *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
-    assert_eq!(prefix, NfSeqPoly::new(epoch0, &[nf0]).commit());
+    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0]).commit());
     assert_eq!(nf_last, nf1);
 }
 
@@ -1466,7 +1466,7 @@ fn unspent_consumers_reject_a_twin_last_member() {
                 .fuse(rng, UnspentLift, lift, segment, next.pcd.clone())
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == "UnspentLift: elapsed is not prefix with the last member"
+                if err.to_string() == "UnspentLift: extended is not elapsed with the tested pair"
         );
     }
     {
@@ -1623,7 +1623,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 forged.3 = NfSeqPoly::new(epoch0, &[nf1]);
                 forged
             },
-            "UnspentLift: prefix does not match header",
+            "UnspentLift: elapsed does not match header",
         ),
         (
             &bucket,
@@ -1638,7 +1638,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 );
                 forged
             },
-            "UnspentLift: elapsed is not prefix with the last member",
+            "UnspentLift: extended is not elapsed with the tested pair",
         ),
         (
             &bucket,

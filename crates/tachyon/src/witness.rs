@@ -92,10 +92,11 @@ pub fn nullifier_fuse(
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
-/// `(left_prefix_seq, combined_prefix_seq, right_prefix_seq)`.
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
-/// covered epoch. Each prefix is a list without its last member.
+/// covered epoch. Each `elapsed` polynomial omits its list's last member,
+/// which the header carries as `nf_last`.
 ///
 /// # Panics
 ///
@@ -109,29 +110,30 @@ pub fn unspent_fuse(
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
     #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
-    let (_, left_prefix) = left_elapsed
+    let (_, left_earlier) = left_elapsed
         .split_last()
         .expect("a segment covers at least one epoch");
     #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
-    let (_, right_prefix) = right_elapsed
+    let (_, right_earlier) = right_elapsed
         .split_last()
         .expect("a segment covers at least one epoch");
-    let combined = [left_elapsed, right_prefix].concat();
+    let combined = [left_elapsed, right_earlier].concat();
     (
-        NfSeqPoly::new(left_epoch_start, left_prefix),
+        NfSeqPoly::new(left_epoch_start, left_earlier),
         NfSeqPoly::new(left_epoch_start, &combined),
-        NfSeqPoly::new(right_epoch_start, right_prefix),
+        NfSeqPoly::new(right_epoch_start, right_earlier),
     )
 }
 
 /// Prepare the witness for [`UnspentBind`]:
-/// `(prefix_seq, nf_seq, complement_seq)`.
+/// `(elapsed_seq, nf_seq, complement_seq)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the complement is the window's runs on both
 /// sides of the unspent's span, multiplied.
-/// The prefix is `elapsed` without its last member.
+/// The `elapsed` polynomial omits the list's last member, which the header
+/// carries as `nf_last`.
 ///
 /// # Panics
 ///
@@ -149,7 +151,7 @@ pub fn unspent_bind(
     let (_, epoch_start, _, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
-    let (_, prefix) = elapsed
+    let (_, earlier) = elapsed
         .split_last()
         .expect("a segment covers at least one epoch");
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
@@ -158,7 +160,7 @@ pub fn unspent_bind(
     let complement_seq =
         NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
     (
-        NfSeqPoly::new(epoch_start, prefix),
+        NfSeqPoly::new(epoch_start, earlier),
         NfSeqPoly::new(nullifiers_epoch_start, window),
         complement_seq,
     )
@@ -455,11 +457,12 @@ pub const fn evidence_tree_open(
 }
 
 /// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
-/// prefix_seq, elapsed_seq, contents)`.
+/// elapsed_seq, extended_seq, contents)`.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
-/// The prefix is `elapsed` without its last member.
+/// The `elapsed` polynomial omits the list's last member, which the header
+/// carries as `nf_last`, and `extended` holds the whole list.
 ///
 /// # Panics
 ///
@@ -474,14 +477,14 @@ pub fn unspent_lift(
     let (_, epoch_start, ..) = unspent;
     let (_epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
     #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
-    let (_, prefix) = elapsed
+    let (_, earlier) = elapsed
         .split_last()
         .expect("a segment covers at least one epoch");
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        NfSeqPoly::new(epoch_start, prefix),
+        NfSeqPoly::new(epoch_start, earlier),
         NfSeqPoly::new(epoch_start, elapsed),
         bucket_members.iter().copied().collect(),
     )
