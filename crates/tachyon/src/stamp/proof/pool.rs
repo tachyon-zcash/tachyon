@@ -24,6 +24,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 
 use super::{
     delegation::NoteNullifiers,
@@ -33,6 +34,7 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     nullifier::Nullifier,
+    pasta,
     pasta::{Ep, Eq, Fp, Fq},
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
@@ -58,32 +60,37 @@ use crate::{
 /// epoch from the same bucket or the same half, and
 /// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
 ///
-/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
+/// The segment's `elapsed` sequence holds one tested nullifier per epoch in
 /// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
 /// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
-/// on `anchor_next`.
+/// on `anchor_next`. The header carries it as a `prefix` [`NfSeqPoly`]
+/// commitment, the members below `epoch_next - 1`, and the member at
+/// `epoch_next - 1`, `nf_last`:
 ///
-/// `nf_last` is the member at `epoch_next - 1`.
-/// The step that tests a value writes it to `nf_last`, and
-/// the step that next takes the segment as a prefix checks that `elapsed` ends
-/// with it: [`UnspentLift`], [`UnspentFuse`] for its left half, or
-/// [`UnspentBind`]. A right half's `nf_last` becomes the fused segment's.
+/// $$
+///   \mathsf{elapsed}(X) = \mathsf{prefix}(X) \cdot
+///   F_{(\mathsf{epoch\_next} - 1,\, \mathsf{nf\_last})}(X)
+/// $$
+///
+/// Every step that consumes a segment multiplies the `nf_last` factor in at a
+/// challenge that absorbs `[nf_last]·G_0`. `nf_last` is a free witness where
+/// it is produced and no commitment binds it, so a challenge that did not
+/// absorb it would let a prover choose it after the challenge, as the
+/// cube-root-of-unity twin of another value.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
-/// because `QrUnspentInit` and [`UnspentLift`] encode their member from the
-/// bucket's own epoch. Each epoch carries exactly one member: `QrUnspentInit`
-/// pins its one member by its challenge identity, `UnspentLift` adds exactly
-/// one at `epoch_next` by its, and [`UnspentFuse`]'s identity determines the
-/// combined polynomial exactly, so the property composes by induction. The
-/// tested value is free at its own challenge, so the first two identities hold
-/// as polynomials once the last-member check above confines the value to the
-/// sequence's factors.
+/// because `QrUnspentInit` and [`UnspentLift`] take their member's epoch from
+/// the bucket. Each epoch carries exactly one member: `QrUnspentInit` emits
+/// one member over the empty prefix, `UnspentLift` folds `nf_last` into the
+/// prefix and adds one member at `epoch_next`, and [`UnspentFuse`]'s identity
+/// determines the combined prefix exactly, so the property composes by
+/// induction.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
 impl Header for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, elapsed, nf_last, epoch_next, anchor_next)`
+    /// `(anchor_start, epoch_start, prefix, nf_last, epoch_next, anchor_next)`
     type Data = (
         Anchor,
         EpochIndex,
@@ -96,7 +103,7 @@ impl Header for ArbitraryUnspent {
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (anchor_start, epoch_start, elapsed, nf_last, epoch_next, anchor_next) = *data;
+        let (anchor_start, epoch_start, prefix, nf_last, epoch_next, anchor_next) = *data;
         (
             vec![
                 Fp::from(anchor_start),
@@ -107,7 +114,7 @@ impl Header for ArbitraryUnspent {
             ],
             Vec::new(),
             Vec::new(),
-            vec![Eq::from(elapsed)],
+            vec![Eq::from(prefix)],
         )
     }
 }
@@ -119,7 +126,7 @@ pub struct NoteUnspent;
 
 impl Header for NoteUnspent {
     /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. `cm` leads;
-    /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed` or
+    /// the rest mirrors the [`ArbitraryUnspent`] without `prefix` or
     /// `nf_last`.
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
 
@@ -291,22 +298,20 @@ impl Step for AnchorSpanFuse {
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
 /// their product.
-/// The fused segment takes `nf_last` from the right.
 ///
 /// # Soundness
 ///
-/// The left half's last member becomes interior here, so the step checks that
-/// `left_elapsed` ends with it,
+/// The combined prefix is the left prefix, the left `nf_last` factor and the
+/// right prefix,
 ///
 /// $$
-///   \mathsf{left\_elapsed}(X) = \mathsf{left\_prefix}(X) \cdot
-///   F_{(\mathsf{left.epoch\_next} - 1,\, \mathsf{left.nf\_last})}(X),
+///   \mathsf{combined}(X) = \mathsf{left}(X) \cdot
+///   F_{(\mathsf{left.epoch\_next} - 1,\, \mathsf{left.nf\_last})}(X) \cdot
+///   \mathsf{right}(X),
 /// $$
 ///
-/// at a challenge absorbing both sequences. `left.nf_last` and
-/// `left.epoch_next` are header fields, fixed before that challenge.
-///
-/// Four committed polynomials: the left prefix and the three sequences.
+/// checked at a challenge absorbing the three prefixes and
+/// `[left.nf_last]·G_0`. The fused segment takes `nf_last` from the right.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -315,22 +320,19 @@ impl Step for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(left_prefix_seq, left_elapsed_seq, combined_elapsed_seq,
-    /// right_elapsed_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(left_prefix_seq, combined_prefix_seq, right_prefix_seq)`
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(2);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_prefix_seq, left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<
-            'source,
-        >,
+        (left_prefix_seq, combined_prefix_seq, right_prefix_seq): Self::Witness<'source>,
         (
             left_anchor_start,
             left_epoch_start,
-            left_elapsed,
+            left_prefix,
             left_nf_last,
             left_epoch_next,
             left_anchor_next,
@@ -338,20 +340,20 @@ impl Step for UnspentFuse {
         (
             right_anchor_start,
             right_epoch_start,
-            right_elapsed,
+            right_prefix,
             right_nf_last,
             right_epoch_next,
             right_anchor_next,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
-            Eq::from(left_elapsed_seq.commit()),
-            Eq::from(left_elapsed),
+            Eq::from(left_prefix_seq.commit()),
+            Eq::from(left_prefix),
             "UnspentFuse: left polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(right_elapsed_seq.commit()),
-            Eq::from(right_elapsed),
+            Eq::from(right_prefix_seq.commit()),
+            Eq::from(right_prefix),
             "UnspentFuse: right polynomial does not match header",
         )?;
         enforce_zero(
@@ -362,36 +364,41 @@ impl Step for UnspentFuse {
             Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
             "UnspentFuse: halves do not meet at one epoch",
         )?;
-        // The factor is not absorbed into the challenge. Its member is
-        // `(left.epoch_next − 1, left.nf_last)`, both fields of the left header.
-        let prefix_commit = left_prefix_seq.commit();
-        let elapsed_commit = left_elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
-        let prefix_at_z = left_prefix_seq.eval(z);
-        let elapsed_at_z = left_elapsed_seq.eval(z);
-        ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
-        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
-        let factor = indexed_multiset::direct_eval(
-            [(u64::from(left_epoch_next) - 1, left_nf_last.into())],
-            z,
-        );
-        if elapsed_at_z != prefix_at_z * factor {
-            return Err(ragu_core::Error::InvalidWitness(
-                "UnspentFuse: left does not end with its last member".into(),
-            ));
-        }
-        enforce_poly_product(
-            ctx,
-            left_elapsed_seq.as_ref(),
-            right_elapsed_seq.as_ref(),
-            combined_elapsed_seq.as_ref(),
+        let z = ctx.derive_challenge(&[
+            left_prefix_seq.commit().into(),
+            combined_prefix_seq.commit().into(),
+            right_prefix_seq.commit().into(),
+            {
+                // The mock absorbs only points, so absorb `[nf_last]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(left_nf_last)
+            },
+        ])?;
+        let left_at_z = left_prefix_seq.eval(z);
+        let combined_at_z = combined_prefix_seq.eval(z);
+        let right_at_z = right_prefix_seq.eval(z);
+        ctx.enforce_poly_query(left_prefix_seq.commit().into(), z, left_at_z)?;
+        ctx.enforce_poly_query(combined_prefix_seq.commit().into(), z, combined_at_z)?;
+        ctx.enforce_poly_query(right_prefix_seq.commit().into(), z, right_at_z)?;
+        enforce_zero(
+            combined_at_z
+                - (left_at_z
+                    * indexed_multiset::direct_eval(
+                        [(u64::from(left_epoch_next) - 1, left_nf_last.into())],
+                        z,
+                    )
+                    * right_at_z),
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
         Ok((
             (
                 left_anchor_start,
                 left_epoch_start,
-                combined_elapsed_seq.commit(),
+                combined_prefix_seq.commit(),
                 right_nf_last,
                 right_epoch_next,
                 right_anchor_next,
@@ -407,37 +414,23 @@ impl Step for UnspentFuse {
 /// The bucket starts on the segment's excluded bound: `anchor_next` and
 /// `epoch_next` are the bucket's `anchor_start` and `epoch`. The step tests one
 /// value against the bucket as [`QrUnspentInit`](super::qr::QrUnspentInit)
-/// does, appends it to `elapsed` as the member at `epoch_next`, and moves the
-/// segment's bound to the bucket's `anchor_next`. The value becomes the
-/// segment's `nf_last`. One step per epoch, where
+/// does, writes it to `nf_last` as the member at `epoch_next`, and moves the
+/// segment's bound to the bucket's `anchor_next`. One step per epoch, where
 /// [`QrUnspentInit`](super::qr::QrUnspentInit) then [`UnspentFuse`] takes two.
 ///
 /// # Soundness
 ///
-/// `elapsed_seq` is bound to the header by commit-equality and `contents` to
-/// the bucket. The segment's last member becomes interior here, so the step
-/// checks that `elapsed` ends with `unspent.nf_last` at `epoch_next - 1`, at
-/// its own challenge. `unspent.nf_last` is a header field, fixed before that
-/// challenge.
+/// `prefix_seq` is bound to the header by commit-equality and `contents` to
+/// the bucket. The challenge absorbs both sequences and
+/// `[unspent.nf_last]·G_0`, so the identity
+/// $\mathsf{elapsed}(z) = \mathsf{prefix}(z) \cdot F(z)$, with $F$ the one
+/// indexed member `(epoch_next - 1, unspent.nf_last)`, fixes `elapsed` to
+/// `prefix` plus exactly that member. `elapsed` becomes the output's prefix,
+/// and `value` its `nf_last` at `epoch_next`, which advances by one, so the
+/// segment keeps one member per epoch in `[epoch_start, epoch_next)`. `value`
+/// is free until [`UnspentBind`] forces it against the note's derivation.
 ///
-/// The identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with
-/// $F$ the one indexed member `(epoch_next, value)`, is checked at a challenge
-/// absorbing both sequences and `contents`. `value` is free and not absorbed,
-/// so a prover can pick it after the challenge. `value` is also the output's
-/// `nf_last`, and the step that next takes the output as a prefix checks that
-/// `extended` has the factor `(epoch_next, nf_last)`, at a challenge over that
-/// prefix and `extended`. That challenge is drawn after `value` is fixed. It
-/// differs from this one because this one also absorbs `contents`: with the
-/// honest prefix `elapsed`, the two would otherwise coincide, and a value
-/// picked here would pass both. The later check confines `value` to
-/// `extended`'s own factors at `epoch_next`, all fixed before this step's
-/// challenge, so the identity here holds as polynomials: `extended` is
-/// `elapsed` plus exactly that member. The member's epoch is `epoch_next`,
-/// which advances by one, so `extended` keeps one member per epoch in
-/// `[epoch_start, epoch_next)`. [`UnspentBind`] forces `value` against the
-/// note's derivation.
-///
-/// Four committed polynomials: the prefix, the two sequences and the contents.
+/// Three committed polynomials, each opened once.
 #[derive(Debug)]
 pub struct UnspentLift;
 
@@ -446,13 +439,11 @@ impl Step for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, prefix_seq, elapsed_seq, extended_seq,
-    /// contents)`
+    /// `(value, classes, mask, prefix_seq, elapsed_seq, contents)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
-        NfSeqPoly,
         NfSeqPoly,
         NfSeqPoly,
         TachygramSetPoly,
@@ -463,13 +454,11 @@ impl Step for UnspentLift {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, classes, mask, prefix_seq, elapsed_seq, extended_seq, contents): Self::Witness<
-            'source,
-        >,
+        (value, classes, mask, prefix_seq, elapsed_seq, contents): Self::Witness<'source>,
         (
             unspent_anchor_start,
             unspent_epoch_start,
-            unspent_elapsed,
+            unspent_prefix,
             unspent_nf_last,
             unspent_epoch_next,
             unspent_anchor_next,
@@ -497,30 +486,10 @@ impl Step for UnspentLift {
             "UnspentLift: contents do not match the bucket",
         )?;
         enforce_equal_point(
-            Eq::from(elapsed_seq.commit()),
-            Eq::from(unspent_elapsed),
-            "UnspentLift: elapsed does not match header",
+            Eq::from(prefix_seq.commit()),
+            Eq::from(unspent_prefix),
+            "UnspentLift: prefix does not match header",
         )?;
-        // The factor is not absorbed into the challenge. Its member is
-        // `(epoch_next − 1, nf_last)`, both fields of the left header.
-        {
-            let prefix_commit = prefix_seq.commit();
-            let elapsed_commit = elapsed_seq.commit();
-            let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
-            let prefix_at_z = prefix_seq.eval(z);
-            let elapsed_at_z = elapsed_seq.eval(z);
-            ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
-            ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
-            let factor = indexed_multiset::direct_eval(
-                [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
-                z,
-            );
-            if elapsed_at_z != prefix_at_z * factor {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "UnspentLift: elapsed does not end with its last member".into(),
-                ));
-            }
-        }
         enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
         enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
 
@@ -528,20 +497,28 @@ impl Step for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
         })?;
 
-        let z = ctx.derive_challenge(&[
-            elapsed_seq.commit().into(),
-            extended_seq.commit().into(),
-            contents_commit.into(),
-        ])?;
+        let z =
+            ctx.derive_challenge(&[prefix_seq.commit().into(), elapsed_seq.commit().into(), {
+                // The mock absorbs only points, so absorb `[nf_last]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(unspent_nf_last)
+            }])?;
+        let prefix_at_z = prefix_seq.eval(z);
         let elapsed_at_z = elapsed_seq.eval(z);
-        let extended_at_z = extended_seq.eval(z);
+        ctx.enforce_poly_query(prefix_seq.commit().into(), z, prefix_at_z)?;
         ctx.enforce_poly_query(elapsed_seq.commit().into(), z, elapsed_at_z)?;
-        ctx.enforce_poly_query(extended_seq.commit().into(), z, extended_at_z)?;
         enforce_zero(
-            extended_at_z
-                - (elapsed_at_z
-                    * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z)),
-            "UnspentLift: extended is not elapsed with the tested pair",
+            elapsed_at_z
+                - (prefix_at_z
+                    * indexed_multiset::direct_eval(
+                        [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
+                        z,
+                    )),
+            "UnspentLift: elapsed is not prefix with the last member",
         )?;
 
         let contents_at_value = contents.eval(value.into());
@@ -555,7 +532,7 @@ impl Step for UnspentLift {
             (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                extended_seq.commit(),
+                elapsed_seq.commit(),
                 value.into(),
                 epoch_next,
                 bucket_anchor_next,
@@ -590,15 +567,15 @@ impl Step for UnspentLift {
 /// Completeness rides `elapsed`'s provenance invariants, so every epoch of
 /// `[epoch_start, epoch_next)` was tested with its own genuine nullifier.
 ///
-/// No later step takes the segment as a prefix, so the bind checks that
-/// `elapsed` ends with `nf_last` at `epoch_next - 1`, at its own challenge.
-/// `nf_last` is a header field, fixed before that challenge.
+/// `elapsed` is the header's `prefix` times the `nf_last` factor, so the
+/// identity is checked as
+/// $\mathsf{nf\_seq}(z) = \mathsf{prefix}(z) \cdot F(z) \cdot
+/// \mathsf{complement}(z)$, with $F$ the one indexed member
+/// `(epoch_next - 1, nf_last)`, at a challenge absorbing the three sequences
+/// and `[nf_last]·G_0`.
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
 /// the validated [`NoteUnspent`].
-///
-/// Four committed polynomials: the prefix, `elapsed`, `nf_seq` and the
-/// complement.
 #[derive(Debug)]
 pub struct UnspentBind;
 
@@ -607,19 +584,19 @@ impl Step for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(prefix_seq, elapsed_seq, nf_seq, complement_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(prefix_seq, nf_seq, complement_seq)`
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (prefix_seq, elapsed_seq, nf_seq, complement_seq): Self::Witness<'source>,
+        (prefix_seq, nf_seq, complement_seq): Self::Witness<'source>,
         (
             unspent_anchor_start,
             unspent_epoch_start,
-            unspent_elapsed,
+            unspent_prefix,
             unspent_nf_last,
             unspent_epoch_next,
             unspent_anchor_next,
@@ -638,41 +615,46 @@ impl Step for UnspentBind {
         }
 
         enforce_equal_point(
-            elapsed_seq.commit().into(),
-            Eq::from(unspent_elapsed),
-            "UnspentBind: elapsed polynomial does not match header",
+            prefix_seq.commit().into(),
+            Eq::from(unspent_prefix),
+            "UnspentBind: prefix polynomial does not match header",
         )?;
         enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
             "UnspentBind: covering sequence does not match header",
         )?;
-        // The factor is not absorbed into the challenge. Its member is
-        // `(epoch_next − 1, nf_last)`, both fields of the left header.
-        let prefix_commit = prefix_seq.commit();
-        let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
-        let prefix_at_z = prefix_seq.eval(z);
-        let elapsed_at_z = elapsed_seq.eval(z);
-        ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
-        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
-        let factor = indexed_multiset::direct_eval(
-            [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
-            z,
-        );
-        if elapsed_at_z != prefix_at_z * factor {
-            return Err(ragu_core::Error::InvalidWitness(
-                "UnspentBind: elapsed does not end with its last member".into(),
-            ));
-        }
 
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
-        enforce_poly_product(
-            ctx,
-            elapsed_seq.as_ref(),
-            complement_seq.as_ref(),
-            nf_seq.as_ref(),
+        let z = ctx.derive_challenge(&[
+            prefix_seq.commit().into(),
+            nf_seq.commit().into(),
+            complement_seq.commit().into(),
+            {
+                // The mock absorbs only points, so absorb `[nf_last]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(unspent_nf_last)
+            },
+        ])?;
+        let prefix_at_z = prefix_seq.eval(z);
+        let nf_seq_at_z = nf_seq.eval(z);
+        let complement_at_z = complement_seq.eval(z);
+        ctx.enforce_poly_query(prefix_seq.commit().into(), z, prefix_at_z)?;
+        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
+        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
+        enforce_zero(
+            nf_seq_at_z
+                - (prefix_at_z
+                    * indexed_multiset::direct_eval(
+                        [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
+                        z,
+                    )
+                    * complement_at_z),
             "UnspentBind: sequence does not match the derivation",
         )?;
 

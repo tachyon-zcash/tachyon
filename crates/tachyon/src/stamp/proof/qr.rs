@@ -30,12 +30,12 @@ use udon::field::Field as _;
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
 use crate::{
-    collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
+    collections::qr::QUADRATIC_NON_RESIDUE,
     digest::poseidon,
     pasta,
     pasta::{Ep, Eq, Fp, Fq},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
+        Anchor, EpochIndex, NfSeqCommit, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
@@ -736,7 +736,6 @@ pub(super) fn enforce_value_profile(
 /// to test. Consecutive epochs' segments meet on that boundary and fuse
 /// directly, or [`UnspentLift`](super::pool::UnspentLift) appends the next
 /// epoch's bucket in one step.
-/// It records the tested value in `nf_last`.
 ///
 /// # Soundness
 ///
@@ -749,19 +748,11 @@ pub(super) fn enforce_value_profile(
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to.
-///
-/// `value` is a free witness, and the challenge absorbs only the sequence. On
-/// its own the identity leaves `value` loose: a prover can pick it after the
-/// challenge, from a cube root of $\mathsf{sequence}(z) + 2$. `value` is also
-/// the segment's `nf_last`, and the step that next takes the segment as a
-/// prefix checks that the sequence has the factor `(epoch, nf_last)`, at a
-/// challenge drawn after `value` is fixed. That challenge absorbs a prefix as
-/// well as the sequence, so it differs from this one. The check confines
-/// `value` to the sequence's own factors at `epoch`, all fixed before this
-/// step's challenge, so the identity here holds as polynomials and the
-/// sequence is the one member. [`UnspentBind`](super::pool::UnspentBind)
-/// forces that member against the note's genuine derivation.
+/// the bucket belongs to. `value` is a free witness, written to `nf_last`
+/// over the empty `prefix`, the constant polynomial 1 committed as $G_0$. The
+/// step that consumes the segment multiplies its member in at a challenge
+/// absorbing `nf_last`; [`UnspentBind`](super::pool::UnspentBind) forces that
+/// member against the note's genuine derivation.
 ///
 /// [`QrBucketSeal`] performs the boundary digest, and so establishes
 /// whole-epoch coverage. This step and every fuse and lift preserve it.
@@ -773,12 +764,11 @@ impl Step for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence, contents)`
+    /// `(value, classes, mask, contents)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
-        NfSeqPoly,
         TachygramSetPoly,
     );
 
@@ -787,7 +777,7 @@ impl Step for QrUnspentInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, classes, mask, sequence, contents): Self::Witness<'source>,
+        (value, classes, mask, contents): Self::Witness<'source>,
         (
             bucket_epoch,
             bucket_anchor_start,
@@ -810,18 +800,6 @@ impl Step for QrUnspentInit {
             ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
         })?;
 
-        let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into()])?;
-        let sequence_at_z = sequence.eval(z);
-        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
-
-        let member_at_z =
-            indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z);
-        enforce_zero(
-            sequence_at_z - member_at_z,
-            "QrUnspentInit: sequence does not match the tested pair",
-        )?;
-
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
         enforce_nonzero(
@@ -829,11 +807,17 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: found nullifier in the bucket",
         )?;
 
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
         Ok((
             (
                 bucket_anchor_start,
                 bucket_epoch,
-                sequence_commit,
+                NfSeqCommit::from(Eq::from(g0)),
                 value.into(),
                 epoch_next,
                 bucket_anchor_next,
