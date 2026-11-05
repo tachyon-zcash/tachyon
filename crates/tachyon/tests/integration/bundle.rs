@@ -311,7 +311,7 @@ fn duplicated_spend_cannot_inflate() {
         memo: Vec::new(),
         stamp: ProofStamp {
             coverage: stamp_coverage(
-                &action_bytes,
+                [descriptor, descriptor],
                 &[fee::Descriptor {
                     max_commitment: fee_max_commitment,
                     value: value::Positive::ZERO,

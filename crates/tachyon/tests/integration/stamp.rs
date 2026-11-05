@@ -289,9 +289,7 @@ fn merge_populates_covered_actions() {
     let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor, note_b);
 
-    let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
-    descriptors.sort_unstable();
-    let expected = stamp_coverage(&descriptors, &[fee_a, fee_b]);
+    let expected = stamp_coverage([plan_a.descriptor(), plan_b.descriptor()], &[fee_a, fee_b]);
 
     let receiver_fee = stamp_a.fee;
     let merged = stamp_a
@@ -354,11 +352,7 @@ fn double_output_cannot_aggregate() {
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
 
-    let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
-        desc_bytes.sort_unstable();
-        stamp_coverage(&desc_bytes, &[fee_a, fee_b])
-    };
+    let coverage = stamp_coverage(all_descriptors.iter().copied(), &[fee_a, fee_b]);
     let tachygrams: BTreeSet<Tachygram> = stamp_a
         .tachygrams
         .union(&stamp_b.tachygrams)
@@ -455,11 +449,7 @@ fn double_spend_cannot_aggregate() {
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
 
-    let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
-        desc_bytes.sort_unstable();
-        stamp_coverage(&desc_bytes, &fees)
-    };
+    let coverage = stamp_coverage(all_descriptors.iter().copied(), &fees);
     let tachygrams: BTreeSet<Tachygram> = stamp_a
         .tachygrams
         .union(&stamp_b.tachygrams)
@@ -530,11 +520,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         .copied()
         .collect();
 
-    let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
-        desc_bytes.sort_unstable();
-        stamp_coverage(&desc_bytes, &[fee])
-    };
+    let coverage = stamp_coverage(all_descriptors.iter().copied(), &[fee]);
     let tachygrams: BTreeSet<Tachygram> = output_stamp.tachygrams.iter().copied().collect();
     let stamp = ProofStamp {
         coverage,

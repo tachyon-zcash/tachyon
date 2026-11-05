@@ -50,11 +50,16 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-pub fn stamp_coverage(descriptors: &[[u8; 64]], fees: &[fee::Descriptor]) -> [u8; 32] {
+pub fn stamp_coverage(
+    descriptors: impl IntoIterator<Item = action::Descriptor>,
+    fees: &[fee::Descriptor],
+) -> [u8; 32] {
+    let mut descriptor_bytes: Vec<[u8; 64]> = descriptors.into_iter().collect();
+    descriptor_bytes.sort_unstable();
     let mut fee_bytes: Vec<[u8; 40]> = fees.iter().copied().map(Into::into).collect();
     fee_bytes.sort_unstable();
     blake2b::stamp_coverage_digest(
-        &blake2b::action_descriptor_digest(descriptors),
+        &blake2b::action_descriptor_digest(&descriptor_bytes),
         &blake2b::stamp_fees_digest(&fee_bytes),
     )
 }
@@ -398,15 +403,6 @@ impl PoolSim {
             let block = block_factory(self);
             self.mine(block);
         }
-    }
-
-    pub fn mine_bundles(&mut self, bundles: &[&Bundle<ProofStamp>]) {
-        self.mine(
-            bundles
-                .iter()
-                .map(|&bundle| bundle.stamp.tachygrams.iter().copied().collect())
-                .collect(),
-        );
     }
 
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
