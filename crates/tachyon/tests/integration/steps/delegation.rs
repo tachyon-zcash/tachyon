@@ -15,7 +15,7 @@ use zcash_tachyon::{
     witness,
 };
 
-use crate::fixtures::{WalletSim, assert_rejected};
+use crate::fixtures::WalletSim;
 
 #[test]
 fn derivation_chain_exports_its_windows() {
@@ -220,27 +220,33 @@ fn delegation_steps_reject_corruptions() {
             .map(drop)
     };
 
-    assert_rejected(
-        derive(rng, left_start, foreign_seq),
-        "NullifierDerive: sequence does not match the derived window",
+    assert_eq!(
+        derive(rng, left_start, foreign_seq)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: NullifierDerive: sequence does not match the derived window",
     );
-    assert_rejected(
-        derive(rng, misaligned, honest_seq),
-        "NullifierDerive: epoch_start is not group-aligned",
+    assert_eq!(
+        derive(rng, misaligned, honest_seq).unwrap_err().to_string(),
+        "invalid witness: NullifierDerive: epoch_start is not group-aligned",
     );
-    assert_rejected(
-        derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[])),
-        "NullifierDerive: window exceeds the epoch range",
+    assert_eq!(
+        derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[]))
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: NullifierDerive: window exceeds the epoch range",
     );
-    assert_rejected(
-        fuse(rng, gapped_witness, &gapped),
-        "NullifierFuse: ranges not contiguous",
+    assert_eq!(
+        fuse(rng, gapped_witness, &gapped).unwrap_err().to_string(),
+        "invalid witness: NullifierFuse: ranges not contiguous",
     );
-    assert_rejected(
-        fuse(rng, foreign_witness, &foreign_right),
-        "NullifierFuse: note commitments differ",
+    assert_eq!(
+        fuse(rng, foreign_witness, &foreign_right)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: NullifierFuse: note commitments differ",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -249,10 +255,12 @@ fn delegation_steps_reject_corruptions() {
                 right_seq.clone(),
             ),
             &right,
-        ),
-        "NullifierFuse: left polynomial does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: NullifierFuse: left polynomial does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -261,15 +269,19 @@ fn delegation_steps_reject_corruptions() {
                 NfSeqPoly::new(right_start, &reversed),
             ),
             &right,
-        ),
-        "NullifierFuse: right polynomial does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: NullifierFuse: right polynomial does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (left_seq, NfSeqPoly::new(left_start, &junk), right_seq),
             &right,
-        ),
-        "NullifierFuse: merged is not the concat of the halves",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: NullifierFuse: merged is not the concat of the halves",
     );
 }

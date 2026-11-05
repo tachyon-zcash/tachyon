@@ -16,7 +16,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use crate::fixtures::{PoolSim, WalletSim, assert_rejected, build_anchor_span_pcd};
+use crate::fixtures::{PoolSim, WalletSim, build_anchor_span_pcd};
 
 fn output_actions(
     rng: &mut StdRng,
@@ -238,21 +238,29 @@ fn lift_steps_reject_corruptions() {
     let (forked_actions, forked_stamp) = content(rng, fork);
     let (member_actions, member_stamp) = content(rng, members[0]);
 
-    assert_rejected(
-        action_lift(rng, &forked_actions, &members),
-        "ActionLift: actions anchor is neither the span's start nor a member",
+    assert_eq!(
+        action_lift(rng, &forked_actions, &members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: ActionLift: actions anchor is neither the span's start nor a member",
     );
-    assert_rejected(
-        action_lift(rng, &member_actions, &foreign_members),
-        "ActionLift: members do not match header",
+    assert_eq!(
+        action_lift(rng, &member_actions, &foreign_members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: ActionLift: members do not match header",
     );
-    assert_rejected(
-        stamp_lift(rng, &forked_stamp, &members),
-        "StampLift: stamp anchor is neither the span's start nor a member",
+    assert_eq!(
+        stamp_lift(rng, &forked_stamp, &members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampLift: stamp anchor is neither the span's start nor a member",
     );
-    assert_rejected(
-        stamp_lift(rng, &member_stamp, &foreign_members),
-        "StampLift: members do not match header",
+    assert_eq!(
+        stamp_lift(rng, &member_stamp, &foreign_members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampLift: members do not match header",
     );
 }
 
@@ -316,7 +324,7 @@ fn action_merge_rejects_corruptions() {
         (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -335,10 +343,12 @@ fn action_merge_rejects_corruptions() {
             ),
             &displaced.0,
         )
-        .map(drop),
-        "ActionMerge: anchors must match",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: anchors must match",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -348,10 +358,12 @@ fn action_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "ActionMerge: left action accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: left action accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -361,10 +373,12 @@ fn action_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "ActionMerge: right action accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: right action accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -374,10 +388,12 @@ fn action_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "ActionMerge: left tachygram accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: left tachygram accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -387,11 +403,13 @@ fn action_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "ActionMerge: right tachygram accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: right tachygram accumulator must commit to header commit",
     );
     // A reused note repeats its tachygrams and a repeated action its digest.
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -410,10 +428,12 @@ fn action_merge_rejects_corruptions() {
             ),
             &reused.0,
         )
-        .map(drop),
-        "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -432,8 +452,10 @@ fn action_merge_rejects_corruptions() {
             ),
             &repeated.0,
         )
-        .map(drop),
-        "ActionMerge: merged action set must be the product of left and right action sets",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: ActionMerge: merged action set must be the product of left and right action sets",
     );
 }
 
@@ -506,7 +528,7 @@ fn stamp_merge_rejects_corruptions() {
         (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -525,10 +547,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &displaced.0,
         )
-        .map(drop),
-        "StampMerge: anchors must match",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: anchors must match",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -538,10 +562,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "StampMerge: left action accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: left action accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -551,10 +577,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "StampMerge: right action accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: right action accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -564,10 +592,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "StampMerge: left tachygram accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: left tachygram accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -577,10 +607,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &right.0,
         )
-        .map(drop),
-        "StampMerge: right tachygram accumulator must commit to header commit",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: right tachygram accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -599,10 +631,12 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &reused.0,
         )
-        .map(drop),
-        "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: merged tachygram set must be the product of left and right tachygram sets",
     );
-    assert_rejected(
+    assert_eq!(
         merge(
             rng,
             (
@@ -621,8 +655,10 @@ fn stamp_merge_rejects_corruptions() {
             ),
             &repeated.0,
         )
-        .map(drop),
-        "StampMerge: merged action set must be the product of left and right action sets",
+        .map(drop)
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: StampMerge: merged action set must be the product of left and right action sets",
     );
 }
 
@@ -684,33 +720,39 @@ fn unmerge_binds_its_sets() {
     let carol_tachygrams: TachygramSetPoly = carol.2.iter().copied().collect();
     let mut wrong_dividend_actions = valid.clone();
     wrong_dividend_actions.0.0 = carol_actions.clone();
-    assert_rejected(
-        unmerge(rng, wrong_dividend_actions),
-        "StampUnmerge: dividend action accumulator must commit to header commit",
+    assert_eq!(
+        unmerge(rng, wrong_dividend_actions)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampUnmerge: dividend action accumulator must commit to header commit",
     );
     let mut wrong_divisor_actions = valid.clone();
     wrong_divisor_actions.2.0 = carol_actions;
-    assert_rejected(
-        unmerge(rng, wrong_divisor_actions),
-        "StampUnmerge: divisor action accumulator must commit to header commit",
+    assert_eq!(
+        unmerge(rng, wrong_divisor_actions).unwrap_err().to_string(),
+        "invalid witness: StampUnmerge: divisor action accumulator must commit to header commit",
     );
     let mut wrong_dividend_tachygrams = valid.clone();
     wrong_dividend_tachygrams.0.1 = carol_tachygrams.clone();
-    assert_rejected(
-        unmerge(rng, wrong_dividend_tachygrams),
-        "StampUnmerge: dividend tachygram accumulator must commit to header commit",
+    assert_eq!(
+        unmerge(rng, wrong_dividend_tachygrams)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampUnmerge: dividend tachygram accumulator must commit to header commit",
     );
     let mut wrong_divisor_tachygrams = valid.clone();
     wrong_divisor_tachygrams.2.1 = carol_tachygrams;
-    assert_rejected(
-        unmerge(rng, wrong_divisor_tachygrams),
-        "StampUnmerge: divisor tachygram accumulator must commit to header commit",
+    assert_eq!(
+        unmerge(rng, wrong_divisor_tachygrams)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampUnmerge: divisor tachygram accumulator must commit to header commit",
     );
     let mut wrong_action_quotient = valid.clone();
     wrong_action_quotient.1.0 = valid.2.0.clone();
-    assert_rejected(
-        unmerge(rng, wrong_action_quotient),
-        "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
+    assert_eq!(
+        unmerge(rng, wrong_action_quotient).unwrap_err().to_string(),
+        "invalid witness: StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
     );
     let alice_tachygram = *alice.2.first().unwrap();
     let bob_tachygram = *bob.2.first().unwrap();
@@ -722,9 +764,11 @@ fn unmerge_binds_its_sets() {
         .filter(|&tachygram| tachygram != alice_tachygram)
         .chain([bob_tachygram])
         .collect();
-    assert_rejected(
-        unmerge(rng, wrong_tachygram_quotient),
-        "StampUnmerge: dividend tachygram set must be the product of divisor and quotient \
+    assert_eq!(
+        unmerge(rng, wrong_tachygram_quotient)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: StampUnmerge: dividend tachygram set must be the product of divisor and quotient \
          tachygram sets",
     );
 }
@@ -888,75 +932,89 @@ fn fee_fuse_rejects_corruptions() {
     };
     let honest_left = || (left_actions.clone(), left_tachygrams.clone());
 
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             (output_sets.0.clone(), left_tachygrams.clone()),
             output_sets.clone(),
             fee_sets.clone(),
-        ),
-        "FeeFuse: left action accumulator must commit to header commit",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: left action accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             (left_actions.clone(), output_sets.1.clone()),
             output_sets.clone(),
             fee_sets.clone(),
-        ),
-        "FeeFuse: left tachygram accumulator must commit to header commit",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: left tachygram accumulator must commit to header commit",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             excess,
             honest_left(),
             output_sets.clone(),
             fee_sets.clone(),
-        ),
-        "FeeFuse: change is out of range",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: change is out of range",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             honest_left(),
             output_sets.clone(),
             (other_fee_sets.0.clone(), fee_sets.1.clone()),
-        ),
-        "FeeFuse: fee action set does not commit to the fee digest",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: fee action set does not commit to the fee digest",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             honest_left(),
             output_sets.clone(),
             (fee_sets.0.clone(), other_fee_sets.1),
-        ),
-        "FeeFuse: fee tachygram set does not commit to the fee change note",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: fee tachygram set does not commit to the fee change note",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             honest_left(),
             (other_output_sets.0.clone(), output_sets.1.clone()),
             fee_sets.clone(),
-        ),
-        "FeeFuse: output action set must be the product of left and fee action sets",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: output action set must be the product of left and fee action sets",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             fee,
             honest_left(),
             (output_sets.0, other_output_sets.1),
             fee_sets,
-        ),
-        "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
     );
 }
 
@@ -979,7 +1037,7 @@ fn fee_seed_rejects_corruptions() {
         ..seed_note
     };
 
-    assert_rejected(
+    assert_eq!(
         fee_seed(
             rng,
             (
@@ -988,21 +1046,27 @@ fn fee_seed_rejects_corruptions() {
                 seed_actions.clone(),
                 seed_tachygrams.clone(),
             ),
-        ),
-        "FeeSeed: maximum fee must be zero",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeSeed: maximum fee must be zero",
     );
-    assert_rejected(
+    assert_eq!(
         fee_seed(
             rng,
             (seed_note, seed_anchor, other_seed_actions, seed_tachygrams),
-        ),
-        "FeeSeed: fee action set does not commit to the fee digest",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeSeed: fee action set does not commit to the fee digest",
     );
-    assert_rejected(
+    assert_eq!(
         fee_seed(
             rng,
             (seed_note, seed_anchor, seed_actions, other_seed_tachygrams),
-        ),
-        "FeeSeed: fee tachygram set does not commit to the fee change note",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: FeeSeed: fee tachygram set does not commit to the fee change note",
     );
 }

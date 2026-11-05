@@ -16,7 +16,7 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, WalletSim, assert_rejected, build_evidence_tree, build_qr_partition,
+    PoolSim, QrBucketEntry, WalletSim, build_evidence_tree, build_qr_partition,
     descend_evidence_tree, mine_sparse, qr_bucket_at,
 };
 
@@ -322,53 +322,69 @@ fn joins_reject_mismatched_networks() {
             .map(drop)
     };
 
-    assert_rejected(
-        leaves(rng, &whole, &later),
-        "EvidenceTreeLeafPair: inputs cover different epochs",
+    assert_eq!(
+        leaves(rng, &whole, &later).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeLeafPair: inputs cover different epochs",
     );
-    assert_rejected(
-        pair(rng, &whole_tree, &later_tree).map(drop),
-        "EvidenceTreePairFuse: inputs cover different epochs",
+    assert_eq!(
+        pair(rng, &whole_tree, &later_tree)
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreePairFuse: inputs cover different epochs",
     );
-    assert_rejected(
-        node(rng, &whole_pair, &later_pair),
-        "EvidenceTreeFuse: inputs cover different epochs",
+    assert_eq!(
+        node(rng, &whole_pair, &later_pair).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeFuse: inputs cover different epochs",
     );
-    assert_rejected(
-        leaves(rng, &later, &elsewhere),
-        "EvidenceTreeLeafPair: inputs open at different anchors",
+    assert_eq!(
+        leaves(rng, &later, &elsewhere).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeLeafPair: inputs open at different anchors",
     );
-    assert_rejected(
-        pair(rng, &later_tree, &elsewhere_tree).map(drop),
-        "EvidenceTreePairFuse: inputs open at different anchors",
+    assert_eq!(
+        pair(rng, &later_tree, &elsewhere_tree)
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreePairFuse: inputs open at different anchors",
     );
-    assert_rejected(
-        node(rng, &later_pair, &elsewhere_pair),
-        "EvidenceTreeFuse: inputs open at different anchors",
+    assert_eq!(
+        node(rng, &later_pair, &elsewhere_pair)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreeFuse: inputs open at different anchors",
     );
-    assert_rejected(
-        leaves(rng, &whole, &short),
-        "EvidenceTreeLeafPair: inputs close at different anchors",
+    assert_eq!(
+        leaves(rng, &whole, &short).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeLeafPair: inputs close at different anchors",
     );
-    assert_rejected(
-        pair(rng, &whole_tree, &short_tree).map(drop),
-        "EvidenceTreePairFuse: inputs close at different anchors",
+    assert_eq!(
+        pair(rng, &whole_tree, &short_tree)
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreePairFuse: inputs close at different anchors",
     );
-    assert_rejected(
-        node(rng, &whole_pair, &short_pair),
-        "EvidenceTreeFuse: inputs close at different anchors",
+    assert_eq!(
+        node(rng, &whole_pair, &short_pair).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeFuse: inputs close at different anchors",
     );
-    assert_rejected(
-        leaves(rng, &whole, &foreign),
-        "EvidenceTreeLeafPair: inputs derive from different discriminants",
+    assert_eq!(
+        leaves(rng, &whole, &foreign).unwrap_err().to_string(),
+        "invalid witness: EvidenceTreeLeafPair: inputs derive from different discriminants",
     );
-    assert_rejected(
-        pair(rng, &whole_tree, &foreign_tree).map(drop),
-        "EvidenceTreePairFuse: inputs derive from different discriminants",
+    assert_eq!(
+        pair(rng, &whole_tree, &foreign_tree)
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreePairFuse: inputs derive from different discriminants",
     );
-    assert_rejected(
-        node(rng, &whole_pair, &foreign_pair),
-        "EvidenceTreeFuse: inputs derive from different discriminants",
+    assert_eq!(
+        node(rng, &whole_pair, &foreign_pair)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreeFuse: inputs derive from different discriminants",
     );
 }
 
@@ -397,7 +413,7 @@ fn descend_and_open_reject_forgeries() {
         .collect::<TachygramSetPoly>()
         .commit();
 
-    assert_rejected(
+    assert_eq!(
         open(
             rng,
             &node,
@@ -406,10 +422,12 @@ fn descend_and_open_reject_forgeries() {
                 bits,
             },
             leaf.contents,
-        ),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
     );
-    assert_rejected(
+    assert_eq!(
         open(
             rng,
             &node,
@@ -418,16 +436,22 @@ fn descend_and_open_reject_forgeries() {
                 bits: bits ^ 1,
             },
             leaf.contents,
-        ),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
     );
-    assert_rejected(
-        open(rng, &node, leaf.profile, stranger),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+    assert_eq!(
+        open(rng, &node, leaf.profile, stranger)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
     );
-    assert_rejected(
-        open(rng, &tree.pcd, leaf.profile, leaf.contents),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+    assert_eq!(
+        open(rng, &tree.pcd, leaf.profile, leaf.contents)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
     );
 
     let levels = evidence::EvidenceTreeDescend::LEVELS;
@@ -436,7 +460,7 @@ fn descend_and_open_reject_forgeries() {
             .expect("a full descent");
         let (_, ref mut children) = path[level];
         children[child] = EvidenceTreeRoot(Fp::from(children[child]) + Fp::ONE);
-        assert_rejected(
+        assert_eq!(
             PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -445,8 +469,10 @@ fn descend_and_open_reject_forgeries() {
                     tree.pcd.clone(),
                     Proof::bootstrap().carry::<()>(()),
                 )
-                .map(drop),
-            "EvidenceTreeDescend: children do not hash to the node",
+                .map(drop)
+                .unwrap_err()
+                .to_string(),
+            "invalid witness: EvidenceTreeDescend: children do not hash to the node",
         );
     }
 }

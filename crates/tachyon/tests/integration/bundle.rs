@@ -58,22 +58,6 @@ fn proved_bundle(
     signed.stamp(proved)
 }
 
-fn merge_side(
-    bundle: &Bundle<ProofStamp>,
-    adjuncts: &[&Bundle<dyn StampState>],
-) -> (
-    ProofStamp,
-    BTreeSet<action::Descriptor>,
-    BTreeSet<fee::Descriptor>,
-) {
-    let members = || iter::once(bundle.as_dyn()).chain(adjuncts.iter().copied());
-    (
-        bundle.stamp.clone(),
-        members().flat_map(Bundle::descriptors).collect(),
-        members().map(Bundle::fee_descriptor).collect(),
-    )
-}
-
 fn build_aggregate(
     rng: &mut StdRng,
     wallet: &WalletSim,
@@ -130,26 +114,76 @@ fn build_aggregate(
             )
         })
         .collect();
-    let adjunct_dyns: Vec<&Bundle<dyn StampState>> = adjuncts.iter().map(Bundle::as_dyn).collect();
 
     if premerged {
         let (first, rest) = adjuncts.split_first().unwrap();
         let mut combined = first.clone();
         for (index, next) in rest.iter().enumerate() {
-            let (stamp, desc, fees) = merge_side(&combined, &adjunct_dyns[1..=index]);
-            combined.stamp = stamp
-                .merge(rng, (desc, fees), merge_side(next, &[]))
+            combined.stamp = combined
+                .stamp
+                .clone()
+                .merge(
+                    rng,
+                    (
+                        combined
+                            .descriptors()
+                            .chain(rest[..index].iter().flat_map(Bundle::descriptors))
+                            .collect(),
+                        iter::once(combined.fee_descriptor())
+                            .chain(rest[..index].iter().map(Bundle::fee_descriptor))
+                            .collect(),
+                    ),
+                    (
+                        next.stamp.clone(),
+                        next.descriptors().collect(),
+                        [next.fee_descriptor()].into(),
+                    ),
+                )
                 .unwrap();
         }
-        let (stamp, desc, fees) = merge_side(&receiver, &[]);
-        receiver.stamp = stamp
-            .merge(rng, (desc, fees), merge_side(&combined, &adjunct_dyns[1..]))
+        receiver.stamp = receiver
+            .stamp
+            .clone()
+            .merge(
+                rng,
+                (
+                    receiver.descriptors().collect(),
+                    [receiver.fee_descriptor()].into(),
+                ),
+                (
+                    combined.stamp.clone(),
+                    combined
+                        .descriptors()
+                        .chain(rest.iter().flat_map(Bundle::descriptors))
+                        .collect(),
+                    iter::once(combined.fee_descriptor())
+                        .chain(rest.iter().map(Bundle::fee_descriptor))
+                        .collect(),
+                ),
+            )
             .unwrap();
     } else {
         for (index, next) in adjuncts.iter().enumerate() {
-            let (stamp, desc, fees) = merge_side(&receiver, &adjunct_dyns[..index]);
-            receiver.stamp = stamp
-                .merge(rng, (desc, fees), merge_side(next, &[]))
+            receiver.stamp = receiver
+                .stamp
+                .clone()
+                .merge(
+                    rng,
+                    (
+                        receiver
+                            .descriptors()
+                            .chain(adjuncts[..index].iter().flat_map(Bundle::descriptors))
+                            .collect(),
+                        iter::once(receiver.fee_descriptor())
+                            .chain(adjuncts[..index].iter().map(Bundle::fee_descriptor))
+                            .collect(),
+                    ),
+                    (
+                        next.stamp.clone(),
+                        next.descriptors().collect(),
+                        [next.fee_descriptor()].into(),
+                    ),
+                )
                 .unwrap();
         }
     }
@@ -953,9 +987,26 @@ fn aggregates_reaggregate_into_a_parent() {
     let covered: Vec<&Bundle<dyn StampState>> = iter::once(aggregate.as_dyn())
         .chain(adjunct_dyns.iter().copied())
         .collect();
-    let (stamp, desc, fees) = merge_side(&parent, &[]);
-    parent.stamp = stamp
-        .merge(rng, (desc, fees), merge_side(&aggregate, &adjunct_dyns))
+    parent.stamp = parent
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                parent.descriptors().collect(),
+                [parent.fee_descriptor()].into(),
+            ),
+            (
+                aggregate.stamp.clone(),
+                aggregate
+                    .descriptors()
+                    .chain(adjuncts.iter().flat_map(Bundle::descriptors))
+                    .collect(),
+                iter::once(aggregate.fee_descriptor())
+                    .chain(adjuncts.iter().map(Bundle::fee_descriptor))
+                    .collect(),
+            ),
+        )
         .unwrap();
     assert!(parent.is_covering(&covered));
     let parent_id = mock_wtxid(&parent);
@@ -995,9 +1046,21 @@ fn verify_rejects_each_edit_at_its_stage() {
     );
     let elsewhere = Anchor::random(rng);
     let other = proved_bundle(rng, &wallet, elsewhere, vec![], &[100], (0, 0));
-    let (stamp, desc, fees) = merge_side(&aggregate, &[]);
-    aggregate.stamp = stamp
-        .merge(rng, (desc, fees), merge_side(&adjunct, &[]))
+    aggregate.stamp = aggregate
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                aggregate.descriptors().collect(),
+                [aggregate.fee_descriptor()].into(),
+            ),
+            (
+                adjunct.stamp.clone(),
+                adjunct.descriptors().collect(),
+                [adjunct.fee_descriptor()].into(),
+            ),
+        )
         .unwrap();
     let sighash = mock_sighash(aggregate.commitment());
     let id = mock_wtxid(&aggregate);
@@ -1215,13 +1278,31 @@ fn aggregates_merge_with_aggregates_and_lift() {
     let (other, other_adjuncts) =
         build_aggregate(rng, &wallet, &mut pool, (false, 1, false), false);
     let receiver_fee = receiver.stamp.fee;
-    let receiver_dyns: Vec<&Bundle<dyn StampState>> =
-        receiver_adjuncts.iter().map(Bundle::as_dyn).collect();
-    let other_dyns: Vec<&Bundle<dyn StampState>> =
-        other_adjuncts.iter().map(Bundle::as_dyn).collect();
-    let (stamp, desc, fees) = merge_side(&receiver, &receiver_dyns);
-    receiver.stamp = stamp
-        .merge(rng, (desc, fees), merge_side(&other, &other_dyns))
+    receiver.stamp = receiver
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                receiver
+                    .descriptors()
+                    .chain(receiver_adjuncts.iter().flat_map(Bundle::descriptors))
+                    .collect(),
+                iter::once(receiver.fee_descriptor())
+                    .chain(receiver_adjuncts.iter().map(Bundle::fee_descriptor))
+                    .collect(),
+            ),
+            (
+                other.stamp.clone(),
+                other
+                    .descriptors()
+                    .chain(other_adjuncts.iter().flat_map(Bundle::descriptors))
+                    .collect(),
+                iter::once(other.fee_descriptor())
+                    .chain(other_adjuncts.iter().map(Bundle::fee_descriptor))
+                    .collect(),
+            ),
+        )
         .unwrap();
     assert_eq!(receiver.stamp.fee, receiver_fee);
     let covered: Vec<Bundle<ProofStamp>> = receiver_adjuncts

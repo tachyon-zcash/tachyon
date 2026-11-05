@@ -14,7 +14,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use crate::fixtures::{WalletSim, assert_rejected};
+use crate::fixtures::WalletSim;
 
 #[test]
 fn output_steps_publish_the_note_pair() {
@@ -105,12 +105,16 @@ fn output_steps_reject_corruptions() {
             .map(drop)
     };
 
-    assert_rejected(
-        fuse(rng, (theta, anchor, action_set, foreign_tachygrams)),
-        "OutputAction: tachygram set does not commit to the bound pair",
+    assert_eq!(
+        fuse(rng, (theta, anchor, action_set, foreign_tachygrams))
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: OutputAction: tachygram set does not commit to the bound pair",
     );
-    assert_rejected(
-        fuse(rng, (theta, anchor, foreign_action_set, tachygram_set)),
-        "OutputAction: action set does not commit to the action",
+    assert_eq!(
+        fuse(rng, (theta, anchor, foreign_action_set, tachygram_set))
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: OutputAction: action set does not commit to the action",
     );
 }

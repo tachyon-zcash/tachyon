@@ -20,8 +20,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, WalletSim, assert_rejected, build_unspent_pcd_over_epochs,
-    detached_segment, mine_sparse, qr_bucket_at,
+    PoolSim, QrBucketEntry, WalletSim, build_unspent_pcd_over_epochs, detached_segment,
+    mine_sparse, qr_bucket_at,
 };
 
 fn pool_with(
@@ -295,9 +295,12 @@ fn spend_steps_reject_corruptions() {
     let absent: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
         .take(2)
         .collect();
-    assert_rejected(
-        init(rng, &absent, creation).map(drop),
-        "SpendableInit: commitment not in set",
+    assert_eq!(
+        init(rng, &absent, creation)
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendableInit: commitment not in set",
     );
     let (final_spendable, ()) = init(
         rng,
@@ -318,13 +321,17 @@ fn spend_steps_reject_corruptions() {
         value: value::Positive::try_from(501u64).unwrap(),
         ..note
     };
-    assert_rejected(
-        bind_with(rng, spendable_pcd.clone(), richer),
-        "SpendBind: secret does not match note",
+    assert_eq!(
+        bind_with(rng, spendable_pcd.clone(), richer)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendBind: secret does not match note",
     );
-    assert_rejected(
-        bind_with(rng, final_spendable, note),
-        "SpendBind: no epoch follows the spend epoch",
+    assert_eq!(
+        bind_with(rng, final_spendable, note)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendBind: no epoch follows the spend epoch",
     );
 
     let secret = wallet.secret_pcd(rng, note);
@@ -351,7 +358,7 @@ fn spend_steps_reject_corruptions() {
             )
             .map(drop)
     };
-    assert_rejected(
+    assert_eq!(
         act(
             rng,
             (
@@ -360,16 +367,22 @@ fn spend_steps_reject_corruptions() {
                 action_set.clone(),
                 tachygram_set.clone(),
             ),
-        ),
-        "SpendAction: pak not related to note",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: SpendAction: pak not related to note",
     );
-    assert_rejected(
-        act(rng, (theta, wallet.pak, action_set, foreign_tachygrams)),
-        "SpendAction: tachygram set does not commit to the nullifier pair",
+    assert_eq!(
+        act(rng, (theta, wallet.pak, action_set, foreign_tachygrams))
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendAction: tachygram set does not commit to the nullifier pair",
     );
-    assert_rejected(
-        act(rng, (theta, wallet.pak, foreign_action_set, tachygram_set)),
-        "SpendAction: action set does not commit to the action",
+    assert_eq!(
+        act(rng, (theta, wallet.pak, foreign_action_set, tachygram_set))
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendAction: action set does not commit to the action",
     );
 }
 
@@ -565,50 +578,66 @@ fn lineage_steps_reject_corruptions() {
     };
     let foreign_members = [Tachygram::random(rng)];
 
-    assert_rejected(
-        lift(rng, lineage.clone(), phantom_unspent),
-        "SpendableLift: unspent cm does not match spendable",
+    assert_eq!(
+        lift(rng, lineage.clone(), phantom_unspent)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendableLift: unspent cm does not match spendable",
     );
-    assert_rejected(
-        lift(rng, lineage.clone(), detached_unspent),
-        "SpendableLift: unspent not adjacent to spendable",
+    assert_eq!(
+        lift(rng, lineage.clone(), detached_unspent)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendableLift: unspent not adjacent to spendable",
     );
-    assert_rejected(
-        lift(rng, lineage, later_unspent),
-        "SpendableLift: segment does not start at the lineage epoch",
+    assert_eq!(
+        lift(rng, lineage, later_unspent).unwrap_err().to_string(),
+        "invalid witness: SpendableLift: segment does not start at the lineage epoch",
     );
-    assert_rejected(
-        lift(rng, short_lineage, next_unspent),
-        "SpendableLift: unspent not adjacent to spendable",
+    assert_eq!(
+        lift(rng, short_lineage, next_unspent)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: SpendableLift: unspent not adjacent to spendable",
     );
-    assert_rejected(
-        qr_init(rng, unpublished_unspent, &cm_bucket, &cm_bucket.members),
-        "QrSpendableInit: commitment not in bucket",
+    assert_eq!(
+        qr_init(rng, unpublished_unspent, &cm_bucket, &cm_bucket.members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: QrSpendableInit: commitment not in bucket",
     );
-    assert_rejected(
+    assert_eq!(
         qr_init(
             rng,
             whole_unspent.clone(),
             &prefix_bucket,
             &prefix_bucket.members,
-        ),
-        "QrSpendableInit: segment does not close where the bucket does",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: QrSpendableInit: segment does not close where the bucket does",
     );
-    assert_rejected(
+    assert_eq!(
         qr_init(
             rng,
             whole_unspent.clone(),
             &later_bucket,
             &later_bucket.members,
-        ),
-        "QrSpendableInit: segment does not start in the bucket's epoch",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: QrSpendableInit: segment does not start in the bucket's epoch",
     );
-    assert_rejected(
-        qr_init(rng, epoch1_unspent, &elsewhere, &elsewhere.members),
-        "QrSpendableInit: segment does not open where the bucket does",
+    assert_eq!(
+        qr_init(rng, epoch1_unspent, &elsewhere, &elsewhere.members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: QrSpendableInit: segment does not open where the bucket does",
     );
-    assert_rejected(
-        qr_init(rng, whole_unspent, &cm_bucket, &foreign_members),
-        "QrSpendableInit: contents do not match the bucket",
+    assert_eq!(
+        qr_init(rng, whole_unspent, &cm_bucket, &foreign_members)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: QrSpendableInit: contents do not match the bucket",
     );
 }

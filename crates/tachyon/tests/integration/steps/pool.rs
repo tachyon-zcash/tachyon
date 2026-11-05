@@ -17,8 +17,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, assert_rejected, build_anchor_span_pcd, build_unspent_pcd_over_epochs,
-    detached_segment, epoch_bucket, mine_sparse,
+    PoolSim, WalletSim, build_anchor_span_pcd, build_unspent_pcd_over_epochs, detached_segment,
+    epoch_bucket, mine_sparse,
 };
 
 #[test]
@@ -87,15 +87,17 @@ fn anchor_span_fuse_rejects_corruptions() {
     let (bogus, ()) = PROOF_SYSTEM
         .seed(rng, pool::AnchorSpanSeed, bogus_witness)
         .expect("AnchorSpanSeed");
-    assert_rejected(
+    assert_eq!(
         PROOF_SYSTEM
             .seed(
                 rng,
                 pool::AnchorSpanSeed,
                 witness::anchor_span_seed(((), ()), bogus_start, epoch1, &[]),
             )
-            .map(drop),
-        "invalid anchor step",
+            .map(drop)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: invalid anchor step",
     );
 
     let mut crossing_pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
@@ -142,47 +144,57 @@ fn anchor_span_fuse_rejects_corruptions() {
             witness::anchor_span_fuse((*halves.0.data(), *halves.1.data()), members.0, members.1)
         };
 
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             honest_fuse((&left_members, &bogus_members), (&left, &bogus)),
             (&left, &bogus),
-        ),
-        "AnchorSpanFuse: spans do not share a vertex",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: spans do not share a vertex",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             honest_fuse((&before_members, &after_members), (&before, &after)),
             (&before, &after),
-        ),
-        "AnchorSpanFuse: spans do not share a vertex",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: spans do not share a vertex",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             honest_fuse((&right_members, &left_members), (&right, &left)),
             (&right, &left),
-        ),
-        "AnchorSpanFuse: spans do not share a vertex",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: spans do not share a vertex",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (right_poly.clone(), union(&[]), right_poly.clone()),
             (&left, &right),
-        ),
-        "AnchorSpanFuse: left members do not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: left members do not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (left_poly.clone(), union(&[]), left_poly.clone()),
             (&left, &right),
-        ),
-        "AnchorSpanFuse: right members do not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: right members do not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -191,16 +203,20 @@ fn anchor_span_fuse_rejects_corruptions() {
                 right_poly.clone(),
             ),
             (&left, &right),
-        ),
-        "AnchorSpanFuse: combined is not the union of the halves",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: combined is not the union of the halves",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (left_poly, union(&[fork]), right_poly),
             (&left, &right),
-        ),
-        "AnchorSpanFuse: combined is not the union of the halves",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: AnchorSpanFuse: combined is not the union of the halves",
     );
 }
 
@@ -375,15 +391,17 @@ fn unspent_fuse_rejects_corruptions() {
             .map(drop)
     };
 
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             witness::unspent_fuse((*segment0.data(), *segment2.data()), &[nf0], &[nf(epoch2)]),
             &segment2,
-        ),
-        "UnspentFuse: left.anchor_next must equal right.anchor_start",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentFuse: left.anchor_next must equal right.anchor_start",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -399,10 +417,12 @@ fn unspent_fuse_rejects_corruptions() {
                     .clone()
                     .carry::<pool::ArbitraryUnspent>(data)
             },
-        ),
-        "UnspentFuse: halves do not meet at one epoch",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentFuse: halves do not meet at one epoch",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -411,10 +431,12 @@ fn unspent_fuse_rejects_corruptions() {
                 NfSeqPoly::new(epoch1, &[nf1]),
             ),
             &segment1,
-        ),
-        "UnspentFuse: left polynomial does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentFuse: left polynomial does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -423,10 +445,12 @@ fn unspent_fuse_rejects_corruptions() {
                 NfSeqPoly::new(epoch1, &[nf0]),
             ),
             &segment1,
-        ),
-        "UnspentFuse: right polynomial does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentFuse: right polynomial does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         fuse(
             rng,
             (
@@ -435,8 +459,10 @@ fn unspent_fuse_rejects_corruptions() {
                 NfSeqPoly::new(epoch1, &[nf1]),
             ),
             &segment1,
-        ),
-        "UnspentFuse: combined is not the concatenation of the halves",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentFuse: combined is not the concatenation of the halves",
     );
 }
 
@@ -479,7 +505,7 @@ fn unspent_bind_rejects_corruptions() {
     let honest_bind = witness::unspent_bind((*segment0.data(), *window.data()), &covering, &[nf0]);
     let (elapsed_seq, nf_seq, complement_seq) = honest_bind.clone();
 
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &{
@@ -492,10 +518,12 @@ fn unspent_bind_rejects_corruptions() {
             },
             honest_bind,
             &window,
-        ),
-        "UnspentBind: segment covers no epoch",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: segment covers no epoch",
     );
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &segment0,
@@ -505,10 +533,12 @@ fn unspent_bind_rejects_corruptions() {
                 complement_seq.clone(),
             ),
             &window,
-        ),
-        "UnspentBind: elapsed polynomial does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: elapsed polynomial does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &segment0,
@@ -526,11 +556,13 @@ fn unspent_bind_rejects_corruptions() {
                 &[nf0],
             ),
             &window,
-        ),
-        "UnspentBind: covering sequence does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: covering sequence does not match header",
     );
     let forged_segment = build_unspent_pcd_over_epochs(rng, &pool, |_| forged_nf, (epoch0, epoch1));
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &forged_segment,
@@ -540,8 +572,10 @@ fn unspent_bind_rejects_corruptions() {
                 &[forged_nf],
             ),
             &window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
     let far = EpochIndex::new(64);
     let far_window = wallet.derivation_pcd(rng, note, far, far);
@@ -549,7 +583,7 @@ fn unspent_bind_rejects_corruptions() {
     let far_covering: Vec<Nullifier> = (u32::from(far_start)..=u32::from(far_last))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &segment0,
@@ -559,8 +593,10 @@ fn unspent_bind_rejects_corruptions() {
                 NfSeqPoly::new(EpochIndex::new(65), &far_covering[1..]),
             ),
             &far_window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
     let past_window = EpochIndex::new(u32::try_from(NF_DERIVATION_WIDTH).unwrap());
     let past_segment = detached_segment(rng, past_window, nf);
@@ -569,7 +605,7 @@ fn unspent_bind_rejects_corruptions() {
     let near_covering: Vec<Nullifier> = (u32::from(near_start)..=u32::from(near_last))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &past_segment,
@@ -579,11 +615,13 @@ fn unspent_bind_rejects_corruptions() {
                 NfSeqPoly::new(epoch1, &near_covering[1..]),
             ),
             &near_window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
     let misplaced = build_unspent_pcd_over_epochs(rng, &pool, |_| nf0, (epoch1, epoch2));
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &misplaced,
@@ -593,12 +631,14 @@ fn unspent_bind_rejects_corruptions() {
                 complement_seq,
             ),
             &window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
     let mut forged_complement = covering[1..].to_vec();
     forged_complement[0] = junk;
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &segment0,
@@ -608,19 +648,23 @@ fn unspent_bind_rejects_corruptions() {
                 NfSeqPoly::new(epoch1, &forged_complement),
             ),
             &window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
     let duplicating_complement =
         NfSeqPoly::new(epoch0, &[nf0]) * NfSeqPoly::new(epoch2, &covering[2..]);
-    assert_rejected(
+    assert_eq!(
         bind(
             rng,
             &segment0,
             (elapsed_seq, nf_seq, duplicating_complement),
             &window,
-        ),
-        "UnspentBind: sequence does not match the derivation",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentBind: sequence does not match the derivation",
     );
 }
 
@@ -664,14 +708,16 @@ fn unspent_lift_rejects_corruptions() {
     let (value, classes, mask, lift_elapsed, extended, contents) =
         lift_witness(nf1.into(), &[nf0], &bucket1.pcd, &bucket1.members);
 
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
             &bucket2.pcd,
             lift_witness(nf1.into(), &[nf0], &bucket2.pcd, &bucket2.members),
-        ),
-        "UnspentLift: the bucket does not start where the segment ends",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: the bucket does not start where the segment ends",
     );
     let mut renumbered_data = *bucket1.pcd.data();
     renumbered_data.0 = epoch2;
@@ -680,17 +726,19 @@ fn unspent_lift_rejects_corruptions() {
         .proof()
         .clone()
         .carry::<qr::QrBucket>(renumbered_data);
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
             &renumbered,
             lift_witness(nf1.into(), &[nf0], &renumbered, &bucket1.members),
-        ),
-        "UnspentLift: the bucket is not the segment's next epoch",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: the bucket is not the segment's next epoch",
     );
     let foreign_contents = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
@@ -703,19 +751,23 @@ fn unspent_lift_rejects_corruptions() {
                 extended.clone(),
                 foreign_contents,
             ),
-        ),
-        "UnspentLift: contents do not match the bucket",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: contents do not match the bucket",
     );
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
             &bucket1.pcd,
             lift_witness(nf1.into(), &[nf1], &bucket1.pcd, &bucket1.members),
-        ),
-        "UnspentLift: elapsed does not match header",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: elapsed does not match header",
     );
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
@@ -726,14 +778,16 @@ fn unspent_lift_rejects_corruptions() {
                 &bucket1.pcd,
                 &bucket1.members,
             ),
-        ),
-        "UnspentLift: tested value is zero",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: tested value is zero",
     );
     let other_classes = QrClassRoot::along(
         Fp::random(|bytes| rng.fill_bytes(bytes)),
         bucket1.pcd.data().3,
     );
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
@@ -746,10 +800,12 @@ fn unspent_lift_rejects_corruptions() {
                 extended,
                 contents.clone(),
             ),
-        ),
-        "QR profile: root does not square to the claimed class",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: QR profile: root does not square to the claimed class",
     );
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
@@ -762,17 +818,21 @@ fn unspent_lift_rejects_corruptions() {
                 NfSeqPoly::new(epoch0, &[nf0, forged_nf]),
                 contents,
             ),
-        ),
-        "UnspentLift: extended is not elapsed with the tested pair",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: extended is not elapsed with the tested pair",
     );
-    assert_rejected(
+    assert_eq!(
         lift(
             rng,
             &segment0,
             &bucket1.pcd,
             lift_witness(bucket1.members[0], &[nf0], &bucket1.pcd, &bucket1.members),
-        ),
-        "UnspentLift: found nullifier in the bucket",
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid witness: UnspentLift: found nullifier in the bucket",
     );
     let mut final_segment_data = *segment0.data();
     final_segment_data.3 = EpochIndex::new(EPOCH_MAX);
@@ -793,8 +853,10 @@ fn unspent_lift_rejects_corruptions() {
         &[nf0],
         &bucket1.members,
     );
-    assert_rejected(
-        lift(rng, &final_segment, &final_bucket, final_witness),
-        "UnspentLift: bucket has no next epoch",
+    assert_eq!(
+        lift(rng, &final_segment, &final_bucket, final_witness)
+            .unwrap_err()
+            .to_string(),
+        "invalid witness: UnspentLift: bucket has no next epoch",
     );
 }

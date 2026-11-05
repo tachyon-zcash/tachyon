@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, string::ToString as _, vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, mem, ops::RangeInclusive};
 
 use ragu::{Pcd, Proof};
@@ -1134,15 +1134,4 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
     Fp::from_uniform_bytes(&wide)
-}
-
-#[track_caller]
-pub fn assert_rejected(result: ragu_core::Result<()>, expected: &str) {
-    match result {
-        Ok(()) => panic!("the step accepted a witness it should reject with {expected:?}"),
-        Err(ragu_core::Error::InvalidWitness(inner)) => {
-            assert_eq!(inner.to_string(), expected);
-        },
-        Err(err) => panic!("expected InvalidWitness {expected:?}, got {err:?}"),
-    }
 }
