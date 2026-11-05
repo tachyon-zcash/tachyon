@@ -5,12 +5,13 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use udon::curve::Affine as _;
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
+    pasta::EpAffine,
     primitives::{ActionDigest, ActionDigestError, Effect, effect},
     reddsa, serialization, value,
 };

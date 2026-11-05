@@ -157,7 +157,8 @@ digests the same action descriptors and fee descriptors.
 $\mathsf{FeeFuse}$ accepts only `Actions`. It applies at most once in any
 lineage. Merging and lifting carry fee digests and fee change
 note commitments like any other set members. A merge keeps the receiving
-stamp's fee. Stripping carries the fee into the stripped trailer. An innocent
+stamp's fee. An unmerge undoes a merge and keeps the dividend's fee.
+Stripping carries the fee into the stripped trailer. An innocent
 aggregate proves its own zero fee with $\mathsf{FeeSeed}$ and merges the
 adjuncts' stamps into that stamp, as
 [Aggregation](./aggregation.md#merge-to-produce-aggregate) describes.

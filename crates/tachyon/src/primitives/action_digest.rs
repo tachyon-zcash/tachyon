@@ -1,7 +1,14 @@
-use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+use core::cmp::Ordering;
 
-use crate::{digest::poseidon, keys::public, value};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
+use udon::curve::Affine as _;
+
+use crate::{
+    digest::poseidon,
+    keys::public,
+    pasta::{EpAffine, Fp},
+    value,
+};
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -9,8 +16,20 @@ use crate::{digest::poseidon, keys::public, value};
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type. A fee digest
 /// $d_\mathsf{fee}$ joins the same action set.
-#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
+
+impl PartialOrd for ActionDigest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ActionDigest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.as_inner().reduce().cmp(&other.0.as_inner().reduce())
+    }
+}
 
 /// Errors from action digest computation.
 #[derive(Clone, Copy, Debug, Display, Error)]
@@ -36,84 +55,13 @@ impl ActionDigest {
     ) -> Result<Self, ActionDigestError> {
         let cv_coords = EpAffine::from(cv)
             .coordinates()
-            .into_option()
             .ok_or(ActionDigestError::IdentityCv)?;
         let rk_coords = EpAffine::from(rk)
             .coordinates()
-            .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use rand::{CryptoRng, SeedableRng as _, rngs::StdRng};
-
-    use super::*;
-    use crate::{
-        entropy::ActionEntropy,
-        keys::private,
-        note::{self, Note},
-        nullifier,
-        primitives::effect,
-        value,
-    };
-
-    fn make_action_parts<RNG: CryptoRng>(
-        rng: &mut RNG,
-        val: u64,
-    ) -> (value::Commitment, public::ActionVerificationKey) {
-        let sk = private::SpendingKey::random(rng);
-        let note = Note {
-            pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(val).unwrap(),
-            psi: nullifier::Trapdoor::random(rng),
-            rcm: note::CommitmentTrapdoor::random(rng),
-        };
-        let rcv = value::Trapdoor::random(rng);
-        let cv = rcv.commit(note.value);
-        let theta = ActionEntropy::random(rng);
-        let alpha = theta.randomizer::<effect::Output>(note.commitment());
-        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        (cv, rk)
-    }
-
-    /// Different (cv, rk) pairs produce different digests.
-    #[test]
-    fn distinct_actions_distinct_digests() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let (cv_a, rk_a) = make_action_parts(rng, 1000);
-        let (cv_b, rk_b) = make_action_parts(rng, 700);
-
-        assert_ne!(
-            ActionDigest::new(cv_a, rk_a).unwrap(),
-            ActionDigest::new(cv_b, rk_b).unwrap()
-        );
-    }
-
-    /// Identity cv is rejected.
-    #[test]
-    fn digest_rejects_identity_cv() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let (_, rk) = make_action_parts(rng, 500);
-        let cv = value::Commitment::default();
-        assert!(matches!(
-            ActionDigest::new(cv, rk),
-            Err(ActionDigestError::IdentityCv)
-        ));
-    }
-
-    /// Identity rk is rejected.
-    #[test]
-    fn digest_rejects_identity_rk() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let (cv, _) = make_action_parts(rng, 500);
-        let rk =
-            public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
-        assert!(matches!(
-            ActionDigest::new(cv, rk),
-            Err(ActionDigestError::IdentityRk)
-        ));
-    }
-}
+mod tests;
