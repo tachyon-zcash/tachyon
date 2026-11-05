@@ -8,6 +8,9 @@
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
 //! absorbs only its data. Every Tachyon Poseidon hash is tagged this way.
 
+use group::GroupEncoding as _;
+use lazy_static::lazy_static;
+use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
 use ragu_core::{
     Cycle as _, PoseidonPermutation as _, Result,
     drivers::{
@@ -22,13 +25,15 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
-    pasta::{EqAffine, Fp},
-    stamp::proof::PROOF_SYSTEM,
+    pasta::{Ep, EpAffine, EqAffine, Fp},
 };
 
 #[expect(
@@ -230,7 +235,21 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     .map(|element| *element.value().take())
 }
 
-/// Native counterpart of the framework's output-slot bridge digest.
+lazy_static! {
+    // R<13> bridge-stage a- and d-wire generator indices: 2n - 121, 4n - 121.
+    static ref BRIDGE_GENERATORS: [Ep; 2] = [3975u32, 8071u32].map(|index| {
+        let [first, second, third, fourth] = index.to_le_bytes();
+        #[expect(clippy::expect_used, reason = "hash-to-curve produces a canonical Pallas point")]
+        EpAffine::from_bytes(
+            Point::hash_to_curve("Ragu-Parameters")(&[0x00, first, second, third, fourth])
+                .to_bytes(),
+        )
+        .expect("valid bridge generator")
+        .to_projective()
+    });
+}
+
+/// Native bridge digest using the two fixed R<13> nested generators.
 ///
 /// # Panics
 ///
@@ -240,9 +259,12 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     reason = "nonidentity commitment has a bridge digest"
 )]
 pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
-    PROOF_SYSTEM
-        .bridge_hash(point)
-        .expect("commitment must not be the identity point")
+    let (x, y) = point
+        .coordinates()
+        .expect("commitment must not be the identity point");
+    let [first, second] = *BRIDGE_GENERATORS;
+    (first * x + second * y)
+        .to_affine()
         .coordinates()
         .expect("bridge digest must not be the identity point")
 }
