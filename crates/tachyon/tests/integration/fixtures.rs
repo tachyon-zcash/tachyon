@@ -977,6 +977,56 @@ pub(crate) fn epoch_bucket<RNG: CryptoRng>(
     seal_qr_intake(rng, intake, anchor_final_prev)
 }
 
+pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
+    let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
+    for _ in 0..3 {
+        pool.mine(random_block(rng, 2, 3));
+    }
+    let final_anchor = pool.block(pool.height()).anchor();
+    (pool, final_anchor)
+}
+
+pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    (start, final_anchor): (Anchor, Anchor),
+    discriminant: QrDiscriminant,
+    capacity: usize,
+    depth: u32,
+    value: Fp,
+    anchor_final_prev: Anchor,
+) -> QrBucketEntry {
+    let profile = qr_profile_of(value, discriminant, depth);
+    let mut branch = build_qr_branch(
+        rng,
+        pool,
+        (start, final_anchor),
+        discriminant,
+        capacity,
+        value,
+        depth,
+    );
+    assert_eq!(branch.len(), 1);
+    let intake = branch.pop().unwrap();
+    assert_eq!(intake.pcd.data().4, profile);
+    seal_qr_intake(rng, intake, anchor_final_prev)
+}
+
+pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
+    rng: &mut RNG,
+    user: &WalletSim,
+    note: &Note,
+    bucket: &QrBucketEntry,
+) -> Pcd<pool::NoteUnspent> {
+    let arbitrary = qr_bucket_segment(rng, bucket, |epoch| {
+        user.pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    });
+    user.unspent_bind(rng, arbitrary, note)
+}
+
 pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     rng: &mut RNG,
     bucket: &QrBucketEntry,

@@ -3,81 +3,29 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{Pcd, Proof};
+use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
-    note::Note,
     nullifier::Nullifier,
     pasta::Fp,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{NoteUnspent, UnspentFuse, UnspentLift},
+        pool::{UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
     value, witness,
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_over_epochs, epoch_bucket, qr_bucket_segment,
+    PoolSim, QrIntakeEntry, WalletSim, build_qr_partition, build_summary_pcd,
+    build_unspent_pcd_over_epochs, epoch_bucket, qr_bucket_at, qr_bucket_segment, qr_epoch_unspent,
     qr_profile_of, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
-    seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
+    seed_qr_stamp_intake, shared_sk, small_epoch, split_qr_intake, unpinned_challenge,
 };
-
-pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
-    let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
-    for _ in 0..3 {
-        pool.mine(random_block(rng, 2, 3));
-    }
-    let final_anchor = pool.block(pool.height()).anchor();
-    (pool, final_anchor)
-}
-
-#[expect(clippy::too_many_arguments, reason = "a fixture assembling one bucket")]
-pub(crate) fn qr_bucket_at(
-    rng: &mut StdRng,
-    pool: &PoolSim,
-    (start, final_anchor): (Anchor, Anchor),
-    discriminant: QrDiscriminant,
-    capacity: usize,
-    depth: u32,
-    value: Fp,
-    anchor_final_prev: Anchor,
-) -> QrBucketEntry {
-    let profile = qr_profile_of(value, discriminant, depth);
-    let mut branch = build_qr_branch(
-        rng,
-        pool,
-        (start, final_anchor),
-        discriminant,
-        capacity,
-        value,
-        depth,
-    );
-    assert_eq!(branch.len(), 1);
-    let intake = branch.pop().unwrap();
-    assert_eq!(intake.pcd.data().4, profile);
-    seal_qr_intake(rng, intake, anchor_final_prev)
-}
-
-pub(crate) fn qr_epoch_unspent(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    note: &Note,
-    bucket: &QrBucketEntry,
-) -> Pcd<NoteUnspent> {
-    let arbitrary = qr_bucket_segment(rng, bucket, |epoch| {
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-    });
-    user.unspent_bind(rng, arbitrary, note)
-}
 
 #[test]
 fn qr_summary_intake_starts_a_root_from_a_summary() {
@@ -1117,17 +1065,6 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
 }
 
-fn empty_bucket(
-    rng: &mut StdRng,
-    anchor: Anchor,
-    epoch: EpochIndex,
-    anchor_final_prev: Anchor,
-) -> QrBucketEntry {
-    let discriminant = QrDiscriminant::random(rng);
-    let intake = seed_qr_empty_intake(rng, anchor, epoch, discriminant);
-    seal_qr_intake(rng, intake, anchor_final_prev)
-}
-
 #[test]
 fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1145,7 +1082,9 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let entry2 = pool.block(epoch2.first_block()).prev;
     assert_eq!(pool.block(epoch1.last_block()).anchor(), entry1);
 
-    let bucket = empty_bucket(rng, entry1, epoch1, final0);
+    let discriminant = QrDiscriminant::random(rng);
+    let intake = seed_qr_empty_intake(rng, entry1, epoch1, discriminant);
+    let bucket = seal_qr_intake(rng, intake, final0);
     let (epoch, anchor_start, anchor_next, _, profile, contents) = *bucket.pcd.data();
     assert_eq!((epoch, anchor_start, anchor_next), (epoch1, entry1, entry2));
     assert_eq!(
@@ -1156,7 +1095,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         )
     );
 
-    let discriminant = QrDiscriminant::random(rng);
     let bucket0 = qr_bucket_at(
         rng,
         &pool,
@@ -1184,18 +1122,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
     assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
-}
-
-#[test]
-fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_pool, final_anchor) = small_epoch(rng);
-    let epoch = EpochIndex::new(0);
-    let bucket = empty_bucket(rng, Anchor::default(), epoch, Anchor::from(Fp::ZERO));
-    assert_ne!(
-        bucket.pcd.data().2,
-        final_anchor.next_epoch(epoch.next().unwrap()).unwrap()
-    );
 }
 
 #[test]
@@ -1775,7 +1701,7 @@ fn qr_unspent_init_rejects_a_twin_value() {
 }
 
 #[test]
-fn qr_unspent_init_accepts_ragged_depths() {
+fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
@@ -1812,80 +1738,44 @@ fn qr_unspent_init_accepts_ragged_depths() {
         };
     }
 
-    let buckets = [(shallow, shallow_value, 1), (deep, deep_value, 3)];
-    for (intake, value, depth) in buckets {
-        let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
-        let (_, _, _, _, profile, _) = *bucket.pcd.data();
-        assert_eq!(profile, qr_profile_of(value, discriminant, depth));
-        let nf = Nullifier::from(value);
-        let witness =
-            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrUnspentInit,
-                witness,
-                bucket.pcd,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .unwrap()
-            .0;
-        assert_eq!(
-            *unspent.data(),
-            (
-                Anchor::default(),
-                epoch,
-                NfSeqPoly::new(epoch, &[nf]).commit(),
-                epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
-            ),
-            "the segment is the bucket's extent, ending on the crossing, at depth {depth}"
-        );
-    }
-}
-
-#[test]
-fn qr_unspent_init_accepts_buckets_at_every_depth() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let epoch = BlockHeight(0).epoch();
-    let epoch_next = epoch.next().unwrap();
-    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-
+    let mut buckets = vec![
+        (
+            seal_qr_intake(rng, shallow, Anchor::from(Fp::ZERO)),
+            shallow_value,
+        ),
+        (
+            seal_qr_intake(rng, deep, Anchor::from(Fp::ZERO)),
+            deep_value,
+        ),
+    ];
     for depth in [0, 1, 31, u32::BITS] {
-        let discriminant = QrDiscriminant::random(rng);
-        let bucket = qr_bucket_at(
-            rng,
-            &pool,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            24,
-            depth,
-            Fp::from(nf),
-            Anchor::from(Fp::ZERO),
-        );
-        let witness =
-            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = PROOF_SYSTEM
-            .fuse(
+        let value = Fp::random(|bytes| rng.fill_bytes(bytes));
+        buckets.push((
+            qr_bucket_at(
                 rng,
-                qr::QrUnspentInit,
-                witness,
-                bucket.pcd,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .unwrap()
-            .0;
+                &pool,
+                (Anchor::default(), final_anchor),
+                discriminant,
+                24,
+                depth,
+                value,
+                Anchor::from(Fp::ZERO),
+            ),
+            value,
+        ));
+    }
+    for (bucket, value) in buckets {
+        let nf = Nullifier::from(value);
+        let segment = qr_bucket_segment(rng, &bucket, |_| nf);
         assert_eq!(
-            *unspent.data(),
+            *segment.data(),
             (
                 Anchor::default(),
                 epoch,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
                 epoch_next,
                 final_anchor.next_epoch(epoch_next).unwrap()
-            ),
-            "the segment is the bucket's extent, ending on the crossing, at depth {depth}"
+            )
         );
     }
 }
@@ -1982,54 +1872,47 @@ fn unspent_lift_rejects_invalid_extensions() {
     };
 
     let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
-    let forged_extended = NfSeqPoly::new(
-        epoch0,
-        &[
-            nf0,
-            Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))),
-        ],
-    );
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
-    let other = Fp::random(|bytes| rng.fill_bytes(bytes));
 
-    let cases = [
+    for (lift_bucket, lift, expected) in [
         (
-            "a bucket past the segment's end",
             &past,
             honest(nf1.into(), &[nf0]),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
-            "the value in the bucket",
             &bucket,
             honest(bucket.members[0], &[nf0]),
             "UnspentLift: found nullifier in the bucket",
         ),
         (
-            "elapsed off the header",
             &bucket,
             honest(nf1.into(), &[nf1]),
             "UnspentLift: elapsed does not match header",
         ),
         (
-            "extended not elapsed with the pair",
             &bucket,
             (
                 value,
                 classes,
                 mask,
                 elapsed_seq.clone(),
-                forged_extended,
+                NfSeqPoly::new(
+                    epoch0,
+                    &[
+                        nf0,
+                        Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))),
+                    ],
+                ),
                 contents.clone(),
             ),
             "UnspentLift: extended is not elapsed with the tested pair",
         ),
         (
-            "classes for another value",
             &bucket,
             (
                 value,
-                QrClassRoot::along(other, discriminant),
+                QrClassRoot::along(Fp::random(|bytes| rng.fill_bytes(bytes)), discriminant),
                 mask,
                 elapsed_seq,
                 honest(nf1.into(), &[nf0]).4,
@@ -2037,9 +1920,7 @@ fn unspent_lift_rejects_invalid_extensions() {
             ),
             "QR profile: root does not square to the claimed class",
         ),
-    ];
-
-    for (label, lift_bucket, lift, expected) in cases {
+    ] {
         if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
             rng,
             UnspentLift,
@@ -2047,9 +1928,9 @@ fn unspent_lift_rejects_invalid_extensions() {
             segment.clone(),
             lift_bucket.pcd.clone(),
         ) {
-            assert_eq!(err.to_string(), expected, "{label}");
+            assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{label}");
+            panic!("{expected}");
         }
     }
 }

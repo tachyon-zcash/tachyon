@@ -9,12 +9,9 @@ use zcash_tachyon::{
     witness,
 };
 
-use crate::{
-    fixtures::{
-        PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree, build_qr_partition,
-        open_evidence_tree, random_block, seal_qr_intake, shared_sk,
-    },
-    qr::{qr_bucket_at, qr_epoch_unspent, small_epoch},
+use crate::fixtures::{
+    PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree, build_qr_partition, open_evidence_tree,
+    qr_bucket_at, qr_epoch_unspent, random_block, seal_qr_intake, shared_sk, small_epoch,
 };
 
 #[test]
