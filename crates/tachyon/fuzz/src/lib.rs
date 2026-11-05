@@ -36,23 +36,10 @@ pub fn read_canonical<'data, T>(
     let consumed = &data[..data.len() - rest.len()];
 
     let mut encoded = Vec::new();
-    write(&decoded, &mut encoded).expect("an accepted value re-encodes");
-    assert_eq!(
-        encoded.len(),
-        consumed.len(),
-        "an accepted value re-encodes to the length consumed"
-    );
+    write(&decoded, &mut encoded).unwrap();
+    assert_eq!(encoded.len(), consumed.len());
     let compared = consumed.len() - opaque_tail(&decoded);
-    if let Some(offset) = encoded[..compared]
-        .iter()
-        .zip(&consumed[..compared])
-        .position(|(re, orig)| re != orig)
-    {
-        panic!(
-            "an accepted encoding is not canonical: {} bytes consumed, first difference at byte {offset}",
-            consumed.len(),
-        );
-    }
+    assert_eq!(encoded[..compared], consumed[..compared]);
 
     Some((decoded, rest))
 }
@@ -65,17 +52,9 @@ pub fn read_canonical<'data, T>(
 /// its max fee commitment is the identity.
 pub fn assert_bundle_invariants<S: StampState + 'static>(bundle: &Bundle<S>) {
     if bundle.actions.is_empty() {
-        assert_eq!(
-            bundle.value_balance,
-            value::Balance::ZERO,
-            "a bundle without actions has a zero value balance"
-        );
+        assert_eq!(bundle.value_balance, value::Balance::ZERO);
     }
-    assert_ne!(
-        bundle.fee_max_commitment,
-        value::Commitment::default(),
-        "the max fee commitment is not the identity"
-    );
+    assert_ne!(bundle.fee_max_commitment, value::Commitment::default());
 }
 
 /// Read a bundle off the front of `data` through [`TachyonBundle::read`].
@@ -102,10 +81,7 @@ pub fn check_bundle_wire(data: &[u8]) -> Option<(TachyonBundle, &[u8])> {
         TachyonBundle::NoBundle => {},
         TachyonBundle::Proven(proven) => {
             assert_bundle_invariants(proven);
-            assert!(
-                !proven.stamp.tachygrams.is_empty(),
-                "a proof stamp publishes at least one tachygram"
-            );
+            assert!(!proven.stamp.tachygrams.is_empty());
         },
         TachyonBundle::Adjunct(adjunct) => assert_bundle_invariants(adjunct),
     }

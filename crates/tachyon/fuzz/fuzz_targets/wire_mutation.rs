@@ -67,7 +67,7 @@ static PROOF: LazyLock<ProofStamp> = LazyLock::new(|| {
         value::Positive::ZERO,
     )
     .prove(rng, &sk.derive_proof_private(), vec![])
-    .expect("an action-free stamp proves")
+    .unwrap()
 });
 
 /// The length of `PROOF`'s proof blob, the tail of every built aggregate.
@@ -282,7 +282,7 @@ fuzz_target!(
 
         let mut bundles = decoded.into_iter();
         let Some(TachyonBundle::Proven(head)) = bundles.next() else {
-            assert!(edited, "the built aggregate decodes as proof-stamped");
+            assert!(edited);
             return;
         };
         let tail: Vec<Bundle<PointerStamp>> = bundles
@@ -293,7 +293,7 @@ fuzz_target!(
             .collect();
 
         let wtxid: [u8; 64] = AggregateId::try_from((&head.commitment(), &head.auth_digest()))
-            .expect("a digest pair is not all zero")
+            .unwrap()
             .into();
         let verified = head.verify(
             &mut StdRng::seed_from_u64(0),
@@ -302,20 +302,16 @@ fuzz_target!(
             &tail.iter().collect::<Vec<_>>(),
         );
         match verified {
-            Ok(()) => panic!("a proof of another stamp verifies"),
+            Ok(()) => panic!(),
             Err(VerificationError::Disproved) => {},
-            Err(err) => assert!(
-                edited,
-                "the built aggregate passes every check before the proof, not: {err}"
-            ),
+            Err(_) => assert!(edited),
         }
 
         if !edited {
-            assert!(rest.is_empty(), "the built wire decodes completely");
+            assert!(rest.is_empty());
             assert_eq!(
                 (head.commitment(), head.auth_digest()),
-                (aggregate.commitment(), aggregate.auth_digest()),
-                "the aggregate decodes to the one built"
+                (aggregate.commitment(), aggregate.auth_digest())
             );
             assert_eq!(
                 tail.iter()
@@ -324,14 +320,10 @@ fuzz_target!(
                 adjuncts
                     .iter()
                     .map(|adjunct| (adjunct.commitment(), adjunct.auth_digest()))
-                    .collect::<Vec<_>>(),
-                "the adjuncts decode to the ones built"
+                    .collect::<Vec<_>>()
             );
             for adjunct in &tail {
-                assert!(
-                    adjunct.verify_signatures(&adjunct.commitment()).is_ok(),
-                    "an adjunct signs its own commitment"
-                );
+                adjunct.verify_signatures(&adjunct.commitment()).unwrap();
             }
         }
     }
