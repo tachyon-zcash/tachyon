@@ -28,9 +28,6 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-#[cfg(test)]
-mod tests;
-
 use alloc::vec::Vec;
 
 use lazy_static::lazy_static;
@@ -59,19 +56,6 @@ fn coefficients(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<pasta::Fp> 
 
 fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
-}
-
-/// Validate a retained prover-side witness against the polynomial the child
-/// actually carries. Circuit queries read the authenticated child slot.
-fn check_polynomial(
-    poly: &Polynomial<pasta::Fp, ProductionRank>,
-    carried: &[pasta::Fp],
-    error: &'static str,
-) -> ragu_core::Result<()> {
-    if coefficients(poly) != carried {
-        return Err(ragu_core::Error::InvalidWitness(error.into()));
-    }
-    Ok(())
 }
 
 /// Step admission checks, separate from the unrestricted protocol anchor hash.

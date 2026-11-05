@@ -2,7 +2,11 @@
 
 use alloc::vec::Vec;
 
-use ragu_core::{Error, Result, drivers::Driver, maybe::Maybe as _};
+use ragu_core::{
+    Error, Result,
+    drivers::{Coeff, Driver},
+    maybe::Maybe as _,
+};
 use ragu_primitives::{
     Boolean, Element, GadgetExt as _, Point,
     vec::{ConstLen, FixedVec},
@@ -19,7 +23,7 @@ use crate::{
 
 // Only the complete arithmetic below uses an infinity flag. Header fields
 // and the exported results remain finite `Point`s.
-struct CompletePoint<'dr, D: Driver<'dr>> {
+pub(crate) struct CompletePoint<'dr, D: Driver<'dr>> {
     x: Element<'dr, D>,
     y: Element<'dr, D>,
     infinity: Boolean<'dr, D>,
@@ -36,7 +40,7 @@ pub(crate) fn coordinates<'dr, D: Driver<'dr, F = Fp>>(
         .map_err(|_err| Error::InvalidWitness("point must write two coordinates".into()))
 }
 
-fn from_point<'dr, D: Driver<'dr, F = Fp>>(
+pub(crate) fn from_point<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     point: &Point<'dr, D, EpAffine>,
 ) -> Result<CompletePoint<'dr, D>> {
@@ -67,7 +71,7 @@ fn select<'dr, D: Driver<'dr, F = Fp>>(
     })
 }
 
-fn add_complete<'dr, D: Driver<'dr, F = Fp>>(
+pub(crate) fn add_complete<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     left: &CompletePoint<'dr, D>,
     right: &CompletePoint<'dr, D>,
@@ -90,8 +94,7 @@ fn add_complete<'dr, D: Driver<'dr, F = Fp>>(
         .infinity
         .conditional_select(dr, &twice_y, &one)?
         .enforce_nonzero(dr)?;
-    let three = Element::constant(dr, Fp::from(3));
-    let numerator = left.x.square(dr)?.mul(dr, &three)?;
+    let numerator = left.x.square(dr)?.scale(dr, Coeff::Arbitrary(Fp::from(3)));
     let double_slope = numerator.divide(dr, &double_denominator)?;
     let twice_x = left.x.double(dr);
     let double_x = double_slope.square(dr)?.sub(dr, &twice_x);
@@ -107,7 +110,7 @@ fn add_complete<'dr, D: Driver<'dr, F = Fp>>(
     select(dr, &right.infinity, &left_corrected, left)
 }
 
-fn scale_complete<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+pub(crate) fn scale_complete<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     dr: &mut D,
     base: &CompletePoint<'dr, D>,
     bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
@@ -128,7 +131,7 @@ fn scale_complete<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     Ok(acc)
 }
 
-fn finish<'dr, D: Driver<'dr, F = Fp>>(
+pub(crate) fn finish<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     computed: &CompletePoint<'dr, D>,
 ) -> Result<Point<'dr, D, EpAffine>> {
@@ -152,19 +155,6 @@ pub(crate) fn scale<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
 ) -> Result<Point<'dr, D, EpAffine>> {
     let complete = from_point(dr, base)?;
     let computed = scale_complete(dr, &complete, bits)?;
-    finish(dr, &computed)
-}
-
-pub(crate) fn add_scaled<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
-    dr: &mut D,
-    addend: &Point<'dr, D, EpAffine>,
-    base: &Point<'dr, D, EpAffine>,
-    bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
-) -> Result<Point<'dr, D, EpAffine>> {
-    let addend_complete = from_point(dr, addend)?;
-    let base_complete = from_point(dr, base)?;
-    let scaled = scale_complete(dr, &base_complete, bits)?;
-    let computed = add_complete(dr, &addend_complete, &scaled)?;
     finish(dr, &computed)
 }
 

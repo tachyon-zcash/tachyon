@@ -26,9 +26,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private, public::ACTION_AUTH_GENERATOR},
     note::{self, Note},
     pasta::{EpAffine, Eq, Fp},
-    primitives::{
-        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
-    },
+    primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     relations::{
         arithmetic as circuit, curve,
         enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
@@ -247,28 +245,6 @@ impl Header<Fp> for Stamp {
     }
 }
 
-/// Prover-side fee roots used to validate the retained singleton witnesses.
-fn fee_roots(note: Note, fee: value::Positive) -> ragu_core::Result<[Fp; 2]> {
-    let change = u64::from(note.value)
-        .checked_sub(u64::from(fee))
-        .ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
-        })?;
-    let commitment = note.fee_blind().commit(-note.value);
-    let coordinates = EpAffine::from(commitment).coordinates().ok_or_else(|| {
-        ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
-    })?;
-    Ok([
-        poseidon::fee_digest(coordinates, u64::from(fee)),
-        poseidon::note_commitment(
-            Fp::from(note.rcm),
-            Fp::from(note.pk),
-            change,
-            Fp::from(note.psi),
-        ),
-    ])
-}
-
 /// Proves an output's action as [`Actions`].
 ///
 /// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
@@ -282,7 +258,6 @@ fn fee_roots(note: Note, fee: value::Positive) -> ragu_core::Result<[Fp; 2]> {
 ///
 /// Two permutations (`alpha`, the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
-/// `O0/O1` carry the action/tachygram sets; the derived action root is staged.
 #[derive(Debug)]
 pub struct OutputAction;
 
@@ -322,11 +297,10 @@ impl Step<Pasta> for OutputAction {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        Ok([
-            super::coefficients(witness.2.as_ref()),
-            super::coefficients(witness.3.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[1] = super::coefficients(witness.3.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -424,7 +398,6 @@ impl Step<Pasta> for OutputAction {
 /// Three permutations (`pk`, `alpha`, the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set
 /// polynomials.
-/// `O0/O1` carry the action/tachygram sets; the derived action root is staged.
 #[derive(Debug)]
 pub struct SpendAction;
 
@@ -467,11 +440,10 @@ impl Step<Pasta> for SpendAction {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        Ok([
-            super::coefficients(witness.2.as_ref()),
-            super::coefficients(witness.3.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[1] = super::coefficients(witness.3.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -519,7 +491,11 @@ impl Step<Pasta> for SpendAction {
         let alpha = poseidon::with_driver::alpha_spend(dr, &theta, &cm)?;
         let alpha_bits = circuit::bits::<D, 255>(dr, &alpha)?;
         let generator = Point::constant(dr, *ACTION_AUTH_GENERATOR)?;
-        let rk = curve::add_scaled(dr, &ak, &generator, &alpha_bits)?;
+        let ak_complete = curve::from_point(dr, &ak)?;
+        let generator_complete = curve::from_point(dr, &generator)?;
+        let scaled = curve::scale_complete(dr, &generator_complete, &alpha_bits)?;
+        let rk_complete = curve::add_complete(dr, &ak_complete, &scaled)?;
+        let rk = curve::finish(dr, &rk_complete)?;
         let cv = left_encoded.as_gadget().cv.clone();
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
@@ -567,7 +543,8 @@ impl Step<Pasta> for SpendAction {
 }
 
 /// Transaction assembly and aggregation.
-/// `L0/L1` and `R0/R1` are the input sets; `O0/O1` their products, at one ζ.
+///
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -576,48 +553,21 @@ impl Step<Pasta> for StampMerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
-    type Witness<'source> = (
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    /// The merged `(action_set, tachygram_set)`.
+    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(10);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        // Bind the witnessed left/right input sets to the public commitments on
-        // the headers.
-        super::check_polynomial(
-            witness.0.0.as_ref(),
-            &left.polynomials[0],
-            "StampMerge: left action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.0.1.as_ref(),
-            &left.polynomials[1],
-            "StampMerge: left tachygram accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.0.as_ref(),
-            &right.polynomials[0],
-            "StampMerge: right action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.1.as_ref(),
-            &right.polynomials[1],
-            "StampMerge: right tachygram accumulator must commit to header commit",
-        )?;
-        Ok([
-            super::coefficients(witness.1.0.as_ref()),
-            super::coefficients(witness.1.1.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.0.as_ref());
+        polynomials[1] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -674,7 +624,7 @@ impl Step<Pasta> for StampMerge {
                 ragu_core::Error::InvalidWitness("StampMerge: anchors must match".into())
             })?;
         let output = D::try_just(|| {
-            let (_, (merged_action_set, merged_tachygram_set), _) = witness.take();
+            let (merged_action_set, merged_tachygram_set) = witness.take();
             let (_, _, left_anchor) = left.take();
             Ok((
                 (
@@ -701,7 +651,8 @@ impl Step<Pasta> for StampMerge {
 }
 
 /// Merges action content.
-/// `L0/L1` and `R0/R1` are the input sets; `O0/O1` their products, at one ζ.
+///
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -710,48 +661,21 @@ impl Step<Pasta> for ActionMerge {
     type Left = Actions;
     type Output = Actions;
     type Right = Actions;
-    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
-    type Witness<'source> = (
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    /// The merged `(action_set, tachygram_set)`.
+    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(34);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        // Bind the witnessed left/right input sets to the public commitments on
-        // the headers.
-        super::check_polynomial(
-            witness.0.0.as_ref(),
-            &left.polynomials[0],
-            "ActionMerge: left action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.0.1.as_ref(),
-            &left.polynomials[1],
-            "ActionMerge: left tachygram accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.0.as_ref(),
-            &right.polynomials[0],
-            "ActionMerge: right action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.1.as_ref(),
-            &right.polynomials[1],
-            "ActionMerge: right tachygram accumulator must commit to header commit",
-        )?;
-        Ok([
-            super::coefficients(witness.1.0.as_ref()),
-            super::coefficients(witness.1.1.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.0.as_ref());
+        polynomials[1] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -808,7 +732,7 @@ impl Step<Pasta> for ActionMerge {
                 ragu_core::Error::InvalidWitness("ActionMerge: anchors must match".into())
             })?;
         let output = D::try_just(|| {
-            let (_, (merged_action_set, merged_tachygram_set), _) = witness.take();
+            let (merged_action_set, merged_tachygram_set) = witness.take();
             let (_, _, left_anchor) = left.take();
             Ok((
                 (
@@ -849,10 +773,9 @@ impl Step<Pasta> for ActionMerge {
 ///
 /// # Soundness
 ///
-/// The step opens $M$ at the stamp's anchor, and checks $M$'s commitment
-/// against the header's `members`. A stamp anchored outside the span passes
-/// only if its anchor collides with `anchor_start` or a member.
-/// `R0` supplies span membership; `L0/L1` are preserved into `O0/O1`.
+/// The step opens the span's $M$ at the stamp's anchor. A stamp anchored
+/// outside the span passes only if its anchor collides with `anchor_start` or a
+/// member.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -861,23 +784,20 @@ impl Step<Pasta> for StampLift {
     type Left = Stamp;
     type Output = Stamp;
     type Right = AnchorSpan;
-    /// `(members)`
-    type Witness<'source> = (AnchorSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(11);
 
     fn polynomials(
         &self,
-        witness: &Self::Witness<'_>,
+        &(): &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &right.polynomials[0],
-            "StampLift: members do not match header",
-        )?;
-        Ok(left.polynomials.clone())
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0].clone_from(&left.polynomials[0]);
+        polynomials[1].clone_from(&left.polynomials[1]);
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -940,7 +860,8 @@ impl Step<Pasta> for StampLift {
 ///
 /// The actions' `anchor` must be the span's `anchor_start` or one of its
 /// members.
-/// `R0` supplies span membership; `L0/L1` are preserved into `O0/O1`.
+///
+/// Opens five slots: R0 (span members), L0/L1 and O0/O1 (preserved sets).
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -949,23 +870,20 @@ impl Step<Pasta> for ActionLift {
     type Left = Actions;
     type Output = Actions;
     type Right = AnchorSpan;
-    /// `(members)`
-    type Witness<'source> = (AnchorSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(35);
 
     fn polynomials(
         &self,
-        witness: &Self::Witness<'_>,
+        &(): &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &right.polynomials[0],
-            "ActionLift: members do not match header",
-        )?;
-        Ok(left.polynomials.clone())
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0].clone_from(&left.polynomials[0]);
+        polynomials[1].clone_from(&left.polynomials[1]);
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1041,13 +959,8 @@ impl Step<Pasta> for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
-    type Witness<'source> = (
-        Note,
-        value::Positive,
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    /// `(max_fee_note, fee, (action_set, tachygram_set))`
+    type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
 
     const INDEX: Index = Index::new(33);
     const NUM_STAGED: usize = 5;
@@ -1070,36 +983,13 @@ impl Step<Pasta> for FeeFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.2.0.as_ref(),
-            &left.polynomials[0],
-            "FeeFuse: left action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.1.as_ref(),
-            &left.polynomials[1],
-            "FeeFuse: left tachygram accumulator must commit to header commit",
-        )?;
-        let [digest, change] = fee_roots(witness.0, witness.1)?;
-        // Singleton references bind supplied fee polynomials to X - root.
-        super::check_polynomial(
-            witness.4.0.as_ref(),
-            &[-digest, Fp::ONE],
-            "FeeFuse: fee action set does not commit to the fee digest",
-        )?;
-        super::check_polynomial(
-            witness.4.1.as_ref(),
-            &[-change, Fp::ONE],
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
-        )?;
-        Ok([
-            super::coefficients(witness.3.0.as_ref()),
-            super::coefficients(witness.3.1.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.0.as_ref());
+        polynomials[1] = super::coefficients(witness.2.1.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1198,7 +1088,7 @@ impl Step<Pasta> for FeeFuse {
                 .map_err(|_err| ragu_core::Error::InvalidWitness(error.into()))?;
         }
         let output = D::just(|| {
-            let (_, _, _, (actions, tachygrams), _) = witness.take();
+            let (_, _, (actions, tachygrams)) = witness.take();
             (actions.commit(), tachygrams.commit(), left.take().2)
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
@@ -1250,11 +1140,10 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        Ok([
-            super::coefficients(witness.2.as_ref()),
-            super::coefficients(witness.3.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[1] = super::coefficients(witness.3.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1400,47 +1289,21 @@ impl Step<Pasta> for StampUnmerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(dividend, quotient, divisor)`, each an `(action_set, tachygram_set)`
-    /// pair.
-    type Witness<'source> = (
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    /// The quotient's `(action_set, tachygram_set)`.
+    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(37);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.0.as_ref(),
-            &left.polynomials[0],
-            "StampUnmerge: dividend action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.0.1.as_ref(),
-            &left.polynomials[1],
-            "StampUnmerge: dividend tachygram accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.0.as_ref(),
-            &right.polynomials[0],
-            "StampUnmerge: divisor action accumulator must commit to header commit",
-        )?;
-        super::check_polynomial(
-            witness.2.1.as_ref(),
-            &right.polynomials[1],
-            "StampUnmerge: divisor tachygram accumulator must commit to header commit",
-        )?;
-        Ok([
-            super::coefficients(witness.1.0.as_ref()),
-            super::coefficients(witness.1.1.as_ref()),
-            alloc::vec![Fp::ONE],
-        ])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.0.as_ref());
+        polynomials[1] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1495,7 +1358,7 @@ impl Step<Pasta> for StampUnmerge {
                 ragu_core::Error::InvalidWitness("StampUnmerge: anchors must match".into())
             })?;
         let output = D::try_just(|| {
-            let (_, (quotient_action_set, quotient_tachygram_set), _) = witness.take();
+            let (quotient_action_set, quotient_tachygram_set) = witness.take();
             let (_, _, left_anchor) = left.take();
             Ok((
                 (

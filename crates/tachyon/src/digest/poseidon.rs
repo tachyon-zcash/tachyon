@@ -553,6 +553,3 @@ pub(crate) mod with_driver {
         tagged_sponge(dr, EVIDENCE_NODE_DOMAIN, children.each_ref())?.squeeze(dr)
     }
 }
-
-#[cfg(test)]
-mod tests;

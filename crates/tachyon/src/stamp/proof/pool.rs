@@ -38,7 +38,7 @@ use udon::{
 
 use super::{
     delegation::NoteNullifiers,
-    qr::{QrBucket, profile},
+    qr::{QrBucket, enforce_value_profile},
 };
 use crate::{
     digest::poseidon,
@@ -432,10 +432,9 @@ impl Step<Pasta> for AnchorSpanSeed {
 ///
 /// # Soundness
 ///
-/// The step checks each half's witnessed polynomial against its header's
-/// `members`. The product check's challenge absorbs all three commitments.
-/// `combined` therefore holds exactly the members of both halves.
-/// `L0/R0` carry the halves and `O0` their union.
+/// The product check reads each half from its header's `members`, and its
+/// challenge absorbs all three commitments. `combined` therefore holds
+/// exactly the members of both halves.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -444,29 +443,19 @@ impl Step<Pasta> for AnchorSpanFuse {
     type Left = AnchorSpan;
     type Output = AnchorSpan;
     type Right = AnchorSpan;
-    /// `(left_members, combined, right_members)`
-    type Witness<'source> = (AnchorSetPoly, AnchorSetPoly, AnchorSetPoly);
+    /// `combined`
+    type Witness<'source> = AnchorSetPoly;
 
     const INDEX: Index = Index::new(32);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &left.polynomials[0],
-            "AnchorSpanFuse: left members do not match header",
-        )?;
-        super::check_polynomial(
-            witness.2.as_ref(),
-            &right.polynomials[0],
-            "AnchorSpanFuse: right members do not match header",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
     }
 
@@ -506,10 +495,12 @@ impl Step<Pasta> for AnchorSpanFuse {
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
         let output = D::try_just(|| {
-            let (_, combined, _) = witness.take();
             let (left_anchor_start, ..) = left.take();
             let (_, _, right_anchor_end) = right.take();
-            Ok(((left_anchor_start, combined.commit(), right_anchor_end), ()))
+            Ok((
+                (left_anchor_start, witness.take().commit(), right_anchor_end),
+                (),
+            ))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
@@ -532,7 +523,6 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
 /// their product.
-/// `L0/R0` carry the halves and `O0` their concatenation.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -541,29 +531,19 @@ impl Step<Pasta> for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `combined_elapsed_seq`
+    type Witness<'source> = NfSeqPoly;
 
     const INDEX: Index = Index::new(2);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &left.polynomials[0],
-            "UnspentFuse: left polynomial does not match header",
-        )?;
-        super::check_polynomial(
-            witness.2.as_ref(),
-            &right.polynomials[0],
-            "UnspentFuse: right polynomial does not match header",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
     }
 
@@ -612,14 +592,13 @@ impl Step<Pasta> for UnspentFuse {
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
         let output = D::try_just(|| {
-            let (_left_elapsed_seq, combined_elapsed_seq, _right_elapsed_seq) = witness.take();
             let (left_anchor_start, left_epoch_start, ..) = left.take();
             let (_, _, _, right_epoch_next, right_anchor_next) = right.take();
             Ok((
                 (
                     left_anchor_start,
                     left_epoch_start,
-                    combined_elapsed_seq.commit(),
+                    witness.take().commit(),
                     right_epoch_next,
                     right_anchor_next,
                 ),
@@ -655,14 +634,17 @@ impl Step<Pasta> for UnspentFuse {
 ///
 /// # Soundness
 ///
-/// `elapsed_seq` is bound to the header by commit-equality and `contents` to
-/// the bucket. The framework fixes both sequences and stages `value`, so the
+/// `elapsed` is the segment's sequence and `contents` the bucket's, both read
+/// from the child slots. The framework fixes both sequences and stages `value`,
+/// so the
 /// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
 /// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
 /// plus exactly that member. The member's epoch is `epoch_next`, which
 /// advances by one, so `extended` keeps one member per epoch in
 /// `[epoch_start, epoch_next)`. `value` is free until
 /// [`UnspentBind`] forces it against the note's derivation.
+///
+/// Three committed polynomials, each opened once.
 /// `L0` is elapsed, `O0` extended, and `R0` the bucket contents.
 #[derive(Debug)]
 pub struct UnspentLift;
@@ -672,14 +654,12 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, elapsed_seq, extended_seq, contents)`
+    /// `(value, classes, mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
-        NfSeqPoly,
-        TachygramSetPoly,
     );
 
     const INDEX: Index = Index::new(24);
@@ -697,21 +677,11 @@ impl Step<Pasta> for UnspentLift {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.3.as_ref(),
-            &left.polynomials[0],
-            "UnspentLift: elapsed does not match header",
-        )?;
-        super::check_polynomial(
-            witness.5.as_ref(),
-            &right.polynomials[0],
-            "UnspentLift: contents do not match the bucket",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.4.as_ref());
+        polynomials[0] = super::coefficients(witness.3.as_ref());
         Ok(polynomials)
     }
 
@@ -764,7 +734,7 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
         })?;
         let discriminant_element = right_encoded.as_gadget().discriminant.clone();
-        profile::enforce_value(
+        enforce_value_profile(
             dr,
             &value_element,
             &discriminant_element,
@@ -773,27 +743,6 @@ impl Step<Pasta> for UnspentLift {
             witness.as_ref().map(|data| data.1),
             witness.as_ref().map(|data| data.2),
         )?;
-        let native = D::try_just(|| {
-            let (value, _, _, elapsed_seq, extended_seq, contents) = witness.clone().take();
-            let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();
-            let (bucket_epoch, _, bucket_anchor_next, ..) = right.take();
-            let output = (
-                unspent_anchor_start,
-                unspent_epoch_start,
-                extended_seq.commit(),
-                circuit::epoch_value(&epoch_next).take(),
-                bucket_anchor_next,
-            );
-            Ok((
-                elapsed_seq,
-                extended_seq,
-                contents,
-                value,
-                bucket_epoch,
-                output,
-            ))
-        })?;
-
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
@@ -821,7 +770,17 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
         })?;
 
-        let output = native.map(|witnessed| witnessed.5);
+        let output = D::just(|| {
+            let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();
+            let (_, _, bucket_anchor_next, ..) = right.take();
+            (
+                unspent_anchor_start,
+                unspent_epoch_start,
+                witness.take().3.commit(),
+                circuit::epoch_value(&epoch_next).take(),
+                bucket_anchor_next,
+            )
+        });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
@@ -874,29 +833,19 @@ impl Step<Pasta> for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(elapsed_seq, nf_seq, complement_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `complement_seq`
+    type Witness<'source> = NfSeqPoly;
 
     const INDEX: Index = Index::new(3);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &left.polynomials[0],
-            "UnspentBind: elapsed polynomial does not match header",
-        )?;
-        super::check_polynomial(
-            witness.1.as_ref(),
-            &right.polynomials[0],
-            "UnspentBind: covering sequence does not match header",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
     }
 

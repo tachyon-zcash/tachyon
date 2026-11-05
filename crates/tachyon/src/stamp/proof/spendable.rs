@@ -214,24 +214,9 @@ impl Step<Pasta> for QrSpendableInit {
     type Left = NoteUnspent;
     type Output = NoteSpendable;
     type Right = QrBucket;
-    /// `(contents)`
-    type Witness<'source> = (TachygramSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(22);
-
-    fn polynomials(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &right.polynomials[0],
-            "QrSpendableInit: contents do not match the bucket",
-        )?;
-        Ok(super::unit_polynomials())
-    }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,

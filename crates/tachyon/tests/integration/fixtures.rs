@@ -15,8 +15,8 @@ use udon::{
     field::Field as _,
 };
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
+    Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
@@ -248,11 +248,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .fuse(
             rng,
             StampMerge,
-            (
-                (left_acts, left_tg),
-                (merged_acts, merged_tg),
-                (right_acts, right_tg),
-            ),
+            (merged_acts, merged_tg),
             left_pcd,
             right_pcd,
         )
@@ -478,9 +474,8 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (Pcd<pool::AnchorSpan>, AnchorSetPoly) {
-    let (span, members) = build_anchor_span_pcd(rng, pool, range);
-    (span, AnchorSetPoly::from_iter(members))
+) -> Pcd<pool::AnchorSpan> {
+    build_anchor_span_pcd(rng, pool, range).0
 }
 
 pub(crate) struct QrIntakeEntry {
@@ -993,8 +988,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> Pcd<pool::ArbitraryUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
-    let witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into(), &bucket.members);
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into());
     let (segment, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1332,16 +1326,8 @@ impl WalletSim {
         let mk = self.pak.nk.derive_note_private(note.psi);
         let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| mk.derive_nullifier(epoch));
         let unspent = self.unspent_bind(rng, arbitrary, note);
-        let witness =
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members);
         let (spendable, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                spendable::QrSpendableInit,
-                witness,
-                unspent,
-                bucket.pcd,
-            )
+            .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
             .unwrap();
         self.lift_to_epoch(rng, pool, note, spendable, target)
     }
@@ -1373,7 +1359,7 @@ impl WalletSim {
         Vec<(
             Pcd<delegation::NoteSecret>,
             Pcd<spendable::NoteSpendable>,
-            Vec<(Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+            Vec<Pcd<pool::AnchorSpan>>,
         )>,
     ) {
         let ask = self.sk.derive_auth_private();
@@ -1418,7 +1404,7 @@ impl WalletSim {
         Vec<(
             Pcd<delegation::NoteSecret>,
             Pcd<spendable::NoteSpendable>,
-            Vec<(Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+            Vec<Pcd<pool::AnchorSpan>>,
         )>,
         Anchor,
         Note,

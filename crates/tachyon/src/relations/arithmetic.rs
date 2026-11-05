@@ -2,7 +2,7 @@
 
 use ragu_core::{
     Result,
-    drivers::{Driver, DriverValue},
+    drivers::{Coeff, Driver, DriverValue},
     maybe::Maybe as _,
 };
 use ragu_primitives::{
@@ -37,8 +37,7 @@ pub(crate) fn bits<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     })?;
     let packed = multipack(dr, &bits)?;
     let recomposed = if N == 255 {
-        let high_weight = Element::constant(dr, Fp::from(2).pow_u64(254));
-        let high = packed[1].mul(dr, &high_weight)?;
+        let high = packed[1].scale(dr, Coeff::Arbitrary(Fp::from(2).pow_u64(254)));
         packed[0].add(dr, &high)
     } else {
         packed[0].clone()

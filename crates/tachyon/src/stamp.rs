@@ -41,9 +41,7 @@ use crate::{
     fee,
     keys::{ProofAuthorizingKey, private},
     pasta::{Eq, Fp},
-    primitives::{
-        ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
-    },
+    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, TachygramSetCommit},
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
@@ -483,10 +481,7 @@ impl Plan {
         spend_pcds: Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         let fee_descriptor = fee::Descriptor {
@@ -519,7 +514,7 @@ impl Plan {
         {
             let reached = spans
                 .last()
-                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().2);
+                .map_or_else(|| spendable_pcd.data().2, |last| last.data().2);
             if reached != self.anchor {
                 return Err(ProveError::MissingPcd(
                     format!("spend {index} does not reach the plan's anchor").into(),
@@ -543,9 +538,9 @@ impl Plan {
                     .commit(),
                 spend_anchor,
             ));
-            for (span, members) in spans {
+            for span in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(rng, ActionLift, (members,), stamp_pcd, span)
+                    .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
@@ -616,12 +611,8 @@ impl Plan {
                         rng,
                         ActionMerge,
                         (
-                            (left_acts_poly, left_tg_poly),
-                            (
-                                ActionSetPoly::from_iter(merged_digests.clone()),
-                                TachygramSetPoly::from_iter(merged_tachygrams.clone()),
-                            ),
-                            (right_acts_poly, right_tg_poly),
+                            ActionSetPoly::from_iter(merged_digests.clone()),
+                            TachygramSetPoly::from_iter(merged_tachygrams.clone()),
                         ),
                         left_pcd,
                         right_pcd,
@@ -950,12 +941,8 @@ impl ProofStamp {
             rng,
             StampMerge,
             (
-                (left_acts_poly, left_tg_poly),
-                (
-                    ActionSetPoly::from_iter(merged_digests.clone()),
-                    TachygramSetPoly::from_iter(tachygrams.clone()),
-                ),
-                (right_acts_poly, right_tg_poly),
+                ActionSetPoly::from_iter(merged_digests.clone()),
+                TachygramSetPoly::from_iter(tachygrams.clone()),
             ),
             left_pcd,
             right_pcd,
@@ -969,9 +956,9 @@ impl ProofStamp {
         ))
     }
 
-    /// Advances the stamp's anchor along `spans`, each paired with its members
-    /// polynomial. The first span must contain the stamp's anchor, and each
-    /// later span must contain the previous span's `anchor_end`.
+    /// Advances the stamp's anchor along `spans`. The first span must contain
+    /// the stamp's anchor, and each later span must contain the previous span's
+    /// `anchor_end`.
     ///
     /// # Errors
     ///
@@ -981,10 +968,7 @@ impl ProofStamp {
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -996,9 +980,9 @@ impl ProofStamp {
         let mut stamp_pcd =
             self.proof
                 .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
-        for (span, members) in spans {
+        for span in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(rng, StampLift, (members,), stamp_pcd, span)
+                .fuse(rng, StampLift, (), stamp_pcd, span)
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
@@ -1031,10 +1015,7 @@ impl ProofStamp {
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()
@@ -1227,11 +1208,7 @@ impl ProofStamp {
             .fuse(
                 rng,
                 StampUnmerge,
-                (
-                    (dividend_action_set, dividend_tachygram_set),
-                    (quotient_action_set, quotient_tachygram_set),
-                    (divisor_action_set, divisor_tachygram_set),
-                ),
+                (quotient_action_set, quotient_tachygram_set),
                 dividend_pcd,
                 divisor_pcd,
             )

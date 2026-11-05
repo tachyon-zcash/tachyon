@@ -167,13 +167,13 @@ fn qr_intake_split_rejects_a_forged_partition() {
         )
         .unwrap();
 
-    let (contents, non_residue, _residue) = witness::qr_intake_split((*root.data(), ()), &members);
+    let (non_residue, _residue) = witness::qr_intake_split((*root.data(), ()), &members);
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                (contents, non_residue.clone(), non_residue),
+                (non_residue.clone(), non_residue),
                 root,
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -225,14 +225,12 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
             intake.members.iter().copied().partition(|member| {
                 *member != exceptional && qr::classify(Fp::from(*member), discriminant.at(depth)).0
             });
-        let (contents, ..) = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
         assert_matches!(
             PROOF_SYSTEM
                 .fuse(
                     rng,
                     qr::QrIntakeSplit,
                     (
-                        contents,
                         non_residue.iter().copied().collect(),
                         residue.iter().copied().collect(),
                     ),
@@ -330,56 +328,23 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
         )
         .unwrap();
 
-    let (_, residue_sibling, residue_interpolant, residue_quotient) =
+    let (_, residue_interpolant, residue_quotient) =
         witness::qr_side_descend((*split.data(), ()), &members, true);
-    let (_, non_residue_sibling, non_residue_interpolant, non_residue_quotient) =
+    let (_, non_residue_interpolant, non_residue_quotient) =
         witness::qr_side_descend((*split.data(), ()), &members, false);
-    for (descend_witness, expected) in [
+    for descend_witness in [
         (
-            (
-                true,
-                non_residue_sibling.clone(),
-                residue_interpolant.clone(),
-                residue_quotient.clone(),
-            ),
-            "QrSideDescend: sibling does not match the header",
+            true,
+            non_residue_interpolant.clone(),
+            residue_quotient.clone(),
         ),
         (
-            (
-                true,
-                residue_sibling.clone(),
-                non_residue_interpolant.clone(),
-                residue_quotient.clone(),
-            ),
-            "QrSideDescend: the sibling fails its class decomposition",
+            false,
+            residue_interpolant.clone(),
+            non_residue_quotient.clone(),
         ),
-        (
-            (
-                false,
-                non_residue_sibling.clone(),
-                residue_interpolant.clone(),
-                non_residue_quotient.clone(),
-            ),
-            "QrSideDescend: the sibling fails its class decomposition",
-        ),
-        (
-            (
-                true,
-                residue_sibling,
-                residue_interpolant,
-                non_residue_quotient,
-            ),
-            "QrSideDescend: the sibling fails its class decomposition",
-        ),
-        (
-            (
-                false,
-                non_residue_sibling,
-                non_residue_interpolant,
-                residue_quotient,
-            ),
-            "QrSideDescend: the sibling fails its class decomposition",
-        ),
+        (true, residue_interpolant, non_residue_quotient),
+        (false, non_residue_interpolant, residue_quotient),
     ] {
         assert_matches!(
             PROOF_SYSTEM
@@ -391,7 +356,8 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
                     PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "QrSideDescend: the sibling fails its class decomposition"
         );
     }
 }
@@ -418,13 +384,11 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .partition(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0);
     let smuggled = short_residue.pop().unwrap();
     padded_non_residue.push(smuggled);
-    let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrIntakeSplit,
             (
-                contents,
                 padded_non_residue.iter().copied().collect(),
                 short_residue.iter().copied().collect(),
             ),
@@ -433,19 +397,13 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         )
         .unwrap();
 
-    let (_, _, interpolant, quotient) =
-        witness::qr_side_descend((*sides.data(), ()), &members, true);
+    let (_, interpolant, quotient) = witness::qr_side_descend((*sides.data(), ()), &members, true);
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                (
-                    true,
-                    padded_non_residue.iter().copied().collect(),
-                    interpolant,
-                    quotient,
-                ),
+                (true, interpolant, quotient),
                 sides.clone(),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -505,7 +463,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let (_, _, interpolant, quotient) =
+    let (_, interpolant, quotient) =
         witness::qr_side_descend((*honest_split.data(), ()), &members, false);
 
     let sibling = misfiled.iter().copied().collect::<TachygramSetPoly>();
@@ -530,16 +488,11 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             witness::qr_stamp_intake_seed(((), ()), start, epoch, solved, &members),
         )
         .unwrap();
-    let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            (
-                contents,
-                non_residue.iter().copied().collect(),
-                sibling.clone(),
-            ),
+            (non_residue.iter().copied().collect(), sibling),
             root,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -550,7 +503,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                (false, sibling, interpolant, quotient),
+                (false, interpolant, quotient),
                 sides,
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -942,13 +895,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
 
     let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-            unspent,
-            bucket.pcd,
-        )
+        .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
         .unwrap();
     assert_eq!(*spendable.data(), (note.commitment(), epoch1, anchor_next));
 
@@ -998,13 +945,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert_eq!(bucket.pcd.data().2, unpublished);
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
     let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-            unspent,
-            bucket.pcd,
-        )
+        .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
         .unwrap();
     assert_eq!(
         *spendable.data(),
@@ -1132,10 +1073,7 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
                 .fuse(
                     rng,
                     spendable::QrSpendableInit,
-                    witness::qr_spendable_init(
-                        (*unspent.data(), *bucket.pcd.data()),
-                        &bucket.members,
-                    ),
+                    (),
                     unspent,
                     bucket.pcd,
                 )
@@ -1172,7 +1110,7 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
             .fuse(
                 rng,
                 spendable::QrSpendableInit,
-                witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
+                (),
                 unspent,
                 bucket.pcd,
             )
@@ -1199,9 +1137,9 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         Anchor::from(Fp::ZERO),
     );
     let (epoch, ..) = *bucket.pcd.data();
-    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
-    for (bucket_pcd, init_witness, expected) in vec![
+    for (bucket_pcd, init_witness, expected) in [
         (
             bucket.pcd.clone(),
             {
@@ -1240,17 +1178,13 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         ),
         (
             bucket.pcd.clone(),
-            witness::qr_unspent_init(
-                (*bucket.pcd.data(), ()),
-                Tachygram::from(Fp::ZERO),
-                &bucket.members,
-            ),
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(Fp::ZERO)),
             "QrUnspentInit: tested value is zero",
         ),
         (
             bucket.pcd.clone(),
             {
-                let mut forged = witness.clone();
+                let mut forged = witness;
                 forged.3 = NfSeqPoly::new(
                     epoch,
                     &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
@@ -1261,7 +1195,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         ),
         (
             bucket.pcd.clone(),
-            witness::qr_unspent_init((*bucket.pcd.data(), ()), bucket.members[0], &bucket.members),
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), bucket.members[0]),
             "QrUnspentInit: found nullifier in the bucket",
         ),
         (
@@ -1273,18 +1207,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                         .find(|&value| qr_profile_of(value, discriminant, 2) != bucket.pcd.data().4)
                         .unwrap(),
                 ),
-                &bucket.members,
             ),
             "QR profile: value does not take the bucket's profile",
-        ),
-        (
-            bucket.pcd,
-            {
-                let mut forged = witness;
-                forged.4 = iter::once(Tachygram::random(rng)).collect();
-                forged
-            },
-            "QrUnspentInit: contents do not match the bucket",
         ),
     ] {
         assert_matches!(
@@ -1328,8 +1252,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
             .iter()
             .any(|&member| Fp::from(member) == value)
     );
-    let mut witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let mut witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
     let (_, honest_roots, ..) = witness;
     assert_eq!(
         honest_roots[usize::try_from(position).unwrap()],
@@ -1408,8 +1331,7 @@ fn qr_unspent_init_rejects_a_twin_value() {
         Anchor::from(Fp::ZERO),
     );
     let (epoch, ..) = *bucket.pcd.data();
-    let mut witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let mut witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
     let z = unpinned_challenge(&[witness.3.commit().into()]);
     let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
@@ -1493,7 +1415,6 @@ fn unspent_lift_carries_a_spendable() {
         (*segment.data(), *bucket.pcd.data()),
         mk.derive_nullifier(epoch2).into(),
         &[mk.derive_nullifier(epoch1)],
-        &bucket.members,
     );
     let lifted = PROOF_SYSTEM
         .fuse(rng, UnspentLift, lift, segment, bucket.pcd)
@@ -1534,23 +1455,13 @@ fn unspent_lift_rejects_invalid_extensions() {
         QrDiscriminant::from(Fp::from(17)),
     );
     let detached = seal_qr_intake(rng, detached_intake, detached_previous);
-    let honest = witness::unspent_lift(
-        (*segment.data(), *bucket.pcd.data()),
-        nf1.into(),
-        &[nf0],
-        &bucket.members,
-    );
+    let honest = witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf0]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
 
     for (lift_bucket, lift, expected) in [
         (
             &detached,
-            witness::unspent_lift(
-                (*segment.data(), *detached.pcd.data()),
-                nf1.into(),
-                &[nf0],
-                &detached.members,
-            ),
+            witness::unspent_lift((*segment.data(), *detached.pcd.data()), nf1.into(), &[nf0]),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
@@ -1559,25 +1470,14 @@ fn unspent_lift_rejects_invalid_extensions() {
                 (*segment.data(), *bucket.pcd.data()),
                 bucket.members[0],
                 &[nf0],
-                &bucket.members,
             ),
             "UnspentLift: found nullifier in the bucket",
         ),
         (
             &bucket,
-            witness::unspent_lift(
-                (*segment.data(), *bucket.pcd.data()),
-                nf1.into(),
-                &[nf1],
-                &bucket.members,
-            ),
-            "UnspentLift: elapsed does not match header",
-        ),
-        (
-            &bucket,
             {
                 let mut forged = honest.clone();
-                forged.4 = NfSeqPoly::new(
+                forged.3 = NfSeqPoly::new(
                     epoch0,
                     &[
                         nf0,

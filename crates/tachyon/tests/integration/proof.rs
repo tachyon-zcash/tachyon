@@ -134,45 +134,19 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
     let right =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(4)));
-    for (fuse_witness, expected) in [
-        (
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
-                NfSeqPoly::new(EpochIndex::new(0), &nf),
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::UnspentFuse,
                 NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-            ),
-            "UnspentFuse: left polynomial does not match header",
-        ),
-        (
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-                NfSeqPoly::new(EpochIndex::new(0), &nf),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
-            ),
-            "UnspentFuse: right polynomial does not match header",
-        ),
-        (
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-            ),
-            "UnspentFuse: combined is not the concatenation of the halves",
-        ),
-    ] {
-        assert_matches!(
-            PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    pool::UnspentFuse,
-                    fuse_witness,
-                    left.clone(),
-                    right.clone(),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
-        );
-    }
+                left.clone(),
+                right.clone(),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentFuse: combined is not the concatenation of the halves"
+    );
 
     let (start, end) = (left.data().0, right.data().4);
     let (fused, ()) = PROOF_SYSTEM
@@ -226,19 +200,13 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         )
         .unwrap();
 
-    for (stamp_anchor, witnessed, expected) in [
-        (anchor_start, members.clone(), None),
-        (members[0], members.clone(), None),
-        (anchor_end, members.clone(), None),
+    for (stamp_anchor, expected) in [
+        (anchor_start, None),
+        (members[0], None),
+        (anchor_end, None),
         (
             fork,
-            members.clone(),
             Some("StampLift: stamp anchor is neither the span's start nor a member"),
-        ),
-        (
-            members[0],
-            members.iter().copied().chain([fork]).collect(),
-            Some("StampLift: members do not match header"),
         ),
     ] {
         let (stamp, plan, fee_descriptor) =
@@ -249,13 +217,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             TachygramSetPoly::from_iter(stamp.tachygrams).commit(),
             stamp_anchor,
         ));
-        let lifted = PROOF_SYSTEM.fuse(
-            rng,
-            stamp::StampLift,
-            witness::stamp_lift((*stamp_pcd.data(), *span.data()), &witnessed),
-            stamp_pcd,
-            span.clone(),
-        );
+        let lifted = PROOF_SYSTEM.fuse(rng, stamp::StampLift, (), stamp_pcd, span.clone());
         if let Some(message) = expected {
             assert_matches!(
                 lifted.err(),
@@ -276,8 +238,6 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
     let (left, left_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (right, right_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(2)..=BlockHeight(2));
 
-    let (left_poly, _combined, right_poly) =
-        witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
     let fork = left
         .data()
         .2
@@ -288,25 +248,17 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         .unwrap();
     for (fuse_witness, (first, second), expected) in [
         (
-            (
-                left_poly.clone(),
-                AnchorSetPoly::from_iter(left_members.iter().copied()),
-                right_poly.clone(),
-            ),
+            AnchorSetPoly::from_iter(left_members.iter().copied()),
             (left.clone(), right.clone()),
             "AnchorSpanFuse: combined is not the union of the halves",
         ),
         (
-            (
-                left_poly,
-                AnchorSetPoly::from_iter(
-                    left_members
-                        .iter()
-                        .chain(&right_members)
-                        .copied()
-                        .chain([fork]),
-                ),
-                right_poly,
+            AnchorSetPoly::from_iter(
+                left_members
+                    .iter()
+                    .chain(&right_members)
+                    .copied()
+                    .chain([fork]),
             ),
             (left.clone(), right.clone()),
             "AnchorSpanFuse: combined is not the union of the halves",
@@ -584,7 +536,7 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
         Anchor::from(Fp::ZERO),
     );
 
-    let (_elapsed_seq, _nf_seq, complement_seq) = witness::unspent_bind(
+    let complement_seq = witness::unspent_bind(
         (synthetic_unspent, *range.data()),
         &user.covering_window(&note, &range),
         &elapsed,
@@ -601,7 +553,6 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
-    let other = user.random_note(700);
     let pool = pool_closing_epoch_zero(rng, &note);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let unspent = build_unspent_pcd_over_epochs(
@@ -610,89 +561,40 @@ fn unspent_bind_rejects_mismatched_sequences() {
         |epoch| mk.derive_nullifier(epoch),
         (EpochIndex::new(0), EpochIndex::new(1)),
     );
-    let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
-        (*unspent.data(), *range.data()),
-        &user.covering_window(&note, &range),
-        &elapsed,
-    );
     let wide = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
-    let (wide_elapsed_seq, wide_nf_seq, _) = witness::unspent_bind(
-        (*unspent.data(), *wide.data()),
-        &user.covering_window(&note, &wide),
-        &elapsed,
-    );
     let later = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
 
-    for (bind_range, bind_witness, expected) in [
-        (
-            range.clone(),
-            (
-                NfSeqPoly::new(
-                    EpochIndex::new(0),
-                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
-                ),
-                nf_seq.clone(),
-                complement_seq,
-            ),
-            "UnspentBind: elapsed polynomial does not match header",
-        ),
-        (
-            range.clone(),
-            witness::unspent_bind(
-                (*unspent.data(), *range.data()),
-                &user.covering_window(&other, &range),
-                &elapsed,
-            ),
-            "UnspentBind: covering sequence does not match header",
-        ),
+    for (bind_range, complement_seq) in [
         (
             range,
-            (
-                elapsed_seq,
-                nf_seq,
-                NfSeqPoly::new(
-                    EpochIndex::new(0),
-                    &[mk.derive_nullifier(EpochIndex::new(0))],
-                ),
+            NfSeqPoly::new(
+                EpochIndex::new(0),
+                &[mk.derive_nullifier(EpochIndex::new(0))],
             ),
-            "UnspentBind: sequence does not match the derivation",
         ),
         (
             wide,
-            (
-                wide_elapsed_seq,
-                wide_nf_seq,
-                NfSeqPoly::new(
-                    EpochIndex::new(1),
-                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
-                ),
+            NfSeqPoly::new(
+                EpochIndex::new(1),
+                &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
             ),
-            "UnspentBind: sequence does not match the derivation",
         ),
-        (
-            later.clone(),
-            (
-                NfSeqPoly::new(EpochIndex::new(0), &elapsed),
-                NfSeqPoly::new(EpochIndex::new(64), &user.covering_window(&note, &later)),
-                NfSeqPoly::new(EpochIndex::new(64), &[]),
-            ),
-            "UnspentBind: sequence does not match the derivation",
-        ),
+        (later, NfSeqPoly::new(EpochIndex::new(64), &[])),
     ] {
         assert_matches!(
             PROOF_SYSTEM
                 .fuse(
                     rng,
                     pool::UnspentBind,
-                    bind_witness,
+                    complement_seq,
                     unspent.clone(),
                     bind_range,
                 )
                 .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "UnspentBind: sequence does not match the derivation"
         );
     }
 }
@@ -707,16 +609,16 @@ fn unspent_bind_rejects_uncovered_end() {
     let unspent = detached_segment(rng, last, |epoch| mk.derive_nullifier(epoch));
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let window = user.covering_window(&note, &range);
-    let witness = (
-        NfSeqPoly::new(last, &[mk.derive_nullifier(last)]),
-        NfSeqPoly::new(EpochIndex::new(0), &window),
-        NfSeqPoly::new(EpochIndex::new(0), &[]),
-    );
 
     assert_matches!(
         PROOF_SYSTEM
-            .fuse(rng, pool::UnspentBind, witness, unspent, range)
+            .fuse(
+                rng,
+                pool::UnspentBind,
+                NfSeqPoly::new(EpochIndex::new(0), &[]),
+                unspent,
+                range,
+            )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "UnspentBind: sequence does not match the derivation"
@@ -1019,7 +921,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     let members: Vec<Nullifier> = (0..32)
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
-    let (left_seq, merged_seq, right_seq) = witness::nullifier_fuse(
+    let merged_seq = witness::nullifier_fuse(
         (*left.data(), *right.data()),
         &members[..16],
         &members[16..],
@@ -1034,11 +936,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
             .fuse(
                 rng,
                 delegation::NullifierFuse,
-                (
-                    left_seq.clone(),
-                    NfSeqPoly::new(EpochIndex::new(0), &wrong_members),
-                    right_seq.clone(),
-                ),
+                NfSeqPoly::new(EpochIndex::new(0), &wrong_members),
                 left.clone(),
                 right.clone(),
             )
@@ -1048,13 +946,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     );
 
     let (merged, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NullifierFuse,
-            (left_seq, merged_seq, right_seq),
-            left,
-            right,
-        )
+        .fuse(rng, delegation::NullifierFuse, merged_seq, left, right)
         .unwrap();
     assert_eq!(
         *merged.data(),
@@ -1081,18 +973,16 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch1, EpochIndex::new(2)));
     let range = user.derivation_pcd(rng, note, epoch0, epoch1);
-    let elapsed_seq = NfSeqPoly::new(epoch1, &[nf(epoch1)]);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],
     );
-    let nf_seq = NfSeqPoly::new(EpochIndex::new(0), &user.covering_window(&note, &range));
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 pool::UnspentBind,
-                (elapsed_seq, nf_seq, complement_seq),
+                complement_seq,
                 unspent,
                 range,
             )

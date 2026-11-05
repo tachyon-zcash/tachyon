@@ -18,7 +18,7 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
@@ -162,30 +162,40 @@ impl Step<Pasta> for SummarySeed {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (anchor_prev, epoch, stamp) = witness.take();
-            let stamp_commit = stamp.commit();
-            let anchor_end = anchor_prev
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let header = encoded.as_gadget();
-        super::enforce_stamp_domain(dr, &header.epoch, oracles.bridge_hash())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        super::enforce_stamp_domain(dr, &epoch_element, oracles.bridge_hash())?;
         let anchor = poseidon::with_driver::anchor_next_stamp(
             dr,
-            &header.anchor_prev,
-            &header.epoch,
+            &previous,
+            &epoch_element,
             oracles.bridge_hash(),
         )?;
-        header.anchor_end.enforce_equal(dr, &anchor)?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let output = D::just(|| {
+            let (anchor_prev, epoch, stamp) = witness.take();
+            (
+                epoch,
+                anchor_prev,
+                Anchor::from(*anchor.value().take()),
+                stamp.commit(),
+            )
+        });
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        let fields = SummaryOutput {
+            epoch: epoch_element,
+            anchor_prev: previous,
+            anchor_end: anchor,
+            acc_commit: encoded.as_gadget().acc_commit.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -199,8 +209,8 @@ impl Step<Pasta> for SummaryAdvance {
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    /// `(acc, extended, stamp)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
+    /// `(extended, stamp)`
+    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(14);
 
@@ -211,8 +221,8 @@ impl Step<Pasta> for SummaryAdvance {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         Ok([
+            super::coefficients(witness.0.as_ref()),
             super::coefficients(witness.1.as_ref()),
-            super::coefficients(witness.2.as_ref()),
             alloc::vec![Fp::from(1)],
         ])
     }
@@ -237,18 +247,7 @@ impl Step<Pasta> for SummaryAdvance {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (acc, ..) = witness.clone().take();
-            let (_, _, _, acc_commit) = left.clone().take();
-            if Eq::from(acc.commit()) != Eq::from(acc_commit) {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SummaryAdvance: accumulator does not match header".into(),
-                ));
-            }
-            Ok(())
-        })?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         enforce_poly_product(
             dr,
             oracles,
@@ -257,31 +256,6 @@ impl Step<Pasta> for SummaryAdvance {
             &Slot::output(0),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let output = D::try_just(|| {
-            let (acc, extended, stamp) = witness.take();
-            let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
-                left.take();
-            right.take();
-            if Eq::from(acc.commit()) != Eq::from(summary_acc_commit) {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SummaryAdvance: accumulator does not match header".into(),
-                ));
-            }
-            let anchor_end = summary_anchor_end
-                .next_stamp(summary_epoch, &stamp.commit())
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok((
-                (
-                    summary_epoch,
-                    summary_anchor_prev,
-                    anchor_end,
-                    extended.commit(),
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         super::enforce_stamp_domain(dr, &left_encoded.as_gadget().epoch, oracles.bridge_hash())?;
         let anchor = poseidon::with_driver::anchor_next_stamp(
             dr,
@@ -289,6 +263,16 @@ impl Step<Pasta> for SummaryAdvance {
             &left_encoded.as_gadget().epoch,
             oracles.bridge_hash(),
         )?;
+        let output = D::just(|| {
+            let (summary_epoch, summary_anchor_prev, ..) = left.take();
+            (
+                summary_epoch,
+                summary_anchor_prev,
+                Anchor::from(*anchor.value().take()),
+                witness.take().0.commit(),
+            )
+        });
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         let fields = SummaryOutput {
             epoch: left_encoded.as_gadget().epoch.clone(),
             anchor_prev: left_encoded.as_gadget().anchor_prev.clone(),
@@ -297,8 +281,8 @@ impl Step<Pasta> for SummaryAdvance {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            aux,
+            output,
+            D::unit(),
         ))
     }
 }

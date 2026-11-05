@@ -337,12 +337,13 @@ impl Step<Pasta> for NoteSeed {
 /// is an honestly labelled window. A fixed-width Boolean decomposition pins
 /// its unsigned representation, and its two low bits are constrained zero.
 /// Bounding the derived final epoch excludes windows beyond the epoch domain.
-/// `O0` carries the derived sequence; `epoch_start` is staged before ζ.
 ///
-/// The epoch indices need no absorbing into $z$, each being `epoch_start`
-/// plus a circuit constant. The nullifier scalars are sponge outputs of the
+/// `epoch_start` is staged before $z$; each epoch index is that start plus a
+/// circuit constant. The nullifier scalars are sponge outputs of the
 /// threaded `mk`, pinned in-circuit, so the product identity alone forces
 /// every member.
+///
+/// Polynomial inventory: `O0` is the derived sequence; stage `epoch_start`.
 #[derive(Debug)]
 pub struct NullifierDerive;
 
@@ -506,7 +507,9 @@ impl Step<Pasta> for NullifierDerive {
 /// halves'. The contiguity check preserves the header invariant established
 /// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
-/// `L0/R0` carry the halves and `O0` their concatenation.
+///
+/// Polynomial inventory: `L0` and `R0` are the halves, `O0` their
+/// concatenation.
 #[derive(Debug)]
 pub struct NullifierFuse;
 
@@ -515,29 +518,19 @@ impl Step<Pasta> for NullifierFuse {
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `(left_seq, merged_seq, right_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `merged_seq`
+    type Witness<'source> = NfSeqPoly;
 
     const INDEX: Index = Index::new(12);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        super::check_polynomial(
-            witness.0.as_ref(),
-            &left.polynomials[0],
-            "NullifierFuse: left polynomial does not match header",
-        )?;
-        super::check_polynomial(
-            witness.2.as_ref(),
-            &right.polynomials[0],
-            "NullifierFuse: right polynomial does not match header",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
     }
 
@@ -587,10 +580,9 @@ impl Step<Pasta> for NullifierFuse {
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         let output = D::try_just(|| {
-            let (_, merged_seq, _) = witness.take();
             let (left_cm, left_epoch_start, ..) = left.take();
             let (_, _, _, right_epoch_end) = right.take();
-            let merged_nf_commit = merged_seq.commit();
+            let merged_nf_commit = witness.take().commit();
             Ok((
                 (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
                 (),
@@ -611,6 +603,3 @@ impl Step<Pasta> for NullifierFuse {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests;

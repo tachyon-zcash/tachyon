@@ -42,21 +42,6 @@ use udon::field::Field as _;
 
 use crate::pasta::Fp;
 
-/// Enforce componentwise equality of fixed-size field tuples.
-pub(crate) fn enforce_equal_fields<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
-    dr: &mut D,
-    left: &[Element<'dr, D>; N],
-    right: &[Element<'dr, D>; N],
-    errors: [&'static str; N],
-) -> Result<()> {
-    for ((left_field, right_field), message) in left.iter().zip(right).zip(errors) {
-        left_field
-            .enforce_equal(dr, right_field)
-            .map_err(|_err| Error::InvalidWitness(message.into()))?;
-    }
-    Ok(())
-}
-
 /// The indexed member factor `((index + 1) * z + value)^3 - 2`, where
 /// `index_plus_one` already includes the offset.
 pub(crate) fn indexed_member_factor<'dr, D: Driver<'dr, F = Fp>>(
