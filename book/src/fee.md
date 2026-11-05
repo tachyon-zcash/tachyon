@@ -104,18 +104,10 @@ The output header carries the commitments to $A'$ and $T'$ and the left
 actions' anchor.
 
 $\mathsf{FeeSeed}$ proves a zero-action bundle's zero fee. It has no
-predecessors and witnesses the max fee note opening, the anchor, and the fee
-singleton set polynomials $S_A$ and $S_T$. It enforces $\maxfee = 0$ and, at
-$\fee = 0$,
-
-$$
-S_A = X - d_\fee,
-\qquad
-S_T = X - \cm_\chg,
-$$
-
-so the fee change note is the max fee note itself. Its $\mathtt{Stamp}$
-carries the singleton commitments and the witnessed anchor.
+predecessors and witnesses the max fee note opening, the anchor, $S_A$ and
+$S_T$. It enforces $\maxfee = 0$, $S_A = X - d_\fee$, and
+$S_T = X - \cm_\chg$ at $\fee = 0$, so the fee change note is the max fee note
+itself. Its $\mathtt{Stamp}$ carries the singleton commitments and the witnessed anchor.
 
 The fee steps prove a local relation, not funding. Funding comes from
 the bundle's actions, the binding signature over the signed $\cv_\maxfee$,

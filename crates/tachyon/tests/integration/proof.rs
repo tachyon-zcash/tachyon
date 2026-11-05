@@ -178,7 +178,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         );
     }
 
-    let (start, end) = (left.data().0, right.data().6);
+    let (start, end) = (left.data().0, right.data().5);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -193,7 +193,6 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         (
             start,
             EpochIndex::new(0),
-            nf0,
             NfSeqPoly::new(EpochIndex::new(0), &nf).commit(),
             nf3,
             EpochIndex::new(4),
@@ -525,10 +524,6 @@ fn lift_crosses_a_stampless_epoch() {
         |epoch| mk.derive_nullifier(epoch),
         (epoch1, epoch3),
     );
-    assert_eq!(
-        (arbitrary.data().2, arbitrary.data().4),
-        (mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2))
-    );
     let lifted = user.lift(rng, spendable, arbitrary, &note);
     assert_eq!(lifted.data().1, epoch3);
     assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
@@ -555,7 +550,7 @@ fn unspent_bind_rejects_a_forged_member() {
     };
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch1));
 
-    let (_, _, _, _, _, unspent_end, _) = *unspent.data();
+    let (_, _, _, _, unspent_end, _) = *unspent.data();
     let range = user.derivation_pcd(rng, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
@@ -589,7 +584,6 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
         epoch_start,
-        elapsed[0],
         NfSeqPoly::new(epoch_start, &elapsed).commit(),
         elapsed[elapsed.len() - 1],
         epoch_end,
@@ -1152,7 +1146,7 @@ fn multi_window_span_binds_once() {
     let unspent = user.unspent_bind(rng, arbitrary, &note);
 
     assert_eq!(
-        (unspent.data().2, unspent.data().5),
+        (unspent.data().2, unspent.data().3),
         (EpochIndex::new(0), EpochIndex::new(last_epoch))
     );
 }

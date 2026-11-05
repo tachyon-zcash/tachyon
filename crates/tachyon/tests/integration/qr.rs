@@ -896,7 +896,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .unwrap();
-    let (fused_anchor_start, _, _, elapsed, _, fused_epoch_next, fused_anchor_next) = *fused.data();
+    let (fused_anchor_start, _, elapsed, _, fused_epoch_next, fused_anchor_next) = *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
@@ -1447,47 +1447,48 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
     let nf1 = mk.derive_nullifier(epoch1);
     let bucket = epoch_bucket(rng, &pool, epoch0);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
-    let mut seed_witness =
+    let mut witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
-    let z = unpinned_challenge(&[seed_witness.3.commit().into()]);
+    let z = unpinned_challenge(&[witness.3.commit().into()]);
     let shift = (Fp::from(u64::from(epoch0)) + Fp::ONE) * z;
     let twin = (Fp::ZETA * (Fp::from(nf) + shift)) - shift;
     assert_ne!(twin, Fp::from(nf));
-    seed_witness.0 = Tachygram::from(twin);
-    seed_witness.1 = QrClassRoot::along(twin, discriminant);
+    assert_eq!(
+        (twin + shift).pow_u64(3) - Fp::from(2),
+        (Fp::from(nf) + shift).pow_u64(3) - Fp::from(2)
+    );
+    witness.0 = Tachygram::from(twin);
+    witness.1 = QrClassRoot::along(twin, discriminant);
 
     let (segment, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrUnspentInit,
-            seed_witness,
+            witness,
             bucket.pcd,
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    assert_eq!(
-        (segment.data().2, segment.data().4),
-        (twin.into(), twin.into())
-    );
+    assert_eq!(segment.data().3, Nullifier::from(twin));
 
     {
         let mut header = *segment.data();
-        header.4 = nf;
+        header.3 = nf;
         let forged = segment.proof().clone().carry::<ArbitraryUnspent>(header);
         assert!(!PROOF_SYSTEM.verify(&forged, &mut *rng).unwrap());
     }
 
     {
         let range = user.derivation_pcd(rng, note, epoch0, epoch1);
-        let witness = witness::unspent_bind(
+        let bind_witness = witness::unspent_bind(
             (*segment.data(), *range.data()),
             &user.covering_window(&note, &range),
             &[nf],
         );
         assert_matches!(
             PROOF_SYSTEM
-                .fuse(rng, UnspentBind, witness, segment.clone(), range)
+                .fuse(rng, UnspentBind, bind_witness, segment.clone(), range)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == "UnspentBind: elapsed does not end with its last member"
@@ -1495,7 +1496,7 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
     }
     let next = epoch_bucket(rng, &pool, epoch1);
     {
-        let witness = witness::unspent_lift(
+        let lift = witness::unspent_lift(
             (*segment.data(), *next.pcd.data()),
             nf1.into(),
             &[nf],
@@ -1503,7 +1504,7 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
         );
         assert_matches!(
             PROOF_SYSTEM
-                .fuse(rng, UnspentLift, witness, segment.clone(), next.pcd.clone())
+                .fuse(rng, UnspentLift, lift, segment.clone(), next.pcd.clone())
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == "UnspentLift: elapsed does not end with its last member"
@@ -1511,10 +1512,10 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
     }
     {
         let right = qr_bucket_segment(rng, &next, |_| nf1);
-        let witness = witness::unspent_fuse((*segment.data(), *right.data()), &[nf], &[nf1]);
+        let fuse_witness = witness::unspent_fuse((*segment.data(), *right.data()), &[nf], &[nf1]);
         assert_matches!(
             PROOF_SYSTEM
-                .fuse(rng, UnspentFuse, witness, segment, right)
+                .fuse(rng, UnspentFuse, fuse_witness, segment, right)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == "UnspentFuse: left does not end with its last member"
@@ -1555,7 +1556,7 @@ fn a_lifted_twin_value_fails_unspent_bind() {
     let (lifted, ()) = PROOF_SYSTEM
         .fuse(rng, UnspentLift, lift, segment, bucket.pcd)
         .unwrap();
-    assert_eq!(lifted.data().4, Nullifier::from(twin));
+    assert_eq!(lifted.data().3, Nullifier::from(twin));
 
     let range = user.derivation_pcd(rng, note, epoch0, epoch2);
     let witness = witness::unspent_bind(
@@ -1598,7 +1599,6 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
             (
                 Anchor::default(),
                 epoch,
-                nf,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
                 nf,
                 epoch_next,
@@ -1636,10 +1636,6 @@ fn unspent_lift_carries_a_spendable() {
         .fuse(rng, UnspentLift, lift, segment, bucket.pcd)
         .unwrap()
         .0;
-    assert_eq!(
-        (lifted.data().2, lifted.data().4),
-        (mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2))
-    );
 
     let carried = user.lift(rng, spendable, lifted, &note);
     assert_eq!(

@@ -731,12 +731,12 @@ pub(super) fn enforce_value_profile(
 ///
 /// The emitted segment reads the value as a nullifier and takes the bucket's
 /// extent, `[anchor_start, anchor_next)`, with epochs `[epoch, epoch + 1)`.
-/// Its one member is the value at `epoch`, which is both its `nf_first` and
-/// its `nf_last`. `anchor_next` is the entry anchor
+/// Its one member is the value at `epoch`. `anchor_next` is the entry anchor
 /// of `epoch + 1`, excluded, so that epoch's nullifier is the next segment's
 /// to test. Consecutive epochs' segments meet on that boundary and fuse
 /// directly, or [`UnspentLift`](super::pool::UnspentLift) appends the next
 /// epoch's bucket in one step.
+/// It records the tested value in `nf_last`.
 ///
 /// # Soundness
 ///
@@ -833,7 +833,6 @@ impl Step for QrUnspentInit {
             (
                 bucket_anchor_start,
                 bucket_epoch,
-                value.into(),
                 sequence_commit,
                 value.into(),
                 epoch_next,

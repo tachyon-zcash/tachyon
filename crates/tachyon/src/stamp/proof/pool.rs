@@ -63,8 +63,8 @@ use crate::{
 /// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
 /// on `anchor_next`.
 ///
-/// `nf_first` is the member at `epoch_start` and `nf_last` the member at
-/// `epoch_next - 1`. The step that tests a value writes it to `nf_last`, and
+/// `nf_last` is the member at `epoch_next - 1`.
+/// The step that tests a value writes it to `nf_last`, and
 /// the step that next takes the segment as a prefix checks that `elapsed` ends
 /// with it: [`UnspentLift`], [`UnspentFuse`] for its left half, or
 /// [`UnspentBind`]. A right half's `nf_last` becomes the fused segment's.
@@ -83,12 +83,10 @@ use crate::{
 pub struct ArbitraryUnspent;
 
 impl Header for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, nf_first, elapsed, nf_last, epoch_next,
-    /// anchor_next)`
+    /// `(anchor_start, epoch_start, elapsed, nf_last, epoch_next, anchor_next)`
     type Data = (
         Anchor,
         EpochIndex,
-        Nullifier,
         NfSeqCommit,
         Nullifier,
         EpochIndex,
@@ -98,13 +96,11 @@ impl Header for ArbitraryUnspent {
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (anchor_start, epoch_start, nf_first, elapsed, nf_last, epoch_next, anchor_next) =
-            *data;
+        let (anchor_start, epoch_start, elapsed, nf_last, epoch_next, anchor_next) = *data;
         (
             vec![
                 Fp::from(anchor_start),
                 Fp::from(epoch_start),
-                Fp::from(nf_first),
                 Fp::from(nf_last),
                 Fp::from(epoch_next),
                 Fp::from(anchor_next),
@@ -122,30 +118,20 @@ impl Header for ArbitraryUnspent {
 pub struct NoteUnspent;
 
 impl Header for NoteUnspent {
-    /// `(cm, anchor_start, epoch_start, nf_first, nf_last, epoch_next,
-    /// anchor_next)`. `cm` leads; the rest mirrors the [`ArbitraryUnspent`]
-    /// without `elapsed`.
-    type Data = (
-        note::Commitment,
-        Anchor,
-        EpochIndex,
-        Nullifier,
-        Nullifier,
-        EpochIndex,
-        Anchor,
-    );
+    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. `cm` leads;
+    /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed` or
+    /// `nf_last`.
+    type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, anchor_start, epoch_start, nf_first, nf_last, epoch_next, anchor_next) = *data;
+        let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(anchor_start),
                 Fp::from(epoch_start),
-                Fp::from(nf_first),
-                Fp::from(nf_last),
                 Fp::from(epoch_next),
                 Fp::from(anchor_next),
             ],
@@ -304,8 +290,8 @@ impl Step for AnchorSpanFuse {
 /// The halves meet at one boundary: `left.anchor_next == right.anchor_start`
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
-/// their product. The fused segment takes `nf_first` from the left half and
-/// `nf_last` from the right.
+/// their product.
+/// The fused segment takes `nf_last` from the right.
 ///
 /// # Soundness
 ///
@@ -344,7 +330,6 @@ impl Step for UnspentFuse {
         (
             left_anchor_start,
             left_epoch_start,
-            left_nf_first,
             left_elapsed,
             left_nf_last,
             left_epoch_next,
@@ -353,7 +338,6 @@ impl Step for UnspentFuse {
         (
             right_anchor_start,
             right_epoch_start,
-            _,
             right_elapsed,
             right_nf_last,
             right_epoch_next,
@@ -398,7 +382,6 @@ impl Step for UnspentFuse {
             (
                 left_anchor_start,
                 left_epoch_start,
-                left_nf_first,
                 combined_elapsed_seq.commit(),
                 right_nf_last,
                 right_epoch_next,
@@ -477,7 +460,6 @@ impl Step for UnspentLift {
         (
             unspent_anchor_start,
             unspent_epoch_start,
-            unspent_nf_first,
             unspent_elapsed,
             unspent_nf_last,
             unspent_epoch_next,
@@ -553,7 +535,6 @@ impl Step for UnspentLift {
             (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                unspent_nf_first,
                 extended_seq.commit(),
                 value.into(),
                 epoch_next,
@@ -618,7 +599,6 @@ impl Step for UnspentBind {
         (
             unspent_anchor_start,
             unspent_epoch_start,
-            unspent_nf_first,
             unspent_elapsed,
             unspent_nf_last,
             unspent_epoch_next,
@@ -672,8 +652,6 @@ impl Step for UnspentBind {
                 nullifiers_cm,
                 unspent_anchor_start,
                 unspent_epoch_start,
-                unspent_nf_first,
-                unspent_nf_last,
                 unspent_epoch_next,
                 unspent_anchor_next,
             ),

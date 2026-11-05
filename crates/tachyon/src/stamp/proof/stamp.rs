@@ -526,8 +526,6 @@ impl Step for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, fee, (left_action_set, left_tachygram_set),
-    /// (output_action_set, output_tachygram_set))`
     type Witness<'source> = (
         Note,
         value::Positive,
@@ -613,14 +611,14 @@ impl Step for FeeFuse {
             left_action_set.as_ref(),
             fee_digest,
             output_action_set.as_ref(),
-            "FeeFuse: output action set is not the left action set with the fee digest",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         )?;
         enforce_poly_linear_factor(
             ctx,
             left_tachygram_set.as_ref(),
             fee_change_commitment,
             output_tachygram_set.as_ref(),
-            "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         )?;
 
         Ok((

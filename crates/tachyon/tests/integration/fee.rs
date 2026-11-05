@@ -129,7 +129,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.3.0 = other.3.0.clone();
                 corrupt
             },
-            "FeeFuse: output action set is not the left action set with the fee digest",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         ),
         (
             {
@@ -137,7 +137,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.3.1 = other.3.1.clone();
                 corrupt
             },
-            "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         ),
         (
             {
@@ -145,7 +145,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.1 = other.1;
                 corrupt
             },
-            "FeeFuse: output action set is not the left action set with the fee digest",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         ),
         (
             {
@@ -154,7 +154,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.3.0 = other.3.0;
                 corrupt
             },
-            "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         ),
     ] {
         assert_matches!(

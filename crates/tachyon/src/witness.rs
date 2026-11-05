@@ -96,7 +96,8 @@ pub fn nullifier_fuse(
 /// right_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
-/// covered epoch. The left prefix is `left_elapsed` without its last member.
+/// covered epoch.
+/// The left prefix is `left_elapsed` without its last member.
 ///
 /// # Panics
 ///
@@ -125,11 +126,11 @@ pub fn unspent_fuse(
 /// Prepare the witness for [`UnspentBind`]:
 /// `(prefix_seq, elapsed_seq, nf_seq, complement_seq)`.
 ///
-/// `elapsed` is the unspent's member list, one per covered epoch, and the
-/// prefix is `elapsed` without its last member. `window` is the complete
-/// covering sequence, one member per epoch of the derivation header's range;
-/// the complement is the window's runs on both sides of the unspent's span,
-/// multiplied.
+/// `elapsed` is the unspent's member list, one per covered epoch. `window`
+/// is the complete covering sequence, one member per epoch of the
+/// derivation header's range; the complement is the window's runs on both
+/// sides of the unspent's span, multiplied.
+/// The prefix is `elapsed` without its last member.
 ///
 /// # Panics
 ///
@@ -144,7 +145,7 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, _, _, _, epoch_next, _) = unspent;
+    let (_, epoch_start, _, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
     let (_, prefix) = elapsed
@@ -457,9 +458,9 @@ pub const fn evidence_tree_open(
 /// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
 /// prefix_seq, elapsed_seq, extended_seq, contents)`.
 ///
-/// `elapsed` is the segment's member list, one per covered epoch, and the
-/// prefix is `elapsed` without its last member; `value` becomes the member at
-/// the bucket's epoch.
+/// `elapsed` is the segment's member list, one per covered epoch; `value`
+/// becomes the member at the bucket's epoch.
+/// The prefix is `elapsed` without its last member.
 ///
 /// # Panics
 ///

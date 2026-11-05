@@ -87,13 +87,6 @@ pub(crate) fn enforce_poly_product(
 /// two committed polynomials by opening both at a Fiat-Shamir challenge and
 /// evaluating the factor in cheap field operations.
 ///
-/// `product` is prover-supplied and the relation works only from the
-/// two commitments and their openings at `z` -- it does not multiply the
-/// inputs. The point-wise identity `product(z) = multiplicand(z)·(z − root)`
-/// at a random `z` confirms the relation: with both operands committed and
-/// absorbed into `z`, the difference `product − multiplicand·(X − root)` is a
-/// fixed polynomial pinned to zero by Schwartz-Zippel.
-///
 /// # Caller obligation (soundness)
 ///
 /// `multiplicand` and `product` are committed and absorbed into `z`; the
@@ -127,14 +120,6 @@ pub(crate) fn enforce_poly_linear_factor(
 /// Faithful indexed member: confirm `product = multiplicand · F(index, value)`
 /// among two committed polynomials by opening both at a Fiat-Shamir challenge
 /// and evaluating the indexed-multiset member factor in cheap field operations.
-///
-/// `product` is prover-supplied and the relation works only from the
-/// two commitments and their openings at `z` -- it does not multiply the
-/// inputs. The point-wise identity `product(z) = multiplicand(z)·F(index,
-/// value)(z)` at a random `z` confirms the relation: with both operands
-/// committed and absorbed into `z`, the difference `product −
-/// multiplicand·F(index, value)` is a fixed polynomial pinned to zero by
-/// Schwartz-Zippel.
 ///
 /// # Caller obligation (soundness)
 ///
