@@ -31,7 +31,7 @@ output_gadget!(SummaryOutput, "SummaryOutput(..)", {
     acc_commit: TachygramSetCommitGadget,
 });
 
-impl Header for Summary {
+impl Header<Fp> for Summary {
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
     type Output = Kind![Fp; SummaryOutput<'_, _>];
 

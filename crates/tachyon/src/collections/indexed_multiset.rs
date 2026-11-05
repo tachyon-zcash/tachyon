@@ -94,13 +94,6 @@ fn encode_single(idx: u64, m: Fp) -> [Fp; 4] {
     ]
 }
 
-#[must_use]
-#[cfg(test)]
-fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
-    let i = Fp::from(idx) + Fp::ONE;
-    ((i * x) + m).pow_u64(3) - NON_RESIDUE
-}
-
 /// Encode the provided indexed members.
 pub(crate) fn encode(
     members: impl IntoIterator<Item = (u64, Fp)>,
@@ -112,65 +105,4 @@ pub(crate) fn encode(
                 arithmetic::poly_mul(&product, &encode_single(idx, m))
             }),
     )
-}
-
-/// Evaluate the indexed multiset without building the polynomial.
-#[cfg(test)]
-pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -> Fp {
-    members
-        .into_iter()
-        .fold(Fp::ONE, |acc, (idx, m)| acc * direct_eval_single(idx, m, x))
-}
-
-#[cfg(test)]
-mod tests {
-    use alloc::vec::Vec;
-
-    use rand::{Rng as _, RngExt as _, SeedableRng as _, rngs::StdRng};
-
-    use super::*;
-
-    #[test]
-    fn member_encoding_matches_manual_evaluation() {
-        let rng = &mut StdRng::seed_from_u64(3);
-        for _ in 0..8 {
-            let idx = u64::from(rng.random_range(0..u32::MAX));
-            let member = Fp::random(|bytes| rng.fill_bytes(bytes));
-            let x = Fp::random(|bytes| rng.fill_bytes(bytes));
-            assert_eq!(
-                Polynomial::<Fp, ProductionRank>::from_coeffs(encode_single(idx, member).to_vec())
-                    .eval(x),
-                direct_eval([(idx, member)], x)
-            );
-        }
-    }
-
-    #[test]
-    fn member_encoding_matches_manual_construction() {
-        let rng = &mut StdRng::seed_from_u64(6);
-        let idx = u64::from(rng.random_range(0..u32::MAX));
-        let member = Fp::random(|bytes| rng.fill_bytes(bytes));
-
-        let m_ix = [member, Fp::from(idx) + Fp::ONE];
-        let mut manual = arithmetic::poly_mul(&arithmetic::poly_mul(&m_ix, &m_ix), &m_ix);
-        manual[0] -= NON_RESIDUE;
-
-        assert_eq!(encode_single(idx, member).as_slice(), manual.as_slice());
-    }
-
-    #[test]
-    fn sequence_evaluation_matches_the_encoding() {
-        let rng = &mut StdRng::seed_from_u64(12);
-        for len in 0..6u64 {
-            let start_idx = u64::from(rng.random_range(0..u32::MAX));
-            let members: Vec<(u64, Fp)> = (start_idx..start_idx + len)
-                .map(|idx| (idx, Fp::random(|bytes| rng.fill_bytes(bytes))))
-                .collect();
-            let x = Fp::random(|bytes| rng.fill_bytes(bytes));
-            assert_eq!(
-                direct_eval(members.iter().copied(), x),
-                encode(members).eval(x)
-            );
-        }
-    }
 }

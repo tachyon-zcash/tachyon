@@ -38,7 +38,7 @@ output_gadget!(NoteSecretOutput, "NoteSecretOutput(..)", {
     mk: NoteMasterKeyGadget,
 });
 
-impl Header for NoteSecret {
+impl Header<Fp> for NoteSecret {
     type Data = (note::Commitment, note::Note, keys::NoteMasterKey);
     type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
@@ -118,7 +118,7 @@ output_gadget!(NoteNullifiersOutput, "NoteNullifiersOutput(..)", {
     nf_commit: NfSeqCommitGadget,
 });
 
-impl Header for NoteNullifiers {
+impl Header<Fp> for NoteNullifiers {
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 

@@ -2,10 +2,9 @@
 
 extern crate alloc;
 
-use ragu::{Encoded, Header, Index, Step, StepCtx};
+use ragu::{Encoded, Header, Index, Oracles, Step, pasta::Pasta};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, GadgetExt as _};
@@ -43,12 +42,11 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendBind;
 
-impl Step for SpendBind {
+impl Step<Pasta> for SpendBind {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = SpendHeader;
     type Right = NoteSecret;
-    type Shared = ();
     /// `(rcv,)`
     type Witness<'source> = (value::Trapdoor,);
 
@@ -56,70 +54,68 @@ impl Step for SpendBind {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let cm = left_encoded.as_gadget().cm.element.clone();
         let secret_cm = right_encoded.as_gadget().cm.element.clone();
-        cm.enforce_equal(ctx.dr, &secret_cm).map_err(|_err| {
+        cm.enforce_equal(dr, &secret_cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
         let value = right_encoded.as_gadget().note.value.element.clone();
-        circuit::bounded::<D, 51>(ctx.dr, &value, MAX_MONEY)?;
+        circuit::bounded::<D, 51>(dr, &value, MAX_MONEY)?;
         let epoch = left_encoded.as_gadget().epoch_current.element.clone();
-        let one = Element::constant(ctx.dr, Fp::ONE);
-        let next = epoch.add(ctx.dr, &one);
-        circuit::bounded::<D, 32>(ctx.dr, &next, u64::from(EPOCH_MAX)).map_err(|_err| {
+        let one = Element::constant(dr, Fp::ONE);
+        let next = epoch.add(dr, &one);
+        circuit::bounded::<D, 32>(dr, &next, u64::from(EPOCH_MAX)).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
         let nf_current = right_encoded
             .as_gadget()
             .mk
-            .derive_nullifier(ctx.dr, &epoch)?
+            .derive_nullifier(dr, &epoch)?
             .element;
         let nf_next = right_encoded
             .as_gadget()
             .mk
-            .derive_nullifier(ctx.dr, &next)?
+            .derive_nullifier(dr, &next)?
             .element;
-        nf_current.clone().enforce_nonzero(ctx.dr).map_err(|_err| {
+        nf_current.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: current-epoch nullifier is zero".into())
         })?;
-        nf_next.clone().enforce_nonzero(ctx.dr).map_err(|_err| {
+        nf_next.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: next-epoch nullifier is zero".into())
         })?;
 
-        let value_bits = circuit::bits::<D, 51>(ctx.dr, &value)?;
-        let rcv_bits =
-            circuit::scalar_bits(ctx.dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
+        let value_bits = circuit::bits::<D, 51>(dr, &value)?;
+        let rcv_bits = circuit::scalar_bits(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
         let value_generator =
-            crate::gadgets::point::CurvePoint::constant(ctx.dr, value::VALUE_COMMIT_V.to_affine())?;
+            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_V.to_affine())?;
         let blind_generator =
-            crate::gadgets::point::CurvePoint::constant(ctx.dr, value::VALUE_COMMIT_R.to_affine())?;
+            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
         let value_point =
-            crate::gadgets::point::CurvePoint::scale(ctx.dr, &value_generator, &value_bits)?;
+            crate::gadgets::point::CurvePoint::scale(dr, &value_generator, &value_bits)?;
         let blind_point =
-            crate::gadgets::point::CurvePoint::scale(ctx.dr, &blind_generator, &rcv_bits)?;
-        let cv = crate::gadgets::point::CurvePoint::add(ctx.dr, &value_point, &blind_point)?;
-        cv.enforce_nonidentity(ctx.dr)?;
+            crate::gadgets::point::CurvePoint::scale(dr, &blind_generator, &rcv_bits)?;
+        let cv = crate::gadgets::point::CurvePoint::add(dr, &value_point, &blind_point)?;
+        cv.enforce_nonidentity(dr)?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
@@ -142,7 +138,6 @@ impl Step for SpendBind {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))

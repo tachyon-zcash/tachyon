@@ -13,16 +13,16 @@
 //! takes unchanged.
 
 extern crate alloc;
+use alloc::vec::Vec;
 use core::array;
 
-use ragu::{Encoded, Header, Index, Step, StepCtx, pasta::Eq};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
 use ragu_primitives::{Boolean, Element, GadgetExt as _};
-use udon::curve::Projective as _;
+use udon::field::Field as _;
 
 use super::qr::QrBucket;
 pub use crate::stamp::headers::evidence::{EvidenceTree, EvidenceTreePair};
@@ -30,8 +30,8 @@ use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
     pasta::Fp,
-    primitives::{EvidenceTreeRoot, QrProfile, TachygramSetCommit},
-    relations::enforce::enforce_equal_fields,
+    primitives::{EvidenceTreeRoot, QrProfile, TachygramSetPoly},
+    relations::enforce::{enforce_equal_fields, enforce_poly_equal},
 };
 
 /// Admit two sealed [`QrBucket`]s as one half of a node.
@@ -49,39 +49,37 @@ use crate::{
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
-impl Step for EvidenceTreeLeafPair {
+impl Step<Pasta> for EvidenceTreeLeafPair {
     type Aux<'source> = ();
     type Left = QrBucket;
     type Output = EvidenceTreePair;
     type Right = QrBucket;
-    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(30);
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let left_fields = [
             left_encoded.as_gadget().epoch.element.clone(),
             left_encoded.as_gadget().anchor_start.element.clone(),
@@ -95,7 +93,7 @@ impl Step for EvidenceTreeLeafPair {
             right_encoded.as_gadget().discriminant.element.clone(),
         ];
         enforce_equal_fields(
-            ctx.dr,
+            dr,
             &left_fields,
             &right_fields,
             [
@@ -107,11 +105,11 @@ impl Step for EvidenceTreeLeafPair {
         )?;
         let first = left_encoded
             .as_gadget()
-            .evidence_leaf(ctx.dr)
+            .evidence_leaf(dr)
             .map(|root| root.element)?;
         let second = right_encoded
             .as_gadget()
-            .evidence_leaf(ctx.dr)
+            .evidence_leaf(dr)
             .map(|root| root.element)?;
         let output = D::just(|| {
             let (epoch, start, end, discriminant, ..) = left.take();
@@ -134,7 +132,6 @@ impl Step for EvidenceTreeLeafPair {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))
@@ -158,39 +155,37 @@ impl Step for EvidenceTreeLeafPair {
 #[derive(Debug)]
 pub struct EvidenceTreePairFuse;
 
-impl Step for EvidenceTreePairFuse {
+impl Step<Pasta> for EvidenceTreePairFuse {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTreePair;
     type Right = EvidenceTree;
-    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(25);
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let left_fields = [
             left_encoded.as_gadget().epoch.element.clone(),
             left_encoded.as_gadget().anchor_start.element.clone(),
@@ -204,7 +199,7 @@ impl Step for EvidenceTreePairFuse {
             right_encoded.as_gadget().discriminant.element.clone(),
         ];
         enforce_equal_fields(
-            ctx.dr,
+            dr,
             &left_fields,
             &right_fields,
             [
@@ -228,7 +223,6 @@ impl Step for EvidenceTreePairFuse {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))
@@ -250,39 +244,37 @@ impl Step for EvidenceTreePairFuse {
 #[derive(Debug)]
 pub struct EvidenceTreeFuse;
 
-impl Step for EvidenceTreeFuse {
+impl Step<Pasta> for EvidenceTreeFuse {
     type Aux<'source> = ();
     type Left = EvidenceTreePair;
     type Output = EvidenceTree;
     type Right = EvidenceTreePair;
-    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(26);
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let left_fields = [
             left_encoded.as_gadget().epoch.element.clone(),
             left_encoded.as_gadget().anchor_start.element.clone(),
@@ -296,7 +288,7 @@ impl Step for EvidenceTreeFuse {
             right_encoded.as_gadget().discriminant.element.clone(),
         ];
         enforce_equal_fields(
-            ctx.dr,
+            dr,
             &left_fields,
             &right_fields,
             [
@@ -312,7 +304,7 @@ impl Step for EvidenceTreeFuse {
             right_encoded.as_gadget().first.element.clone(),
             right_encoded.as_gadget().second.element.clone(),
         ];
-        let root = poseidon::evidence_tree_node_circuit(ctx.dr, &children)?;
+        let root = poseidon::evidence_tree_node_circuit(dr, &children)?;
         let output = D::just(|| {
             let (epoch, start, end, discriminant, ..) = left.take();
             (
@@ -332,7 +324,6 @@ impl Step for EvidenceTreeFuse {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))
@@ -357,41 +348,39 @@ impl Step for EvidenceTreeFuse {
 #[derive(Debug)]
 pub struct EvidenceTreeCap;
 
-impl Step for EvidenceTreeCap {
+impl Step<Pasta> for EvidenceTreeCap {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
-    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(27);
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let root = left_encoded.as_gadget().root.element.clone();
         let children = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|_| root.clone());
-        let raised = poseidon::evidence_tree_node_circuit(ctx.dr, &children)?;
+        let raised = poseidon::evidence_tree_node_circuit(dr, &children)?;
         let output = D::just(|| {
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
             (
@@ -411,7 +400,6 @@ impl Step for EvidenceTreeCap {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))
@@ -453,12 +441,11 @@ const _: () = assert!(
     "a descent's levels must divide the quaternary levels a profile can address"
 );
 
-impl Step for EvidenceTreeDescend {
+impl Step<Pasta> for EvidenceTreeDescend {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
-    type Shared = ();
     /// `(path)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
@@ -470,70 +457,63 @@ impl Step for EvidenceTreeDescend {
     )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let mut node = left_encoded.as_gadget().root.element.clone();
         for level in 0..Self::LEVELS {
-            let outer = Boolean::alloc(
-                ctx.dr,
-                &mut (),
-                witness.as_ref().map(|path| path.0[level].0[0]),
-            )?;
-            let inner = Boolean::alloc(
-                ctx.dr,
-                &mut (),
-                witness.as_ref().map(|path| path.0[level].0[1]),
-            )?;
+            let outer =
+                Boolean::alloc(dr, &mut (), witness.as_ref().map(|path| path.0[level].0[0]))?;
+            let inner =
+                Boolean::alloc(dr, &mut (), witness.as_ref().map(|path| path.0[level].0[1]))?;
             let children = [
                 Element::alloc(
-                    ctx.dr,
+                    dr,
                     &mut (),
                     witness.as_ref().map(|path| Fp::from(path.0[level].1[0])),
                 )?,
                 Element::alloc(
-                    ctx.dr,
+                    dr,
                     &mut (),
                     witness.as_ref().map(|path| Fp::from(path.0[level].1[1])),
                 )?,
                 Element::alloc(
-                    ctx.dr,
+                    dr,
                     &mut (),
                     witness.as_ref().map(|path| Fp::from(path.0[level].1[2])),
                 )?,
                 Element::alloc(
-                    ctx.dr,
+                    dr,
                     &mut (),
                     witness.as_ref().map(|path| Fp::from(path.0[level].1[3])),
                 )?,
             ];
-            let hash = poseidon::evidence_tree_node_circuit(ctx.dr, &children)?;
-            node.enforce_equal(ctx.dr, &hash).map_err(|_err| {
+            let hash = poseidon::evidence_tree_node_circuit(dr, &children)?;
+            node.enforce_equal(dr, &hash).map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "EvidenceTreeDescend: children do not hash to the node".into(),
                 )
             })?;
             let [first, second, third, fourth] = children;
-            let lower = inner.conditional_select(ctx.dr, &first, &second)?;
-            let upper = inner.conditional_select(ctx.dr, &third, &fourth)?;
-            node = outer.conditional_select(ctx.dr, &lower, &upper)?;
+            let lower = inner.conditional_select(dr, &first, &second)?;
+            let upper = inner.conditional_select(dr, &third, &fourth)?;
+            node = outer.conditional_select(dr, &lower, &upper)?;
         }
         let output = D::just(|| {
             let (epoch, start, end, discriminant, _) = left.take();
@@ -554,7 +534,6 @@ impl Step for EvidenceTreeDescend {
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
             output,
             D::unit(),
         ))
@@ -585,61 +564,65 @@ impl Step for EvidenceTreeDescend {
 #[derive(Debug)]
 pub struct EvidenceTreeOpen;
 
-impl Step for EvidenceTreeOpen {
+impl Step<Pasta> for EvidenceTreeOpen {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = QrBucket;
     type Right = ();
-    type Shared = ();
     /// `(profile, contents)`
-    type Witness<'source> = (QrProfile, TachygramSetCommit);
+    type Witness<'source> = (QrProfile, TachygramSetPoly);
 
     const INDEX: Index = Index::new(29);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let contents = super::coefficients(witness.1.as_ref());
+        Ok([contents.clone(), contents, alloc::vec![Fp::ONE]])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let profile = [
             Element::alloc(
-                ctx.dr,
+                dr,
                 &mut (),
                 witness
                     .as_ref()
                     .map(|data| Fp::from(u64::from(data.0.depth))),
             )?,
             Element::alloc(
-                ctx.dr,
+                dr,
                 &mut (),
                 witness
                     .as_ref()
                     .map(|data| Fp::from(u64::from(data.0.bits))),
             )?,
         ];
-        let contents = crate::gadgets::commitment::HostCommitment::alloc(
-            ctx.dr,
-            &mut (),
-            witness.as_ref().map(|data| Eq::from(data.1).to_affine()),
-        )
-        .map(|encoding| encoding.limbs)?;
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let contents = oracles.bridge_hash().clone();
         let output = D::just(|| {
             let (carrier_profile, carrier_contents) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.clone().take();
@@ -649,7 +632,7 @@ impl Step for EvidenceTreeOpen {
                 anchor_next,
                 discriminant,
                 carrier_profile,
-                carrier_contents,
+                carrier_contents.commit(),
             )
         });
         let expected = left_encoded.as_gadget().root.element.clone();
@@ -668,12 +651,10 @@ impl Step for EvidenceTreeOpen {
                 depth: profile[0].clone(),
                 bits: profile[1].clone(),
             },
-            contents: (crate::gadgets::commitment::HostCommitment { limbs: contents }).into(),
+            contents_digest: crate::gadgets::commitment::HostCommitment { limbs: contents },
         };
-        let computed = output_fields
-            .evidence_leaf(ctx.dr)
-            .map(|root| root.element)?;
-        expected.enforce_equal(ctx.dr, &computed).map_err(|_err| {
+        let computed = output_fields.evidence_leaf(dr).map(|root| root.element)?;
+        expected.enforce_equal(dr, &computed).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "EvidenceTreeOpen: witnessed bucket is not the tree's leaf".into(),
             )
@@ -685,7 +666,6 @@ impl Step for EvidenceTreeOpen {
                 right_encoded,
                 Encoded::from_gadget(output_fields),
             ),
-            (),
             output,
             D::unit(),
         ))
@@ -693,58 +673,4 @@ impl Step for EvidenceTreeOpen {
 }
 
 #[cfg(test)]
-mod tests {
-    fn network_fields<'dr, D: Driver<'dr, F = Fp>>(
-        dr: &mut D,
-        fields: [DriverValue<D, Fp>; 4],
-    ) -> ragu_core::Result<[Element<'dr, D>; 4]> {
-        let [epoch, start, end, discriminant] = fields;
-        Ok([
-            Element::alloc(dr, &mut (), epoch)?,
-            Element::alloc(dr, &mut (), start)?,
-            Element::alloc(dr, &mut (), end)?,
-            Element::alloc(dr, &mut (), discriminant)?,
-        ])
-    }
-
-    use ragu_primitives::Simulator;
-    use udon::field::Field as _;
-
-    use super::*;
-
-    /// Valid published buckets correlate their epoch and anchor digests. Raw
-    /// allocation-boundary assignments isolate each equality without
-    /// fabricating a recursively authenticated child under altered native
-    /// header data.
-    #[test]
-    fn network_comparison_rejects_each_independent_field_mismatch() {
-        let expected = [5u64, 7, 11, 13].map(Fp::from);
-        for changed in 0..=4 {
-            let mut candidate = expected;
-            if changed < 4 {
-                candidate[changed] += Fp::ONE;
-            }
-            let result = Simulator::<Fp>::simulate((expected, candidate), |driver, assignment| {
-                let left = network_fields(
-                    driver,
-                    array::from_fn(|index| assignment.as_ref().map(|values| values.0[index])),
-                )?;
-                let right = network_fields(
-                    driver,
-                    array::from_fn(|index| assignment.as_ref().map(|values| values.1[index])),
-                )?;
-                enforce_equal_fields(
-                    driver,
-                    &left,
-                    &right,
-                    ["epoch", "start", "end", "discriminant"],
-                )
-            });
-            if changed == 4 {
-                result.expect("equal network fields");
-            } else {
-                assert!(result.is_err(), "field {changed} must be constrained");
-            }
-        }
-    }
-}
+mod tests;

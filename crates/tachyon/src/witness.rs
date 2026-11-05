@@ -7,9 +7,8 @@
 //! step they serve. Steps with an empty `()` witness need no utility.
 
 use alloc::collections::BTreeSet;
-use core::iter;
 
-use ragu::{Header, Step};
+use ragu::{Header, Step, pasta::Pasta};
 
 use crate::{
     collections,
@@ -22,7 +21,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -39,11 +38,11 @@ use crate::{
     value,
 };
 
-type StepLeft<S> = <<S as Step>::Left as Header>::Data;
+type StepLeft<S> = <<S as Step<Pasta>>::Left as Header<Fp>>::Data;
 
-type StepRight<S> = <<S as Step>::Right as Header>::Data;
+type StepRight<S> = <<S as Step<Pasta>>::Right as Header<Fp>>::Data;
 
-type StepWitness<'src, S> = <S as Step>::Witness<'src>;
+type StepWitness<'src, S> = <S as Step<Pasta>>::Witness<'src>;
 
 /// Prepare the witness for [`NoteSeed`]: `(value, psi, rcm, pak)`.
 ///
@@ -161,11 +160,7 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_commit, members)`.
-///
-/// # Panics
-///
-/// Panics if the stamp is empty or its commitment is the identity.
+/// stamp_set)`.
 #[must_use]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
@@ -173,12 +168,11 @@ pub fn anchor_span_seed(
     epoch: EpochIndex,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, AnchorSpanSeed> {
-    let stamp_commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-    #[expect(clippy::expect_used, reason = "builder requires a nonempty stamp")]
-    let end = anchor_start
-        .next_stamp(epoch, &stamp_commit)
-        .expect("valid stamp fold");
-    (anchor_start, epoch, stamp_commit, iter::once(end).collect())
+    (
+        anchor_start,
+        epoch,
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
 }
 
 /// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
@@ -211,7 +205,7 @@ pub fn stamp_lift(
 }
 
 /// Prepare the witness for [`SummarySeed`]:
-/// `(anchor_prev, epoch, stamp_commit)`.
+/// `(anchor_prev, epoch, stamp_set)`.
 #[must_use]
 pub fn summary_seed(
     (_left, _right): (StepLeft<SummarySeed>, StepRight<SummarySeed>),
@@ -222,7 +216,7 @@ pub fn summary_seed(
     (
         anchor_prev,
         epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 
@@ -264,7 +258,7 @@ pub const fn qr_summary_intake(
 }
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
-/// discriminant, stamp_commit)`.
+/// discriminant, stamp_set)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
@@ -277,7 +271,7 @@ pub fn qr_stamp_intake_seed(
         anchor_prev,
         epoch,
         discriminant,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 
@@ -435,7 +429,7 @@ pub const fn evidence_tree_descend(
 pub const fn evidence_tree_open(
     (_tree, _right): (StepLeft<EvidenceTreeOpen>, StepRight<EvidenceTreeOpen>),
     profile: QrProfile,
-    contents: TachygramSetCommit,
+    contents: TachygramSetPoly,
 ) -> StepWitness<'static, EvidenceTreeOpen> {
     (profile, contents)
 }

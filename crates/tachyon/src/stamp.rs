@@ -24,7 +24,7 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::PROOF_SIZE_COMPRESSED;
+use ragu::{PROOF_SIZE_COMPRESSED, pasta::Pasta};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 use udon::{
@@ -58,17 +58,11 @@ use crate::{
 /// [`StampState`], so an unproven bundle cannot be serialized.
 ///
 /// ```compile_fail,E0599
-/// use zcash_tachyon::{Bundle, Unproven, bundle::Signature};
+/// use zcash_tachyon::{Bundle, Unproven};
 ///
-/// let unproven = Bundle {
-///     actions: vec![],
-///     value_balance: 0,
-///     binding_sig: Signature::from([0u8; 64]),
-///     stamp: Unproven,
-/// };
-///
-/// let mut buf = vec![];
-/// unproven.write(&mut buf); // no `write` on `Bundle<Unproven>`
+/// fn serialize(unproven: &Bundle<Unproven>) {
+///     unproven.write(&mut Vec::<u8>::new()); // no `write` on `Bundle<Unproven>`
+/// }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
@@ -351,7 +345,7 @@ impl ProofStamp {
                     io::Error::new(io::ErrorKind::InvalidData, "failed to read proof")
                 })?;
 
-            ragu::Proof::try_from(proof_bytes).map_err(|_err| {
+            proof::Proof::try_from(proof_bytes).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
             })?
         };
@@ -487,9 +481,12 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NoteSecret>,
-            ragu::Pcd<spendable::NoteSpendable>,
-            Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<(
+                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+                AnchorSetPoly,
+            )>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         let fee_descriptor = fee::Descriptor {
@@ -675,7 +672,7 @@ impl Plan {
                             &tachygrams,
                         ),
                         merged_proof.carry::<Actions>(stamp_header),
-                        ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
+                        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, descriptors, tachygrams)
@@ -743,7 +740,7 @@ pub struct ProofStamp {
 
     /// The Ragu proof bytes.
     #[debug(skip)]
-    pub proof: Box<ragu::Proof>,
+    pub proof: Box<proof::Proof>,
 
     /// The fee of the bundle that carries this stamp.
     pub fee: value::Positive,
@@ -778,7 +775,7 @@ impl ProofStamp {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<proof::Proof>,
         ),
         ProveError,
     > {
@@ -801,7 +798,7 @@ impl ProofStamp {
                 OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
-                ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -837,14 +834,14 @@ impl ProofStamp {
     fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<spend::SpendHeader>,
+        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<proof::Proof>,
         ),
         ProveError,
     > {
@@ -862,7 +859,7 @@ impl ProofStamp {
                 SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, pak),
                 bind_pcd,
-                ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -900,20 +897,20 @@ impl ProofStamp {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<proof::Proof>,
         ),
         (right_digests, right_tachygrams, right_anchor, right_proof): (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<proof::Proof>,
         ),
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<proof::Proof>,
         ),
         ragu_core::Error,
     > {
@@ -984,7 +981,10 @@ impl ProofStamp {
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -1031,7 +1031,10 @@ impl ProofStamp {
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()

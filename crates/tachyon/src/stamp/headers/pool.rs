@@ -68,7 +68,7 @@ output_gadget!(ArbitraryUnspentOutput, "ArbitraryUnspentOutput(..)", {
     elapsed: NfSeqCommitGadget,
 });
 
-impl Header for ArbitraryUnspent {
+impl Header<Fp> for ArbitraryUnspent {
     type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
@@ -130,7 +130,7 @@ output_gadget!(NoteUnspentOutput, "NoteUnspentOutput(..)", {
     anchor_next: AnchorGadget,
 });
 
-impl Header for NoteUnspent {
+impl Header<Fp> for NoteUnspent {
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
 
@@ -208,7 +208,7 @@ output_gadget!(AnchorSpanOutput, "AnchorSpanOutput(..)", {
     members: AnchorSetCommitGadget,
 });
 
-impl Header for AnchorSpan {
+impl Header<Fp> for AnchorSpan {
     type Data = (Anchor, AnchorSetCommit, Anchor);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 

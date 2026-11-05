@@ -8,20 +8,21 @@
 //! absorption.
 
 extern crate alloc;
+use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, Index, Step, StepCtx, pasta::Eq};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
-use ragu_primitives::Element;
-use udon::curve::Projective as _;
+use ragu_primitives::GadgetExt as _;
 
+pub use crate::stamp::headers::summary::Summary;
 use crate::{
-    pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    relations::enforce::{bind_poly_handle, enforce_poly_product, poly_handle_limbs},
+    gadgets::anchor::AnchorGadget,
+    pasta::{Eq, Fp},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
 /// Start a summary from one stamp. The step performs the same fold as
@@ -35,78 +36,65 @@ use crate::{
 #[derive(Debug)]
 pub struct SummarySeed;
 
-impl Step for SummarySeed {
+impl Step<Pasta> for SummarySeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = Summary;
     type Right = ();
-    type Shared = ();
-    /// `(anchor_prev, epoch, stamp_commit)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
+    /// `(anchor_prev, epoch, stamp)`; `O0/O1` carry the same stamp polynomial.
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let stamp = super::coefficients(witness.2.as_ref());
+        Ok([stamp.clone(), stamp, alloc::vec![Fp::from(1)]])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left)?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
-        let previous = Element::alloc(
-            ctx.dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0)),
-        )?;
-        let epoch_element = Element::alloc(
-            ctx.dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.1)),
-        )?;
-        let limbs = crate::gadgets::commitment::HostCommitment::alloc(
-            ctx.dr,
-            &mut (),
-            witness.as_ref().map(|data| Eq::from(data.2).to_affine()),
-        )
-        .map(|encoding| encoding.limbs)?;
-        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous.clone())
-            .next_stamp(ctx.dr, epoch_element.clone(), limbs.clone())
-            .map(|anchor| anchor.element)?;
-        let output = D::just(|| {
-            let (anchor_prev, epoch, stamp_commit) = witness.take();
-            (
-                epoch,
-                anchor_prev,
-                Anchor::from(*anchor.value().take()),
-                stamp_commit,
-            )
-        });
-        let fields = crate::stamp::headers::summary::SummaryOutput {
-            epoch: (epoch_element).into(),
-            anchor_prev: (previous).into(),
-            anchor_end: (anchor).into(),
-            acc_commit: (crate::gadgets::commitment::HostCommitment { limbs }).into(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
-            output,
-            D::unit(),
-        ))
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (anchor_prev, epoch, stamp) = witness.take();
+            let stamp_commit = stamp.commit();
+            let anchor_end = anchor_prev
+                .next_stamp(epoch, &stamp_commit)
+                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let header = encoded.as_gadget();
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let anchor = AnchorGadget::from(header.anchor_prev.element.clone())
+            .next_stamp(dr, &header.epoch.element, oracles.bridge_hash().clone())?
+            .element;
+        header.anchor_end.element.enforce_equal(dr, &anchor)?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -115,99 +103,111 @@ impl Step for SummarySeed {
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
-impl Step for SummaryAdvance {
+impl Step<Pasta> for SummaryAdvance {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    type Shared = ();
     /// `(acc, extended, stamp)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(14);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        Ok([
+            super::coefficients(witness.1.as_ref()),
+            super::coefficients(witness.2.as_ref()),
+            alloc::vec![Fp::from(1)],
+        ])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
-        let acc_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|polynomials| polynomials.0.as_ref().clone()),
-        )?;
-        let extended_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|polynomials| polynomials.1.as_ref().clone()),
-        )?;
-        let stamp_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|polynomials| polynomials.2.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &acc_handle,
-            &left_encoded.as_gadget().acc_commit.encoding.limbs,
-            "SummaryAdvance: accumulator does not match header",
-        )?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let _precheck = D::try_just(|| {
+            let (acc, ..) = witness.clone().take();
+            let (_, _, _, acc_commit) = left.clone().take();
+            if Eq::from(acc.commit()) != Eq::from(acc_commit) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: accumulator does not match header".into(),
+                ));
+            }
+            Ok(())
+        })?;
         enforce_poly_product(
-            ctx,
-            &acc_handle,
-            &stamp_handle,
-            &extended_handle,
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::output(1),
+            &Slot::output(0),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let previous = left_encoded.as_gadget().anchor_end.element.clone();
-        let epoch_element = left_encoded.as_gadget().epoch.element.clone();
-        let limbs = poly_handle_limbs(ctx.dr, &stamp_handle)?;
-        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous)
-            .next_stamp(ctx.dr, epoch_element, limbs)
-            .map(|anchor| anchor.element)?;
-        let output = D::just(|| {
-            let (_, extended, _) = witness.take();
-            let (summary_epoch, summary_anchor_prev, ..) = left.take();
-            (
-                summary_epoch,
-                summary_anchor_prev,
-                Anchor::from(*anchor.value().take()),
-                extended.commit(),
-            )
-        });
+        let output = D::try_just(|| {
+            let (acc, extended, stamp) = witness.take();
+            let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
+                left.take();
+            right.take();
+            if Eq::from(acc.commit()) != Eq::from(summary_acc_commit) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: accumulator does not match header".into(),
+                ));
+            }
+            let anchor_end = summary_anchor_end
+                .next_stamp(summary_epoch, &stamp.commit())
+                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            Ok((
+                (
+                    summary_epoch,
+                    summary_anchor_prev,
+                    anchor_end,
+                    extended.commit(),
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let anchor = AnchorGadget::from(left_encoded.as_gadget().anchor_end.element.clone())
+            .next_stamp(
+                dr,
+                &left_encoded.as_gadget().epoch.element,
+                oracles.bridge_hash().clone(),
+            )?
+            .element;
         let fields = crate::stamp::headers::summary::SummaryOutput {
-            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
-            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
-            anchor_end: (anchor).into(),
-            acc_commit: (crate::gadgets::commitment::HostCommitment {
-                limbs: poly_handle_limbs(ctx.dr, &extended_handle)?,
-            })
-            .into(),
+            epoch: left_encoded.as_gadget().epoch.clone(),
+            anchor_prev: left_encoded.as_gadget().anchor_prev.clone(),
+            anchor_end: anchor.into(),
+            acc_commit: encoded.as_gadget().acc_commit.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            (),
-            output,
-            D::unit(),
+            data,
+            aux,
         ))
     }
 }
-
-pub use crate::stamp::headers::summary::Summary;

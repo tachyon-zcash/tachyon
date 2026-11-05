@@ -33,38 +33,4 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndexGadget<'dr, D> {
 }
 
 #[cfg(test)]
-mod tests {
-    use ragu_primitives::Simulator;
-
-    use super::*;
-    use crate::constants::EPOCH_MAX;
-    #[test]
-    fn epoch_successor_rejects_raw_final_and_out_of_domain_assignments() {
-        for index in [Fp::ZERO, Fp::from(u64::from(EPOCH_MAX - 1))] {
-            Simulator::<Fp>::simulate(index, |driver, assignment| {
-                let epoch = Element::alloc(driver, &mut (), assignment)?;
-                EpochIndexGadget::from((epoch).clone())
-                    .next(driver)
-                    .map(|next| next.element)?;
-                Ok(())
-            })
-            .expect("bounded successor");
-        }
-        for index in [
-            -Fp::ONE,
-            Fp::from(u64::from(EPOCH_MAX)),
-            Fp::from(u64::from(EPOCH_MAX) + 1),
-        ] {
-            assert!(
-                Simulator::<Fp>::simulate(index, |driver, assignment| {
-                    let epoch = Element::alloc(driver, &mut (), assignment)?;
-                    EpochIndexGadget::from((epoch).clone())
-                        .next(driver)
-                        .map(|next| next.element)?;
-                    Ok(())
-                })
-                .is_err()
-            );
-        }
-    }
-}
+mod tests;

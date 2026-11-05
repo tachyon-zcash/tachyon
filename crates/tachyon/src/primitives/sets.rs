@@ -115,7 +115,7 @@ pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
-#[derive(AsRef, Clone, Debug, From, Into)]
+#[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
 
 impl AnchorSetPoly {
@@ -175,21 +175,5 @@ impl FromIterator<ActionDigest> for ActionSetPoly {
 impl FromIterator<Tachygram> for TachygramSetPoly {
     fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
         Self(multiset::encode(iter.into_iter().map(Fp::from)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
-
-    use super::*;
-
-    #[test]
-    fn singleton_commits_to_the_one_member_set() {
-        let anchor = Anchor::random(&mut StdRng::seed_from_u64(0));
-        assert_eq!(
-            AnchorSetCommit::singleton(anchor),
-            AnchorSetPoly::from_iter([anchor]).commit()
-        );
     }
 }

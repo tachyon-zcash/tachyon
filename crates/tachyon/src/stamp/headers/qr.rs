@@ -34,7 +34,7 @@ output_gadget!(QrIntakeOutput, "QrIntakeOutput(..)", {
     contents: TachygramSetCommitGadget,
 });
 
-impl Header for QrIntake {
+impl Header<Fp> for QrIntake {
     type Data = (
         EpochIndex,
         Anchor,
@@ -120,7 +120,7 @@ output_gadget!(QrIntakeSidesOutput, "QrIntakeSidesOutput(..)", {
     residue: TachygramSetCommitGadget,
 });
 
-impl Header for QrIntakeSides {
+impl Header<Fp> for QrIntakeSides {
     type Data = (
         EpochIndex,
         Anchor,
@@ -217,10 +217,10 @@ output_gadget!(QrBucketOutput, "QrBucketOutput(..)", {
     anchor_next: AnchorGadget,
     discriminant: QrDiscriminantGadget,
     profile: QrProfileGadget,
-    contents: TachygramSetCommitGadget,
+    contents_digest: HostCommitment,
 });
 
-impl Header for QrBucket {
+impl Header<Fp> for QrBucket {
     type Data = (
         EpochIndex,
         Anchor,
@@ -279,14 +279,13 @@ impl Header for QrBucket {
                         .map(|fields| Fp::from(u64::from(fields.4.bits))),
                 )?,
             },
-            contents: HostCommitment::alloc(
+            contents_digest: HostCommitment::alloc_digest(
                 dr,
                 allocator,
                 witness
                     .as_ref()
                     .map(|fields| Eq::from(fields.5).to_affine()),
-            )?
-            .into(),
+            )?,
         })
     }
 }

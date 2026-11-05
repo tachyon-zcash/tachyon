@@ -13,19 +13,18 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrBucketOutput<'dr, D> {
         dr: &mut D,
     ) -> ragu_core::Result<EvidenceTreeRootGadget<'dr, D>> {
         let [depth, bits] = self.profile.validate(dr)?;
-        let [low, high] = self.contents.encoding.limbs.clone();
-        poseidon::evidence_tree_leaf_circuit(
+        let digest = &self.contents_digest.limbs;
+        poseidon::evidence_tree_leaf_gadget(
             dr,
-            &[
-                self.epoch.element.clone(),
-                self.anchor_start.element.clone(),
-                self.anchor_next.element.clone(),
-                self.discriminant.element.clone(),
-                depth,
-                bits,
-                low,
-                high,
+            [
+                &self.epoch.element,
+                &self.anchor_start.element,
+                &self.anchor_next.element,
+                &self.discriminant.element,
+                &depth,
+                &bits,
             ],
+            digest,
         )
         .map(Into::into)
     }

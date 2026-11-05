@@ -37,7 +37,7 @@ output_gadget!(SpendHeaderOutput, "SpendHeaderOutput(..)", {
     cv: ValueCommitmentGadget,
 });
 
-impl Header for SpendHeader {
+impl Header<Fp> for SpendHeader {
     type Data = (
         note::Commitment,
         nullifier::Nullifier,

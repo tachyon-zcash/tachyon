@@ -31,6 +31,7 @@ use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
+    stamp::proof::PROOF_SYSTEM,
 };
 
 #[expect(
@@ -85,6 +86,30 @@ fn tagged_sponge<const L: usize>(
 fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     let (mut emulator, mut sponge) = tagged_sponge(domain, input);
     squeeze(&mut emulator, &mut sponge)
+}
+
+fn hash_gadget<'dr, D: Driver<'dr, F = Fp>, const L: usize>(
+    dr: &mut D,
+    domain: &[u8; 16],
+    input: [&Element<'dr, D>; L],
+) -> Result<Element<'dr, D>> {
+    let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            dr,
+            if index == PoseidonFp::RATE {
+                capacity
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge =
+        Sponge::<_, PoseidonFp>::resume(state, Pasta::circuit_poseidon(pasta::baked()));
+    for value in input {
+        sponge.absorb(dr, value)?;
+    }
+    sponge.squeeze(dr)
 }
 
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
@@ -337,28 +362,21 @@ pub(crate) fn nullifier_group_circuit<'dr, D: Driver<'dr, F = Fp>>(
     ])
 }
 
-/// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.
-///
-/// The 32-byte encoding carries $x$ with the sign of $y$ in its high bit, so
-/// the limb pair determines the point. Each limb reads 16 bytes little-endian,
-/// far below the $\mathbb{F}_p$ modulus.
+/// Native counterpart of the framework's output-slot bridge digest.
 ///
 /// # Panics
 ///
 /// Panics if `point` is the identity.
-#[expect(clippy::expect_used, reason = "constant-size decomposition")]
-fn point_limbs(point: EqAffine) -> (Fp, Fp) {
-    assert!(
-        !point.is_identity(),
-        "commitment must not be the identity point"
-    );
-
-    let encoding = point.to_bytes();
-    let (lo, hi) = encoding.as_ref().split_at(16);
-    (
-        Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),
-        Fp::from_u128(u128::from_le_bytes(hi.try_into().expect("16 bytes"))),
-    )
+#[expect(
+    clippy::expect_used,
+    reason = "nonidentity commitment has a bridge digest"
+)]
+pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
+    PROOF_SYSTEM
+        .bridge_hash(point)
+        .expect("commitment must not be the identity point")
+        .coordinates()
+        .expect("bridge digest must not be the identity point")
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
@@ -371,30 +389,33 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (tgs_lo, tgs_hi) = point_limbs(tgs);
-    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
+    anchor_next_stamp_digest(anchor_prev, epoch, commitment_digest(tgs))
 }
 
-/// Circuit stamp-anchor fold. The caller enforces the stamp's nonempty domain.
-pub(crate) fn anchor_next_stamp_circuit<'dr, D: Driver<'dr, F = Fp>>(
-    driver: &mut D,
-    input: &[Element<'dr, D>; 4],
+/// The circuit-side fold reads the digest from `Oracles::bridge_hash`.
+pub(crate) fn anchor_next_stamp_digest(
+    anchor_prev: Fp,
+    epoch: Fp,
+    (digest_x, digest_y): (Fp, Fp),
+) -> Fp {
+    hash::<4>(
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, digest_x, digest_y],
+    )
+}
+
+/// Fold a slot's certified bridge digest into an anchor.
+pub(crate) fn anchor_next_stamp_gadget<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    anchor_prev: &Element<'dr, D>,
+    epoch: &Element<'dr, D>,
+    digest: &[Element<'dr, D>; 2],
 ) -> Result<Element<'dr, D>> {
-    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-        Element::constant(
-            driver,
-            if index == PoseidonFp::RATE {
-                Fp::from_u128(u128::from_le_bytes(*ANCHOR_STAMP_DOMAIN))
-            } else {
-                Fp::ZERO
-            },
-        )
-    }));
-    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-    for element in input {
-        sponge.absorb(driver, element)?;
-    }
-    sponge.squeeze(driver)
+    hash_gadget(
+        dr,
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, &digest[0], &digest[1]],
+    )
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
@@ -415,7 +436,27 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (contents_lo, contents_hi) = point_limbs(contents);
+    evidence_tree_leaf_digest(
+        epoch,
+        anchor_start,
+        anchor_next,
+        discriminant,
+        depth,
+        bits,
+        commitment_digest(contents),
+    )
+}
+
+/// Hash a bucket using its certified bridge digest.
+pub(crate) fn evidence_tree_leaf_digest(
+    epoch: Fp,
+    anchor_start: Fp,
+    anchor_next: Fp,
+    discriminant: Fp,
+    depth: Fp,
+    bits: Fp,
+    (digest_x, digest_y): (Fp, Fp),
+) -> Fp {
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -425,32 +466,33 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents_lo,
-            contents_hi,
+            digest_x,
+            digest_y,
         ],
     )
 }
 
-/// Circuit leaf digest, including the bucket's profile and compressed contents.
-pub(crate) fn evidence_tree_leaf_circuit<'dr, D: Driver<'dr, F = Fp>>(
-    driver: &mut D,
-    input: &[Element<'dr, D>; 8],
+/// Hash the fields of a bucket and its certified bridge digest.
+pub(crate) fn evidence_tree_leaf_gadget<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    fields: [&Element<'dr, D>; 6],
+    digest: &[Element<'dr, D>; 2],
 ) -> Result<Element<'dr, D>> {
-    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-        Element::constant(
-            driver,
-            if index == PoseidonFp::RATE {
-                Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN))
-            } else {
-                Fp::ZERO
-            },
-        )
-    }));
-    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-    for element in input {
-        sponge.absorb(driver, element)?;
-    }
-    sponge.squeeze(driver)
+    let [epoch, anchor_start, anchor_next, discriminant, depth, bits] = fields;
+    hash_gadget(
+        dr,
+        QR_BUCKET_DOMAIN,
+        [
+            epoch,
+            anchor_start,
+            anchor_next,
+            discriminant,
+            depth,
+            bits,
+            &digest[0],
+            &digest[1],
+        ],
+    )
 }
 
 /// Folds four subtree roots into their parent node of a evidence tree.
@@ -499,241 +541,4 @@ pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
 }
 
 #[cfg(test)]
-mod tests {
-    use alloc::vec::Vec;
-    use core::{array, mem};
-
-    use ff::{Field as _, PrimeField as _};
-    use ragu_arithmetic::{Cycle as _, PoseidonPermutation as _};
-    use ragu_pasta::Pasta as LegacyPasta;
-    use ragu_primitives::{GadgetExt as _, Simulator};
-
-    use super::*;
-
-    #[test]
-    fn protocol_digest_circuits_emit_gates_and_reject_independent_roots() {
-        let input: [Fp; 4] = [Fp::from(2), Fp::from(3), Fp::from(5), Fp::from(7)];
-        for operation in 0..6 {
-            let expected = match operation {
-                0 => note_commitment(input[0], input[1], 5, input[3]),
-                1 => hash::<3>(PAYMENT_KEY_DOMAIN, [input[0], input[1], input[2]]),
-                2 => hash::<4>(ACTION_DIGEST_DOMAIN, input),
-                3 => fee_blind(input[0], input[1], input[2]),
-                4 => hash::<3>(FEE_DIGEST_DOMAIN, [input[0], input[1], input[2]]),
-                5 => evidence_tree_node(input),
-                _ => unreachable!("six fixed protocol digests"),
-            };
-            for wrong in [false, true] {
-                let claimed = expected + if wrong { Fp::ONE } else { Fp::ZERO };
-                let result = Simulator::<Fp>::simulate((input, claimed), |driver, assignment| {
-                    let fields = [
-                        Element::alloc(
-                            driver,
-                            &mut (),
-                            assignment.as_ref().map(|values| values.0[0]),
-                        )?,
-                        Element::alloc(
-                            driver,
-                            &mut (),
-                            assignment.as_ref().map(|values| values.0[1]),
-                        )?,
-                        Element::alloc(
-                            driver,
-                            &mut (),
-                            assignment.as_ref().map(|values| values.0[2]),
-                        )?,
-                        Element::alloc(
-                            driver,
-                            &mut (),
-                            assignment.as_ref().map(|values| values.0[3]),
-                        )?,
-                    ];
-                    let gates_before = driver.num_gates();
-                    let digest = match operation {
-                        0 => note_commitment_circuit(driver, &fields)?,
-                        1 => payment_key_circuit(
-                            driver,
-                            &[fields[0].clone(), fields[1].clone(), fields[2].clone()],
-                        )?,
-                        2 => action_digest_circuit(driver, &fields)?,
-                        3 => fee_blind_circuit(
-                            driver,
-                            &[fields[0].clone(), fields[1].clone(), fields[2].clone()],
-                        )?,
-                        4 => fee_digest_circuit(
-                            driver,
-                            &[fields[0].clone(), fields[1].clone(), fields[2].clone()],
-                        )?,
-                        5 => evidence_tree_node_circuit(driver, &fields)?,
-                        _ => unreachable!("six fixed protocol digests"),
-                    };
-                    assert!(
-                        driver.num_gates() > gates_before + 1,
-                        "a native hash followed by one free allocation is not synthesis"
-                    );
-                    let target =
-                        Element::alloc(driver, &mut (), assignment.map(|values| values.1))?;
-                    digest.enforce_equal(driver, &target)
-                });
-                assert_eq!(result.is_ok(), !wrong, "protocol digest {operation}");
-            }
-        }
-    }
-
-    #[test]
-    fn nullifier_group_circuit_is_driver_bound_at_all_four_lanes() {
-        let master = Fp::from(19);
-        let epoch_start = Fp::from(32);
-        let expected = nullifier_group(master, epoch_start);
-        for wrong in [false, true] {
-            let result = Simulator::<Fp>::simulate((master, epoch_start), |driver, assignment| {
-                let master_element =
-                    Element::alloc(driver, &mut (), assignment.as_ref().map(|values| values.0))?;
-                let epoch_element =
-                    Element::alloc(driver, &mut (), assignment.map(|values| values.1))?;
-                let gates_before = driver.num_gates();
-                let actual = nullifier_group_circuit(driver, &master_element, &epoch_element)?;
-                assert!(
-                    driver.num_gates() > gates_before + PoseidonFp::RATE,
-                    "group derivation must synthesize Poseidon"
-                );
-                for (index, (element, expected_value)) in actual.iter().zip(expected).enumerate() {
-                    let claimed = expected_value
-                        + if wrong && index == 0 {
-                            Fp::ONE
-                        } else {
-                            Fp::ZERO
-                        };
-                    let target = Element::constant(driver, claimed);
-                    element.enforce_equal(driver, &target)?;
-                }
-                Ok(())
-            });
-            assert_eq!(result.is_ok(), !wrong);
-        }
-    }
-
-    fn legacy_permute(
-        mut state: [pasta_curves::Fp; ragu_pasta::PoseidonFp::T],
-    ) -> [pasta_curves::Fp; ragu_pasta::PoseidonFp::T] {
-        let parameters = LegacyPasta::circuit_poseidon(LegacyPasta::baked());
-        let first_full_rounds = ragu_pasta::PoseidonFp::FULL_ROUNDS >> 1;
-        let partial_round_end = first_full_rounds + ragu_pasta::PoseidonFp::PARTIAL_ROUNDS;
-        let total_rounds = partial_round_end + first_full_rounds;
-        let mut round_constants = parameters.round_constants();
-
-        for round in 0..total_rounds {
-            let constants = round_constants
-                .next()
-                .expect("legacy Poseidon has one constant row per round");
-            for (value, constant) in state.iter_mut().zip(constants) {
-                *value += *constant;
-            }
-            let active = if round < first_full_rounds || round >= partial_round_end {
-                ragu_pasta::PoseidonFp::T
-            } else {
-                1
-            };
-            for value in state.iter_mut().take(active) {
-                let square = value.square();
-                *value = square.square() * *value;
-            }
-
-            let mut next_state = [pasta_curves::Fp::ZERO; ragu_pasta::PoseidonFp::T];
-            for (next, row) in next_state.iter_mut().zip(parameters.mds_matrix()) {
-                *next = state
-                    .iter()
-                    .zip(row)
-                    .fold(pasta_curves::Fp::ZERO, |sum, (value, coefficient)| {
-                        sum + (*value * *coefficient)
-                    });
-            }
-            state = next_state;
-        }
-        state
-    }
-
-    fn legacy_sponge_state<const L: usize>(
-        domain: &[u8; 16],
-        input: [Fp; L],
-    ) -> [pasta_curves::Fp; ragu_pasta::PoseidonFp::T] {
-        let capacity = domain
-            .iter()
-            .rev()
-            .fold(pasta_curves::Fp::ZERO, |acc, byte| {
-                acc * pasta_curves::Fp::from(256) + pasta_curves::Fp::from(u64::from(*byte))
-            });
-        let mut state = array::from_fn(|index| {
-            if index == ragu_pasta::PoseidonFp::RATE {
-                capacity
-            } else {
-                pasta_curves::Fp::ZERO
-            }
-        });
-        let mut pending = Vec::new();
-        for input_value in input {
-            if pending.len() == ragu_pasta::PoseidonFp::RATE {
-                let absorbed_values = mem::take(&mut pending);
-                for (lane, value) in state
-                    .iter_mut()
-                    .take(ragu_pasta::PoseidonFp::RATE)
-                    .zip(absorbed_values)
-                {
-                    *lane += value;
-                }
-                state = legacy_permute(state);
-            }
-            pending.push(
-                pasta_curves::Fp::from_repr(input_value.to_bytes())
-                    .into_option()
-                    .expect("canonical Udon field bytes decode in the legacy field"),
-            );
-        }
-        for (lane, pending_value) in state
-            .iter_mut()
-            .take(ragu_pasta::PoseidonFp::RATE)
-            .zip(pending)
-        {
-            *lane += pending_value;
-        }
-        legacy_permute(state)
-    }
-
-    #[test]
-    fn tagged_hash_matches_legacy_parameters_at_and_past_the_absorb_rate() {
-        let domain = *b"Tachyon-ActionDg";
-        let at_rate = [Fp::from(2), Fp::from(3), Fp::from(5), Fp::from(7)];
-        let past_rate = [
-            Fp::from(2),
-            Fp::from(3),
-            Fp::from(5),
-            Fp::from(7),
-            Fp::from(11),
-        ];
-        let [legacy_at_rate, ..] = legacy_sponge_state(&domain, at_rate);
-        let [legacy_past_rate, ..] = legacy_sponge_state(&domain, past_rate);
-
-        assert_eq!(
-            hash::<4>(&domain, at_rate).to_bytes(),
-            legacy_at_rate.to_repr()
-        );
-        assert_eq!(
-            hash::<5>(&domain, past_rate).to_bytes(),
-            legacy_past_rate.to_repr()
-        );
-    }
-
-    #[test]
-    fn nullifier_group_matches_legacy_parameters_across_successive_squeezes() {
-        let master = Fp::from(19);
-        let epoch_start = Fp::from(32);
-        let [legacy_0, legacy_1, legacy_2, legacy_3, _capacity] =
-            legacy_sponge_state(NULLIFIER_DOMAIN, [master, epoch_start]);
-        let current = nullifier_group(master, epoch_start);
-
-        assert_eq!(current[0].to_bytes(), legacy_0.to_repr());
-        assert_eq!(current[1].to_bytes(), legacy_1.to_repr());
-        assert_eq!(current[2].to_bytes(), legacy_2.to_repr());
-        assert_eq!(current[3].to_bytes(), legacy_3.to_repr());
-    }
-}
+mod tests;

@@ -26,7 +26,7 @@ output_gadget!(NoteSpendableOutput, "NoteSpendableOutput(..)", {
     anchor: AnchorGadget,
 });
 
-impl Header for NoteSpendable {
+impl Header<Fp> for NoteSpendable {
     type Data = (note::Commitment, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
