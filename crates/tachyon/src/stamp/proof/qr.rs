@@ -62,8 +62,11 @@ use crate::{
 pub struct QrIntake;
 
 /// `QrIntake` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("QrIntakeOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,
@@ -170,8 +173,11 @@ impl Header<Fp> for QrIntake {
 pub struct QrIntakeSides;
 
 /// `QrIntakeSides` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("QrIntakeSidesOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,
@@ -961,8 +967,11 @@ impl Step<Pasta> for QrSideDescend {
 pub struct QrBucket;
 
 /// `QrBucket` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("QrBucketOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,
