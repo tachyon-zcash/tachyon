@@ -43,35 +43,6 @@ fn pool_closing_epoch_zero(rng: &mut StdRng, note: &Note) -> PoolSim {
     pool
 }
 
-fn epoch_zero_unspent(
-    rng: &mut StdRng,
-    pool: &PoolSim,
-    user: &WalletSim,
-    note: &Note,
-) -> (Pcd<pool::ArbitraryUnspent>, Vec<Nullifier>) {
-    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
-    let unspent = build_unspent_pcd_over_epochs(
-        rng,
-        pool,
-        |epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch)
-        },
-        (epoch0, epoch1),
-    );
-    (
-        unspent,
-        vec![
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch0),
-        ],
-    )
-}
-
 fn detached_segment(
     rng: &mut StdRng,
     epoch: EpochIndex,
@@ -987,8 +958,14 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let note = user.random_note(500);
     let other = user.random_note(700);
     let pool = pool_closing_epoch_zero(rng, &note);
-    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let mk = user.pak.nk.derive_note_private(note.psi);
+    let unspent = build_unspent_pcd_over_epochs(
+        rng,
+        &pool,
+        |epoch| mk.derive_nullifier(epoch),
+        (EpochIndex::new(0), EpochIndex::new(1)),
+    );
+    let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(

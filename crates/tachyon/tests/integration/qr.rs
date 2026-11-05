@@ -1760,7 +1760,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
-    for (bucket_pcd, init_witness, expected) in [
+    for (bucket_pcd, init_witness, expected) in vec![
         (
             bucket.pcd.clone(),
             {
@@ -1850,9 +1850,9 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             "QrUnspentInit: sequence does not match the tested pair",
         ),
         (
-            bucket.pcd.clone(),
+            bucket.pcd,
             {
-                let mut forged = witness.clone();
+                let mut forged = witness;
                 forged.4 = iter::once(Tachygram::random(rng)).collect();
                 forged
             },
@@ -1914,8 +1914,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
             bucket.pcd.clone(),
             Proof::bootstrap().carry::<()>(()),
         )
-        .unwrap()
-        .0;
+        .unwrap();
 
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
@@ -2154,7 +2153,7 @@ fn unspent_lift_appends_one_epoch() {
         &bucket.members,
     );
     let lifted = PROOF_SYSTEM
-        .fuse(rng, UnspentLift, lift, segment, bucket.pcd.clone())
+        .fuse(rng, UnspentLift, lift, segment, bucket.pcd)
         .unwrap()
         .0;
 
@@ -2187,7 +2186,7 @@ fn unspent_lift_carries_a_spendable() {
         &bucket.members,
     );
     let lifted = PROOF_SYSTEM
-        .fuse(rng, UnspentLift, lift, segment, bucket.pcd.clone())
+        .fuse(rng, UnspentLift, lift, segment, bucket.pcd)
         .unwrap()
         .0;
 

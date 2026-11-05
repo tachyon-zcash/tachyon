@@ -1001,7 +1001,7 @@ fn read_rejects_zero_wtxid() {
         let max_fee = wallet.random_note(0);
         let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
         let sighash = mock_sighash(plan.commitment().unwrap());
-        let bundle = Bundle {
+        Bundle {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
             fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
@@ -1011,8 +1011,7 @@ fn read_rejects_zero_wtxid() {
                 wtxid,
                 fee: value::Positive::ZERO,
             },
-        };
-        bundle
+        }
     };
 
     for stripped in [adjunct, innocent] {
@@ -1152,7 +1151,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let max_money = i64::try_from(MAX_MONEY).unwrap();
-    for (spends, outputs, balance) in [
+    for (spends, outputs, expected) in [
         (&[300][..], &[200][..], Some(100)),
         (&[MAX_MONEY][..], &[][..], Some(max_money)),
         (&[][..], &[MAX_MONEY][..], Some(-max_money)),
@@ -1170,7 +1169,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 .collect(),
             WalletSim::new(shared_sk()).random_note(0),
         );
-        if let Some(balance) = balance {
+        if let Some(balance) = expected {
             assert_eq!(
                 plan.value_balance(),
                 Ok(value::Balance::try_from(balance).unwrap())
