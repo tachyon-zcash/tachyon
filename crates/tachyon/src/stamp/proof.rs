@@ -78,17 +78,17 @@ fn check_polynomial(
 fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
     dr: &mut D,
     epoch: &Element<'dr, D>,
-    digest: &[Element<'dr, D>; 2],
+    bridge_hash: &[Element<'dr, D>; 2],
 ) -> ragu_core::Result<()> {
     let generator = *Pasta::host_generators(pasta::baked())
         .g()
         .first()
         .ok_or_else(|| ragu_core::Error::InvalidWitness("fixed generator table is empty".into()))?;
-    let (low, high) = poseidon::commitment_digest(generator);
+    let (low, high) = poseidon::bridge_hash(generator);
     let low_element = Element::constant(dr, low);
     let high_element = Element::constant(dr, high);
-    let equal_low = digest[0].is_equal(dr, &mut (), &low_element)?;
-    let equal_high = digest[1].is_equal(dr, &mut (), &high_element)?;
+    let equal_low = bridge_hash[0].is_equal(dr, &mut (), &low_element)?;
+    let equal_high = bridge_hash[1].is_equal(dr, &mut (), &high_element)?;
     equal_low
         .and(dr, &equal_high)?
         .element()
@@ -118,7 +118,7 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
 /// | AnchorSpan | 2 | 0 | 1 | 4 |
 ///
 /// Points write two coordinates; commitments write two compressed limbs.
-/// `QrBucket` writes its certified bridge digest's two coordinates instead
+/// `QrBucket` writes its certified bridge hash's two coordinates instead
 /// of its native contents commitment's compressed limbs.
 /// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
 /// have one application fragment.

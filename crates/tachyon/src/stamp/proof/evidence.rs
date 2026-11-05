@@ -50,7 +50,7 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
         &bucket.anchor_next,
         &bucket.discriminant,
         (&depth, &bits),
-        &bucket.contents_digest,
+        &bucket.contents_bridge_hash,
     )
 }
 
@@ -789,7 +789,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             )?,
         ];
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let contents = oracles.bridge_hash().clone();
+        let contents_bridge_hash = oracles.bridge_hash().clone();
         let output = D::just(|| {
             let (carrier_profile, carrier_contents) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.clone().take();
@@ -816,7 +816,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             discriminant: fields[3].clone(),
             depth: profile[0].clone(),
             bits: profile[1].clone(),
-            contents_digest: contents,
+            contents_bridge_hash,
         };
         let computed = bucket_leaf(dr, &output_fields)?;
         expected.enforce_equal(dr, &computed).map_err(|_err| {

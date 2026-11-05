@@ -249,16 +249,16 @@ lazy_static! {
     });
 }
 
-/// Native bridge digest using the two fixed R<13> nested generators.
+/// Native bridge hash using the two fixed R<13> nested generators.
 ///
 /// # Panics
 ///
 /// Panics if `point` is the identity.
 #[expect(
     clippy::expect_used,
-    reason = "nonidentity commitment has a bridge digest"
+    reason = "nonidentity commitment has a bridge hash"
 )]
-pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
+pub(crate) fn bridge_hash(point: EqAffine) -> (Fp, Fp) {
     let (x, y) = point
         .coordinates()
         .expect("commitment must not be the identity point");
@@ -266,7 +266,7 @@ pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
     (first * x + second * y)
         .to_affine()
         .coordinates()
-        .expect("bridge digest must not be the identity point")
+        .expect("bridge hash must not be the identity point")
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
@@ -279,15 +279,15 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (digest_x, digest_y) = commitment_digest(tgs);
+    let (bridge_hash_x, bridge_hash_y) = bridge_hash(tgs);
     *emulate(|driver| {
         let anchor_element = Element::constant(driver, anchor_prev);
         let epoch_element = Element::constant(driver, epoch);
-        let digest = [
-            Element::constant(driver, digest_x),
-            Element::constant(driver, digest_y),
+        let bridge_hash = [
+            Element::constant(driver, bridge_hash_x),
+            Element::constant(driver, bridge_hash_y),
         ];
-        with_driver::anchor_next_stamp(driver, &anchor_element, &epoch_element, &digest)
+        with_driver::anchor_next_stamp(driver, &anchor_element, &epoch_element, &bridge_hash)
     })
     .value()
     .take()
@@ -311,7 +311,7 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (digest_x, digest_y) = commitment_digest(contents);
+    let (bridge_hash_x, bridge_hash_y) = bridge_hash(contents);
     *emulate(|driver| {
         let epoch_element = Element::constant(driver, epoch);
         let start_element = Element::constant(driver, anchor_start);
@@ -319,9 +319,9 @@ pub fn evidence_tree_leaf(
         let discriminant_element = Element::constant(driver, discriminant);
         let depth_element = Element::constant(driver, depth);
         let bits_element = Element::constant(driver, bits);
-        let digest = [
-            Element::constant(driver, digest_x),
-            Element::constant(driver, digest_y),
+        let bridge_hash = [
+            Element::constant(driver, bridge_hash_x),
+            Element::constant(driver, bridge_hash_y),
         ];
         with_driver::evidence_tree_leaf(
             driver,
@@ -330,7 +330,7 @@ pub fn evidence_tree_leaf(
             &next_element,
             &discriminant_element,
             (&depth_element, &bits_element),
-            &digest,
+            &bridge_hash,
         )
     })
     .value()
@@ -438,12 +438,12 @@ pub(crate) mod with_driver {
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
         epoch: &Element<'dr, D>,
-        digest: &[Element<'dr, D>; 2],
+        bridge_hash: &[Element<'dr, D>; 2],
     ) -> Result<Element<'dr, D>> {
         tagged_sponge(
             dr,
             ANCHOR_STAMP_DOMAIN,
-            [anchor_prev, epoch, &digest[0], &digest[1]],
+            [anchor_prev, epoch, &bridge_hash[0], &bridge_hash[1]],
         )?
         .squeeze(dr)
     }
@@ -455,7 +455,7 @@ pub(crate) mod with_driver {
         anchor_next: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
         profile: (&Element<'dr, D>, &Element<'dr, D>),
-        digest: &[Element<'dr, D>; 2],
+        bridge_hash: &[Element<'dr, D>; 2],
     ) -> Result<Element<'dr, D>> {
         tagged_sponge(
             dr,
@@ -467,8 +467,8 @@ pub(crate) mod with_driver {
                 discriminant,
                 profile.0,
                 profile.1,
-                &digest[0],
-                &digest[1],
+                &bridge_hash[0],
+                &bridge_hash[1],
             ],
         )?
         .squeeze(dr)

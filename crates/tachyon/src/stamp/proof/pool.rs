@@ -311,8 +311,8 @@ impl Header<Fp> for AnchorSpan {
 ///
 /// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
 /// The span's only member is the resulting anchor, committed with
-/// [`AnchorSetCommit::singleton`](crate::primitives::AnchorSetCommit::singleton).
-/// `O0` carries that singleton; `O1` carries the stamp for its bridge digest.
+/// [`AnchorSetCommit::singleton`].
+/// `O0` carries that singleton; `O1` carries the stamp for its bridge hash.
 ///
 /// # Soundness
 ///

@@ -411,7 +411,7 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// `discriminant` is a free witness; see [`QrDiscriminant`]. `stamp_commit`
 /// is folded into `anchor_end`.
-/// `O0/O1` carry the stamp, with `O1` providing its bridge digest.
+/// `O0/O1` carry the stamp, with `O1` providing its bridge hash.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -1107,8 +1107,8 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub depth: Element<'dr, D>,
     /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// Contents bridge digest.
-    pub contents_digest: [Element<'dr, D>; 2],
+    /// Contents bridge hash.
+    pub contents_bridge_hash: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrBucket {
@@ -1130,14 +1130,14 @@ impl Header<Fp> for QrBucket {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let digest = D::try_just(|| {
+        let bridge_hash = D::try_just(|| {
             let point = Eq::from(witness.clone().take().5).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot hash the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::commitment_digest(point)))
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(QrBucketOutput {
             epoch: Element::alloc(
@@ -1174,9 +1174,9 @@ impl Header<Fp> for QrBucket {
                     .as_ref()
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
-            contents_digest: [
-                Element::alloc(dr, allocator, digest.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, digest.as_ref().map(|values| values[1]))?,
+            contents_bridge_hash: [
+                Element::alloc(dr, allocator, bridge_hash.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, bridge_hash.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -1215,7 +1215,7 @@ impl Header<Fp> for QrBucket {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
-/// `L0` is copied into `O0/O1`; the header certifies `O1`'s bridge digest.
+/// `L0` is copied to `O0/O1`; the header certifies `O1`'s bridge hash.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -1328,7 +1328,7 @@ impl Step<Pasta> for QrBucketSeal {
             discriminant: left_encoded.as_gadget().discriminant.clone(),
             depth: left_encoded.as_gadget().depth.clone(),
             bits: left_encoded.as_gadget().bits.clone(),
-            contents_digest: oracles.bridge_hash().clone(),
+            contents_bridge_hash: oracles.bridge_hash().clone(),
         };
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
