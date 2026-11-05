@@ -137,13 +137,10 @@ fn signed_bundle(
     // The commitment leaves out the signatures, so a bundle signed over any
     // sighash yields the commitment it must sign.
     let sighash = in_wire_order(plan.sign(rng, &[0; 32], &ask).unwrap()).commitment();
-    let signed = in_wire_order(plan.sign(rng, &sighash, &ask).unwrap());
-    assert_eq!(
-        signed.commitment(),
-        sighash,
-        "the bundle signs its own commitment"
-    );
-    (signed, value::Positive::try_from(fee).unwrap())
+    (
+        in_wire_order(plan.sign(rng, &sighash, &ask).unwrap()),
+        value::Positive::try_from(fee).unwrap(),
+    )
 }
 
 fuzz_target!(

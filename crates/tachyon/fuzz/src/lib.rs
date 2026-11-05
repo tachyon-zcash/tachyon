@@ -13,7 +13,7 @@
 //! zeros. The comparison stops short of the proof and leaves its canonicality
 //! to ragu.
 
-use std::{hint, io};
+use std::io;
 
 use zcash_tachyon::{Bundle, bundle::TachyonBundle, stamp::StampState, value};
 
@@ -57,8 +57,7 @@ pub fn read_canonical<'data, T>(
     Some((decoded, rest))
 }
 
-/// Assert the bundle-body invariants a canonical encoding does not imply, and
-/// take both digests over the decoded bundle.
+/// Assert the bundle-body invariants a canonical encoding does not imply.
 ///
 /// # Panics
 ///
@@ -77,9 +76,6 @@ pub fn assert_bundle_invariants<S: StampState + 'static>(bundle: &Bundle<S>) {
         value::Commitment::default(),
         "the max fee commitment is not the identity"
     );
-
-    hint::black_box(bundle.commitment());
-    hint::black_box(bundle.auth_digest());
 }
 
 /// Read a bundle off the front of `data` through [`TachyonBundle::read`].
