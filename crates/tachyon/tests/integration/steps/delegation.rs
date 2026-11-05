@@ -216,94 +216,84 @@ fn delegation_steps_reject_corruptions() {
         )
     };
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, left_start, foreign_seq)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, left_start, foreign_seq) {
         assert_eq!(
             err.to_string(),
             "NullifierDerive: sequence does not match the derived window"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, misaligned, honest_seq) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, misaligned, honest_seq) {
         assert_eq!(
             err.to_string(),
             "NullifierDerive: epoch_start is not group-aligned"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[]))
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[]))
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "NullifierDerive: window exceeds the epoch range"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, gapped_witness, &gapped) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, gapped_witness, &gapped) {
         assert_eq!(err.to_string(), "NullifierFuse: ranges not contiguous");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, foreign_witness, &foreign_right)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, foreign_witness, &foreign_right) {
         assert_eq!(err.to_string(), "NullifierFuse: note commitments differ");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                NfSeqPoly::new(left_start, &right_nfs),
-                merged_seq.clone(),
-                right_seq.clone(),
-            ),
-            &right,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            NfSeqPoly::new(left_start, &right_nfs),
+            merged_seq.clone(),
+            right_seq.clone(),
+        ),
+        &right,
+    ) {
         assert_eq!(
             err.to_string(),
             "NullifierFuse: left polynomial does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                left_seq.clone(),
-                merged_seq,
-                NfSeqPoly::new(right_start, &reversed),
-            ),
-            &right,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            left_seq.clone(),
+            merged_seq,
+            NfSeqPoly::new(right_start, &reversed),
+        ),
+        &right,
+    ) {
         assert_eq!(
             err.to_string(),
             "NullifierFuse: right polynomial does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (left_seq, NfSeqPoly::new(left_start, &junk), right_seq),
-            &right,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (left_seq, NfSeqPoly::new(left_start, &junk), right_seq),
+        &right,
+    ) {
         assert_eq!(
             err.to_string(),
             "NullifierFuse: merged is not the concat of the halves"
         );
+    } else {
+        panic!();
     }
 }

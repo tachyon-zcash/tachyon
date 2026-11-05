@@ -87,15 +87,14 @@ fn anchor_span_fuse_rejects_corruptions() {
     let (bogus, ()) = PROOF_SYSTEM
         .seed(rng, pool::AnchorSpanSeed, bogus_witness)
         .expect("AnchorSpanSeed");
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
-            rng,
-            pool::AnchorSpanSeed,
-            witness::anchor_span_seed(((), ()), bogus_start, epoch1, &[]),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
+        rng,
+        pool::AnchorSpanSeed,
+        witness::anchor_span_seed(((), ()), bogus_start, epoch1, &[]),
+    ) {
         assert_eq!(err.to_string(), "invalid anchor step");
+    } else {
+        panic!();
     }
 
     let mut crossing_pool = PoolSim::genesis_with(vec![vec![Tachygram::random(rng)]]);
@@ -140,100 +139,93 @@ fn anchor_span_fuse_rejects_corruptions() {
             witness::anchor_span_fuse((*halves.0.data(), *halves.1.data()), members.0, members.1)
         };
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            honest_fuse((&left_members, &bogus_members), (&left, &bogus)),
-            (&left, &bogus),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        honest_fuse((&left_members, &bogus_members), (&left, &bogus)),
+        (&left, &bogus),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: spans do not share a vertex"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            honest_fuse((&before_members, &after_members), (&before, &after)),
-            (&before, &after),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        honest_fuse((&before_members, &after_members), (&before, &after)),
+        (&before, &after),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: spans do not share a vertex"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            honest_fuse((&right_members, &left_members), (&right, &left)),
-            (&right, &left),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        honest_fuse((&right_members, &left_members), (&right, &left)),
+        (&right, &left),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: spans do not share a vertex"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (right_poly.clone(), union(&[]), right_poly.clone()),
-            (&left, &right),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (right_poly.clone(), union(&[]), right_poly.clone()),
+        (&left, &right),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: left members do not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (left_poly.clone(), union(&[]), left_poly.clone()),
-            (&left, &right),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (left_poly.clone(), union(&[]), left_poly.clone()),
+        (&left, &right),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: right members do not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                left_poly.clone(),
-                AnchorSetPoly::from_iter(left_members.iter().copied()),
-                right_poly.clone(),
-            ),
-            (&left, &right),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            left_poly.clone(),
+            AnchorSetPoly::from_iter(left_members.iter().copied()),
+            right_poly.clone(),
+        ),
+        (&left, &right),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: combined is not the union of the halves"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (left_poly, union(&[fork]), right_poly),
-            (&left, &right),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (left_poly, union(&[fork]), right_poly),
+        (&left, &right),
+    ) {
         assert_eq!(
             err.to_string(),
             "AnchorSpanFuse: combined is not the union of the halves"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -406,93 +398,88 @@ fn unspent_fuse_rejects_corruptions() {
         )
     };
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            witness::unspent_fuse((*segment0.data(), *segment2.data()), &[nf0], &[nf(epoch2)]),
-            &segment2,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        witness::unspent_fuse((*segment0.data(), *segment2.data()), &[nf0], &[nf(epoch2)]),
+        &segment2,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentFuse: left.anchor_next must equal right.anchor_start"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                NfSeqPoly::new(epoch0, &[nf0]),
-                NfSeqPoly::new(epoch0, &[nf0, nf1]),
-                NfSeqPoly::new(epoch1, &[nf1]),
-            ),
-            &{
-                let mut data = *segment1.data();
-                data.1 = epoch2;
-                segment1
-                    .proof()
-                    .clone()
-                    .carry::<pool::ArbitraryUnspent>(data)
-            },
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            NfSeqPoly::new(epoch0, &[nf0]),
+            NfSeqPoly::new(epoch0, &[nf0, nf1]),
+            NfSeqPoly::new(epoch1, &[nf1]),
+        ),
+        &{
+            let mut data = *segment1.data();
+            data.1 = epoch2;
+            segment1
+                .proof()
+                .clone()
+                .carry::<pool::ArbitraryUnspent>(data)
+        },
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentFuse: halves do not meet at one epoch"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                NfSeqPoly::new(epoch0, &[nf1]),
-                NfSeqPoly::new(epoch0, &[nf0, nf1]),
-                NfSeqPoly::new(epoch1, &[nf1]),
-            ),
-            &segment1,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            NfSeqPoly::new(epoch0, &[nf1]),
+            NfSeqPoly::new(epoch0, &[nf0, nf1]),
+            NfSeqPoly::new(epoch1, &[nf1]),
+        ),
+        &segment1,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentFuse: left polynomial does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                NfSeqPoly::new(epoch0, &[nf0]),
-                NfSeqPoly::new(epoch0, &[nf0, nf1]),
-                NfSeqPoly::new(epoch1, &[nf0]),
-            ),
-            &segment1,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            NfSeqPoly::new(epoch0, &[nf0]),
+            NfSeqPoly::new(epoch0, &[nf0, nf1]),
+            NfSeqPoly::new(epoch1, &[nf0]),
+        ),
+        &segment1,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentFuse: right polynomial does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            (
-                NfSeqPoly::new(epoch0, &[nf0]),
-                NfSeqPoly::new(epoch1, &[nf1]),
-                NfSeqPoly::new(epoch1, &[nf1]),
-            ),
-            &segment1,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        (
+            NfSeqPoly::new(epoch0, &[nf0]),
+            NfSeqPoly::new(epoch1, &[nf1]),
+            NfSeqPoly::new(epoch1, &[nf1]),
+        ),
+        &segment1,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentFuse: combined is not the concatenation of the halves"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -533,86 +520,82 @@ fn unspent_bind_rejects_corruptions() {
     let honest_bind = witness::unspent_bind((*segment0.data(), *window.data()), &covering, &[nf0]);
     let (elapsed_seq, nf_seq, complement_seq) = honest_bind.clone();
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &{
-                let mut data = *segment0.data();
-                data.3 = data.1;
-                segment0
-                    .proof()
-                    .clone()
-                    .carry::<pool::ArbitraryUnspent>(data)
-            },
-            honest_bind,
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &{
+            let mut data = *segment0.data();
+            data.3 = data.1;
+            segment0
+                .proof()
+                .clone()
+                .carry::<pool::ArbitraryUnspent>(data)
+        },
+        honest_bind,
+        &window,
+    ) {
         assert_eq!(err.to_string(), "UnspentBind: segment covers no epoch");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &segment0,
-            (
-                NfSeqPoly::new(epoch0, &[junk]),
-                nf_seq.clone(),
-                complement_seq.clone(),
-            ),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &segment0,
+        (
+            NfSeqPoly::new(epoch0, &[junk]),
+            nf_seq.clone(),
+            complement_seq.clone(),
+        ),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: elapsed polynomial does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &segment0,
-            witness::unspent_bind(
-                (*segment0.data(), *window.data()),
-                &(u32::from(window_start)..=u32::from(window_last))
-                    .map(|epoch| {
-                        wallet
-                            .pak
-                            .nk
-                            .derive_note_private(other.psi)
-                            .derive_nullifier(EpochIndex::new(epoch))
-                    })
-                    .collect::<Vec<Nullifier>>(),
-                &[nf0],
-            ),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &segment0,
+        witness::unspent_bind(
+            (*segment0.data(), *window.data()),
+            &(u32::from(window_start)..=u32::from(window_last))
+                .map(|epoch| {
+                    wallet
+                        .pak
+                        .nk
+                        .derive_note_private(other.psi)
+                        .derive_nullifier(EpochIndex::new(epoch))
+                })
+                .collect::<Vec<Nullifier>>(),
+            &[nf0],
+        ),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: covering sequence does not match header"
         );
+    } else {
+        panic!();
     }
     let forged_segment = build_unspent_pcd_over_epochs(rng, &pool, |_| forged_nf, (epoch0, epoch1));
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &forged_segment,
-            witness::unspent_bind(
-                (*forged_segment.data(), *window.data()),
-                &covering,
-                &[forged_nf],
-            ),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &forged_segment,
+        witness::unspent_bind(
+            (*forged_segment.data(), *window.data()),
+            &covering,
+            &[forged_nf],
+        ),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
     let far = EpochIndex::new(64);
     let far_window = wallet.derivation_pcd(rng, note, far, far);
@@ -620,23 +603,22 @@ fn unspent_bind_rejects_corruptions() {
     let far_covering: Vec<Nullifier> = (u32::from(far_start)..=u32::from(far_last))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &segment0,
-            (
-                NfSeqPoly::new(epoch0, &[nf0]),
-                NfSeqPoly::new(far, &far_covering),
-                NfSeqPoly::new(EpochIndex::new(65), &far_covering[1..]),
-            ),
-            &far_window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &segment0,
+        (
+            NfSeqPoly::new(epoch0, &[nf0]),
+            NfSeqPoly::new(far, &far_covering),
+            NfSeqPoly::new(EpochIndex::new(65), &far_covering[1..]),
+        ),
+        &far_window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
     let past_window = EpochIndex::new(u32::try_from(NF_DERIVATION_WIDTH).unwrap());
     let past_segment = detached_segment(rng, past_window, nf);
@@ -645,78 +627,74 @@ fn unspent_bind_rejects_corruptions() {
     let near_covering: Vec<Nullifier> = (u32::from(near_start)..=u32::from(near_last))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &past_segment,
-            (
-                NfSeqPoly::new(past_window, &[nf(past_window)]),
-                NfSeqPoly::new(epoch0, &near_covering),
-                NfSeqPoly::new(epoch1, &near_covering[1..]),
-            ),
-            &near_window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &past_segment,
+        (
+            NfSeqPoly::new(past_window, &[nf(past_window)]),
+            NfSeqPoly::new(epoch0, &near_covering),
+            NfSeqPoly::new(epoch1, &near_covering[1..]),
+        ),
+        &near_window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
     let misplaced = build_unspent_pcd_over_epochs(rng, &pool, |_| nf0, (epoch1, epoch2));
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &misplaced,
-            (
-                NfSeqPoly::new(epoch1, &[nf0]),
-                nf_seq.clone(),
-                complement_seq,
-            ),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &misplaced,
+        (
+            NfSeqPoly::new(epoch1, &[nf0]),
+            nf_seq.clone(),
+            complement_seq,
+        ),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
     let mut forged_complement = covering[1..].to_vec();
     forged_complement[0] = junk;
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &segment0,
-            (
-                elapsed_seq.clone(),
-                nf_seq.clone(),
-                NfSeqPoly::new(epoch1, &forged_complement),
-            ),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &segment0,
+        (
+            elapsed_seq.clone(),
+            nf_seq.clone(),
+            NfSeqPoly::new(epoch1, &forged_complement),
+        ),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
     let duplicating_complement =
         NfSeqPoly::new(epoch0, &[nf0]) * NfSeqPoly::new(epoch2, &covering[2..]);
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind(
-            rng,
-            &segment0,
-            (elapsed_seq, nf_seq, duplicating_complement),
-            &window,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind(
+        rng,
+        &segment0,
+        (elapsed_seq, nf_seq, duplicating_complement),
+        &window,
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentBind: sequence does not match the derivation"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -758,19 +736,18 @@ fn unspent_lift_rejects_corruptions() {
     let (value, classes, mask, lift_elapsed, extended, contents) =
         lift_witness(nf1.into(), &[nf0], &bucket1.pcd, &bucket1.members);
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket2.pcd,
-            lift_witness(nf1.into(), &[nf0], &bucket2.pcd, &bucket2.members),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket2.pcd,
+        lift_witness(nf1.into(), &[nf0], &bucket2.pcd, &bucket2.members),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: the bucket does not start where the segment ends"
         );
+    } else {
+        panic!();
     }
     let mut renumbered_data = *bucket1.pcd.data();
     renumbered_data.0 = epoch2;
@@ -779,131 +756,124 @@ fn unspent_lift_rejects_corruptions() {
         .proof()
         .clone()
         .carry::<qr::QrBucket>(renumbered_data);
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &renumbered,
-            lift_witness(nf1.into(), &[nf0], &renumbered, &bucket1.members),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &renumbered,
+        lift_witness(nf1.into(), &[nf0], &renumbered, &bucket1.members),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: the bucket is not the segment's next epoch"
         );
+    } else {
+        panic!();
     }
     let foreign_contents = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket1.pcd,
-            (
-                value,
-                classes,
-                mask,
-                lift_elapsed.clone(),
-                extended.clone(),
-                foreign_contents,
-            ),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        (
+            value,
+            classes,
+            mask,
+            lift_elapsed.clone(),
+            extended.clone(),
+            foreign_contents,
+        ),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: contents do not match the bucket"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket1.pcd,
-            lift_witness(nf1.into(), &[nf1], &bucket1.pcd, &bucket1.members),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        lift_witness(nf1.into(), &[nf1], &bucket1.pcd, &bucket1.members),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: elapsed does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        lift_witness(
+            Tachygram::from(Fp::ZERO),
+            &[nf0],
             &bucket1.pcd,
-            lift_witness(
-                Tachygram::from(Fp::ZERO),
-                &[nf0],
-                &bucket1.pcd,
-                &bucket1.members,
-            ),
-        ) else {
-            panic!();
-        };
+            &bucket1.members,
+        ),
+    ) {
         assert_eq!(err.to_string(), "UnspentLift: tested value is zero");
+    } else {
+        panic!();
     }
     let other_classes = QrClassRoot::along(
         Fp::random(|bytes| rng.fill_bytes(bytes)),
         bucket1.pcd.data().3,
     );
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket1.pcd,
-            (
-                value,
-                other_classes,
-                mask,
-                lift_elapsed.clone(),
-                extended,
-                contents.clone(),
-            ),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        (
+            value,
+            other_classes,
+            mask,
+            lift_elapsed.clone(),
+            extended,
+            contents.clone(),
+        ),
+    ) {
         assert_eq!(
             err.to_string(),
             "QR profile: root does not square to the claimed class"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket1.pcd,
-            (
-                value,
-                classes,
-                mask,
-                lift_elapsed,
-                NfSeqPoly::new(epoch0, &[nf0, forged_nf]),
-                contents,
-            ),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        (
+            value,
+            classes,
+            mask,
+            lift_elapsed,
+            NfSeqPoly::new(epoch0, &[nf0, forged_nf]),
+            contents,
+        ),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: extended is not elapsed with the tested pair"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(
-            rng,
-            &segment0,
-            &bucket1.pcd,
-            lift_witness(bucket1.members[0], &[nf0], &bucket1.pcd, &bucket1.members),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(
+        rng,
+        &segment0,
+        &bucket1.pcd,
+        lift_witness(bucket1.members[0], &[nf0], &bucket1.pcd, &bucket1.members),
+    ) {
         assert_eq!(
             err.to_string(),
             "UnspentLift: found nullifier in the bucket"
         );
+    } else {
+        panic!();
     }
     let mut final_segment_data = *segment0.data();
     final_segment_data.3 = EpochIndex::new(EPOCH_MAX);
@@ -924,12 +894,11 @@ fn unspent_lift_rejects_corruptions() {
         &[nf0],
         &bucket1.members,
     );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        lift(rng, &final_segment, &final_bucket, final_witness)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            lift(rng, &final_segment, &final_bucket, final_witness)
-        else {
-            panic!();
-        };
         assert_eq!(err.to_string(), "UnspentLift: bucket has no next epoch");
+    } else {
+        panic!();
     }
 }

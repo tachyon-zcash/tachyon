@@ -295,11 +295,10 @@ fn spend_steps_reject_corruptions() {
     let absent: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
         .take(2)
         .collect();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = init(rng, &absent, creation) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = init(rng, &absent, creation) {
         assert_eq!(err.to_string(), "SpendableInit: commitment not in set");
+    } else {
+        panic!();
     }
     let (final_spendable, ()) = init(
         rng,
@@ -318,23 +317,20 @@ fn spend_steps_reject_corruptions() {
         value: value::Positive::try_from(501u64).unwrap(),
         ..note
     };
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        bind_with(rng, spendable_pcd.clone(), richer)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            bind_with(rng, spendable_pcd.clone(), richer)
-        else {
-            panic!();
-        };
         assert_eq!(err.to_string(), "SpendBind: secret does not match note");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = bind_with(rng, final_spendable, note)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = bind_with(rng, final_spendable, note) {
         assert_eq!(
             err.to_string(),
             "SpendBind: no epoch follows the spend epoch"
         );
+    } else {
+        panic!();
     }
 
     let secret = wallet.secret_pcd(rng, note);
@@ -359,41 +355,38 @@ fn spend_steps_reject_corruptions() {
             Proof::bootstrap().carry::<()>(()),
         )
     };
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = act(
-            rng,
-            (
-                theta,
-                stranger.pak,
-                action_set.clone(),
-                tachygram_set.clone(),
-            ),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = act(
+        rng,
+        (
+            theta,
+            stranger.pak,
+            action_set.clone(),
+            tachygram_set.clone(),
+        ),
+    ) {
         assert_eq!(err.to_string(), "SpendAction: pak not related to note");
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        act(rng, (theta, wallet.pak, action_set, foreign_tachygrams))
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            act(rng, (theta, wallet.pak, action_set, foreign_tachygrams))
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "SpendAction: tachygram set does not commit to the nullifier pair"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        act(rng, (theta, wallet.pak, foreign_action_set, tachygram_set))
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            act(rng, (theta, wallet.pak, foreign_action_set, tachygram_set))
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "SpendAction: action set does not commit to the action"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -585,103 +578,91 @@ fn lineage_steps_reject_corruptions() {
     };
     let foreign_members = [Tachygram::random(rng)];
 
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, lineage.clone(), phantom_unspent)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            lift(rng, lineage.clone(), phantom_unspent)
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "SpendableLift: unspent cm does not match spendable"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, lineage.clone(), detached_unspent)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            lift(rng, lineage.clone(), detached_unspent)
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "SpendableLift: unspent not adjacent to spendable"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, lineage, later_unspent) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, lineage, later_unspent) {
         assert_eq!(
             err.to_string(),
             "SpendableLift: segment does not start at the lineage epoch"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, short_lineage, next_unspent)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = lift(rng, short_lineage, next_unspent) {
         assert_eq!(
             err.to_string(),
             "SpendableLift: unspent not adjacent to spendable"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        qr_init(rng, unpublished_unspent, &cm_bucket, &cm_bucket.members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            qr_init(rng, unpublished_unspent, &cm_bucket, &cm_bucket.members)
-        else {
-            panic!();
-        };
         assert_eq!(err.to_string(), "QrSpendableInit: commitment not in bucket");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = qr_init(
-            rng,
-            whole_unspent.clone(),
-            &prefix_bucket,
-            &prefix_bucket.members,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = qr_init(
+        rng,
+        whole_unspent.clone(),
+        &prefix_bucket,
+        &prefix_bucket.members,
+    ) {
         assert_eq!(
             err.to_string(),
             "QrSpendableInit: segment does not close where the bucket does"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = qr_init(
-            rng,
-            whole_unspent.clone(),
-            &later_bucket,
-            &later_bucket.members,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = qr_init(
+        rng,
+        whole_unspent.clone(),
+        &later_bucket,
+        &later_bucket.members,
+    ) {
         assert_eq!(
             err.to_string(),
             "QrSpendableInit: segment does not start in the bucket's epoch"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        qr_init(rng, epoch1_unspent, &elsewhere, &elsewhere.members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            qr_init(rng, epoch1_unspent, &elsewhere, &elsewhere.members)
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "QrSpendableInit: segment does not open where the bucket does"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        qr_init(rng, whole_unspent, &cm_bucket, &foreign_members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            qr_init(rng, whole_unspent, &cm_bucket, &foreign_members)
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "QrSpendableInit: contents do not match the bucket"
         );
+    } else {
+        panic!();
     }
 }

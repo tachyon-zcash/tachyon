@@ -103,26 +103,24 @@ fn output_steps_reject_corruptions() {
         )
     };
 
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        fuse(rng, (theta, anchor, action_set, foreign_tachygrams))
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            fuse(rng, (theta, anchor, action_set, foreign_tachygrams))
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "OutputAction: tachygram set does not commit to the bound pair"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        fuse(rng, (theta, anchor, foreign_action_set, tachygram_set))
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            fuse(rng, (theta, anchor, foreign_action_set, tachygram_set))
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "OutputAction: action set does not commit to the action"
         );
+    } else {
+        panic!();
     }
 }

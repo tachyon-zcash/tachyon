@@ -234,42 +234,36 @@ fn lift_steps_reject_corruptions() {
     let (forked_actions, forked_stamp) = content(rng, fork);
     let (member_actions, member_stamp) = content(rng, members[0]);
 
+    if let Err(ragu_core::Error::InvalidWitness(err)) = action_lift(rng, &forked_actions, &members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            action_lift(rng, &forked_actions, &members)
-        else {
-            panic!();
-        };
         assert_eq!(
             err.to_string(),
             "ActionLift: actions anchor is neither the span's start nor a member"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        action_lift(rng, &member_actions, &foreign_members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            action_lift(rng, &member_actions, &foreign_members)
-        else {
-            panic!();
-        };
         assert_eq!(err.to_string(), "ActionLift: members do not match header");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = stamp_lift(rng, &forked_stamp, &members)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = stamp_lift(rng, &forked_stamp, &members) {
         assert_eq!(
             err.to_string(),
             "StampLift: stamp anchor is neither the span's start nor a member"
         );
+    } else {
+        panic!();
     }
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        stamp_lift(rng, &member_stamp, &foreign_members)
     {
-        let Err(ragu_core::Error::InvalidWitness(err)) =
-            stamp_lift(rng, &member_stamp, &foreign_members)
-        else {
-            panic!();
-        };
         assert_eq!(err.to_string(), "StampLift: members do not match header");
+    } else {
+        panic!();
     }
 }
 
@@ -333,149 +327,142 @@ fn action_merge_rejects_corruptions() {
         (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&displaced.1).copied().collect(),
-                    left.2.union(&displaced.2).copied().collect(),
-                ),
-                (
-                    displaced.1.iter().copied().collect(),
-                    displaced.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &displaced.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&displaced.1).copied().collect(),
+                left.2.union(&displaced.2).copied().collect(),
+            ),
+            (
+                displaced.1.iter().copied().collect(),
+                displaced.2.iter().copied().collect(),
+            ),
+        ),
+        &displaced.0,
+    ) {
         assert_eq!(err.to_string(), "ActionMerge: anchors must match");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (right_actions.clone(), left_tachygrams.clone()),
-                merged.clone(),
-                (right_actions.clone(), right_tachygrams.clone()),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (right_actions.clone(), left_tachygrams.clone()),
+            merged.clone(),
+            (right_actions.clone(), right_tachygrams.clone()),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: left action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions.clone(), left_tachygrams.clone()),
-                merged.clone(),
-                (left_actions.clone(), right_tachygrams.clone()),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions.clone(), left_tachygrams.clone()),
+            merged.clone(),
+            (left_actions.clone(), right_tachygrams.clone()),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: right action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions.clone(), right_tachygrams.clone()),
-                merged.clone(),
-                (right_actions.clone(), right_tachygrams),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions.clone(), right_tachygrams.clone()),
+            merged.clone(),
+            (right_actions.clone(), right_tachygrams),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: left tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions, left_tachygrams.clone()),
-                merged,
-                (right_actions, left_tachygrams),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions, left_tachygrams.clone()),
+            merged,
+            (right_actions, left_tachygrams),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: right tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
     // A reused note repeats its tachygrams and a repeated action its digest.
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&reused.1).copied().collect(),
-                    left.2.union(&reused.2).copied().collect(),
-                ),
-                (
-                    reused.1.iter().copied().collect(),
-                    reused.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &reused.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&reused.1).copied().collect(),
+                left.2.union(&reused.2).copied().collect(),
+            ),
+            (
+                reused.1.iter().copied().collect(),
+                reused.2.iter().copied().collect(),
+            ),
+        ),
+        &reused.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&repeated.1).copied().collect(),
-                    left.2.union(&repeated.2).copied().collect(),
-                ),
-                (
-                    repeated.1.iter().copied().collect(),
-                    repeated.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &repeated.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&repeated.1).copied().collect(),
+                left.2.union(&repeated.2).copied().collect(),
+            ),
+            (
+                repeated.1.iter().copied().collect(),
+                repeated.2.iter().copied().collect(),
+            ),
+        ),
+        &repeated.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "ActionMerge: merged action set must be the product of left and right action sets"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -548,148 +535,141 @@ fn stamp_merge_rejects_corruptions() {
         (merged.0.commit(), merged.1.commit(), left.0.data().2)
     );
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&displaced.1).copied().collect(),
-                    left.2.union(&displaced.2).copied().collect(),
-                ),
-                (
-                    displaced.1.iter().copied().collect(),
-                    displaced.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &displaced.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&displaced.1).copied().collect(),
+                left.2.union(&displaced.2).copied().collect(),
+            ),
+            (
+                displaced.1.iter().copied().collect(),
+                displaced.2.iter().copied().collect(),
+            ),
+        ),
+        &displaced.0,
+    ) {
         assert_eq!(err.to_string(), "StampMerge: anchors must match");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (right_actions.clone(), left_tachygrams.clone()),
-                merged.clone(),
-                (right_actions.clone(), right_tachygrams.clone()),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (right_actions.clone(), left_tachygrams.clone()),
+            merged.clone(),
+            (right_actions.clone(), right_tachygrams.clone()),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: left action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions.clone(), left_tachygrams.clone()),
-                merged.clone(),
-                (left_actions.clone(), right_tachygrams.clone()),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions.clone(), left_tachygrams.clone()),
+            merged.clone(),
+            (left_actions.clone(), right_tachygrams.clone()),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: right action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions.clone(), right_tachygrams.clone()),
-                merged.clone(),
-                (right_actions.clone(), right_tachygrams),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions.clone(), right_tachygrams.clone()),
+            merged.clone(),
+            (right_actions.clone(), right_tachygrams),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: left tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
-            (
-                (left_actions, left_tachygrams.clone()),
-                merged,
-                (right_actions, left_tachygrams),
-            ),
-            &right.0,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
+            (left_actions, left_tachygrams.clone()),
+            merged,
+            (right_actions, left_tachygrams),
+        ),
+        &right.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: right tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&reused.1).copied().collect(),
-                    left.2.union(&reused.2).copied().collect(),
-                ),
-                (
-                    reused.1.iter().copied().collect(),
-                    reused.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &reused.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&reused.1).copied().collect(),
+                left.2.union(&reused.2).copied().collect(),
+            ),
+            (
+                reused.1.iter().copied().collect(),
+                reused.2.iter().copied().collect(),
+            ),
+        ),
+        &reused.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = merge(
-            rng,
+    if let Err(ragu_core::Error::InvalidWitness(err)) = merge(
+        rng,
+        (
             (
-                (
-                    left.1.iter().copied().collect(),
-                    left.2.iter().copied().collect(),
-                ),
-                (
-                    left.1.union(&repeated.1).copied().collect(),
-                    left.2.union(&repeated.2).copied().collect(),
-                ),
-                (
-                    repeated.1.iter().copied().collect(),
-                    repeated.2.iter().copied().collect(),
-                ),
+                left.1.iter().copied().collect(),
+                left.2.iter().copied().collect(),
             ),
-            &repeated.0,
-        ) else {
-            panic!();
-        };
+            (
+                left.1.union(&repeated.1).copied().collect(),
+                left.2.union(&repeated.2).copied().collect(),
+            ),
+            (
+                repeated.1.iter().copied().collect(),
+                repeated.2.iter().copied().collect(),
+            ),
+        ),
+        &repeated.0,
+    ) {
         assert_eq!(
             err.to_string(),
             "StampMerge: merged action set must be the product of left and right action sets"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -749,61 +729,53 @@ fn unmerge_binds_its_sets() {
     let carol_tachygrams: TachygramSetPoly = carol.2.iter().copied().collect();
     let mut wrong_dividend_actions = valid.clone();
     wrong_dividend_actions.0.0 = carol_actions.clone();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_dividend_actions)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_dividend_actions) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: dividend action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
     let mut wrong_divisor_actions = valid.clone();
     wrong_divisor_actions.2.0 = carol_actions;
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_divisor_actions) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_divisor_actions) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: divisor action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
     let mut wrong_dividend_tachygrams = valid.clone();
     wrong_dividend_tachygrams.0.1 = carol_tachygrams.clone();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_dividend_tachygrams)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_dividend_tachygrams) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: dividend tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
     let mut wrong_divisor_tachygrams = valid.clone();
     wrong_divisor_tachygrams.2.1 = carol_tachygrams;
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_divisor_tachygrams)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_divisor_tachygrams) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: divisor tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
     let mut wrong_action_quotient = valid.clone();
     wrong_action_quotient.1.0 = valid.2.0.clone();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_action_quotient) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_action_quotient) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets"
         );
+    } else {
+        panic!();
     }
     let alice_tachygram = *alice.2.first().unwrap();
     let bob_tachygram = *bob.2.first().unwrap();
@@ -815,16 +787,14 @@ fn unmerge_binds_its_sets() {
         .filter(|&tachygram| tachygram != alice_tachygram)
         .chain([bob_tachygram])
         .collect();
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_tachygram_quotient)
-        else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = unmerge(rng, wrong_tachygram_quotient) {
         assert_eq!(
             err.to_string(),
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient \
          tachygram sets"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -985,107 +955,100 @@ fn fee_fuse_rejects_corruptions() {
     };
     let honest_left = || (left_actions.clone(), left_tachygrams.clone());
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            (output_sets.0.clone(), left_tachygrams.clone()),
-            output_sets.clone(),
-            fee_sets.clone(),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        (output_sets.0.clone(), left_tachygrams.clone()),
+        output_sets.clone(),
+        fee_sets.clone(),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: left action accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            (left_actions.clone(), output_sets.1.clone()),
-            output_sets.clone(),
-            fee_sets.clone(),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        (left_actions.clone(), output_sets.1.clone()),
+        output_sets.clone(),
+        fee_sets.clone(),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: left tachygram accumulator must commit to header commit"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            excess,
-            honest_left(),
-            output_sets.clone(),
-            fee_sets.clone(),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        excess,
+        honest_left(),
+        output_sets.clone(),
+        fee_sets.clone(),
+    ) {
         assert_eq!(err.to_string(), "FeeFuse: change is out of range");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            honest_left(),
-            output_sets.clone(),
-            (other_fee_sets.0.clone(), fee_sets.1.clone()),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        honest_left(),
+        output_sets.clone(),
+        (other_fee_sets.0.clone(), fee_sets.1.clone()),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: fee action set does not commit to the fee digest"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            honest_left(),
-            output_sets.clone(),
-            (fee_sets.0.clone(), other_fee_sets.1),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        honest_left(),
+        output_sets.clone(),
+        (fee_sets.0.clone(), other_fee_sets.1),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: fee tachygram set does not commit to the fee change note"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            honest_left(),
-            (other_output_sets.0.clone(), output_sets.1.clone()),
-            fee_sets.clone(),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        honest_left(),
+        (other_output_sets.0.clone(), output_sets.1.clone()),
+        fee_sets.clone(),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: output action set must be the product of left and fee action sets"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
-            rng,
-            fee,
-            honest_left(),
-            (output_sets.0, other_output_sets.1),
-            fee_sets,
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
+        rng,
+        fee,
+        honest_left(),
+        (output_sets.0, other_output_sets.1),
+        fee_sets,
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeFuse: output tachygram set must be the product of left and fee tachygram sets"
         );
+    } else {
+        panic!();
     }
 }
 
@@ -1106,42 +1069,39 @@ fn fee_seed_rejects_corruptions() {
         ..seed_note
     };
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
-            rng,
-            (
-                funded,
-                seed_anchor,
-                seed_actions.clone(),
-                seed_tachygrams.clone(),
-            ),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
+        rng,
+        (
+            funded,
+            seed_anchor,
+            seed_actions.clone(),
+            seed_tachygrams.clone(),
+        ),
+    ) {
         assert_eq!(err.to_string(), "FeeSeed: maximum fee must be zero");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
-            rng,
-            (seed_note, seed_anchor, other_seed_actions, seed_tachygrams),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
+        rng,
+        (seed_note, seed_anchor, other_seed_actions, seed_tachygrams),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeSeed: fee action set does not commit to the fee digest"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
-            rng,
-            (seed_note, seed_anchor, seed_actions, other_seed_tachygrams),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fee_seed(
+        rng,
+        (seed_note, seed_anchor, seed_actions, other_seed_tachygrams),
+    ) {
         assert_eq!(
             err.to_string(),
             "FeeSeed: fee tachygram set does not commit to the fee change note"
         );
+    } else {
+        panic!();
     }
 }

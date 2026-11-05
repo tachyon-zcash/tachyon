@@ -106,44 +106,40 @@ fn summary_steps_reject_corruptions() {
         witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
     let dropped = stamp_a.iter().copied().collect::<TachygramSetPoly>();
 
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &[]),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
+        rng,
+        summary::SummarySeed,
+        witness::summary_seed(((), ()), start, epoch, &[]),
+    ) {
         assert_eq!(err.to_string(), "invalid anchor step");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = advance(
-            rng,
-            witness::summary_advance((*seeded.data(), ()), &stamp_a, &[]),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = advance(
+        rng,
+        witness::summary_advance((*seeded.data(), ()), &stamp_a, &[]),
+    ) {
         assert_eq!(err.to_string(), "invalid anchor step");
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = advance(
-            rng,
-            witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-        ) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = advance(
+        rng,
+        witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
+    ) {
         assert_eq!(
             err.to_string(),
             "SummaryAdvance: accumulator does not match header"
         );
+    } else {
+        panic!();
     }
-    {
-        let Err(ragu_core::Error::InvalidWitness(err)) = advance(rng, (acc, dropped, stamp)) else {
-            panic!();
-        };
+    if let Err(ragu_core::Error::InvalidWitness(err)) = advance(rng, (acc, dropped, stamp)) {
         assert_eq!(
             err.to_string(),
             "SummaryAdvance: extended accumulator must fold the stamp"
         );
+    } else {
+        panic!();
     }
 }
