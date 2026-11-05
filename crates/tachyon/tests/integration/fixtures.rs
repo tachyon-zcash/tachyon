@@ -89,8 +89,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
-        alloc::vec![],
-        alloc::vec![plan],
+        vec![],
+        vec![plan],
         WalletSim::new(shared_sk()).random_note(0),
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
@@ -161,8 +161,8 @@ pub fn build_autonome<RNG: CryptoRng>(
     wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(spend_note, spendable_pcd)],
-        alloc::vec![output_note],
+        vec![(spend_note, spendable_pcd)],
+        vec![output_note],
     )
 }
 
@@ -282,7 +282,7 @@ pub fn random_block_with<RNG: CryptoRng>(
         .map(|cms| cms.iter().map(|&cm| Tachygram::from(cm)).collect())
         .collect();
     stamps.extend(
-        iter::repeat_with(|| alloc::vec![Tachygram::random(rng)]).take(n_stamps - stamps_cms.len()),
+        iter::repeat_with(|| vec![Tachygram::random(rng)]).take(n_stamps - stamps_cms.len()),
     );
     stamps
 }
@@ -1153,13 +1153,9 @@ impl WalletSim {
         range: &Pcd<delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
         let (_, start, _, last) = *range.data();
+        let mk = self.pak.nk.derive_note_private(note.psi);
         (u32::from(start)..=u32::from(last))
-            .map(|epoch| {
-                self.pak
-                    .nk
-                    .derive_note_private(note.psi)
-                    .derive_nullifier(EpochIndex::new(epoch))
-            })
+            .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
             .collect()
     }
 
@@ -1199,6 +1195,7 @@ impl WalletSim {
             return pcd.clone();
         }
         let secret = self.secret_pcd(rng, note);
+        let mk = self.pak.nk.derive_note_private(note.psi);
 
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
@@ -1218,20 +1215,10 @@ impl WalletSim {
                 None => leaf,
                 Some(left) => {
                     let left_nfs: Vec<Nullifier> = (base..u32::from(chunk_start))
-                        .map(|epoch| {
-                            self.pak
-                                .nk
-                                .derive_note_private(note.psi)
-                                .derive_nullifier(EpochIndex::new(epoch))
-                        })
+                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
                         .collect();
                     let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)..=u32::from(chunk_end))
-                        .map(|epoch| {
-                            self.pak
-                                .nk
-                                .derive_note_private(note.psi)
-                                .derive_nullifier(EpochIndex::new(epoch))
-                        })
+                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
                         .collect();
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(
@@ -1307,13 +1294,9 @@ impl WalletSim {
     ) -> Pcd<pool::NoteUnspent> {
         let (_, epoch_start, _, epoch_next, _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
+        let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
-            .map(|epoch| {
-                self.pak
-                    .nk
-                    .derive_note_private(note.psi)
-                    .derive_nullifier(EpochIndex::new(epoch))
-            })
+            .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM
             .fuse(
@@ -1354,18 +1337,14 @@ impl WalletSim {
         target: EpochIndex,
     ) -> Pcd<spendable::NoteSpendable> {
         let (_, epoch, _) = *spendable.data();
+        let mk = self.pak.nk.derive_note_private(note.psi);
         if epoch == target {
             return spendable;
         }
         let unspent = build_unspent_pcd_over_epochs(
             rng,
             pool,
-            |covered| {
-                self.pak
-                    .nk
-                    .derive_note_private(note.psi)
-                    .derive_nullifier(covered)
-            },
+            |covered| mk.derive_nullifier(covered),
             (epoch, target),
         );
         self.lift(rng, spendable, unspent, note)
@@ -1390,12 +1369,8 @@ impl WalletSim {
             .unwrap();
         let creation = BlockHeight::from(creation_height).epoch();
         let bucket = epoch_bucket(rng, pool, creation);
-        let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| {
-            self.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch)
-        });
+        let mk = self.pak.nk.derive_note_private(note.psi);
+        let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| mk.derive_nullifier(epoch));
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let witness =
             witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members);

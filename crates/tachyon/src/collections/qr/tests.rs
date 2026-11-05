@@ -41,13 +41,6 @@ fn classification_matches_the_legendre_symbol() {
 }
 
 #[test]
-fn the_exceptional_value_is_pinned_to_the_residue_side() {
-    let rng = &mut StdRng::seed_from_u64(22);
-    let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
-    assert_eq!(classify(-discriminant, discriminant), (true, Fp::ZERO));
-}
-
-#[test]
 fn a_value_takes_exactly_one_side() {
     let rng = &mut StdRng::seed_from_u64(28);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));

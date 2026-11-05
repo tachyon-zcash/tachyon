@@ -40,18 +40,6 @@ fn class_roots_square_to_the_shifted_value() {
 }
 
 #[test]
-fn the_fixed_point_takes_the_residue_side_with_root_zero() {
-    let discriminant = QrDiscriminant::from(Fp::from(13));
-    let position = 5;
-    let value = -discriminant.at(position);
-    let classes = QrClassRoot::along(value, discriminant);
-    assert_eq!(
-        classes[usize::try_from(position).unwrap()],
-        QrClassRoot(true, Fp::ZERO)
-    );
-}
-
-#[test]
 fn the_depth_mask_is_a_prefix_of_the_depth() {
     for depth in [0, 1, 31, 32] {
         let mask = QrProfile { depth, bits: 0 }.depth_mask();

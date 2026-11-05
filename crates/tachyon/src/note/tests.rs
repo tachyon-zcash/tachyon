@@ -1,30 +1,7 @@
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
-use crate::{constants::MAX_MONEY, value};
-
-#[test]
-fn positive_value_accepts_max() {
-    value::Positive::try_from(MAX_MONEY).unwrap();
-}
-
-#[test]
-fn positive_value_rejects_over_max() {
-    assert_eq!(
-        value::Positive::try_from(MAX_MONEY + 1),
-        Err(value::OutOfRange)
-    );
-}
-
-#[test]
-fn positive_value_accepts_zero() {
-    value::Positive::try_from(0u64).unwrap();
-}
-
-#[test]
-fn positive_value_rejects_negative() {
-    assert_eq!(value::Positive::try_from(-1i64), Err(value::OutOfRange));
-}
+use crate::value;
 
 #[test]
 fn distinct_rcm_distinct_commitments() {

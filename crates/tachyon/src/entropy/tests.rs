@@ -5,8 +5,8 @@ use crate::{digest::poseidon, note, primitives::effect};
 
 #[test]
 fn spend_and_output_randomizers_differ() {
-    let mut rng = StdRng::seed_from_u64(100);
-    let theta = ActionEntropy::random(&mut rng);
+    let rng = &mut StdRng::seed_from_u64(0);
+    let theta = ActionEntropy::random(rng);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
@@ -17,9 +17,9 @@ fn spend_and_output_randomizers_differ() {
 
 #[test]
 fn randomizer_depends_on_theta() {
-    let mut rng = StdRng::seed_from_u64(101);
-    let theta_a = ActionEntropy::random(&mut rng);
-    let theta_b = ActionEntropy::random(&mut rng);
+    let rng = &mut StdRng::seed_from_u64(0);
+    let theta_a = ActionEntropy::random(rng);
+    let theta_b = ActionEntropy::random(rng);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
@@ -29,8 +29,8 @@ fn randomizer_depends_on_theta() {
 
 #[test]
 fn randomizer_embeds_the_poseidon_output() {
-    let mut rng = StdRng::seed_from_u64(102);
-    let theta = ActionEntropy::random(&mut rng);
+    let rng = &mut StdRng::seed_from_u64(0);
+    let theta = ActionEntropy::random(rng);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
     let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
