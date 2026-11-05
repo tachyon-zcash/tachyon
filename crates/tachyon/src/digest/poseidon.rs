@@ -209,16 +209,16 @@ lazy_static! {
     });
 }
 
-/// Native bridge digest using the two fixed R<13> nested generators.
+/// Native bridge hash using the two fixed R<13> nested generators.
 ///
 /// # Panics
 ///
 /// Panics if `point` is the identity.
 #[expect(
     clippy::expect_used,
-    reason = "nonidentity commitment has a bridge digest"
+    reason = "nonidentity commitment has a bridge hash"
 )]
-pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
+pub(crate) fn bridge_hash(point: EqAffine) -> (Fp, Fp) {
     let (x, y) = point
         .coordinates()
         .expect("commitment must not be the identity point");
@@ -226,7 +226,7 @@ pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
     (first * x + second * y)
         .to_affine()
         .coordinates()
-        .expect("bridge digest must not be the identity point")
+        .expect("bridge hash must not be the identity point")
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
@@ -239,10 +239,10 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (digest_x, digest_y) = commitment_digest(tgs);
+    let (bridge_hash_x, bridge_hash_y) = bridge_hash(tgs);
     hash::<4>(
         ANCHOR_STAMP_DOMAIN,
-        [anchor_prev, epoch, digest_x, digest_y],
+        [anchor_prev, epoch, bridge_hash_x, bridge_hash_y],
     )
 }
 
@@ -264,7 +264,7 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (digest_x, digest_y) = commitment_digest(contents);
+    let (bridge_hash_x, bridge_hash_y) = bridge_hash(contents);
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -274,8 +274,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            digest_x,
-            digest_y,
+            bridge_hash_x,
+            bridge_hash_y,
         ],
     )
 }

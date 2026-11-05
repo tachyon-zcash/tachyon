@@ -781,7 +781,11 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let header = encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        for (actual, expected) in header.contents_digest.iter().zip(oracles.bridge_hash()) {
+        for (actual, expected) in header
+            .contents_bridge_hash
+            .iter()
+            .zip(oracles.bridge_hash())
+        {
             actual.enforce_equal(dr, expected)?;
         }
         Ok(((left_encoded, right_encoded, encoded), data, aux))
