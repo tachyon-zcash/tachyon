@@ -16,12 +16,10 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, fee_digests, mock_sighash, mock_wtxid,
+    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid,
     random_block, shared_sk,
 };
 
-/// Removing one contributor from an aggregate leaves a stamp that covers the
-/// others.
 #[test]
 fn unmerge_removes_one_contributor() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -96,10 +94,6 @@ fn unmerge_removes_one_contributor() {
         .unwrap();
 }
 
-/// The quotient keeps the dividend's fee. Dividing `B` out of `B` merged into
-/// `A` undoes the merge, leaving a stamp that verifies on `A`. Dividing `A`
-/// out instead leaves `A`'s fee on a stamp covering `B`, which fails on `B`
-/// and verifies once merged into `C`'s stamp at `C`'s fee.
 #[test]
 fn unmerge_keeps_the_dividend_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -222,9 +216,6 @@ fn unmerge_keeps_the_dividend_fee() {
         .unwrap();
 }
 
-/// Sub-aggregate boundaries do not bound removal. Merging `C`, the complement
-/// of a mined `B·C`, into `A·B` and dividing `B·C` out leaves `A`, though no
-/// merge produced `B·C` as a part of `(A·B)·C`.
 #[test]
 fn unmerge_by_a_divisor_across_merge_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -307,13 +298,11 @@ fn unmerge_by_a_divisor_across_merge_boundaries() {
         .unwrap();
 }
 
-/// A divisor proved at an earlier anchor divides only once lifted to the
-/// dividend's anchor.
 #[test]
 fn unmerge_by_a_lifted_divisor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let bob = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
@@ -390,8 +379,6 @@ fn unmerge_by_a_lifted_divisor() {
         .unwrap();
 }
 
-/// Dividing a stamp by itself proves a stamp over no leaves, which no bundle
-/// covers.
 #[test]
 fn unmerge_by_itself_leaves_no_leaves() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -432,9 +419,6 @@ fn unmerge_by_itself_leaves_no_leaves() {
     };
 }
 
-/// A divisor holding some of one bundle's leaves splits it. The divisor must
-/// carry the bundle's fee, so the quotient proves over the kept action alone,
-/// and the bundle no longer verifies.
 #[test]
 fn unmerge_splitting_a_bundle() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -504,9 +488,6 @@ fn unmerge_splitting_a_bundle() {
     };
 }
 
-/// `StampUnmerge` divides `A·B` by `B` with honest operands. It binds the
-/// dividend and divisor sets to their headers, and rejects a quotient whose
-/// product with the divisor is not the dividend.
 #[test]
 fn unmerge_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -536,25 +517,41 @@ fn unmerge_binds_its_sets() {
         .descriptors()
         .chain(bob.descriptors())
         .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests([alice.fee_descriptor(), bob.fee_descriptor()]))
+        .chain(
+            [alice.fee_descriptor(), bob.fee_descriptor()]
+                .into_iter()
+                .map(|fee| fee.digest().unwrap()),
+        )
         .collect();
     let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
     let alice_actions: ActionSetPoly = alice
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests([alice.fee_descriptor()]))
+        .chain(
+            [alice.fee_descriptor()]
+                .into_iter()
+                .map(|fee| fee.digest().unwrap()),
+        )
         .collect();
     let alice_tachygrams: TachygramSetPoly = alice.stamp.tachygrams.iter().copied().collect();
     let bob_actions: ActionSetPoly = bob
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests([bob.fee_descriptor()]))
+        .chain(
+            [bob.fee_descriptor()]
+                .into_iter()
+                .map(|fee| fee.digest().unwrap()),
+        )
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
     let carol_actions: ActionSetPoly = carol
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(fee_digests([carol.fee_descriptor()]))
+        .chain(
+            [carol.fee_descriptor()]
+                .into_iter()
+                .map(|fee| fee.digest().unwrap()),
+        )
         .collect();
     let carol_tachygrams: TachygramSetPoly = carol.stamp.tachygrams.iter().copied().collect();
 
@@ -595,11 +592,8 @@ fn unmerge_binds_its_sets() {
     wrong_divisor_actions.2.0 = carol_actions;
     let mut wrong_divisor_tachygrams = valid.clone();
     wrong_divisor_tachygrams.2.1 = carol_tachygrams;
-    // The action quotient removes A's leaves instead of B's.
     let mut wrong_action_quotient = valid.clone();
     wrong_action_quotient.1.0 = bob_actions;
-    // The tachygram quotient removes one of A's tachygrams in place of one of
-    // B's, under an honest action quotient.
     let alice_tachygram = *alice.stamp.tachygrams.first().unwrap();
     let bob_tachygram = *bob.stamp.tachygrams.first().unwrap();
     let mut wrong_tachygram_quotient = valid;

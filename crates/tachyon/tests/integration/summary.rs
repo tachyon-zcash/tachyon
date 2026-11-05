@@ -1,5 +1,3 @@
-//! The `Summary` accumulator over a run of stamps.
-
 extern crate alloc;
 
 use alloc::string::ToString as _;
@@ -163,7 +161,6 @@ fn summary_advance_rejects_forged_extension() {
         )
         .unwrap();
 
-    // The stamp is folded into the anchor but dropped from the accumulator.
     let (acc, _extended, stamp) =
         witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
     let forged = stamp_a.iter().copied().collect::<TachygramSetPoly>();
@@ -184,8 +181,6 @@ fn summary_advance_rejects_forged_extension() {
     }
 }
 
-/// A wrong seed epoch is not detected in-step; it lands off the published
-/// chain.
 #[test]
 fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
     let rng = &mut StdRng::seed_from_u64(0);

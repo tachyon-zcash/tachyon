@@ -1,5 +1,3 @@
-//! Evidence trees: folding sealed QR buckets under one root and replaying them.
-
 use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
@@ -14,19 +12,12 @@ use zcash_tachyon::{
 
 use crate::{
     fixtures::{
-        EvidenceLeaf, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
+        EvidenceLeaf, PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree,
         build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
     },
     qr::{EPOCH_MEMBERS, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch},
 };
 
-/// One sealed bucket as the smallest tree that holds it: the bucket repeated
-/// across one node's leaves.
-fn tree_of(rng: &mut StdRng, bucket: QrBucketEntry) -> Pcd<evidence::EvidenceTree> {
-    build_evidence_tree(rng, vec![bucket]).pcd
-}
-
-/// Pair two trees as half a node.
 fn pair_trees(
     rng: &mut StdRng,
     left: Pcd<evidence::EvidenceTree>,
@@ -37,7 +28,6 @@ fn pair_trees(
         .map(|(pair, ())| pair)
 }
 
-/// Join four trees under a fresh node, two pairs at a time.
 fn fuse_trees(
     rng: &mut StdRng,
     left: Pcd<evidence::EvidenceTreePair>,
@@ -48,8 +38,6 @@ fn fuse_trees(
         .map(|(tree, ())| tree)
 }
 
-/// Both joins check the same four fields, so a network mismatch is rejected
-/// whether the two trees meet at a pair or one level up at a node.
 fn assert_both_joins_reject(
     rng: &mut StdRng,
     left: Pcd<evidence::EvidenceTree>,
@@ -74,7 +62,6 @@ fn assert_both_joins_reject(
     }
 }
 
-/// Descend `tree` along one leaf's path.
 fn descend_to_leaf(
     rng: &mut StdRng,
     tree: Pcd<evidence::EvidenceTree>,
@@ -97,8 +84,6 @@ fn descend_to_leaf(
     node
 }
 
-/// Replay one leaf of `tree` under a witnessed preimage, whatever the tree
-/// actually holds there.
 fn open_leaf(
     rng: &mut StdRng,
     tree: Pcd<evidence::EvidenceTree>,
@@ -160,9 +145,6 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     }
 }
 
-/// Five buckets pad to sixteen leaves by repeating the last, so the tree has
-/// two levels of nodes and the padding slots hold clones. Every leaf replays a
-/// real bucket: its own, or the last for a padding slot.
 #[test]
 fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -203,8 +185,6 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     }
 }
 
-/// The tree is transparent to everything downstream: a replayed bucket starts
-/// the same segment the sealed one does, and the wallet binds it.
 #[test]
 fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -221,7 +201,12 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
         (Anchor::default(), pool.block(epoch0.last_block()).anchor()),
         EPOCH_MEMBERS,
         2,
-        Fp::from(user.nf_at(&note, epoch0)),
+        Fp::from(
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch0),
+        ),
         Anchor::from(Fp::ZERO),
     );
     let sealed = *bucket.pcd.data();
@@ -269,12 +254,13 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
         final0,
     );
 
-    let (left, right) = (tree_of(rng, first), tree_of(rng, second));
+    let (left, right) = (
+        build_evidence_tree(rng, vec![first]).pcd,
+        build_evidence_tree(rng, vec![second]).pcd,
+    );
     assert_both_joins_reject(rng, left, right, "inputs cover different epochs");
 }
 
-/// Two routing networks over one epoch are two trees. Their buckets share
-/// every field but the discriminant, and the fuse refuses to join them.
 #[test]
 fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -302,7 +288,10 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     );
     assert_ne!(first.pcd.data().3, second.pcd.data().3);
 
-    let (left, right) = (tree_of(rng, first), tree_of(rng, second));
+    let (left, right) = (
+        build_evidence_tree(rng, vec![first]).pcd,
+        build_evidence_tree(rng, vec![second]).pcd,
+    );
     assert_both_joins_reject(
         rng,
         left,
@@ -311,8 +300,6 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     );
 }
 
-/// Chaining is not fusing. A bucket over a prefix of the epoch shares its
-/// opening anchor and nothing else, and the tree refuses to span both.
 #[test]
 fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -341,7 +328,10 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
         Anchor::from(Fp::ZERO),
     );
 
-    let (left, right) = (tree_of(rng, whole), tree_of(rng, short));
+    let (left, right) = (
+        build_evidence_tree(rng, vec![whole]).pcd,
+        build_evidence_tree(rng, vec![short]).pcd,
+    );
     assert_both_joins_reject(rng, left, right, "inputs close at different anchors");
 }
 
@@ -368,8 +358,6 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
         final0,
     );
 
-    // An invented preceding anchor gives an epoch-one opening the chain never
-    // produced; the seal takes it, since the opening matches its witness.
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
     let fake_prev = fake_anchor_final_prev.next_epoch(epoch1).unwrap();
     let members = [Tachygram::random(rng)];
@@ -389,12 +377,13 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
         fake_anchor_final_prev,
     );
 
-    let (left, right) = (tree_of(rng, genuine), tree_of(rng, elsewhere));
+    let (left, right) = (
+        build_evidence_tree(rng, vec![genuine]).pcd,
+        build_evidence_tree(rng, vec![elsewhere]).pcd,
+    );
     assert_both_joins_reject(rng, left, right, "inputs open at different anchors");
 }
 
-/// Admitting two buckets at once checks the same four fields the pair fuse
-/// does, since it admits both buckets as leaves of one pair.
 #[test]
 fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -440,7 +429,6 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     }
 }
 
-/// A cap raises the root and leaves every other field alone.
 #[test]
 fn evidence_tree_cap_is_transparent_to_a_descent() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -479,10 +467,6 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
     assert_ne!(raised.4, root);
 }
 
-/// The leaf binds the profile alongside the contents, so a real bucket cannot
-/// be replayed under another profile. That is the forgery the binding exists
-/// for: under the tested value's own profile the class fold would pass and the
-/// opening would find nothing.
 #[test]
 fn evidence_tree_open_rejects_a_forged_leaf() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -587,9 +571,6 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
     }
 }
 
-/// A node is not a leaf. Stopping a descent one level short leaves an interior
-/// node on the header. Leaf and node digests use different domains,
-/// `Tachyon-QrBucket` and `Tachyon-EvidNode`.
 #[test]
 fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
     let rng = &mut StdRng::seed_from_u64(0);

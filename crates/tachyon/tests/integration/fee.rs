@@ -22,21 +22,9 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    forge_overlapping_merge, mock_sighash, mock_wtxid, random_block_with, shared_sk,
+    forge_overlapping_merge, mock_sighash, mock_wtxid, random_block, random_block_with, shared_sk,
     stamp_coverage,
 };
-
-fn zat(amount: u64) -> value::Positive {
-    value::Positive::try_from(amount).unwrap()
-}
-
-fn verify_alone(
-    rng: &mut StdRng,
-    bundle: &Bundle<ProofStamp>,
-    sighash: &[u8; 32],
-) -> Result<(), VerificationError> {
-    bundle.verify(rng, sighash, &mock_wtxid(bundle).into(), &[])
-}
 
 fn merge_side(
     bundle: &Bundle<ProofStamp>,
@@ -54,8 +42,6 @@ fn merge_side(
     )
 }
 
-/// A signed output-only bundle whose genuine `OutputAction` stamp has no fee
-/// applied, carrying the coverage of its action alone.
 fn fee_less_output_bundle(
     rng: &mut StdRng,
     wallet: &WalletSim,
@@ -112,14 +98,12 @@ fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
     )
 }
 
-/// `FeeFuse` binds the left, fee and output sets to its header, and rejects
-/// each substituted set polynomial.
 #[test]
 fn fee_fuse_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
-    let anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     let left = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
 
     let action_digests: BTreeSet<ActionDigest> = left
@@ -147,7 +131,7 @@ fn fee_fuse_binds_its_sets() {
         witness::fee_fuse(
             (stamp_header, ()),
             max_fee_note,
-            zat(fee),
+            value::Positive::try_from(fee).unwrap(),
             &action_digests,
             &left.stamp.tachygrams,
         )
@@ -237,7 +221,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let sighash = mock_sighash(signed.commitment());
     let prove = |prove_rng: &mut StdRng, fee| {
         bundle_plan
-            .stamp_plan(anchor, zat(fee))
+            .stamp_plan(anchor, value::Positive::try_from(fee).unwrap())
             .prove(prove_rng, &wallet.pak, spend_pcds.clone())
             .map(|proved| signed.clone().stamp(proved))
     };
@@ -261,11 +245,11 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let mut excess_witness = witness::fee_fuse(
         (stamp_header, ()),
         max_fee_note,
-        zat(300),
+        value::Positive::try_from(300).unwrap(),
         &action_digests,
         &zero.stamp.tachygrams,
     );
-    excess_witness.1 = zat(301);
+    excess_witness.1 = value::Positive::try_from(301).unwrap();
     if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
         rng,
         FeeFuse,
@@ -291,7 +275,9 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         assert_eq!(bundle.binding_sig, signed.binding_sig, "fee {fee}");
         assert_eq!(bundle.stamp.tachygrams.len(), 2 * 2 + 1, "fee {fee}");
 
-        verify_alone(rng, &bundle, &sighash).unwrap();
+        bundle
+            .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
+            .unwrap();
         auth_digests.insert(bundle.auth_digest());
     }
     assert_eq!(auth_digests.len(), 3);
@@ -314,7 +300,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             witness::fee_fuse(
                 (header, ()),
                 max_fee_note,
-                zat(0),
+                value::Positive::try_from(0).unwrap(),
                 &digests,
                 &once.stamp.tachygrams,
             ),
@@ -334,13 +320,17 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         ..once
     };
 
-    let mismatch = verify_alone(rng, &twice, &sighash).unwrap_err();
+    let mismatch = twice
+        .verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
+        .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
         panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
     };
 
     twice.stamp.coverage = coverage_of(&[twice.as_dyn()]);
-    let arity = verify_alone(rng, &twice, &sighash).unwrap_err();
+    let arity = twice
+        .verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
+        .unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
         panic!("expected Tachygrams(WrongArity), got {arity:?}");
     };
@@ -353,7 +343,6 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     assert!(!twice.verify_proof(rng, &published_digests).unwrap());
 }
 
-/// A fee descriptor shared by two covered bundles is rejected, even forged.
 #[test]
 fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -364,7 +353,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
     let mut aggregate = signed.stamp(
         bundle_plan
-            .stamp_plan(anchor, zat(120))
+            .stamp_plan(anchor, value::Positive::try_from(120).unwrap())
             .prove(rng, &wallet.pak, spend_pcds)
             .unwrap(),
     );
@@ -427,30 +416,30 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     }
 }
 
-/// A bundle whose stamp omits its fee fails verification at coverage, at
-/// tachygram arity once the coverage is forged, and at the proof once the fee
-/// change note is forged into the tachygrams.
 #[test]
 fn verify_rejects_a_stamp_without_its_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
-    let anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     let mut fee_less = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let sighash = mock_sighash(fee_less.commitment());
 
-    let mismatch = verify_alone(rng, &fee_less, &sighash).unwrap_err();
+    let mismatch = fee_less
+        .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
+        .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
         panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
     };
 
     fee_less.stamp.coverage = coverage_of(&[fee_less.as_dyn()]);
-    let arity = verify_alone(rng, &fee_less, &sighash).unwrap_err();
+    let arity = fee_less
+        .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
+        .unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
         panic!("expected Tachygrams(WrongArity), got {arity:?}");
     };
 
-    // At a zero fee the fee change note is the max fee note itself.
     fee_less
         .stamp
         .tachygrams
@@ -462,13 +451,14 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let disproved = verify_alone(rng, &fee_less, &sighash).unwrap_err();
+    let disproved = fee_less
+        .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
+        .unwrap_err();
     let VerificationError::Disproved = disproved else {
         panic!("expected Disproved, got {disproved:?}");
     };
 }
 
-/// A fee-bearing aggregate merges a fee-bearing adjunct and verifies.
 #[test]
 fn fee_applies_over_a_fee_bearing_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -486,13 +476,13 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     );
     let adjunct = adjunct_signed.stamp(
         adjunct_plan
-            .stamp_plan(anchor, zat(40))
+            .stamp_plan(anchor, value::Positive::try_from(40).unwrap())
             .prove(rng, &wallet.pak, vec![])
             .unwrap(),
     );
 
     let aggregate_stamp = bundle_plan
-        .stamp_plan(anchor, zat(120))
+        .stamp_plan(anchor, value::Positive::try_from(120).unwrap())
         .prove(rng, &wallet.pak, spend_pcds)
         .unwrap();
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
@@ -510,7 +500,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .unwrap();
     let aggregate = signed.stamp(merged_stamp);
 
-    assert_eq!(aggregate.stamp.fee, zat(120));
+    assert_eq!(aggregate.stamp.fee, value::Positive::try_from(120).unwrap());
     assert!(
         adjunct
             .stamp
@@ -523,7 +513,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     );
     let final_id = mock_wtxid(&aggregate);
     let stripped = adjunct.strip(final_id);
-    assert_eq!(stripped.stamp.fee, zat(40));
+    assert_eq!(stripped.stamp.fee, value::Positive::try_from(40).unwrap());
     aggregate
         .verify(rng, &sighash, &final_id.into(), &[&stripped])
         .unwrap();
@@ -536,7 +526,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
     let notes: Vec<Note> = [1000, 900, 800, 700]
         .map(|value| wallet.random_note(value))
         .into();
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let commitments: Vec<_> = notes.iter().map(Note::commitment).collect();
     pool.mine(random_block_with(rng, &[commitments], 1));
     let [mut left, left_auto, mut right, right_auto] = [0, 1, 2, 3].map(|i| {
@@ -549,7 +539,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             wallet.random_note(100),
         );
         let stamp = plan
-            .stamp_plan(anchor, zat(40))
+            .stamp_plan(anchor, value::Positive::try_from(40).unwrap())
             .prove(rng, &wallet.pak, pcds)
             .unwrap();
         signed.stamp(stamp)
@@ -596,31 +586,33 @@ fn fee_bearing_aggregates_merge_and_lift() {
         .unwrap();
 }
 
-/// A zero-action bundle's `FeeSeed` stamp verifies and survives a round-trip.
 #[test]
 fn zero_action_fee_seed_round_trips_and_verifies() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     let bundle = wallet.autonome(rng, anchor, vec![], vec![]);
     let sighash = mock_sighash(bundle.commitment());
     assert_eq!(bundle.actions.len(), 0);
     assert_eq!(bundle.stamp.tachygrams.len(), 1);
     assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
-    verify_alone(rng, &bundle, &sighash).unwrap();
+    bundle
+        .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
+        .unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    verify_alone(rng, &decoded, &sighash).unwrap();
+    decoded
+        .verify(rng, &sighash, &mock_wtxid(&decoded).into(), &[])
+        .unwrap();
 }
 
-/// An innocent's seed stamp absorbs an adjunct, then strips under a parent.
 #[test]
 fn innocent_seed_merges_and_strips() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     let mut innocent = wallet.autonome(rng, anchor, vec![], vec![]);
     let adjunct = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(100)]);
     let (innocent_stamp, innocent_desc, innocent_fees) = merge_side(&innocent, &[]);
@@ -663,17 +655,16 @@ fn innocent_seed_merges_and_strips() {
         .unwrap();
 }
 
-/// `FeeSeed` rejects a nonzero max fee.
 #[test]
 fn fee_seed_rejects_a_nonzero_max_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     let max_fee_note = wallet.random_note(0);
     let valid = witness::fee_seed(((), ()), max_fee_note, anchor);
 
     let mut max_fee = valid;
-    max_fee.0.value = zat(1);
+    max_fee.0.value = value::Positive::try_from(1).unwrap();
     if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(rng, FeeSeed, max_fee) {
         assert_eq!(err.to_string(), "FeeSeed: maximum fee must be zero");
     } else {
@@ -681,14 +672,12 @@ fn fee_seed_rejects_a_nonzero_max_fee() {
     }
 }
 
-/// `FeeSeed` binds each singleton set to the fee digest or the fee change
-/// note, and its output header to those sets and the witnessed anchor.
 #[test]
 fn fee_seed_binds_its_singletons_and_header() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = PoolSim::genesis(rng).anchor();
-    let other_anchor = PoolSim::genesis(rng).anchor();
+    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
+    let other_anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
     assert_ne!(anchor, other_anchor);
     let valid = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
     let other = witness::fee_seed(((), ()), wallet.random_note(0), anchor);

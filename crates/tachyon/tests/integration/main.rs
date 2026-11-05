@@ -17,8 +17,6 @@
     reason = "test code"
 )]
 
-//! Integration tests, exercising the crate through its public surface.
-
 #[cfg(test)]
 mod bundle;
 #[cfg(test)]

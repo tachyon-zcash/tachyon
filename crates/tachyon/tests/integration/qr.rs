@@ -1,6 +1,3 @@
-//! QR epoch evidence: the partition of an epoch's tachygrams and the
-//! `ArbitraryUnspent` lineage born from one bucket.
-
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
@@ -31,10 +28,8 @@ use crate::fixtures::{
     seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
 };
 
-/// The witness of [`qr::QrUnspentInit`].
 type UnspentInitWitness = <qr::QrUnspentInit as Step>::Witness<'static>;
 
-/// Run [`qr::QrUnspentInit`] over `bucket`.
 fn fuse_unspent_init(
     rng: &mut StdRng,
     bucket: Pcd<qr::QrBucket>,
@@ -51,10 +46,8 @@ fn fuse_unspent_init(
         .map(|(unspent, ())| unspent)
 }
 
-/// The witness of [`UnspentLift`].
 type UnspentLiftWitness = <UnspentLift as Step>::Witness<'static>;
 
-/// Run [`UnspentLift`] over `segment` and `bucket`.
 fn fuse_unspent_lift(
     rng: &mut StdRng,
     segment: Pcd<ArbitraryUnspent>,
@@ -66,8 +59,6 @@ fn fuse_unspent_lift(
         .map(|(unspent, ())| unspent)
 }
 
-/// Four blocks of epoch zero, two actions of three tachygrams each; with the
-/// final anchor.
 pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
@@ -77,12 +68,8 @@ pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
     (pool, final_anchor)
 }
 
-/// The members an epoch holds in the pools these tests build: one tachygram
-/// per stamp and one stamp per block, so the whole epoch fits one polynomial
-/// and its partition reaches a bucket spanning it.
 pub(crate) const EPOCH_MEMBERS: usize = EPOCH_SIZE as usize;
 
-/// [`qr_bucket_at`] with a freshly sampled first discriminant.
 pub(crate) fn qr_bucket_for(
     rng: &mut StdRng,
     pool: &PoolSim,
@@ -105,9 +92,6 @@ pub(crate) fn qr_bucket_for(
     )
 }
 
-/// The sealed bucket holding `value` at `depth` levels over the anchor span
-/// `(start, final_anchor)`, routed at `discriminant` and sealed on
-/// `anchor_final_prev`.
 #[expect(clippy::too_many_arguments, reason = "a fixture assembling one bucket")]
 pub(crate) fn qr_bucket_at(
     rng: &mut StdRng,
@@ -135,8 +119,6 @@ pub(crate) fn qr_bucket_at(
     seal_qr_intake(rng, intake, anchor_final_prev)
 }
 
-/// The note's QR segment across a bucket's epoch and out over the crossing,
-/// bound to the note.
 pub(crate) fn qr_epoch_unspent(
     rng: &mut StdRng,
     user: &WalletSim,
@@ -146,7 +128,11 @@ pub(crate) fn qr_epoch_unspent(
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init(
         (*bucket.pcd.data(), ()),
-        user.nf_at(note, epoch).into(),
+        user.pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+            .into(),
         &bucket.members,
     );
     let arbitrary = fuse_unspent_init(rng, bucket.pcd.clone(), witness).unwrap();
@@ -387,8 +373,6 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
         )
         .unwrap();
 
-    // Moving one member across the partition leaves the product intact, so
-    // only the opening at -R separates the two filings.
     let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) =
         members.iter().copied().partition(|&member| {
             member != exceptional && qr::classify(Fp::from(member), Fp::from(discriminant)).0
@@ -414,7 +398,6 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
     }
 }
 
-/// A split at `depth` opens the non-residue side at $-R_{\mathsf{depth}+1}$.
 #[test]
 fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -422,7 +405,6 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         let epoch = EpochIndex::new(3);
         let start = Anchor::random(rng);
         let discriminant = QrDiscriminant::random(rng);
-        // Choose x from R_0 and the selected split depth.
         let value = -Fp::from(discriminant) - Fp::from(u64::from(depth));
         assert_ne!(value, Fp::ZERO);
         let exceptional = Tachygram::from(value);
@@ -452,8 +434,6 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
             )
             .unwrap();
 
-        // Reach the selected depth through honest splits and descents, keeping
-        // the branch containing x rather than fabricating a deeper profile.
         let mut intake = QrIntakeEntry { pcd: root, members };
         for level in 0..depth {
             let side = qr::classify(value, discriminant.at(level)).0;
@@ -473,8 +453,6 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
             )
             .unwrap();
 
-        // Moving only x across the partition leaves the product intact, so
-        // only the opening at -R_{depth+1} separates the two filings.
         let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) =
             intake.members.iter().copied().partition(|member| {
                 *member != exceptional && qr::classify(Fp::from(*member), discriminant.at(depth)).0
@@ -624,8 +602,6 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
     }
 }
 
-/// The interpolant of the other side does not decompose the sibling at its
-/// class, on either side.
 #[test]
 fn qr_side_descend_rejects_a_foreign_interpolant() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -682,8 +658,6 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
     }
 }
 
-/// The quotient of the other side does not complete the sibling's own
-/// interpolant, on either side.
 #[test]
 fn qr_side_descend_rejects_a_foreign_quotient() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -765,8 +739,6 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         )
         .unwrap();
 
-    // File one residue-class member on the non-residue side. The product
-    // still holds, so the split accepts the misfiled partition.
     let (mut short_residue, mut padded_non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
         .iter()
         .copied()
@@ -788,9 +760,6 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         )
         .unwrap();
 
-    // Extracting the short residue child attests the padded sibling, which
-    // holds a residue-class root and so has no non-residue decomposition; the
-    // honest sibling's decomposition is the best a prover can offer.
     let (_, _, interpolant, quotient) =
         witness::qr_side_descend((*sides.data(), ()), &members, true);
     if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
@@ -813,8 +782,6 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         panic!();
     }
 
-    // The padded child is complete for its class, merely impure: its short
-    // sibling is pure, so the extraction passes and carries the stray member.
     let members_without_smuggled: Vec<Tachygram> = members
         .iter()
         .copied()
@@ -841,10 +808,6 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     );
 }
 
-/// A discriminant solved after the challenge. The prover files members on the
-/// residue side arbitrarily, takes any interpolant and quotient, and solves
-/// $u(z)^2 - s(z) \cdot h(z) = z + R$ for $R$ at the challenge the three
-/// commitments alone would give. Only the challenge absorbing $R$ rejects it.
 #[test]
 fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1235,12 +1198,16 @@ fn qr_partition_covers_the_epoch_by_profile() {
     let final_anchor = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::random(rng);
     let published: Vec<Tachygram> = (0..=3)
-        .flat_map(|height| pool.block(BlockHeight(height)).tachygrams())
+        .flat_map(|height| {
+            pool.block(BlockHeight(height))
+                .stamps
+                .iter()
+                .map(|stamp| stamp.1.clone())
+                .collect::<Vec<_>>()
+        })
         .flatten()
         .collect();
 
-    // The epoch's twenty-four members fit one polynomial, so each profile ends
-    // up as a single intake over the whole span.
     let routed = build_qr_partition(
         rng,
         &pool,
@@ -1296,8 +1263,6 @@ fn qr_partition_covers_the_epoch_by_profile() {
     assert_eq!(sorted(covered), sorted(published));
 }
 
-/// A span past what one polynomial holds leaves each profile as a run of
-/// adjacent intakes rather than a single one.
 #[test]
 fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1308,7 +1273,13 @@ fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
     let final_anchor = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::random(rng);
     let published: Vec<Tachygram> = (0..=3)
-        .flat_map(|height| pool.block(BlockHeight(height)).tachygrams())
+        .flat_map(|height| {
+            pool.block(BlockHeight(height))
+                .stamps
+                .iter()
+                .map(|stamp| stamp.1.clone())
+                .collect::<Vec<_>>()
+        })
         .flatten()
         .collect();
     let capacity = 11;
@@ -1394,8 +1365,6 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     for _ in 0..3 {
         pool.mine(random_block(rng, 2, 3));
     }
-    // Opening the span past the epoch's first stamp leaves it rooted on a stamp
-    // anchor, which the epoch domain cannot produce.
     let final_anchor = pool.block(BlockHeight(2)).anchor();
     let discriminant = QrDiscriminant::random(rng);
     let start = pool.block(BlockHeight(0)).anchor();
@@ -1419,9 +1388,6 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     }
 }
 
-/// The seal does not know the epoch's final anchor: an intake that stops
-/// well short of it still seals, and the bucket ends on the crossing out of
-/// the intake's own endpoint, which the pool never published.
 #[test]
 fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1432,7 +1398,6 @@ fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
     let final_anchor = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::random(rng);
 
-    // A six-member capacity chunks the epoch into four roots.
     let routed = build_qr_partition(
         rng,
         &pool,
@@ -1456,9 +1421,6 @@ fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
     );
 }
 
-/// The first discriminant moves how members distribute, not which bucket
-/// holds a value under it: two networks over the same epoch at different first
-/// discriminants each admit the same absent nullifier.
 #[test]
 fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1534,9 +1496,6 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     assert_eq!(elapsed, NfSeqPoly::new(epoch, &[nf]).commit());
 }
 
-/// Every QR bucket ends on the boundary into the next epoch, so two
-/// consecutive epochs' segments abut at the entry anchor and `UnspentFuse`
-/// composes them directly.
 #[test]
 fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1544,7 +1503,6 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    // Fill epoch zero and open epoch one, one stamp per block.
     pool.advance(epoch1.first_block().0 + 1, |_| random_block(rng, 1, 1));
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
 
@@ -1597,8 +1555,6 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
 }
 
-/// The empty bucket of `epoch`, rooted at `anchor` and sealed on
-/// `anchor_final_prev`.
 fn empty_bucket(
     rng: &mut StdRng,
     anchor: Anchor,
@@ -1610,9 +1566,6 @@ fn empty_bucket(
     seal_qr_intake(rng, intake, anchor_final_prev)
 }
 
-/// An epoch that published no stamp seals an empty bucket from its entry
-/// anchor, which is also its final anchor. The bucket ends on the next
-/// epoch's entry anchor, so its segment fuses between its neighbours'.
 #[test]
 fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1620,7 +1573,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    // Fill epoch zero, leave epoch one empty, and open epoch two.
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
     pool.advance(EPOCH_SIZE, |_| Vec::new());
     pool.mine(random_block(rng, 1, 1));
@@ -1678,10 +1630,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
 }
 
-/// An empty intake over an epoch that published stamps seals to a crossing
-/// off the published chain: the stamps' folds lie between the epoch's entry
-/// and final anchors, so the crossing from the entry anchor is not the one
-/// the pool made.
 #[test]
 fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1694,10 +1642,6 @@ fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
     );
 }
 
-/// A note created in epoch zero bootstraps from the bucket holding its `cm`
-/// over its own QR segment, rests at epoch one's entry anchor because the
-/// segment already crossed, lifts through epoch one on ordinary segments, and
-/// binds a spend in epoch two.
 #[test]
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1707,12 +1651,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    // Fill epochs zero and one and open epoch two, one stamp per block.
     pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 1));
 
-    // Two levels down, the note's `cm` and its epoch-zero nullifier take
-    // different paths, so the spendable pairs one bucket against a segment
-    // built over another. Both span the epoch, which is what closes them.
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
     let bucket = qr_bucket_for(
         rng,
@@ -1729,7 +1669,12 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         span,
         EPOCH_MEMBERS,
         2,
-        Fp::from(user.nf_at(&note, epoch0)),
+        Fp::from(
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch0),
+        ),
         Anchor::from(Fp::ZERO),
     );
     assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
@@ -1759,17 +1704,18 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     assert_eq!(
         (nf_current, nf_next),
         (
-            user.nf_at(&note, epoch2),
-            user.nf_at(&note, EpochIndex::new(u32::from(epoch2) + 1))
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch2),
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(EpochIndex::new(u32::from(epoch2) + 1))
         )
     );
 }
 
-/// A short bucket's evidence is unconsumable. The seal performs the boundary
-/// digest of the intake's own last anchor, and for an intake that stopped
-/// inside its epoch that lands on an anchor the pool never published, so the
-/// next epoch's segment, which opens on the published entry anchor, is not
-/// adjacent to the spendable it bootstraps.
 #[test]
 fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let rng = &mut StdRng::seed_from_u64(196);
@@ -1815,15 +1761,18 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
             .all(|entry| entry.3 != unpublished)
     );
 
-    // The next epoch's segment opens on the published entry anchor, which the
-    // short crossing never reaches, so the lift finds nothing adjacent.
     pool.advance(epoch_next.last_block().0 - pool.height().0, |_| {
         random_block(rng, 1, 1)
     });
     let next = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        |covered| user.nf_at(&note, covered),
+        |covered| {
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(covered)
+        },
         (epoch_next, epoch_next.next().unwrap()),
     );
     let bound_next = user.unspent_bind(rng, next, &note);
@@ -1846,7 +1795,6 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    // The note's cm is published nowhere in this pool.
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
 
@@ -1874,8 +1822,6 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     }
 }
 
-/// A bucket sealed short of the epoch opens at the real boundary but closes
-/// inside it, so it cannot pair with the note's whole-epoch segment.
 #[test]
 fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1922,8 +1868,6 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
     }
 }
 
-/// A bucket of the following epoch cannot pair with a segment over the
-/// creation epoch.
 #[test]
 fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1942,7 +1886,12 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
         (Anchor::default(), final0),
         EPOCH_MEMBERS,
         0,
-        Fp::from(user.nf_at(&note, epoch0)),
+        Fp::from(
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch0),
+        ),
         Anchor::from(Fp::ZERO),
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
@@ -1972,8 +1921,6 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     }
 }
 
-/// A bucket sealed over an invented boundary of the same epoch opens
-/// elsewhere than the note's segment.
 #[test]
 fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1992,14 +1939,16 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
         (final0.next_epoch(epoch1).unwrap(), final1),
         EPOCH_MEMBERS,
         0,
-        Fp::from(user.nf_at(&note, epoch1)),
+        Fp::from(
+            user.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch1),
+        ),
         final0,
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
 
-    // The invented preceding anchor gives an epoch-one boundary the chain never
-    // produced; the seal accepts it because the opening matches
-    // `anchor_final_prev`.
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
     let fake_prev = fake_anchor_final_prev.next_epoch(epoch1).unwrap();
     let members = [Tachygram::from(note.commitment())];
@@ -2112,8 +2061,6 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     }
 }
 
-/// A fresh nullifier, its depth-two bucket over a small epoch, and the honest
-/// witness, which is checked to pass before any test tampers with it.
 fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentInitWitness) {
     let (pool, final_anchor) = small_epoch(rng);
     let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
@@ -2153,8 +2100,6 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
     }
 }
 
-/// Positions past the bucket's depth are compared to nothing, but still
-/// tested against the value.
 #[test]
 fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2180,8 +2125,6 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     }
 }
 
-/// The exceptional value $-R_j$ has root zero under either class and is filed
-/// residue-side, so claiming the non-residue side there is refused.
 #[test]
 fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2266,9 +2209,6 @@ fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
     }
 }
 
-/// Recarrying a proof under altered header data exercises the step's own
-/// constraints under mock ragu; a real proof would not authenticate the
-/// altered header.
 fn recarry_bucket(
     bucket: &QrBucketEntry,
     alter: impl FnOnce(&mut <qr::QrBucket as ragu::Header>::Data),
@@ -2278,9 +2218,6 @@ fn recarry_bucket(
     bucket.pcd.proof().clone().carry::<qr::QrBucket>(data)
 }
 
-/// The final epoch has no successor, so there is no crossing to fold and the
-/// seal refuses. Nothing is lost: a spend in the final epoch cannot bind
-/// either.
 #[test]
 fn qr_bucket_seal_refuses_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2321,8 +2258,6 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
     }
 }
 
-/// No seal produces a bucket in the final epoch; a forged one has no next
-/// epoch for the segment's second member, and the init refuses it.
 #[test]
 fn qr_unspent_init_refuses_a_bucket_in_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2348,7 +2283,6 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
         profile.depth = u32::BITS + 1;
     });
     let (_, _, ref mut depth_mask, ..) = witness;
-    // Bypass the constructor's range check to exercise the step's constraint.
     *depth_mask = [true; QrProfile::MAX_DEPTH];
     if let Err(ragu_core::Error::InvalidWitness(err)) =
         fuse_unspent_init(rng, forged, witness.clone())
@@ -2450,9 +2384,6 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     }
 }
 
-/// A cube-root twin of the tested value shares its factor at the challenge the
-/// sequence alone would give. At the root profile the twin passes every
-/// routing check, so only the challenge absorbing `value` rejects it.
 #[test]
 fn qr_unspent_init_rejects_a_twin_value() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2514,10 +2445,6 @@ fn qr_unspent_init_rejects_foreign_contents() {
     }
 }
 
-/// The step reads one bucket's depth, so a router splits only what is over
-/// capacity and its partition is an unbalanced trie: one side sealed at
-/// depth 1 and a leaf under the other side sealed at depth 3 each admit
-/// their own value's segment.
 #[test]
 fn qr_unspent_init_accepts_ragged_depths() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2579,8 +2506,6 @@ fn qr_unspent_init_accepts_ragged_depths() {
     }
 }
 
-/// A bucket at any depth up to the maximum admits the segment, whatever its
-/// bits.
 #[test]
 fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2725,9 +2650,6 @@ fn qr_intake_merge_rejects_different_epochs() {
     }
 }
 
-/// Routing consecutive values: each lands in the bucket of its own profile,
-/// and the buckets together hold every value. A correctness check on
-/// structured input, not a balance measurement.
 #[test]
 fn qr_partition_routes_consecutive_values_by_profile() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2778,16 +2700,12 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     assert_eq!(routed, expected);
 }
 
-/// A pool whose epochs before `epoch` are closed, with `epoch`'s entry block
-/// mined.
 fn pool_through(rng: &mut StdRng, epoch: EpochIndex) -> PoolSim {
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(epoch.first_block().0, |_| random_block(rng, 1, 2));
     pool
 }
 
-/// Lifting epoch one's bucket onto epoch zero's segment yields the segment
-/// the two epochs' segments fuse to.
 #[test]
 fn unspent_lift_appends_one_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2811,7 +2729,6 @@ fn unspent_lift_appends_one_epoch() {
     assert_eq!(*lifted.data(), *fused.data());
 }
 
-/// A lifted segment binds to the note and carries its spendable two epochs on.
 #[test]
 fn unspent_lift_carries_a_spendable() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2819,7 +2736,7 @@ fn unspent_lift_carries_a_spendable() {
     let note = user.random_note(500);
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 2));
     pool.advance(epoch3.first_block().0 - pool.height().0, |_| {
         random_block(rng, 1, 2)
@@ -2827,12 +2744,25 @@ fn unspent_lift_carries_a_spendable() {
 
     let spendable = user.spendable_at(rng, &pool, &note, epoch1);
     let first = epoch_bucket(rng, &pool, epoch1);
-    let segment = qr_bucket_segment(rng, &first, |epoch| user.nf_at(&note, epoch));
+    let segment = qr_bucket_segment(rng, &first, |epoch| {
+        user.pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch)
+    });
     let bucket = epoch_bucket(rng, &pool, epoch2);
     let lift = witness::unspent_lift(
         (*segment.data(), *bucket.pcd.data()),
-        user.nf_at(&note, epoch2).into(),
-        &[user.nf_at(&note, epoch1)],
+        user.pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch2)
+            .into(),
+        &[user
+            .pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(epoch1)],
         &bucket.members,
     );
     let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();
