@@ -726,6 +726,9 @@ fn based_aggregate_with_two_adjuncts() {
     let adjuncts = [&adjunct_a, &adjunct_b];
 
     assert!(becomes_based.is_aggregate());
+    assert!(becomes_based.is_covering(&[&adjunct_a, &adjunct_b]));
+    assert!(!becomes_based.is_covering(&[&adjunct_a]));
+    assert!(!becomes_based.is_covering(&[&adjunct_a, &adjunct_b, &adjunct_a]));
     becomes_based
         .verify(rng, &sighash, &wtxid_bytes, &adjuncts)
         .unwrap();
@@ -1073,179 +1076,39 @@ fn innocent_round_trips_with_nonzero_wtxid() {
 
 #[test]
 fn auth_digest_invariants() {
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-
-        let covering = build_autonome(rng, &wallet, 500, 300);
-        let stripped = stamped.clone().strip(mock_wtxid(&covering));
-
-        assert_eq!(stamped.commitment(), stripped.commitment());
-        assert_ne!(stamped.auth_digest(), stripped.auth_digest());
-    }
-
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let autonome = build_autonome(rng, &wallet, 1000, 700);
-
-        let covering_a = build_autonome(rng, &wallet, 500, 300);
-        let covering_b = build_autonome(rng, &wallet, 800, 600);
-
-        let stripped_aa = autonome.clone().strip(mock_wtxid(&covering_a));
-        let digest_aa = stripped_aa.auth_digest();
-        let stripped_bb = autonome.strip(mock_wtxid(&covering_b));
-        let digest_bb = stripped_bb.auth_digest();
-        assert_ne!(digest_aa, digest_bb);
-
-        let mut stripped_fee = stripped_aa;
-        stripped_fee.stamp.fee =
-            value::Positive::try_from(u64::from(stripped_fee.stamp.fee) + 1).unwrap();
-        assert_ne!(digest_aa, stripped_fee.auth_digest());
-    }
-
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let stamped_direct = stamped.auth_digest();
-        let covering_wtxid = mock_wtxid(&stamped);
-        let erased: TachyonBundle = stamped.into();
-        assert_eq!(erased.auth_digest(), stamped_direct);
-
-        let wallet2 = WalletSim::new(shared_sk());
-        let stripped = build_autonome(rng, &wallet2, 1000, 700).strip(covering_wtxid);
-        let stripped_direct = stripped.auth_digest();
-        let erased_stripped: TachyonBundle = stripped.into();
-        assert_eq!(erased_stripped.auth_digest(), stripped_direct);
-    }
-
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let baseline = stamped.auth_digest();
-        let baseline_commitment = stamped.commitment();
-
-        let mut altered_actions = stamped.clone();
-        altered_actions.stamp.coverage[0] ^= 0x01;
-        assert_eq!(baseline_commitment, altered_actions.commitment());
-        assert_ne!(baseline, altered_actions.auth_digest());
-
-        let mut altered_fee = stamped.clone();
-        altered_fee.stamp.fee =
-            value::Positive::try_from(u64::from(stamped.stamp.fee) + 1).unwrap();
-        assert_eq!(baseline_commitment, altered_fee.commitment());
-        assert_ne!(baseline, altered_fee.auth_digest());
-
-        let mut extra_tachygram = stamped;
-        extra_tachygram
-            .stamp
-            .tachygrams
-            .insert(Tachygram::from(Fp::from(7u64)));
-        assert_eq!(baseline_commitment, extra_tachygram.commitment());
-        assert_ne!(baseline, extra_tachygram.auth_digest());
-    }
-}
-
-#[test]
-fn coverage_check_matches_stamp_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    let (commitment, auth_digest) = (stamped.commitment(), stamped.auth_digest());
+    let erased: TachyonBundle = stamped.clone().into();
+    assert_eq!(erased.auth_digest(), auth_digest);
 
-    let based_spend = wallet.random_note(800);
-    let based_output = wallet.random_note(400);
-    let a_spend = wallet.random_note(1000);
-    let a_output = wallet.random_note(700);
-    let b_spend = wallet.random_note(500);
-    let b_output = wallet.random_note(200);
+    let pointer = stamped.clone().strip(mock_wtxid(&stamped));
+    let repointed = stamped
+        .clone()
+        .strip(AggregateId::try_from([0x11u8; 64]).unwrap());
+    assert_eq!(pointer.commitment(), commitment);
+    assert_ne!(pointer.auth_digest(), auth_digest);
+    assert_ne!(pointer.auth_digest(), repointed.auth_digest());
+    let erased_pointer: TachyonBundle = pointer.clone().into();
+    assert_eq!(erased_pointer.auth_digest(), pointer.auth_digest());
+    let mut refeed = pointer.clone();
+    refeed.stamp.fee = value::Positive::try_from(u64::from(pointer.stamp.fee) + 1).unwrap();
+    assert_ne!(refeed.auth_digest(), pointer.auth_digest());
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(
-        rng,
-        &[
-            vec![based_spend.commitment()],
-            vec![a_spend.commitment()],
-            vec![b_spend.commitment()],
-        ],
-        50,
-    ));
-    let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-
-    let spend_epoch = cm_height.epoch().next().unwrap();
-    let based_sp = wallet.spendable_at(rng, &pool, &based_spend, spend_epoch);
-    let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
-    let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
-    let anchor = based_sp.data().2;
-
-    let mut becomes_based = wallet.autonome(
-        rng,
-        anchor,
-        alloc::vec![(based_spend, based_sp)],
-        alloc::vec![based_output],
-    );
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor,
-        alloc::vec![(a_spend, a_sp)],
-        alloc::vec![a_output],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor,
-        alloc::vec![(b_spend, b_sp)],
-        alloc::vec![b_output],
-    );
-
-    let based_descriptors: BTreeSet<action::Descriptor> = becomes_based
-        .actions
-        .iter()
-        .map(Action::descriptor)
-        .collect();
-    let descriptors_a: BTreeSet<action::Descriptor> =
-        autonome_a.actions.iter().map(Action::descriptor).collect();
-    let descriptors_b: BTreeSet<action::Descriptor> =
-        autonome_b.actions.iter().map(Action::descriptor).collect();
-
-    let stamp_a = autonome_a.stamp.clone();
-    let stamp_b = autonome_b.stamp.clone();
-    let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
-    let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-    let innocent_fees = fees_a.union(&fees_b).copied().collect();
-    let based_fees = BTreeSet::from([becomes_based.fee_descriptor()]);
-
-    let innocent_descriptors: BTreeSet<action::Descriptor> =
-        descriptors_a.union(&descriptors_b).copied().collect();
-    let innocent_stamp = stamp_a
-        .merge(
-            rng,
-            (descriptors_a, fees_a),
-            (stamp_b, descriptors_b, fees_b),
-        )
-        .unwrap();
-
-    let based_stamp = becomes_based
+    let mut coverage = stamped.clone();
+    coverage.stamp.coverage[0] ^= 0x01;
+    let mut fee = stamped.clone();
+    fee.stamp.fee = value::Positive::try_from(u64::from(stamped.stamp.fee) + 1).unwrap();
+    let mut extra = stamped;
+    extra
         .stamp
-        .merge(
-            rng,
-            (based_descriptors, based_fees),
-            (innocent_stamp, innocent_descriptors, innocent_fees),
-        )
-        .unwrap();
-    becomes_based.stamp = based_stamp;
-
-    let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
-    let adjunct_b = autonome_b.strip(mock_wtxid(&becomes_based));
-
-    assert!(becomes_based.is_covering(&[&adjunct_a, &adjunct_b]));
-
-    assert!(!becomes_based.is_covering(&[&adjunct_a]));
-
-    assert!(!becomes_based.is_covering(&[&adjunct_a, &adjunct_b, &adjunct_a]));
+        .tachygrams
+        .insert(Tachygram::from(Fp::from(7u64)));
+    for edited in [coverage, fee, extra] {
+        assert_eq!(edited.commitment(), commitment);
+        assert_ne!(edited.auth_digest(), auth_digest);
+    }
 }
 
 #[test]
