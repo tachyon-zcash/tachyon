@@ -142,18 +142,19 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.4.0 = other.4.0.clone();
+                corrupt.1 = other.1;
                 corrupt
             },
-            "FeeFuse: fee action set does not commit to the fee digest",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         ),
         (
             {
                 let mut corrupt = valid;
-                corrupt.4.1 = other.4.1;
+                corrupt.1 = other.1;
+                corrupt.3.0 = other.3.0;
                 corrupt
             },
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         ),
     ] {
         assert_matches!(

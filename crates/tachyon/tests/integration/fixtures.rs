@@ -1038,8 +1038,8 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
         let to = usize::try_from(u64::from(hi - base)).unwrap();
         &nf[from..to]
     };
-    let (_, left_epoch_start, _, left_epoch_next, _) = *left.data();
-    let (_, right_epoch_start, _, right_epoch_next, _) = *right.data();
+    let (_, left_epoch_start, _, _, left_epoch_next, _) = *left.data();
+    let (_, right_epoch_start, _, _, right_epoch_next, _) = *right.data();
     let left_el = elapsed_slice(left_epoch_start, left_epoch_next);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
     assert_eq!(u32::from(right_epoch_start), u32::from(left_epoch_next));
@@ -1246,7 +1246,7 @@ impl WalletSim {
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
     ) -> Pcd<pool::NoteUnspent> {
-        let (_, epoch_start, _, epoch_next, _) = *arbitrary.data();
+        let (_, epoch_start, _, _, epoch_next, _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))

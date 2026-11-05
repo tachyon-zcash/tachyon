@@ -138,25 +138,25 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     for (fuse_witness, expected) in [
         (
             (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0]),
-                NfSeqPoly::new(EpochIndex::new(0), &nf),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf1]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2]),
             ),
             "UnspentFuse: left polynomial does not match header",
         ),
         (
             (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-                NfSeqPoly::new(EpochIndex::new(0), &nf),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf3]),
             ),
             "UnspentFuse: right polynomial does not match header",
         ),
         (
             (
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2]),
             ),
             "UnspentFuse: combined is not the concatenation of the halves",
         ),
@@ -175,7 +175,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         );
     }
 
-    let (start, end) = (left.data().0, right.data().4);
+    let (start, end) = (left.data().0, right.data().5);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -190,7 +190,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         (
             start,
             EpochIndex::new(0),
-            NfSeqPoly::new(EpochIndex::new(0), &nf).commit(),
+            NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2]).commit(),
+            nf3,
             EpochIndex::new(4),
             end,
         )
@@ -546,7 +547,7 @@ fn unspent_bind_rejects_a_forged_member() {
     };
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch1));
 
-    let (_, _, _, unspent_end, _) = *unspent.data();
+    let (_, _, _, _, unspent_end, _) = *unspent.data();
     let range = user.derivation_pcd(rng, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
@@ -580,7 +581,8 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
         epoch_start,
-        NfSeqPoly::new(epoch_start, &elapsed).commit(),
+        NfSeqPoly::new(epoch_start, &elapsed[..elapsed.len() - 1]).commit(),
+        elapsed[elapsed.len() - 1],
         epoch_end,
         Anchor::from(Fp::ZERO),
     );
@@ -676,7 +678,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
         (
             later.clone(),
             (
-                NfSeqPoly::new(EpochIndex::new(0), &elapsed),
+                NfSeqPoly::new(EpochIndex::new(0), &[]),
                 NfSeqPoly::new(EpochIndex::new(64), &user.covering_window(&note, &later)),
                 NfSeqPoly::new(EpochIndex::new(64), &[]),
             ),
@@ -710,7 +712,7 @@ fn unspent_bind_rejects_uncovered_end() {
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let window = user.covering_window(&note, &range);
     let witness = (
-        NfSeqPoly::new(last, &[mk.derive_nullifier(last)]),
+        NfSeqPoly::new(last, &[]),
         NfSeqPoly::new(EpochIndex::new(0), &window),
         NfSeqPoly::new(EpochIndex::new(0), &[]),
     );
@@ -1082,7 +1084,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch1, EpochIndex::new(2)));
     let range = user.derivation_pcd(rng, note, epoch0, epoch1);
-    let elapsed_seq = NfSeqPoly::new(epoch1, &[nf(epoch1)]);
+    let elapsed_seq = NfSeqPoly::new(epoch1, &[]);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],

@@ -95,7 +95,12 @@ pub fn nullifier_fuse(
 /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
-/// covered epoch.
+/// covered epoch. Each `elapsed` polynomial omits its list's last member,
+/// which the header carries as `nf_last`.
+///
+/// # Panics
+///
+/// Panics if either list is empty.
 #[must_use]
 pub fn unspent_fuse(
     (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
@@ -104,11 +109,19 @@ pub fn unspent_fuse(
 ) -> StepWitness<'static, UnspentFuse> {
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
-    let combined = [left_elapsed, right_elapsed].concat();
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, left_earlier) = left_elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, right_earlier) = right_elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
+    let combined = [left_elapsed, right_earlier].concat();
     (
-        NfSeqPoly::new(left_epoch_start, left_elapsed),
+        NfSeqPoly::new(left_epoch_start, left_earlier),
         NfSeqPoly::new(left_epoch_start, &combined),
-        NfSeqPoly::new(right_epoch_start, right_elapsed),
+        NfSeqPoly::new(right_epoch_start, right_earlier),
     )
 }
 
@@ -119,6 +132,12 @@ pub fn unspent_fuse(
 /// is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the complement is the window's runs on both
 /// sides of the unspent's span, multiplied.
+/// The `elapsed` polynomial omits the list's last member, which the header
+/// carries as `nf_last`.
+///
+/// # Panics
+///
+/// Panics if `elapsed` is empty.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -129,15 +148,19 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, _, epoch_next, _) = unspent;
+    let (_, epoch_start, _, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, earlier) = elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
     let complement_seq =
         NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
     (
-        NfSeqPoly::new(epoch_start, elapsed),
+        NfSeqPoly::new(epoch_start, earlier),
         NfSeqPoly::new(nullifiers_epoch_start, window),
         complement_seq,
     )
@@ -386,7 +409,7 @@ pub const fn qr_bucket_seal(
 }
 
 /// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
-/// sequence, contents)`.
+/// contents)`.
 ///
 /// # Panics
 ///
@@ -398,12 +421,11 @@ pub fn qr_unspent_init(
     value: Tachygram,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    let (_epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )
 }
@@ -439,6 +461,12 @@ pub const fn evidence_tree_open(
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
+/// The `elapsed` polynomial omits the list's last member, which the header
+/// carries as `nf_last`, and `extended` holds the whole list.
+///
+/// # Panics
+///
+/// Panics if `elapsed` is empty.
 #[must_use]
 pub fn unspent_lift(
     (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
@@ -447,14 +475,17 @@ pub fn unspent_lift(
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
-    let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
+    let (_epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    #[expect(clippy::expect_used, reason = "a segment covers at least one epoch")]
+    let (_, earlier) = elapsed
+        .split_last()
+        .expect("a segment covers at least one epoch");
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        elapsed_seq.clone(),
-        elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
+        NfSeqPoly::new(epoch_start, earlier),
+        NfSeqPoly::new(epoch_start, elapsed),
         bucket_members.iter().copied().collect(),
     )
 }
@@ -531,11 +562,10 @@ pub fn spend_action(
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
 /// (left_action_set, left_tachygram_set), (output_action_set,
-/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
+/// output_tachygram_set))`.
 ///
-/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
-/// singleton set contains one element: the fee digest or the fee change note's
-/// commitment. The output set polynomials represent the unions.
+/// `action_digests` and `tachygrams` are the left `Actions` sets. The output
+/// sets add the fee digest and the fee change note's commitment to them.
 ///
 /// # Panics
 ///
@@ -581,10 +611,6 @@ pub fn fee_fuse(
         (
             output_action_digests.into_iter().collect(),
             output_tachygrams.into_iter().collect(),
-        ),
-        (
-            ActionSetPoly::from_iter([fee_digest]),
-            TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
     )
 }

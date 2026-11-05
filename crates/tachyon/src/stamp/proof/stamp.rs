@@ -61,8 +61,9 @@ impl Header for Actions {
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
-/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
-/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
+/// [`FeeFuse`] multiplies the action set polynomial by `X − fee_digest` and the
+/// tachygram set polynomial by `X − cmChange`. [`FeeSeed`] directly produces a
+/// stamp with fee singleton sets.
 ///
 /// `anchor` is a free witness at [`FeeSeed`]. At [`FeeFuse`] it comes from
 /// the left [`Actions`]. At [`StampMerge`] the step requires
@@ -530,7 +531,6 @@ impl Step for FeeFuse {
         value::Positive,
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
     );
 
     const INDEX: Index = Index::new(33);
@@ -543,7 +543,6 @@ impl Step for FeeFuse {
             fee,
             (left_action_set, left_tachygram_set),
             (output_action_set, output_tachygram_set),
-            (fee_action_set, fee_tachygram_set),
         ): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
@@ -604,34 +603,38 @@ impl Step for FeeFuse {
             "FeeFuse: fee change note commitment is zero",
         )?;
 
-        enforce_poly_roots(
-            ctx,
-            fee_action_set.as_ref(),
-            &[fee_digest],
-            "FeeFuse: fee action set does not commit to the fee digest",
-        )?;
-
-        enforce_poly_roots(
-            ctx,
-            fee_tachygram_set.as_ref(),
-            &[fee_change_commitment],
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
-        )?;
-
-        enforce_poly_product(
-            ctx,
-            left_action_set.as_ref(),
-            fee_action_set.as_ref(),
-            output_action_set.as_ref(),
-            "FeeFuse: output action set must be the product of left and fee action sets",
-        )?;
-        enforce_poly_product(
-            ctx,
-            left_tachygram_set.as_ref(),
-            fee_tachygram_set.as_ref(),
-            output_tachygram_set.as_ref(),
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-        )?;
+        // Neither root is absorbed into a challenge. Each is a Poseidon output
+        // over the witnessed max fee note and fee, so a root solved from a
+        // challenge needs a Poseidon preimage.
+        {
+            let left_commit = left_action_set.commit();
+            let output_commit = output_action_set.commit();
+            let z = ctx.derive_challenge(&[left_commit.into(), output_commit.into()])?;
+            let left_at_z = left_action_set.eval(z);
+            let output_at_z = output_action_set.eval(z);
+            ctx.enforce_poly_query(left_commit.into(), z, left_at_z)?;
+            ctx.enforce_poly_query(output_commit.into(), z, output_at_z)?;
+            if output_at_z != left_at_z * (z - fee_digest) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeFuse: output action set must be the product of left and fee action sets"
+                        .into(),
+                ));
+            }
+        }
+        {
+            let left_commit = left_tachygram_set.commit();
+            let output_commit = output_tachygram_set.commit();
+            let z = ctx.derive_challenge(&[left_commit.into(), output_commit.into()])?;
+            let left_at_z = left_tachygram_set.eval(z);
+            let output_at_z = output_tachygram_set.eval(z);
+            ctx.enforce_poly_query(left_commit.into(), z, left_at_z)?;
+            ctx.enforce_poly_query(output_commit.into(), z, output_at_z)?;
+            if output_at_z != left_at_z * (z - fee_change_commitment) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeFuse: output tachygram set must be the product of left and fee tachygram sets".into(),
+                ));
+            }
+        }
 
         Ok((
             (

@@ -14,7 +14,7 @@ use zcash_tachyon::{
     pasta::Fp,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{UnspentFuse, UnspentLift},
+        pool::{UnspentBind, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
     value, witness,
@@ -896,11 +896,13 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .unwrap();
-    let (fused_anchor_start, _, elapsed, fused_epoch_next, fused_anchor_next) = *fused.data();
+    let (fused_anchor_start, _, elapsed, nf_last, fused_epoch_next, fused_anchor_next) =
+        *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
-    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
+    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0]).commit());
+    assert_eq!(nf_last, nf1);
 }
 
 #[test]
@@ -1199,7 +1201,6 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         Fp::from(nf),
         Anchor::from(Fp::ZERO),
     );
-    let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
     for (bucket_pcd, init_witness, expected) in vec![
@@ -1281,18 +1282,6 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         ),
         (
             bucket.pcd.clone(),
-            {
-                let mut forged = witness.clone();
-                forged.3 = NfSeqPoly::new(
-                    epoch,
-                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
-                );
-                forged
-            },
-            "QrUnspentInit: sequence does not match the tested pair",
-        ),
-        (
-            bucket.pcd.clone(),
             witness::qr_unspent_init((*bucket.pcd.data(), ()), bucket.members[0], &bucket.members),
             "QrUnspentInit: found nullifier in the bucket",
         ),
@@ -1313,7 +1302,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd,
             {
                 let mut forged = witness;
-                forged.4 = iter::once(Tachygram::random(rng)).collect();
+                forged.3 = iter::once(Tachygram::random(rng)).collect();
                 forged
             },
             "QrUnspentInit: contents do not match the bucket",
@@ -1435,49 +1424,82 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
 }
 
 #[test]
-fn qr_unspent_init_rejects_a_twin_value() {
+fn unspent_consumers_reject_a_twin_last_member() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-    let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        0,
-        Fp::from(nf),
-        Anchor::from(Fp::ZERO),
-    );
-    let (epoch, ..) = *bucket.pcd.data();
-    let mut witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    pool.advance(EpochIndex::new(2).first_block().0, |_| {
+        random_block(rng, 1, 2)
+    });
+    let [nf0, nf1] = [mk.derive_nullifier(epoch0), mk.derive_nullifier(epoch1)];
+    let first = epoch_bucket(rng, &pool, epoch0);
+    let next = epoch_bucket(rng, &pool, epoch1);
+    let empty = NfSeqPoly::new(epoch0, &[]);
+    let twin = |commitments: &[_]| {
+        let shift = (Fp::from(u64::from(epoch0)) + Fp::ONE) * unpinned_challenge(commitments);
+        let twin = Fp::ZETA * (Fp::from(nf0) + shift) - shift;
+        assert_ne!(twin, Fp::from(nf0));
+        assert_eq!(
+            (twin + shift).pow_u64(3),
+            (Fp::from(nf0) + shift).pow_u64(3)
+        );
+        Nullifier::from(twin)
+    };
 
-    let z = unpinned_challenge(&[witness.3.commit().into()]);
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    let twin = (Fp::ZETA * (Fp::from(nf) + shift)) - shift;
-    assert_ne!(twin, Fp::from(nf));
-    assert_eq!(
-        (twin + shift).pow_u64(3) - Fp::from(2),
-        (Fp::from(nf) + shift).pow_u64(3) - Fp::from(2)
-    );
-    witness.0 = Tachygram::from(twin);
-    witness.1 = QrClassRoot::along(twin, discriminant);
-
-    assert_matches!(
-        PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrUnspentInit,
-                witness,
-                bucket.pcd,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrUnspentInit: sequence does not match the tested pair"
-    );
+    {
+        let nf_last = twin(&[
+            empty.commit().into(),
+            NfSeqPoly::new(epoch0, &[nf0]).commit().into(),
+        ]);
+        let segment = qr_bucket_segment(rng, &first, |_| nf_last);
+        let lift = witness::unspent_lift(
+            (*segment.data(), *next.pcd.data()),
+            nf1.into(),
+            &[nf0],
+            &next.members,
+        );
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(rng, UnspentLift, lift, segment, next.pcd.clone())
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "UnspentLift: extended is not elapsed with the tested pair"
+        );
+    }
+    {
+        let nf_last = twin(&[
+            empty.commit().into(),
+            NfSeqPoly::new(epoch0, &[nf0]).commit().into(),
+            empty.commit().into(),
+        ]);
+        let left = qr_bucket_segment(rng, &first, |_| nf_last);
+        let right = qr_bucket_segment(rng, &next, |_| nf1);
+        let fuse = witness::unspent_fuse((*left.data(), *right.data()), &[nf0], &[nf1]);
+        assert_matches!(
+            PROOF_SYSTEM.fuse(rng, UnspentFuse, fuse, left, right).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "UnspentFuse: combined is not the concatenation of the halves"
+        );
+    }
+    {
+        let range = user.derivation_pcd(rng, note, epoch0, epoch0);
+        let window = user.covering_window(&note, &range);
+        let nf_last = twin(&[
+            empty.commit().into(),
+            NfSeqPoly::new(epoch0, &window).commit().into(),
+            NfSeqPoly::new(epoch1, &window[1..]).commit().into(),
+        ]);
+        let segment = qr_bucket_segment(rng, &first, |_| nf_last);
+        let bind = witness::unspent_bind((*segment.data(), *range.data()), &window, &[nf0]);
+        assert_matches!(
+            PROOF_SYSTEM.fuse(rng, UnspentBind, bind, segment, range).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "UnspentBind: sequence does not match the derivation"
+        );
+    }
 }
 
 #[test]
@@ -1506,7 +1528,8 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
             (
                 Anchor::default(),
                 epoch,
-                NfSeqPoly::new(epoch, &[nf]).commit(),
+                NfSeqPoly::new(epoch, &[]).commit(),
+                nf,
                 epoch_next,
                 final_anchor.next_epoch(epoch_next).unwrap()
             )
@@ -1595,12 +1618,11 @@ fn unspent_lift_rejects_invalid_extensions() {
         ),
         (
             &bucket,
-            witness::unspent_lift(
-                (*segment.data(), *bucket.pcd.data()),
-                nf1.into(),
-                &[nf1],
-                &bucket.members,
-            ),
+            {
+                let mut forged = honest.clone();
+                forged.3 = NfSeqPoly::new(epoch0, &[nf1]);
+                forged
+            },
             "UnspentLift: elapsed does not match header",
         ),
         (
