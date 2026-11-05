@@ -20,7 +20,7 @@ use crate::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_linear_factor, enforce_poly_product, enforce_poly_roots},
+    relations::enforce::{enforce_poly_product, enforce_poly_roots, open_poly_pair},
     value,
 };
 
@@ -606,20 +606,28 @@ impl Step for FeeFuse {
         // Neither root is absorbed into a challenge. Each is a Poseidon output
         // over the witnessed max fee note and fee, so a root solved from a
         // challenge needs a Poseidon preimage.
-        enforce_poly_linear_factor(
-            ctx,
-            left_action_set.as_ref(),
-            fee_digest,
-            output_action_set.as_ref(),
-            "FeeFuse: output action set must be the product of left and fee action sets",
-        )?;
-        enforce_poly_linear_factor(
-            ctx,
-            left_tachygram_set.as_ref(),
-            fee_change_commitment,
-            output_tachygram_set.as_ref(),
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-        )?;
+        {
+            let (z, left_at_z, output_at_z) =
+                open_poly_pair(ctx, left_action_set.as_ref(), output_action_set.as_ref())?;
+            if output_at_z != left_at_z * (z - fee_digest) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeFuse: output action set must be the product of left and fee action sets"
+                        .into(),
+                ));
+            }
+        }
+        {
+            let (z, left_at_z, output_at_z) = open_poly_pair(
+                ctx,
+                left_tachygram_set.as_ref(),
+                output_tachygram_set.as_ref(),
+            )?;
+            if output_at_z != left_at_z * (z - fee_change_commitment) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeFuse: output tachygram set must be the product of left and fee tachygram sets".into(),
+                ));
+            }
+        }
 
         Ok((
             (
