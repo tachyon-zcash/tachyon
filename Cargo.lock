@@ -487,7 +487,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "ragu"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "blake2b_simd",
  "ragu_circuits",
@@ -500,7 +500,7 @@ dependencies = [
 [[package]]
 name = "ragu_acceleration"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "ragu_backend",
  "ragu_core",
@@ -523,7 +523,7 @@ dependencies = [
 [[package]]
 name = "ragu_backend"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "ragu_circuits",
  "ragu_core",
@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "ragu_circuits"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "blake2b_simd",
  "ragu_core",
@@ -546,9 +546,9 @@ dependencies = [
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
- "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1)",
+ "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef)",
  "tachyon-maybe-rayon",
  "thiserror",
  "zakura-udon",
@@ -570,7 +570,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -592,7 +592,7 @@ dependencies = [
 [[package]]
 name = "ragu_pcd"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "lazy_static",
  "ragu_acceleration",
@@ -610,10 +610,10 @@ dependencies = [
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1#963038ccbd5e063600b0212d4d9f97213a4f40c1"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef#5433cc3b7e7d10b03395f0e28d3333ea122afcef"
 dependencies = [
  "ragu_core",
- "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=963038ccbd5e063600b0212d4d9f97213a4f40c1)",
+ "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=5433cc3b7e7d10b03395f0e28d3333ea122afcef)",
  "thiserror",
  "zakura-udon",
 ]
