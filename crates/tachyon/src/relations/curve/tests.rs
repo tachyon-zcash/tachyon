@@ -13,7 +13,7 @@ fn complete_curve_addition_handles_inverse_points() {
         let right_complete = from_point(dr, &right)?;
         assert!(
             add_complete(dr, &left_complete, &right_complete)?
-                .2
+                .infinity
                 .value()
                 .take()
         );
