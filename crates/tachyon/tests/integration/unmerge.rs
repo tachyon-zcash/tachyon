@@ -566,7 +566,7 @@ fn unmerge_binds_its_sets() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }

@@ -63,7 +63,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 

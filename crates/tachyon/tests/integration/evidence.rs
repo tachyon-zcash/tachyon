@@ -232,14 +232,14 @@ fn evidence_tree_joins_reject_mismatched_trees() {
                 format!("EvidenceTreePairFuse: {complaint}")
             );
         } else {
-            panic!("{complaint}");
+            panic!();
         }
         if let Err(ragu_core::Error::InvalidWitness(err)) =
             PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
         {
             assert_eq!(err.to_string(), format!("EvidenceTreeFuse: {complaint}"));
         } else {
-            panic!("{complaint}");
+            panic!();
         }
     }
 }

@@ -386,7 +386,7 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -726,7 +726,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 
@@ -1134,7 +1134,7 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -1319,7 +1319,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -1562,62 +1562,63 @@ fn unspent_lift_rejects_invalid_extensions() {
     let segment = qr_bucket_segment(rng, &first, nf);
     let bucket = epoch_bucket(rng, &pool, epoch1);
     let past = epoch_bucket(rng, &pool, epoch2);
-    let honest = |value: Tachygram, elapsed: &[Nullifier]| {
-        witness::unspent_lift(
-            (*segment.data(), *bucket.pcd.data()),
-            value,
-            elapsed,
-            &bucket.members,
-        )
-    };
-
-    let (value, classes, mask, elapsed_seq, _extended, contents) = honest(nf1.into(), &[nf0]);
+    let honest = witness::unspent_lift(
+        (*segment.data(), *bucket.pcd.data()),
+        nf1.into(),
+        &[nf0],
+        &bucket.members,
+    );
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
 
     for (lift_bucket, lift, expected) in [
         (
             &past,
-            honest(nf1.into(), &[nf0]),
+            honest.clone(),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
             &bucket,
-            honest(bucket.members[0], &[nf0]),
+            witness::unspent_lift(
+                (*segment.data(), *bucket.pcd.data()),
+                bucket.members[0],
+                &[nf0],
+                &bucket.members,
+            ),
             "UnspentLift: found nullifier in the bucket",
         ),
         (
             &bucket,
-            honest(nf1.into(), &[nf1]),
+            witness::unspent_lift(
+                (*segment.data(), *bucket.pcd.data()),
+                nf1.into(),
+                &[nf1],
+                &bucket.members,
+            ),
             "UnspentLift: elapsed does not match header",
         ),
         (
             &bucket,
-            (
-                value,
-                classes,
-                mask,
-                elapsed_seq.clone(),
-                NfSeqPoly::new(
+            {
+                let mut forged = honest.clone();
+                forged.4 = NfSeqPoly::new(
                     epoch0,
                     &[
                         nf0,
                         Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))),
                     ],
-                ),
-                contents.clone(),
-            ),
+                );
+                forged
+            },
             "UnspentLift: extended is not elapsed with the tested pair",
         ),
         (
             &bucket,
-            (
-                value,
-                QrClassRoot::along(Fp::random(|bytes| rng.fill_bytes(bytes)), discriminant),
-                mask,
-                elapsed_seq,
-                honest(nf1.into(), &[nf0]).4,
-                contents,
-            ),
+            {
+                let mut forged = honest;
+                forged.1 =
+                    QrClassRoot::along(Fp::random(|bytes| rng.fill_bytes(bytes)), discriminant);
+                forged
+            },
             "QR profile: root does not square to the claimed class",
         ),
     ] {
@@ -1630,7 +1631,7 @@ fn unspent_lift_rejects_invalid_extensions() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }

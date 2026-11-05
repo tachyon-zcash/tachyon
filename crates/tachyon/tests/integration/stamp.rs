@@ -81,7 +81,7 @@ fn plan_prove_rejects_invalid_inputs() {
         ),
     ] {
         let Err(ProveError::MissingPcd(reason)) = plan.clone().prove(rng, &user.pak, pcds) else {
-            panic!("{expected}");
+            panic!();
         };
         assert_eq!(reason.to_string(), expected);
     }
@@ -301,7 +301,7 @@ fn overlapping_stamps_cannot_aggregate() {
         {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
 
         let forged = forge_overlapping_merge(

@@ -74,24 +74,6 @@ fn honest_spend_bind(
     bind_pcd
 }
 
-fn honest_spend_stamp(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    bind_pcd: Pcd<spend::SpendHeader>,
-) -> Pcd<stamp::Actions> {
-    let theta = ActionEntropy::random(rng);
-    let (stamp, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
-            bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    stamp
-}
-
 #[test]
 fn spendable_init_rejects_tg_absent() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -187,7 +169,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 
@@ -277,7 +259,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             if let Err(ragu_core::Error::InvalidWitness(err)) = lifted {
                 assert_eq!(err.to_string(), message);
             } else {
-                panic!("{message}");
+                panic!();
             }
         } else {
             assert_eq!(lifted.unwrap().0.data().2, anchor_end);
@@ -340,7 +322,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -421,7 +403,15 @@ fn step_accepts_zero_value_note() {
     let height = mine_cm_block(rng, &mut pool, zero_spend.commitment());
     let spendable_pcd = user.spendable_init(rng, &zero_spend, &pool, height);
     let spend_bind = honest_spend_bind(rng, &user, &zero_spend, spendable_pcd);
-    honest_spend_stamp(rng, &user, spend_bind);
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            stamp::SpendAction,
+            witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
+            spend_bind,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -470,7 +460,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 
@@ -700,7 +690,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -793,7 +783,7 @@ fn spendable_lift_rejects_mismatched_segments() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -860,7 +850,7 @@ fn nullifier_derive_rejects_invalid_windows() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -898,7 +888,7 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
         {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -986,7 +976,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 
@@ -1007,6 +997,12 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit(),
             anchor,
         )
+    );
+    assert_ne!(
+        action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv)
+            .digest()
+            .unwrap(),
+        action::Plan::output(note, theta, rcv).digest().unwrap()
     );
 }
 

@@ -164,7 +164,7 @@ fn fee_fuse_binds_its_sets() {
         ) {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 }
@@ -587,7 +587,7 @@ fn fee_seed_binds_its_singletons_and_header() {
         {
             assert_eq!(err.to_string(), expected);
         } else {
-            panic!("{expected}");
+            panic!();
         }
     }
 
