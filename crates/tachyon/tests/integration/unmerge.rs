@@ -186,7 +186,7 @@ fn unmerge_keeps_the_dividend_fee() {
         )
         .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
+        panic!();
     };
 
     carol.stamp = carol
@@ -416,7 +416,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
         .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
         .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
+        panic!();
     };
 }
 
@@ -485,7 +485,7 @@ fn unmerge_splitting_a_bundle() {
         .verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[])
         .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
+        panic!();
     };
 }
 

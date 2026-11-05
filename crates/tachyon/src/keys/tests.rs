@@ -38,8 +38,7 @@ fn window_matches_per_epoch_derivation() {
 #[should_panic(expected = "epoch index above EPOCH_MAX")]
 fn window_rejects_a_start_too_close_to_the_final_epoch() {
     let mk = NoteMasterKey::random(&mut StdRng::seed_from_u64(0));
-    let window = mk.derive_window(EpochIndex::new(EPOCH_MAX - 3));
-    panic!("a window past the final epoch must not derive, got {window:?}");
+    let _window = mk.derive_window(EpochIndex::new(EPOCH_MAX - 3));
 }
 
 #[test]

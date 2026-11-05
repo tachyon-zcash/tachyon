@@ -37,97 +37,80 @@ fn stripped_bundle_retains_signatures() {
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
 
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let adjunct = bundle.strip(mock_wtxid(&covering));
+    let adjunct = bundle.strip(AggregateId::try_from([0x11u8; 64]).unwrap());
     adjunct.verify_signatures(&sighash).unwrap();
 }
 
 #[test]
-fn sign_signs_an_honest_plan() {
+fn sign_and_apply_signatures_verify_every_plan_shape() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-    let (_rcv, _theta, output) = build_output_plan(rng, wallet.random_note(100));
-    let plan = Plan::new(
-        alloc::vec![spend],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .unwrap();
-    bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap();
+    for (spends, outputs) in [
+        (&[200][..], &[100][..]),
+        (&[200][..], &[][..]),
+        (&[][..], &[200][..]),
+        (&[][..], &[][..]),
+    ] {
+        let plan = Plan::new(
+            spends
+                .iter()
+                .map(|&amount| spend_plan_at(rng, &wallet, &ask, amount))
+                .collect(),
+            outputs
+                .iter()
+                .map(|&amount| build_output_plan(rng, wallet.random_note(amount)).2)
+                .collect(),
+            wallet.random_note(0),
+        );
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let signed = plan.sign(rng, &sighash, &ask).unwrap();
+        signed.verify_signatures(&sighash).unwrap();
+        let authorized = plan
+            .descriptors()
+            .into_iter()
+            .zip(signed.actions.into_iter().map(|action| action.sig))
+            .collect();
+        plan.apply_signatures(rng, &sighash, authorized)
+            .unwrap()
+            .verify_signatures(&sighash)
+            .unwrap();
+    }
 }
 
 #[test]
-fn actions_signed_despite_wrong_rk_fail_verification() {
+fn actions_signed_with_mismatched_keys_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-
-    let mut output = action::Plan::output(
-        wallet.random_note(100),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    let unrelated = action::Plan::output(
-        wallet.random_note(50),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    output.rk = unrelated.rk;
-
-    let plan = Plan::new(
-        alloc::vec![spend],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .unwrap();
-
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
-}
-
-#[test]
-fn actions_signed_by_wrong_rsk_fail_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-    let note = wallet.random_note(100);
-    let (_rcv, _theta, output) = build_output_plan(rng, note);
-
-    let plan = Plan::new(
-        alloc::vec![spend],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
-        .unwrap();
-
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
+    for (output, signer) in [
+        (
+            {
+                let mut output = build_output_plan(rng, wallet.random_note(100)).2;
+                output.rk = build_output_plan(rng, wallet.random_note(50)).2.rk;
+                output
+            },
+            &ask,
+        ),
+        (
+            build_output_plan(rng, wallet.random_note(100)).2,
+            &WalletSim::random(rng).sk.derive_auth_private(),
+        ),
+    ] {
+        let plan = Plan::new(
+            vec![spend_plan_at(rng, &wallet, &ask, 200)],
+            vec![output],
+            wallet.random_note(0),
+        );
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let Err(SignatureError::Action(_)) = plan
+            .sign(rng, &sighash, signer)
+            .unwrap()
+            .verify_signatures(&sighash)
+        else {
+            panic!();
+        };
+    }
 }
 
 #[test]
@@ -138,57 +121,30 @@ fn apply_signatures_rejects_wrong_sig_count() {
     let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
     let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
     let spend_c = spend_plan_at(rng, &wallet, &ask, 300);
-    let plan = Plan::new(
-        alloc::vec![spend_a, spend_b],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    let sig_a = {
-        let alpha = spend_a
-            .theta
-            .randomizer::<effect::Spend>(spend_a.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    };
-
-    let sig_b = {
-        let alpha = spend_b
-            .theta
-            .randomizer::<effect::Spend>(spend_b.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    };
-
-    let sig_c = {
-        let alpha = spend_c
-            .theta
-            .randomizer::<effect::Spend>(spend_c.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    };
-
-    let too_few = plan
-        .apply_signatures(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            BTreeMap::from([(spend_a.descriptor(), sig_a)]),
+    let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sig = ask
+        .derive_action_private(
+            &spend_a
+                .theta
+                .randomizer::<effect::Spend>(spend_a.note.commitment()),
         )
-        .unwrap_err();
-    assert_eq!(too_few, PlanError::ActionSigMismatch);
+        .sign(rng, &sighash);
 
-    let too_many = plan
-        .apply_signatures(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            BTreeMap::from([
-                (spend_a.descriptor(), sig_a),
-                (spend_b.descriptor(), sig_b),
-                (spend_c.descriptor(), sig_c),
-            ]),
-        )
-        .unwrap_err();
-    assert_eq!(too_many, PlanError::ActionSigMismatch);
+    for authorized in [
+        BTreeMap::from([(spend_a.descriptor(), sig)]),
+        BTreeMap::from([
+            (spend_a.descriptor(), sig),
+            (spend_b.descriptor(), sig),
+            (spend_c.descriptor(), sig),
+        ]),
+    ] {
+        assert_eq!(
+            plan.apply_signatures(rng, &sighash, authorized)
+                .unwrap_err(),
+            PlanError::ActionSigMismatch
+        );
+    }
 }
 
 #[test]
@@ -199,11 +155,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
 
     let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
     let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
-    let plan = Plan::new(
-        alloc::vec![spend_a, spend_b],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
+    let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
 
     let mut sigs: Vec<action::Signature> = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
@@ -224,150 +176,87 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
     let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+        panic!();
     };
 }
 
 #[test]
-fn permuted_actions_change_commitment() {
+fn edited_bundles_fail_binding_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-
     let original = build_autonome(rng, &wallet, 1000, 700);
-
-    original
-        .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap();
-
-    let mut permuted = original.clone();
-    permuted.actions.swap(0, 1);
-
-    assert_ne!(
-        mock_sighash(original.commitment()),
-        mock_sighash(permuted.commitment())
-    );
-
-    let sig_err = permuted
-        .verify_signatures(&mock_sighash(permuted.commitment()))
-        .unwrap_err();
-    let SignatureError::Binding(_) = sig_err else {
-        panic!("expected SignatureError::Binding, got {sig_err:?}");
-    };
-}
-
-#[test]
-fn tampered_value_balance_fails_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-
-    let original = build_autonome(rng, &wallet, 1000, 700);
-
-    original
-        .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap();
-
-    let mut tampered = original.clone();
-    tampered.value_balance = value::Balance::try_from(999).unwrap();
-
-    let bind_err = tampered
-        .verify_signatures(&mock_sighash(tampered.commitment()))
-        .unwrap_err();
-    let SignatureError::Binding(_) = bind_err else {
-        panic!("expected SignatureError::Binding, got {bind_err:?}");
-    };
-
-    let also_err = tampered
-        .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap_err();
-    let SignatureError::Binding(_) = also_err else {
-        panic!("expected SignatureError::Binding, got {also_err:?}");
-    };
-}
-
-#[test]
-fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-
-    let spend_plan = Plan::new(
-        alloc::vec![spend_plan_at(rng, &wallet, &ask, 200)],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-    spend_plan
-        .sign(rng, &mock_sighash(spend_plan.commitment().unwrap()), &ask)
-        .unwrap()
-        .verify_signatures(&mock_sighash(spend_plan.commitment().unwrap()))
-        .unwrap();
-
-    let note = wallet.random_note(200);
-    let (_rcv, _theta, output) = build_output_plan(rng, note);
-    let output_plan = Plan::new(
-        alloc::vec![],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-    output_plan
-        .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
-        .unwrap()
-        .verify_signatures(&mock_sighash(output_plan.commitment().unwrap()))
-        .unwrap();
-
-    let empty_plan = Plan::new(
-        alloc::vec![],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-    empty_plan
-        .sign(rng, &mock_sighash(empty_plan.commitment().unwrap()), &ask)
-        .unwrap()
-        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
-        .unwrap();
-    empty_plan
-        .apply_signatures(
-            rng,
-            &mock_sighash(empty_plan.commitment().unwrap()),
-            BTreeMap::new(),
-        )
-        .unwrap()
-        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
-        .unwrap();
+    for edited in [
+        {
+            let mut permuted = original.clone();
+            permuted.actions.swap(0, 1);
+            permuted
+        },
+        {
+            let mut tampered = original.clone();
+            tampered.value_balance = value::Balance::try_from(999).unwrap();
+            tampered
+        },
+    ] {
+        assert_ne!(edited.commitment(), original.commitment());
+        let Err(SignatureError::Binding(_)) =
+            edited.verify_signatures(&mock_sighash(edited.commitment()))
+        else {
+            panic!();
+        };
+    }
 }
 
 #[test]
 fn no_bundle_commitment_differs_from_empty_bundle() {
-    let empty_plan = Plan::new(
-        alloc::vec![],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
+    let empty_plan = Plan::new(vec![], vec![], WalletSim::new(shared_sk()).random_note(0));
     assert_ne!(*blake2b::COMMIT_NO_BUNDLE, empty_plan.commitment().unwrap());
 }
 
 #[test]
-fn zero_action_bundle_is_valid() {
+fn zero_action_bundle_requires_a_zero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let covering = build_autonome(rng, &wallet, 1000, 700);
-
-    let max_fee = wallet.random_note(0);
-    let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
+    let max_fee = WalletSim::new(shared_sk()).random_note(0);
+    let plan = Plan::new(vec![], vec![], max_fee);
     let sighash = mock_sighash(plan.commitment().unwrap());
-
-    let bundle = Bundle {
-        actions: alloc::vec![],
-        value_balance: value::Balance::ZERO,
-        fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        memo: Vec::new(),
-        stamp: PointerStamp {
-            wtxid: mock_wtxid(&covering),
-            fee: value::Positive::ZERO,
-        },
-    };
-
-    bundle.verify_signatures(&sighash).unwrap();
+    for value_balance in [0i64, 1] {
+        let bundle = Bundle {
+            actions: vec![],
+            value_balance: value::Balance::try_from(value_balance).unwrap(),
+            fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+            binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+            memo: Vec::new(),
+            stamp: PointerStamp {
+                wtxid: AggregateId::try_from([0x11u8; 64]).unwrap(),
+                fee: value::Positive::ZERO,
+            },
+        };
+        let mut buf = Vec::new();
+        bundle.write(&mut buf).unwrap();
+        if value_balance == 0 {
+            bundle.verify_signatures(&sighash).unwrap();
+            for decoded in [
+                Bundle::<PointerStamp>::read(&*buf).unwrap(),
+                Bundle::<PointerStamp>::try_from(TachyonBundle::read(&*buf).unwrap()).unwrap(),
+            ] {
+                assert_eq!(decoded.commitment(), bundle.commitment());
+                assert_eq!(decoded.auth_digest(), bundle.auth_digest());
+            }
+        } else {
+            let Err(SignatureError::Binding(_)) = bundle.verify_signatures(&sighash) else {
+                panic!();
+            };
+            for err in [
+                Bundle::<PointerStamp>::read(&*buf).unwrap_err(),
+                TachyonBundle::read(&*buf).unwrap_err(),
+            ] {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+                assert_eq!(
+                    err.to_string(),
+                    "bundle with no actions must have zero value balance"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -378,11 +267,7 @@ fn duplicated_spend_cannot_inflate() {
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
-    let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let spendable = wallet.spendable_at(rng, &pool, &note, cm_height.epoch().next().unwrap());
+    let spendable = wallet.spendable_init(rng, &note, &pool, pool.height());
     let anchor = spendable.data().2;
 
     let rcv = value::Trapdoor::random(rng);
@@ -394,14 +279,14 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.secret_pcd(rng, note);
     let max_fee = wallet.random_note(0);
     let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
-    let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![], max_fee)
+    let honest_stamp = Plan::new(vec![plan], vec![], max_fee)
         .stamp_plan(anchor, value::Positive::ZERO)
-        .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, vec![])])
+        .prove(rng, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
 
     let doubled = 2 * i64::try_from(u64::from(note.value)).unwrap();
     let value_balance = value::Balance::try_from(doubled).unwrap();
-    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+    let action_bytes: Vec<[u8; 64]> = [descriptor, descriptor].into_iter().collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
@@ -415,20 +300,9 @@ fn duplicated_spend_cannot_inflate() {
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
     let action = Action::from((descriptor, sig));
-    let binding_sig = Plan::new(alloc::vec![plan, plan], alloc::vec![], max_fee)
+    let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee)
         .derive_bsk_private()
         .sign(rng, &sighash);
-    let coverage = {
-        let mut desc_bytes = Vec::<[u8; 64]>::from_iter([descriptor, descriptor]);
-        desc_bytes.sort_unstable();
-        stamp_coverage(
-            &desc_bytes,
-            &[fee::Descriptor {
-                max_commitment: fee_max_commitment,
-                value: value::Positive::ZERO,
-            }],
-        )
-    };
     let bundle = Bundle {
         actions: vec![action, action],
         value_balance,
@@ -436,12 +310,14 @@ fn duplicated_spend_cannot_inflate() {
         binding_sig,
         memo: Vec::new(),
         stamp: ProofStamp {
-            coverage,
-            anchor: honest_stamp.anchor,
-            tachygram_set: honest_stamp.tachygram_set,
-            tachygrams: honest_stamp.tachygrams,
-            proof: honest_stamp.proof,
-            fee: honest_stamp.fee,
+            coverage: stamp_coverage(
+                &action_bytes,
+                &[fee::Descriptor {
+                    max_commitment: fee_max_commitment,
+                    value: value::Positive::ZERO,
+                }],
+            ),
+            ..honest_stamp
         },
     };
 
@@ -452,11 +328,6 @@ fn duplicated_spend_cannot_inflate() {
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
         .unwrap();
-    let dup_err = decoded.verify_coverage(&[], &[]).unwrap_err();
-    let VerifyCoverageError::DuplicateActions = dup_err else {
-        panic!("expected DuplicateActions, got {dup_err:?}");
-    };
-
     let digests: Vec<ActionDigest> = decoded
         .descriptors()
         .map(|desc| desc.digest().unwrap())
@@ -464,16 +335,13 @@ fn duplicated_spend_cannot_inflate() {
         .collect();
     assert!(!decoded.verify_proof(rng, &digests).unwrap());
 
-    let err = decoded
-        .verify(
-            rng,
-            &mock_sighash(decoded.commitment()),
-            &mock_wtxid(&decoded).into(),
-            &[],
-        )
-        .unwrap_err();
-    let VerificationError::Coverage(VerifyCoverageError::DuplicateActions) = err else {
-        panic!("expected Coverage(DuplicateActions), got {err:?}");
+    let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateActions)) = decoded.verify(
+        rng,
+        &mock_sighash(decoded.commitment()),
+        &mock_wtxid(&decoded).into(),
+        &[],
+    ) else {
+        panic!();
     };
 }
 
@@ -490,7 +358,7 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
         .verify_coverage(&adjunct_descs, &[adjunct.fee_descriptor()])
         .unwrap_err();
     let VerifyCoverageError::DuplicateActions = err else {
-        panic!("expected DuplicateActions, got {err:?}");
+        panic!();
     };
 
     let digests: Vec<ActionDigest> = bundle
@@ -518,113 +386,6 @@ fn verify_proof_disproves_uncovered_adjunct() {
         .chain([bundle.fee_descriptor().digest().unwrap()])
         .collect();
     assert!(!bundle.verify_proof(rng, &digests).unwrap());
-}
-
-#[test]
-fn innocent_aggregate_from_two_autonomes() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-
-    let spend_a = wallet.random_note(1000);
-    let output_a = wallet.random_note(700);
-    let spend_b = wallet.random_note(500);
-    let output_b = wallet.random_note(200);
-
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(
-        rng,
-        &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
-        50,
-    ));
-    let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-
-    let sp_a = wallet.spendable_at(rng, &pool, &spend_a, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
-    let anchor_a = sp_a.data().2;
-    let anchor_b = sp_b.data().2;
-
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor_a,
-        alloc::vec![(spend_a, sp_a)],
-        alloc::vec![output_a],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor_b,
-        alloc::vec![(spend_b, sp_b)],
-        alloc::vec![output_b],
-    );
-
-    let descriptors_a: BTreeSet<action::Descriptor> =
-        autonome_a.actions.iter().map(Action::descriptor).collect();
-    let descriptors_b: BTreeSet<action::Descriptor> =
-        autonome_b.actions.iter().map(Action::descriptor).collect();
-    let stamp_a = autonome_a.stamp.clone();
-    let stamp_b = autonome_b.stamp.clone();
-
-    let innocent = {
-        let max_fee = wallet.random_note(0);
-        let innocent_plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-        let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
-
-        let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
-        let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-        let seed = stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
-            .prove(rng, &wallet.pak, vec![])
-            .unwrap();
-        let descs = descriptors_a.union(&descriptors_b).copied().collect();
-        let fees = fees_a.union(&fees_b).copied().collect();
-        let adjuncts = stamp_a
-            .merge(
-                rng,
-                (descriptors_a, fees_a),
-                (stamp_b, descriptors_b, fees_b),
-            )
-            .unwrap();
-        let stamp = seed
-            .merge(
-                rng,
-                (
-                    BTreeSet::new(),
-                    [fee::Descriptor {
-                        max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                        value: value::Positive::ZERO,
-                    }]
-                    .into(),
-                ),
-                (adjuncts, descs, fees),
-            )
-            .unwrap();
-
-        Bundle {
-            actions: alloc::vec![],
-            value_balance: value::Balance::ZERO,
-            fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            binding_sig: innocent_plan
-                .derive_bsk_private()
-                .sign(rng, &innocent_sighash),
-            memo: Vec::new(),
-            stamp,
-        }
-    };
-
-    let adjuncts = [
-        autonome_a.strip(mock_wtxid(&innocent)),
-        autonome_b.strip(mock_wtxid(&innocent)),
-    ];
-
-    innocent
-        .verify(
-            rng,
-            &mock_sighash(innocent.commitment()),
-            &mock_wtxid(&innocent).into(),
-            &adjuncts.iter().collect::<Vec<_>>(),
-        )
-        .unwrap();
 }
 
 #[test]
@@ -663,21 +424,11 @@ fn based_aggregate_with_two_adjuncts() {
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(based_spend, based_sp)],
-        alloc::vec![based_output],
+        vec![(based_spend, based_sp)],
+        vec![based_output],
     );
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor,
-        alloc::vec![(a_spend, a_sp)],
-        alloc::vec![a_output],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor,
-        alloc::vec![(b_spend, b_sp)],
-        alloc::vec![b_output],
-    );
+    let autonome_a = wallet.autonome(rng, anchor, vec![(a_spend, a_sp)], vec![a_output]);
+    let autonome_b = wallet.autonome(rng, anchor, vec![(b_spend, b_sp)], vec![b_output]);
 
     let sighash = mock_sighash(becomes_based.commitment());
 
@@ -733,84 +484,77 @@ fn based_aggregate_with_two_adjuncts() {
         .verify(rng, &sighash, &wtxid_bytes, &adjuncts)
         .unwrap();
 
-    {
-        let foreign = [0x5au8; 64];
-        let err = becomes_based
-            .verify(rng, &sighash, &foreign, &adjuncts)
-            .unwrap_err();
-        let VerificationError::Pointers(VerifyPointersError::AdjunctPointerMismatch) = err else {
-            panic!("expected AdjunctPointerMismatch, got {err:?}");
-        };
-    }
-
-    {
-        let err = becomes_based
-            .verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1])
-            .unwrap_err();
-        let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-            panic!("expected Coverage(StampActionsMismatch), got {err:?}");
-        };
-    }
+    let Err(VerificationError::Pointers(VerifyPointersError::AdjunctPointerMismatch)) =
+        becomes_based.verify(rng, &sighash, &[0x5au8; 64], &adjuncts)
+    else {
+        panic!();
+    };
+    let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
+        becomes_based.verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1])
+    else {
+        panic!();
+    };
 }
 
 #[test]
-fn autonome_verify_composes_all_checks() {
+fn autonome_verify_rejects_flipped_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
     let wtxid: [u8; 64] = mock_wtxid(&bundle).into();
-
     bundle.verify(rng, &sighash, &wtxid, &[]).unwrap();
 
-    let mut tampered = bundle.clone();
-    let mut sig_bytes: Vec<u8> = Vec::new();
-    tampered.binding_sig.write(&mut sig_bytes).unwrap();
-    sig_bytes[0] ^= 0xFF;
-    tampered.binding_sig = Signature::read(&mut sig_bytes.as_slice()).unwrap();
-
-    let err = tampered.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
+    let mut binding_bytes = Vec::new();
+    bundle.binding_sig.write(&mut binding_bytes).unwrap();
+    binding_bytes[0] ^= 0xFF;
+    let mut bad_binding = bundle.clone();
+    bad_binding.binding_sig = Signature::read(&mut binding_bytes.as_slice()).unwrap();
+    let Err(VerificationError::Signatures(SignatureError::Binding(_))) =
+        bad_binding.verify(rng, &sighash, &wtxid, &[])
+    else {
+        panic!();
     };
-}
 
-#[test]
-fn invalid_action_sig_fails_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment());
-
-    let mut sig_bytes: Vec<u8> = Vec::new();
-    bundle.actions[0].sig.write(&mut sig_bytes).unwrap();
-    sig_bytes[0] ^= 0xFF;
-    let bad_sig = action::Signature::read(&mut sig_bytes.as_slice()).unwrap();
-    bundle.actions[0].sig = bad_sig;
-
-    let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Action(sig) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+    let mut action_bytes = Vec::new();
+    bundle.actions[0].sig.write(&mut action_bytes).unwrap();
+    action_bytes[0] ^= 0xFF;
+    let bad_sig = action::Signature::read(&mut action_bytes.as_slice()).unwrap();
+    let mut bad_action = bundle;
+    bad_action.actions[0].sig = bad_sig;
+    let Err(VerificationError::Signatures(SignatureError::Action(sig))) =
+        bad_action.verify(rng, &sighash, &wtxid, &[])
+    else {
+        panic!();
     };
     assert_eq!(sig, bad_sig);
 }
 
 #[test]
-fn stamped_read_write_round_trip() {
+fn stamped_bundle_round_trips() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let original = build_autonome(rng, &wallet, 1000, 700);
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
-    original.write(&mut buf).unwrap();
-    let deserialized = Bundle::<ProofStamp>::read(&*buf).unwrap();
+    stamped.write(&mut buf).unwrap();
+    let mut erased_buf = Vec::new();
+    TachyonBundle::from(stamped.clone())
+        .write(&mut erased_buf)
+        .unwrap();
+    assert_eq!(erased_buf, buf);
 
-    assert_eq!(original.actions, deserialized.actions);
-    assert_eq!(original.value_balance, deserialized.value_balance);
-    assert_eq!(original.stamp.tachygrams, deserialized.stamp.tachygrams);
-    assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
-
-    let sighash = mock_sighash(deserialized.commitment());
-    deserialized.verify_signatures(&sighash).unwrap();
+    for decoded in [
+        Bundle::<ProofStamp>::read(&*buf).unwrap(),
+        Bundle::<ProofStamp>::try_from(TachyonBundle::read(&*buf).unwrap()).unwrap(),
+    ] {
+        assert_eq!(decoded.actions, stamped.actions);
+        assert_eq!(decoded.value_balance, stamped.value_balance);
+        assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
+        assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
+        decoded
+            .verify_signatures(&mock_sighash(decoded.commitment()))
+            .unwrap();
+    }
 }
 
 #[test]
@@ -849,7 +593,7 @@ fn read_preserves_action_order() {
             ))
         })
         .collect();
-    let binding_sig = Plan::new(alloc::vec![], alloc::vec![plan_a, plan_b], max_fee)
+    let binding_sig = Plan::new(vec![], vec![plan_a, plan_b], max_fee)
         .derive_bsk_private()
         .sign(rng, &sighash);
 
@@ -874,66 +618,40 @@ fn read_preserves_action_order() {
 }
 
 #[test]
-fn stripped_read_write_round_trip() {
+fn stripped_bundle_round_trips() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let wtxid = mock_wtxid(&covering);
+    let wtxid = AggregateId::try_from([0x11u8; 64]).unwrap();
     let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
-
     let mut buf = Vec::new();
     stripped.write(&mut buf).unwrap();
-    let deserialized = Bundle::<PointerStamp>::read(&*buf).unwrap();
+    let mut erased_buf = Vec::new();
+    TachyonBundle::from(stripped.clone())
+        .write(&mut erased_buf)
+        .unwrap();
+    assert_eq!(erased_buf, buf);
 
-    assert_eq!(stripped.commitment(), deserialized.commitment());
-    assert_eq!(stripped.auth_digest(), deserialized.auth_digest());
-    assert_eq!(deserialized.stamp.wtxid, wtxid);
-}
-
-#[test]
-fn tachyon_bundle_conversions() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, &wallet, 1000, 700);
-    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
-
-    let stamped_erased: TachyonBundle = stamped.into();
-    Bundle::<PointerStamp>::try_from(stamped_erased).unwrap_err();
-
-    let adjunct_erased: TachyonBundle = adjunct.into();
-    Bundle::<ProofStamp>::try_from(adjunct_erased).unwrap_err();
-}
-
-#[test]
-fn tachyon_bundle_wire_round_trip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-
-    {
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let erased: TachyonBundle = stamped.clone().into();
-        let mut buf = Vec::new();
-        erased.write(&mut buf).unwrap();
-        let decoded = TachyonBundle::read(&*buf).unwrap();
-        let back = Bundle::<ProofStamp>::try_from(decoded).unwrap();
-
-        assert_eq!(stamped.actions, back.actions);
-        assert_eq!(stamped.value_balance, back.value_balance);
-        assert_eq!(stamped.stamp.tachygrams, back.stamp.tachygrams);
-        assert_eq!(stamped.stamp.anchor, back.stamp.anchor);
+    for decoded in [
+        Bundle::<PointerStamp>::read(&*buf).unwrap(),
+        Bundle::<PointerStamp>::try_from(TachyonBundle::read(&*buf).unwrap()).unwrap(),
+    ] {
+        assert_eq!(decoded.commitment(), stripped.commitment());
+        assert_eq!(decoded.auth_digest(), stripped.auth_digest());
+        assert_eq!(decoded.stamp.wtxid, wtxid);
     }
 
-    {
-        let covering = build_autonome(rng, &wallet, 500, 300);
-        let stripped = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&covering));
-        let erased: TachyonBundle = stripped.clone().into();
-        let mut buf = Vec::new();
-        erased.write(&mut buf).unwrap();
-        let decoded = TachyonBundle::read(&*buf).unwrap();
-        let back = Bundle::<PointerStamp>::try_from(decoded).unwrap();
-
-        assert_eq!(stripped.commitment(), back.commitment());
-        assert_eq!(stripped.auth_digest(), back.auth_digest());
+    for byte in buf.iter_mut().rev().take(64) {
+        *byte = 0;
+    }
+    for err in [
+        Bundle::<PointerStamp>::read(&*buf).unwrap_err(),
+        TachyonBundle::read(&*buf).unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "aggregate id is zero and refers to no aggregate"
+        );
     }
 }
 
@@ -943,134 +661,44 @@ fn aggregate_id_try_from_rejects_zero() {
 }
 
 #[test]
-fn wire_state_byte_dispatch() {
-    {
-        let buf: &[u8] = &[0x03];
-        for err in [
-            Bundle::<ProofStamp>::read(buf).unwrap_err(),
-            Bundle::<PointerStamp>::read(buf).unwrap_err(),
-            TachyonBundle::read(buf).unwrap_err(),
-        ] {
-            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-            assert_eq!(err.to_string(), "invalid bundle state");
-        }
-    }
-
-    {
-        let buf: &[u8] = &[0x00];
-        let decoded = TachyonBundle::read(buf).unwrap();
-        assert!(decoded.is_no_bundle());
-    }
-
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let mut stamped_buf = Vec::new();
-        stamped.write(&mut stamped_buf).unwrap();
-
-        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
-        let mut adjunct_buf = Vec::new();
-        adjunct.write(&mut adjunct_buf).unwrap();
-
-        let adjunct_on_stamped = Bundle::<PointerStamp>::read(&*stamped_buf).unwrap_err();
-        assert_eq!(
-            adjunct_on_stamped.to_string(),
-            "unexpected tachyonBundleState"
-        );
-        let stamped_on_adjunct = Bundle::<ProofStamp>::read(&*adjunct_buf).unwrap_err();
-        assert_eq!(
-            stamped_on_adjunct.to_string(),
-            "unexpected tachyonBundleState"
-        );
-    }
-}
-
-#[test]
-fn read_rejects_zero_wtxid() {
+fn bundle_state_mismatches_are_rejected() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let wtxid = mock_wtxid(&covering);
-
-    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
-
-    let innocent = {
-        let max_fee = wallet.random_note(0);
-        let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-        let sighash = mock_sighash(plan.commitment().unwrap());
-        Bundle {
-            actions: alloc::vec![],
-            value_balance: value::Balance::ZERO,
-            fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-            memo: Vec::new(),
-            stamp: PointerStamp {
-                wtxid,
-                fee: value::Positive::ZERO,
-            },
-        }
-    };
-
-    for stripped in [adjunct, innocent] {
-        let mut buf = Vec::new();
-        stripped.write(&mut buf).unwrap();
-
-        for byte in buf.iter_mut().rev().take(64) {
-            *byte = 0;
-        }
-
-        let adjunct_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
-        assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(
-            adjunct_err.to_string(),
-            "aggregate id is zero and refers to no aggregate"
-        );
-
-        let enum_err = TachyonBundle::read(&*buf).unwrap_err();
-        assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(
-            enum_err.to_string(),
-            "aggregate id is zero and refers to no aggregate"
-        );
+    let buf: &[u8] = &[0x03];
+    for err in [
+        Bundle::<ProofStamp>::read(buf).unwrap_err(),
+        Bundle::<PointerStamp>::read(buf).unwrap_err(),
+        TachyonBundle::read(buf).unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "invalid bundle state");
     }
-}
 
-#[test]
-fn innocent_round_trips_with_nonzero_wtxid() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let covering = build_autonome(rng, &wallet, 1000, 700);
+    assert!(TachyonBundle::read(&[0x00][..]).unwrap().is_no_bundle());
 
-    let max_fee = wallet.random_note(0);
-    let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-
-    let innocent = Bundle {
-        actions: alloc::vec![],
-        value_balance: value::Balance::ZERO,
-        fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        memo: Vec::new(),
-        stamp: PointerStamp {
-            wtxid: mock_wtxid(&covering),
-            fee: value::Positive::ZERO,
-        },
-    };
-
-    let mut buf = Vec::new();
-    innocent.write(&mut buf).unwrap();
-
-    let via_adjunct = Bundle::<PointerStamp>::read(&*buf).unwrap();
-    assert_eq!(innocent.commitment(), via_adjunct.commitment());
-    assert_eq!(innocent.auth_digest(), via_adjunct.auth_digest());
-
-    let decoded = TachyonBundle::read(&*buf).unwrap();
-    let via_enum = Bundle::<PointerStamp>::try_from(decoded).unwrap();
-    assert_eq!(innocent.commitment(), via_enum.commitment());
-    assert_eq!(innocent.auth_digest(), via_enum.auth_digest());
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    let adjunct = stamped
+        .clone()
+        .strip(AggregateId::try_from([0x11u8; 64]).unwrap());
+    let mut stamped_buf = Vec::new();
+    stamped.write(&mut stamped_buf).unwrap();
+    let mut adjunct_buf = Vec::new();
+    adjunct.write(&mut adjunct_buf).unwrap();
+    assert_eq!(
+        Bundle::<PointerStamp>::read(&*stamped_buf)
+            .unwrap_err()
+            .to_string(),
+        "unexpected tachyonBundleState"
+    );
+    assert_eq!(
+        Bundle::<ProofStamp>::read(&*adjunct_buf)
+            .unwrap_err()
+            .to_string(),
+        "unexpected tachyonBundleState"
+    );
+    Bundle::<PointerStamp>::try_from(TachyonBundle::from(stamped)).unwrap_err();
+    Bundle::<ProofStamp>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
 }
 
 #[test]
@@ -1116,7 +744,6 @@ fn read_rejects_noncanonical_tachygrams() {
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let n = bundle.stamp.tachygrams.len();
-    assert!(n >= 2);
 
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
@@ -1167,7 +794,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 .iter()
                 .map(|&amount| build_output_plan(rng, wallet.random_note(amount)).2)
                 .collect(),
-            WalletSim::new(shared_sk()).random_note(0),
+            wallet.random_note(0),
         );
         if let Some(balance) = expected {
             assert_eq!(
@@ -1216,100 +843,56 @@ fn read_bounds_the_value_balance() {
 }
 
 #[test]
-fn zero_action_bundle_rejects_nonzero_balance() {
+fn verify_tachygrams_rejects_an_edited_list() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let max_fee = WalletSim::new(shared_sk()).random_note(0);
-    let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = Anchor::random(rng);
+    let (stamp, output_plan, max_fee) =
+        build_output_stamp_with_fee(rng, anchor, wallet.random_note(200));
+    let bundle_plan = Plan::new(vec![], vec![output_plan], max_fee);
+    let signed = bundle_plan
+        .sign(
+            rng,
+            &mock_sighash(bundle_plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let dropped = *stamp.tachygrams.iter().next().unwrap();
 
-    let bundle = Bundle {
-        actions: alloc::vec![],
-        value_balance: value::Balance::try_from(1).unwrap(),
-        fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        memo: Vec::new(),
-        stamp: PointerStamp {
-            wtxid: AggregateId::try_from([0x42u8; 64]).unwrap(),
-            fee: value::Positive::ZERO,
-        },
-    };
-    let Err(SignatureError::Binding(_)) = bundle.verify_signatures(&sighash) else {
-        panic!();
-    };
-
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).unwrap();
-    for err in [
-        Bundle::<PointerStamp>::read(&*buf).unwrap_err(),
-        TachyonBundle::read(&*buf).unwrap_err(),
+    for (tachygrams, expected) in [
+        (
+            stamp
+                .tachygrams
+                .iter()
+                .copied()
+                .filter(|&tachygram| tachygram != dropped)
+                .collect(),
+            "stamp does not publish two tachygrams per action and one per fee",
+        ),
+        (
+            stamp
+                .tachygrams
+                .iter()
+                .copied()
+                .filter(|&tachygram| tachygram != dropped)
+                .chain([Tachygram::random(rng)])
+                .collect(),
+            "tachygrams do not reproduce the set commitment",
+        ),
     ] {
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let bundle = signed.clone().stamp(ProofStamp {
+            tachygrams,
+            ..stamp.clone()
+        });
+        let (covered, covered_fees) = bundle.verify_coverage(&[], &[]).unwrap();
         assert_eq!(
-            err.to_string(),
-            "bundle with no actions must have zero value balance"
+            bundle
+                .verify_tachygrams(covered.len(), covered_fees.len())
+                .unwrap_err()
+                .to_string(),
+            expected
         );
     }
-}
-
-#[test]
-fn verify_tachygrams_rejects_wrong_arity() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
-
-    assert_eq!(stamp.tachygrams.len(), 2 + 1);
-
-    let mut short = stamp;
-    let dropped = *short.tachygrams.iter().next().unwrap();
-    short.tachygrams.remove(&dropped);
-
-    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(short);
-
-    let (covered, covered_fees) = bundle.verify_coverage(&[], &[]).unwrap();
-
-    let err = bundle
-        .verify_tachygrams(covered.len(), covered_fees.len())
-        .unwrap_err();
-    let VerifyTachygramsError::WrongArity = err else {
-        panic!("expected WrongArity, got {err:?}");
-    };
-}
-
-#[test]
-fn verify_tachygrams_rejects_a_tampered_list() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
-
-    let mut tampered = stamp;
-    let dropped = *tampered.tachygrams.iter().next().unwrap();
-    tampered.tachygrams.remove(&dropped);
-    tampered.tachygrams.insert(Tachygram::random(rng));
-
-    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let bundle = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .unwrap()
-        .stamp(tampered);
-
-    let (covered, covered_fees) = bundle.verify_coverage(&[], &[]).unwrap();
-
-    let err = bundle
-        .verify_tachygrams(covered.len(), covered_fees.len())
-        .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "tachygrams do not reproduce the set commitment"
-    );
 }
 
 #[test]
@@ -1353,20 +936,21 @@ fn memo_round_trips_and_rejects_truncation() {
 fn plan_memo_reaches_the_signed_bundle() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
-
     let memo = vec![0x7Fu8; 900];
-    let bundle_plan =
-        Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee).with_memo(memo.clone());
+    let bundle_plan = Plan::new(
+        vec![],
+        vec![build_output_plan(rng, wallet.random_note(200)).2],
+        wallet.random_note(0),
+    )
+    .with_memo(memo.clone());
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
-    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(stamp);
+    let bundle = bundle_plan
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+        .unwrap();
 
     assert_eq!(bundle.memo, memo);
-    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
+    assert_eq!(bundle.commitment(), bundle_plan.commitment().unwrap());
     bundle.verify_signatures(&sighash).unwrap();
 }
 
@@ -1390,9 +974,15 @@ fn bundle_lift_preserves_coverage() {
 
     let descriptors = bundle.verify_coverage(&[], &[]).unwrap();
 
-    let next_a = build_autonome(rng, &wallet, 400, 300);
-    let next_b = build_autonome(rng, &wallet, 500, 200);
-    pool.mine_bundles(&[&next_a, &next_b]);
+    let Err(ProveError::MissingPcd(reason)) = bundle.clone().lift(rng, &[], vec![]) else {
+        panic!();
+    };
+    assert_eq!(
+        reason.to_string(),
+        "no anchor span proof for no anchor advance"
+    );
+
+    pool.mine(random_block(rng, 1, 2));
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
     let lifted = bundle.lift(rng, &[], vec![span]).unwrap();
@@ -1400,34 +990,6 @@ fn bundle_lift_preserves_coverage() {
     assert_eq!(lifted.stamp.anchor, pool.anchor());
     assert!(lifted.is_autonome());
     assert_eq!(lifted.verify_coverage(&[], &[]).unwrap(), descriptors);
-}
-
-#[test]
-fn bundle_lift_rejects_no_spans() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-
-    let spend_note = wallet.random_note(1000);
-    let output_note = wallet.random_note(700);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
-    let cm_height = pool.height();
-    let spendable_pcd = wallet.spendable_init(rng, &spend_note, &pool, cm_height);
-    let bundle = wallet.autonome(
-        rng,
-        spendable_pcd.data().2,
-        vec![(spend_note, spendable_pcd)],
-        vec![output_note],
-    );
-
-    let err = bundle.lift(rng, &[], vec![]).unwrap_err();
-    let ProveError::MissingPcd(reason) = err else {
-        panic!("expected a missing anchor span, got {err:?}");
-    };
-    assert_eq!(
-        reason.to_string(),
-        "no anchor span proof for no anchor advance"
-    );
 }
 
 #[test]
@@ -1508,11 +1070,18 @@ fn bundle_lift_over_an_aggregate() {
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));
     let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
+    innocent
+        .verify(
+            rng,
+            &mock_sighash(innocent.commitment()),
+            &mock_wtxid(&innocent).into(),
+            &[&adjunct_a, &adjunct_b],
+        )
+        .unwrap();
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
-    pool.advance(1, |_| alloc::vec![]);
-    let next = build_autonome(rng, &wallet, 400, 300);
-    pool.mine_bundles(&[&next]);
+    pool.advance(1, |_| vec![]);
+    pool.mine(random_block(rng, 1, 2));
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
     let lifted = innocent.lift(rng, &adjuncts, vec![span]).unwrap();

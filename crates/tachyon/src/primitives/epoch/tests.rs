@@ -9,15 +9,13 @@ fn epoch_difference_counts_the_span() {
 #[test]
 #[should_panic(expected = "epoch difference is positive")]
 fn epoch_difference_rejects_reversed_operands() {
-    let reversed = EpochIndex(3) - EpochIndex(7);
-    panic!("reversed operands must not produce a difference, got {reversed:?}");
+    let _reversed = EpochIndex(3) - EpochIndex(7);
 }
 
 #[test]
 #[should_panic(expected = "epoch index above EPOCH_MAX")]
 fn new_rejects_an_index_past_the_final_epoch() {
-    let past_the_end = EpochIndex::new(EPOCH_MAX + 1);
-    panic!("an index above EPOCH_MAX is not an epoch, got {past_the_end:?}");
+    let _past_the_end = EpochIndex::new(EPOCH_MAX + 1);
 }
 
 #[test]

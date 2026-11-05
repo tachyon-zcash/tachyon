@@ -324,7 +324,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         .verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
         .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
-        panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
+        panic!();
     };
 
     twice.stamp.coverage = coverage_of(&[twice.as_dyn()]);
@@ -332,7 +332,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         .verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
         .unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
-        panic!("expected Tachygrams(WrongArity), got {arity:?}");
+        panic!();
     };
 
     let published_digests: Vec<ActionDigest> = twice
@@ -401,7 +401,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
             .unwrap_err();
         let VerificationError::Coverage(VerifyCoverageError::DuplicateFees) = err else {
-            panic!("expected Coverage(DuplicateFees), got {err:?}");
+            panic!();
         };
 
         aggregate.stamp.coverage = coverage_of(&[aggregate.as_dyn(), adjunct.as_dyn()]);
@@ -411,7 +411,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
             .unwrap_err();
         let VerificationError::Coverage(VerifyCoverageError::DuplicateFees) = forged else {
-            panic!("expected Coverage(DuplicateFees), got {forged:?}");
+            panic!();
         };
     }
 }
@@ -429,7 +429,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
         .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
-        panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
+        panic!();
     };
 
     fee_less.stamp.coverage = coverage_of(&[fee_less.as_dyn()]);
@@ -437,7 +437,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
         .unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
-        panic!("expected Tachygrams(WrongArity), got {arity:?}");
+        panic!();
     };
 
     fee_less
@@ -455,7 +455,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
         .unwrap_err();
     let VerificationError::Disproved = disproved else {
-        panic!("expected Disproved, got {disproved:?}");
+        panic!();
     };
 }
 

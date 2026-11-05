@@ -125,7 +125,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
         let ProveError::MissingPcd(reason) = err else {
-            panic!("expected MissingPcd, got {err:?}");
+            panic!();
         };
         assert_eq!(
             reason.to_string(),
@@ -139,7 +139,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
         let ProveError::MissingPcd(reason) = err else {
-            panic!("expected MissingPcd, got {err:?}");
+            panic!();
         };
         assert_eq!(
             reason.to_string(),
