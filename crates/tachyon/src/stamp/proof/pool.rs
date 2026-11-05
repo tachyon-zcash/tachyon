@@ -367,7 +367,8 @@ impl Step<Pasta> for AnchorSpanSeed {
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let anchor_element = poseidon::anchor_next_stamp_circuit(
+        super::enforce_stamp_domain(dr, &epoch_element, oracles.bridge_hash())?;
+        let anchor_element = poseidon::with_driver::anchor_next_stamp(
             dr,
             &previous,
             &epoch_element,

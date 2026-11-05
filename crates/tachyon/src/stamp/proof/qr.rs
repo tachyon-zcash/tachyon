@@ -453,7 +453,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let epoch_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let anchor = poseidon::anchor_next_stamp_circuit(
+        super::enforce_stamp_domain(dr, &epoch_element, oracles.bridge_hash())?;
+        let anchor = poseidon::with_driver::anchor_next_stamp(
             dr,
             &previous,
             &epoch_element,

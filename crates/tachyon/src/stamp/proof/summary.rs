@@ -170,7 +170,8 @@ impl Step<Pasta> for SummarySeed {
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
         let header = encoded.as_gadget();
-        let anchor = poseidon::anchor_next_stamp_circuit(
+        super::enforce_stamp_domain(dr, &header.epoch, oracles.bridge_hash())?;
+        let anchor = poseidon::with_driver::anchor_next_stamp(
             dr,
             &header.anchor_prev,
             &header.epoch,
@@ -274,7 +275,8 @@ impl Step<Pasta> for SummaryAdvance {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let anchor = poseidon::anchor_next_stamp_circuit(
+        super::enforce_stamp_domain(dr, &left_encoded.as_gadget().epoch, oracles.bridge_hash())?;
+        let anchor = poseidon::with_driver::anchor_next_stamp(
             dr,
             &left_encoded.as_gadget().anchor_end,
             &left_encoded.as_gadget().epoch,

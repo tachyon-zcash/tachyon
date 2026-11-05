@@ -141,7 +141,8 @@ impl Step<Pasta> for OutputBind {
             witness.as_ref().map(|data| Fp::from(data.0.psi)),
         )?;
         let input = [rcm, pk, amount.clone(), psi];
-        let cm = poseidon::note_commitment_circuit(dr, &input)?;
+        let cm =
+            poseidon::with_driver::note_commitment(dr, &input[0], &input[1], &input[2], &input[3])?;
         let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
             Element::constant(
                 dr,

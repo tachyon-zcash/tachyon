@@ -42,16 +42,13 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
     bucket: &QrBucketOutput<'dr, D>,
 ) -> ragu_core::Result<Element<'dr, D>> {
     let [depth, bits] = qr::profile::validate(dr, &bucket.depth, &bucket.bits)?;
-    poseidon::evidence_tree_leaf_circuit(
+    poseidon::with_driver::evidence_tree_leaf(
         dr,
-        [
-            &bucket.epoch,
-            &bucket.anchor_start,
-            &bucket.anchor_next,
-            &bucket.discriminant,
-            &depth,
-            &bits,
-        ],
+        &bucket.epoch,
+        &bucket.anchor_start,
+        &bucket.anchor_next,
+        &bucket.discriminant,
+        (&depth, &bits),
         &bucket.contents_digest,
     )
 }
@@ -471,7 +468,7 @@ impl Step<Pasta> for EvidenceTreeFuse {
             right_encoded.as_gadget().first.clone(),
             right_encoded.as_gadget().second.clone(),
         ];
-        let root = poseidon::evidence_tree_node_circuit(dr, &children)?;
+        let root = poseidon::with_driver::evidence_tree_node(dr, &children)?;
         let output = D::just(|| {
             let (epoch, start, end, discriminant, ..) = left.take();
             (
@@ -547,7 +544,7 @@ impl Step<Pasta> for EvidenceTreeCap {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let root = left_encoded.as_gadget().root.clone();
         let children = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|_| root.clone());
-        let raised = poseidon::evidence_tree_node_circuit(dr, &children)?;
+        let raised = poseidon::with_driver::evidence_tree_node(dr, &children)?;
         let output = D::just(|| {
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
             (
@@ -671,7 +668,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
                     witness.as_ref().map(|path| Fp::from(path.0[level].1[3])),
                 )?,
             ];
-            let hash = poseidon::evidence_tree_node_circuit(dr, &children)?;
+            let hash = poseidon::with_driver::evidence_tree_node(dr, &children)?;
             node.enforce_equal(dr, &hash).map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "EvidenceTreeDescend: children do not hash to the node".into(),

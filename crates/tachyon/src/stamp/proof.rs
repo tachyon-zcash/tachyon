@@ -36,10 +36,11 @@ use alloc::vec::Vec;
 use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::pasta::Pasta;
+use ragu_core::{Cycle as _, FixedGenerators as _, drivers::Driver, pasta::Pasta};
+use ragu_primitives::Element;
 use udon::field::Field as _;
 
-use crate::pasta;
+use crate::{constants::EPOCH_MAX, digest::poseidon, pasta, relations::arithmetic::bounded};
 
 /// Application proof with the production polynomial rank.
 pub type Proof = ragu::Proof<Pasta, ProductionRank>;
@@ -71,6 +72,29 @@ fn check_polynomial(
         return Err(ragu_core::Error::InvalidWitness(error.into()));
     }
     Ok(())
+}
+
+/// Step admission checks, separate from the unrestricted protocol anchor hash.
+fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
+    dr: &mut D,
+    epoch: &Element<'dr, D>,
+    digest: &[Element<'dr, D>; 2],
+) -> ragu_core::Result<()> {
+    let generator = *Pasta::host_generators(pasta::baked())
+        .g()
+        .first()
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("fixed generator table is empty".into()))?;
+    let (low, high) = poseidon::commitment_digest(generator);
+    let low_element = Element::constant(dr, low);
+    let high_element = Element::constant(dr, high);
+    let equal_low = digest[0].is_equal(dr, &mut (), &low_element)?;
+    let equal_high = digest[1].is_equal(dr, &mut (), &high_element)?;
+    equal_low
+        .and(dr, &equal_high)?
+        .element()
+        .enforce_zero(dr)
+        .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+    bounded::<D, 32>(dr, epoch, u64::from(EPOCH_MAX))
 }
 
 /// Application-wide encoded header width, including one suffix element.

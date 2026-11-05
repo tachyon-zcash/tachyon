@@ -280,7 +280,7 @@ impl Step<Pasta> for NoteSeed {
         })?;
         let ak = Point::alloc(dr, ak_assignment)?;
         let [ak_x, ak_y] = curve::coordinates(dr, &ak)?;
-        let pk = poseidon::payment_key_circuit(dr, &[ak_x, ak_y, nk.clone()])?;
+        let pk = poseidon::with_driver::payment_key(dr, (&ak_x, &ak_y), &nk)?;
         let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
             Element::constant(
                 dr,
@@ -295,10 +295,7 @@ impl Step<Pasta> for NoteSeed {
         sponge.absorb(dr, &psi)?;
         sponge.absorb(dr, &nk)?;
         let mk = sponge.squeeze(dr)?;
-        let cm = poseidon::note_commitment_circuit(
-            dr,
-            &[rcm.clone(), pk.clone(), value.clone(), psi.clone()],
-        )?;
+        let cm = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &value, &psi)?;
         let output = D::just(|| {
             let (note_value, note_psi, note_rcm, _) = witness.take();
             let note = Note {
@@ -456,7 +453,7 @@ impl Step<Pasta> for NullifierDerive {
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             let group_offset = offset.sub(dr, &one);
             let group_start = epoch_start.add(dr, &group_offset);
-            let group = poseidon::nullifier_group_circuit(dr, &mk, &group_start)?;
+            let group = poseidon::with_driver::nullifier_group(dr, &mk, &group_start)?;
             for nullifier in group {
                 let index = epoch_start.add(dr, &offset);
                 let factor = indexed_member_factor(dr, &nullifier, &index, &z)?;

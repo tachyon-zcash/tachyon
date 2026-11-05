@@ -145,8 +145,9 @@ impl Step<Pasta> for SpendableInit {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
+        super::enforce_stamp_domain(dr, &epoch, oracles.bridge_hash())?;
         let anchor =
-            poseidon::anchor_next_stamp_circuit(dr, &previous, &epoch, oracles.bridge_hash())?;
+            poseidon::with_driver::anchor_next_stamp(dr, &previous, &epoch, oracles.bridge_hash())?;
         let x = left_encoded.as_gadget().cm.clone();
         let evaluation = oracles.query(dr, Slot::output(1), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {

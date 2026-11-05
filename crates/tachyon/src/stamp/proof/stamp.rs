@@ -375,7 +375,7 @@ impl Step<Pasta> for OutputAction {
         let cv = left_encoded.as_gadget().cv.clone();
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
-        let action_root = poseidon::action_digest_circuit(dr, &[cv_x, cv_y, rk_x, rk_y])?;
+        let action_root = poseidon::with_driver::action_digest(dr, (&cv_x, &cv_y), (&rk_x, &rk_y))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         action_root.enforce_equal(dr, &oracles.staged()[0])?;
         let action_roots = [action_root];
@@ -513,7 +513,7 @@ impl Step<Pasta> for SpendAction {
             witness.as_ref().map(|data| Fp::from(data.1.nk)),
         )?;
         let [ak_x, ak_y] = curve::coordinates(dr, &ak)?;
-        let derived_pk = poseidon::payment_key_circuit(dr, &[ak_x, ak_y, nk])?;
+        let derived_pk = poseidon::with_driver::payment_key(dr, (&ak_x, &ak_y), &nk)?;
         let pk = left_encoded.as_gadget().pk.clone();
         pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
@@ -540,7 +540,7 @@ impl Step<Pasta> for SpendAction {
         let cv = left_encoded.as_gadget().cv.clone();
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
-        let action_root = poseidon::action_digest_circuit(dr, &[cv_x, cv_y, rk_x, rk_y])?;
+        let action_root = poseidon::with_driver::action_digest(dr, (&cv_x, &cv_y), (&rk_x, &rk_y))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         action_root.enforce_equal(dr, &oracles.staged()[0])?;
         enforce_poly_roots(
@@ -1160,7 +1160,7 @@ impl Step<Pasta> for FeeFuse {
             &mut (),
             witness.as_ref().map(|data| Fp::from(data.0.rcm)),
         )?;
-        let blind = poseidon::fee_blind_circuit(dr, &[pk.clone(), psi.clone(), rcm.clone()])?;
+        let blind = poseidon::with_driver::fee_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
         for (index, actual) in [&pk, &psi, &rcm, &maximum, &fee].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
@@ -1169,8 +1169,8 @@ impl Step<Pasta> for FeeFuse {
         let blind_bits = circuit::bits::<D, 255>(dr, &blind)?;
         let cv = curve::commitment(dr, &maximum_bits, &blind_bits, true)?;
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
-        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv_x, cv_y, fee])?;
-        let fee_change = poseidon::note_commitment_circuit(dr, &[rcm, pk, change, psi])?;
+        let fee_digest = poseidon::with_driver::fee_digest(dr, (&cv_x, &cv_y), &fee)?;
+        let fee_change = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &change, &psi)?;
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
         })?;
@@ -1305,7 +1305,7 @@ impl Step<Pasta> for FeeSeed {
             &mut (),
             witness.as_ref().map(|data| Fp::from(data.0.rcm)),
         )?;
-        let blind = poseidon::fee_blind_circuit(dr, &[pk.clone(), psi.clone(), rcm.clone()])?;
+        let blind = poseidon::with_driver::fee_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 3")]
         for (index, actual) in [&pk, &psi, &rcm].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
@@ -1315,8 +1315,8 @@ impl Step<Pasta> for FeeSeed {
         let cv = curve::scale(dr, &blind_generator, &blind_bits)?;
         let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let zero = Element::constant(dr, Fp::ZERO);
-        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv_x, cv_y, zero.clone()])?;
-        let fee_change = poseidon::note_commitment_circuit(dr, &[rcm, pk, zero, psi])?;
+        let fee_digest = poseidon::with_driver::fee_digest(dr, (&cv_x, &cv_y), &zero)?;
+        let fee_change = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &zero, &psi)?;
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
         })?;
