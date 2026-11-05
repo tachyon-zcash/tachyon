@@ -57,17 +57,11 @@ use crate::{
 /// [`StampState`], so an unproven bundle cannot be serialized.
 ///
 /// ```compile_fail,E0599
-/// use zcash_tachyon::{Bundle, Unproven, bundle::Signature};
+/// use zcash_tachyon::{Bundle, Unproven};
 ///
-/// let unproven = Bundle {
-///     actions: vec![],
-///     value_balance: 0,
-///     binding_sig: Signature::from([0u8; 64]),
-///     stamp: Unproven,
-/// };
-///
-/// let mut buf = vec![];
-/// unproven.write(&mut buf); // no `write` on `Bundle<Unproven>`
+/// fn serialize(unproven: &Bundle<Unproven>) {
+///     unproven.write(&mut Vec::<u8>::new()); // no `write` on `Bundle<Unproven>`
+/// }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
