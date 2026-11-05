@@ -30,25 +30,6 @@ use crate::fixtures::{
     shared_sk, stamp_coverage,
 };
 
-#[test]
-fn plan_value_balance_sums_spends_and_outputs() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let spend = spend_plan_at(rng, &wallet, &ask, 300);
-    let note = wallet.random_note(200);
-    let (_rcv, _theta, output) = build_output_plan(rng, note);
-    let bundle_plan = Plan::new(
-        alloc::vec![spend],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    assert_eq!(
-        bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(100).unwrap())
-    );
-}
 
 #[test]
 fn stripped_bundle_retains_signatures() {
@@ -1303,170 +1284,82 @@ fn spend_plan_at(
     })
 }
 
+
+
+
+
+
+
+
+
 #[test]
-fn plan_value_balance_accepts_boundary_max_money() {
+fn plan_value_balance_is_bounded_by_max_money() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let spend = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
-    let bundle_plan = Plan::new(
-        alloc::vec![spend],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    assert_eq!(
-        bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(i64::try_from(MAX_MONEY).unwrap()).unwrap())
-    );
-}
-
-#[test]
-fn plan_value_balance_accepts_boundary_negative_max_money() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let note = wallet.random_note(MAX_MONEY);
-    let (_rcv, _theta, output) = build_output_plan(rng, note);
-    let bundle_plan = Plan::new(
-        alloc::vec![],
-        alloc::vec![output],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    assert_eq!(
-        bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(-i64::try_from(MAX_MONEY).unwrap()).unwrap())
-    );
-}
-
-#[test]
-fn plan_value_balance_rejects_overflow_above_max_money() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let spend_a = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
-    let spend_b = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
-    let bundle_plan = Plan::new(
-        alloc::vec![spend_a, spend_b],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
-    {
-        let err = bundle_plan.commitment().unwrap_err();
-        assert_eq!(err, value::OutOfRange);
-    }
-    let sighash = [0u8; 32];
-    {
-        let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        assert_eq!(err, PlanError::BalanceOverflow);
+    let max_money = i64::try_from(MAX_MONEY).unwrap();
+    for (spends, outputs, balance) in [
+        (&[300][..], &[200][..], Some(100)),
+        (&[MAX_MONEY][..], &[][..], Some(max_money)),
+        (&[][..], &[MAX_MONEY][..], Some(-max_money)),
+        (&[MAX_MONEY, MAX_MONEY][..], &[][..], None),
+        (&[][..], &[MAX_MONEY, MAX_MONEY][..], None),
+    ] {
+        let plan = Plan::new(
+            spends
+                .iter()
+                .map(|&amount| spend_plan_at(rng, &wallet, &ask, amount))
+                .collect(),
+            outputs
+                .iter()
+                .map(|&amount| build_output_plan(rng, wallet.random_note(amount)).2)
+                .collect(),
+            WalletSim::new(shared_sk()).random_note(0),
+        );
+        if let Some(balance) = balance {
+            assert_eq!(
+                plan.value_balance(),
+                Ok(value::Balance::try_from(balance).unwrap())
+            );
+        } else {
+            assert_eq!(plan.value_balance(), Err(value::OutOfRange));
+            assert_eq!(plan.commitment().unwrap_err(), value::OutOfRange);
+            assert_eq!(
+                plan.sign(rng, &[0u8; 32], &ask).unwrap_err(),
+                PlanError::BalanceOverflow
+            );
+        }
     }
 }
 
 #[test]
-fn plan_value_balance_rejects_overflow_below_negative_max_money() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note_a = wallet.random_note(MAX_MONEY);
-    let note_b = wallet.random_note(MAX_MONEY);
-    let (_, _, output_a) = build_output_plan(rng, note_a);
-    let (_, _, output_b) = build_output_plan(rng, note_b);
-    let bundle_plan = Plan::new(
-        alloc::vec![],
-        alloc::vec![output_a, output_b],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-
-    assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
-    {
-        let err = bundle_plan.commitment().unwrap_err();
-        assert_eq!(err, value::OutOfRange);
-    }
-    let sighash = [0u8; 32];
-    {
-        let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        assert_eq!(err, PlanError::BalanceOverflow);
-    }
-}
-
-#[test]
-fn read_accepts_value_balance_at_max_money_boundaries() {
+fn read_bounds_the_value_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
+    let mut buf = Vec::new();
+    build_autonome(rng, &wallet, 1000, 700)
+        .write(&mut buf)
+        .unwrap();
     let max_money = i64::try_from(MAX_MONEY).unwrap();
 
     for value_balance in [max_money, -max_money] {
-        let vb = value::Balance::try_from(value_balance).unwrap();
-        let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-        bundle.value_balance = vb;
-
-        let mut buf = Vec::new();
-        bundle.write(&mut buf).unwrap();
-        let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
-        assert_eq!(decoded.value_balance, vb);
-    }
-}
-
-#[test]
-fn read_rejects_value_balance_out_of_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let max_money = i64::try_from(MAX_MONEY).unwrap();
-
-    for value_balance in [max_money + 1, -max_money - 1, i64::MAX, i64::MIN] {
-        let bundle = build_autonome(rng, &wallet, 1000, 700);
-
-        let mut buf = Vec::new();
-        bundle.write(&mut buf).unwrap();
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
-
-        let stamp_err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
-        assert_eq!(stamp_err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(stamp_err.to_string(), "value balance out of range");
-
-        let enum_err = TachyonBundle::read(&*buf).unwrap_err();
-        assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(enum_err.to_string(), "value balance out of range");
+        let decoded: i64 = Bundle::<ProofStamp>::read(&*buf)
+            .unwrap()
+            .value_balance
+            .into();
+        assert_eq!(decoded, value_balance);
     }
-}
-
-#[test]
-fn read_rejects_zero_actions_with_nonzero_balance() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let max_fee = WalletSim::new(shared_sk()).random_note(0);
-    let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-
-    let bundle = Bundle {
-        actions: alloc::vec![],
-        value_balance: value::Balance::try_from(1).unwrap(),
-        fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        memo: Vec::new(),
-        stamp: PointerStamp {
-            wtxid: AggregateId::try_from([0x42u8; 64]).unwrap(),
-            fee: value::Positive::ZERO,
-        },
-    };
-
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).unwrap();
-
-    let adjunct_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
-    assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(
-        adjunct_err.to_string(),
-        "bundle with no actions must have zero value balance"
-    );
-
-    let enum_err = TachyonBundle::read(&*buf).unwrap_err();
-    assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(
-        enum_err.to_string(),
-        "bundle with no actions must have zero value balance"
-    );
+    for value_balance in [max_money + 1, -max_money - 1, i64::MAX, i64::MIN] {
+        buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
+        for err in [
+            Bundle::<ProofStamp>::read(&*buf).unwrap_err(),
+            TachyonBundle::read(&*buf).unwrap_err(),
+        ] {
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(err.to_string(), "value balance out of range");
+        }
+    }
 }
 
 #[test]
@@ -1483,15 +1376,26 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: PointerStamp {
-            wtxid: AggregateId::try_from([1u8; 64]).unwrap(),
+            wtxid: AggregateId::try_from([0x42u8; 64]).unwrap(),
             fee: value::Positive::ZERO,
         },
     };
-
-    let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
+    let Err(SignatureError::Binding(_)) = bundle.verify_signatures(&sighash) else {
+        panic!();
     };
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).unwrap();
+    for err in [
+        Bundle::<PointerStamp>::read(&*buf).unwrap_err(),
+        TachyonBundle::read(&*buf).unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "bundle with no actions must have zero value balance"
+        );
+    }
 }
 
 #[test]
@@ -1555,49 +1459,44 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     );
 }
 
+
+
+
 #[test]
-fn memo_round_trips_present_and_absent() {
+fn memo_binds_the_commitment_but_not_the_auth_digest() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+    let (commitment, auth_digest) = (bundle.commitment(), bundle.auth_digest());
+
+    bundle.memo = vec![0x5Au8; 128];
+    assert_ne!(bundle.commitment(), commitment);
+    assert_eq!(bundle.auth_digest(), auth_digest);
+
+    let adjunct = bundle.clone().strip(mock_wtxid(&bundle));
+    assert_eq!(adjunct.memo, bundle.memo);
+    assert_eq!(adjunct.commitment(), bundle.commitment());
+}
+
+#[test]
+fn memo_round_trips_and_rejects_truncation() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
 
     for memo in [Vec::new(), vec![0xABu8; 1500]] {
         bundle.memo = memo.clone();
-
         let mut buf = Vec::new();
         bundle.write(&mut buf).unwrap();
-        let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
-
-        assert_eq!(decoded.memo, memo);
-        assert_eq!(decoded.stamp.tachygrams, bundle.stamp.tachygrams);
+        assert_eq!(Bundle::<ProofStamp>::read(&*buf).unwrap().memo, memo);
     }
-}
 
-#[test]
-fn stripping_memo_changes_commitment() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-
-    bundle.memo = vec![0x01u8; 64];
-    let with_memo = bundle.commitment();
-
-    bundle.memo = Vec::new();
-    let without_memo = bundle.commitment();
-
-    assert_ne!(with_memo, without_memo);
-}
-
-#[test]
-fn memo_absent_from_auth_digest() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-
-    let without_memo = bundle.auth_digest();
-    bundle.memo = vec![0x01u8; 64];
-
-    assert_eq!(bundle.auth_digest(), without_memo);
+    bundle.memo = vec![0x33u8; 8192];
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).unwrap();
+    buf.truncate(1024);
+    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
 #[test]
@@ -1621,37 +1520,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     bundle.verify_signatures(&sighash).unwrap();
 }
 
-#[test]
-fn memo_survives_strip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    bundle.memo = vec![0x5Au8; 128];
 
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let adjunct = bundle.clone().strip(mock_wtxid(&covering));
-
-    assert_eq!(adjunct.memo, bundle.memo);
-    assert_eq!(adjunct.commitment(), bundle.commitment());
-}
-
-#[test]
-fn read_rejects_truncated_memo() {
-    const DECLARED: usize = 8192;
-    const KEPT: usize = 1024;
-
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    bundle.memo = vec![0x33u8; DECLARED];
-
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).unwrap();
-    buf.truncate(KEPT);
-
-    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-}
 
 #[test]
 fn bundle_lift_preserves_coverage() {

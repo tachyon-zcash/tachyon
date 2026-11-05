@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{Pcd, Proof, Step};
+use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
@@ -15,7 +15,7 @@ use zcash_tachyon::{
     pasta::Fp,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
+        pool::{NoteUnspent, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
     value, witness,
@@ -27,37 +27,6 @@ use crate::fixtures::{
     qr_profile_of, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
     seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
 };
-
-type UnspentInitWitness = <qr::QrUnspentInit as Step>::Witness<'static>;
-
-fn fuse_unspent_init(
-    rng: &mut StdRng,
-    bucket: Pcd<qr::QrBucket>,
-    witness: UnspentInitWitness,
-) -> ragu_core::Result<Pcd<ArbitraryUnspent>> {
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrUnspentInit,
-            witness,
-            bucket,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .map(|(unspent, ())| unspent)
-}
-
-type UnspentLiftWitness = <UnspentLift as Step>::Witness<'static>;
-
-fn fuse_unspent_lift(
-    rng: &mut StdRng,
-    segment: Pcd<ArbitraryUnspent>,
-    bucket: &QrBucketEntry,
-    witness: UnspentLiftWitness,
-) -> ragu_core::Result<Pcd<ArbitraryUnspent>> {
-    PROOF_SYSTEM
-        .fuse(rng, UnspentLift, witness, segment, bucket.pcd.clone())
-        .map(|(unspent, ())| unspent)
-}
 
 pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
@@ -135,7 +104,16 @@ pub(crate) fn qr_epoch_unspent(
             .into(),
         &bucket.members,
     );
-    let arbitrary = fuse_unspent_init(rng, bucket.pcd.clone(), witness).unwrap();
+    let arbitrary = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness,
+            bucket.pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap()
+        .0;
     user.unspent_bind(rng, arbitrary, note)
 }
 
@@ -1351,7 +1329,16 @@ fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
 
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
+        let unspent = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0;
         assert_eq!(unspent.data().2, NfSeqPoly::new(epoch, &[nf]).commit());
     }
 }
@@ -1391,7 +1378,16 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
+    let unspent = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness,
+            bucket.pcd,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap()
+        .0;
 
     let (anchor_start, epoch_start, elapsed, segment_epoch_next, anchor_next) = *unspent.data();
     assert_eq!(anchor_start, Anchor::default());
@@ -1434,7 +1430,16 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let mut segment = |bucket: QrBucketEntry, nf: Nullifier| {
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        fuse_unspent_init(rng, bucket.pcd, witness).unwrap()
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0
     };
     let left = segment(bucket0, nf0);
     let right = segment(bucket1, nf1);
@@ -1510,12 +1515,30 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         );
         let witness =
             witness::qr_unspent_init((*bucket0.pcd.data(), ()), nf0.into(), &bucket0.members);
-        fuse_unspent_init(rng, bucket0.pcd, witness).unwrap()
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket0.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0
     };
     let right = {
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf1.into(), &bucket.members);
-        fuse_unspent_init(rng, bucket.pcd, witness).unwrap()
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0
     };
 
     let (fused, ()) = PROOF_SYSTEM
@@ -1906,8 +1929,13 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrUnspentInit,
+        witness,
+        bucket.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
         assert_eq!(
             err.to_string(),
             "QrUnspentInit: found nullifier in the bucket"
@@ -1944,8 +1972,13 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     let bucket = seal_qr_intake(rng, foreign, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrUnspentInit,
+        witness,
+        bucket.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
         assert_eq!(
             err.to_string(),
             "QR profile: value does not take the bucket's profile"
@@ -1955,7 +1988,9 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     }
 }
 
-fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentInitWitness) {
+#[test]
+fn qr_unspent_init_rejects_corrupted_inputs() {
+    let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let bucket = qr_bucket_for(
@@ -1967,55 +2002,119 @@ fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentIn
         Fp::from(nf),
         Anchor::from(Fp::ZERO),
     );
+    let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).unwrap();
-    (nf, bucket, witness)
-}
 
-#[test]
-fn qr_unspent_init_rejects_a_root_off_its_class() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
-
-    let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(_, ref mut root) = roots[0];
-    let off = *root + Fp::ONE;
-    assert_ne!(off.square(), root.square());
-    *root = off;
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: root does not square to the claimed class"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (nf, bucket, mut witness) = honest_unspent_init(rng);
-    let (_, _, _, discriminant, profile, ..) = *bucket.pcd.data();
-    assert_eq!(profile.depth, 2);
-
-    let position = 5;
-    let shifted = Fp::from(nf) + discriminant.at(position);
-    assert_ne!(shifted, Fp::ZERO);
-    let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
-    *side = !*side;
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: root does not square to the claimed class"
-        );
-    } else {
-        panic!();
+    for (bucket_pcd, init_witness, expected) in [
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.1[0].1 += Fp::ONE;
+                forged
+            },
+            "QR profile: root does not square to the claimed class",
+        ),
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.1[5].0 = !forged.1[5].0;
+                forged
+            },
+            "QR profile: root does not square to the claimed class",
+        ),
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.2 = array::from_fn(|position| position == 0 || position == 2);
+                forged
+            },
+            "QR profile: depth mask is not a prefix",
+        ),
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.2 = QrProfile { depth: 3, bits: 0 }.depth_mask();
+                forged
+            },
+            "QR profile: depth mask does not match the bucket's depth",
+        ),
+        {
+            let mut data = *bucket.pcd.data();
+            data.0 = EpochIndex::new(EPOCH_MAX);
+            (
+                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
+                witness::qr_unspent_init((data, ()), nf.into(), &bucket.members),
+                "QrUnspentInit: bucket has no next epoch",
+            )
+        },
+        {
+            let mut data = *bucket.pcd.data();
+            data.4.depth = u32::BITS + 1;
+            let mut forged = witness.clone();
+            forged.2 = [true; QrProfile::MAX_DEPTH];
+            (
+                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
+                forged,
+                "QR profile: depth mask does not match the bucket's depth",
+            )
+        },
+        {
+            let mut data = *bucket.pcd.data();
+            data.4 = QrProfile { depth: 0, bits: 1 };
+            let mut forged = witness.clone();
+            forged.2 = QrProfile::ROOT.depth_mask();
+            (
+                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
+                forged,
+                "QR profile: value does not take the bucket's profile",
+            )
+        },
+        (
+            bucket.pcd.clone(),
+            witness::qr_unspent_init(
+                (*bucket.pcd.data(), ()),
+                Tachygram::from(Fp::ZERO),
+                &bucket.members,
+            ),
+            "QrUnspentInit: tested value is zero",
+        ),
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.3 = NfSeqPoly::new(
+                    epoch,
+                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+                );
+                forged
+            },
+            "QrUnspentInit: sequence does not match the tested pair",
+        ),
+        (
+            bucket.pcd.clone(),
+            {
+                let mut forged = witness.clone();
+                forged.4 = iter::once(Tachygram::random(rng)).collect();
+                forged
+            },
+            "QrUnspentInit: contents do not match the bucket",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            qr::QrUnspentInit,
+            init_witness,
+            bucket_pcd,
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 }
 
@@ -2052,13 +2151,27 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         honest_roots[usize::try_from(position).unwrap()],
         QrClassRoot(true, Fp::ZERO)
     );
-    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).unwrap();
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness.clone(),
+            bucket.pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap()
+        .0;
 
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = false;
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrUnspentInit,
+        witness,
+        bucket.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
         assert_eq!(
             err.to_string(),
             "QR profile: exceptional discriminant claimed the non-residue class"
@@ -2066,50 +2179,6 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     } else {
         panic!();
     }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_non_prefix_mask() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
-
-    let (_, _, ref mut depth_mask, ..) = witness;
-    *depth_mask = array::from_fn(|position| position == 0 || position == 2);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(err.to_string(), "QR profile: depth mask is not a prefix");
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
-
-    let (_, _, ref mut depth_mask, ..) = witness;
-    *depth_mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: depth mask does not match the bucket's depth"
-        );
-    } else {
-        panic!();
-    }
-}
-
-fn recarry_bucket(
-    bucket: &QrBucketEntry,
-    alter: impl FnOnce(&mut <qr::QrBucket as ragu::Header>::Data),
-) -> Pcd<qr::QrBucket> {
-    let mut data = *bucket.pcd.data();
-    alter(&mut data);
-    bucket.pcd.proof().clone().carry::<qr::QrBucket>(data)
 }
 
 #[test]
@@ -2153,103 +2222,6 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
 }
 
 #[test]
-fn qr_unspent_init_refuses_a_bucket_in_the_final_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (nf, bucket, _witness) = honest_unspent_init(rng);
-
-    let forged = recarry_bucket(&bucket, |&mut (ref mut epoch, ..)| {
-        *epoch = EpochIndex::new(EPOCH_MAX);
-    });
-    let witness = witness::qr_unspent_init((*forged.data(), ()), nf.into(), &bucket.members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, witness) {
-        assert_eq!(err.to_string(), "QrUnspentInit: bucket has no next epoch");
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
-
-    let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
-        profile.depth = u32::BITS + 1;
-    });
-    let (_, _, ref mut depth_mask, ..) = witness;
-    *depth_mask = [true; QrProfile::MAX_DEPTH];
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, witness) {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: depth mask does not match the bucket's depth"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_malformed_profile() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, witness) = honest_unspent_init(rng);
-
-    let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
-        *profile = QrProfile { depth: 0, bits: 1 };
-    });
-    let mut shallow = witness;
-    let (_, _, ref mut depth_mask, ..) = shallow;
-    *depth_mask = QrProfile::ROOT.depth_mask();
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, shallow) {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: value does not take the bucket's profile"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_zero_value() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, _witness) = honest_unspent_init(rng);
-
-    let witness = witness::qr_unspent_init(
-        (*bucket.pcd.data(), ()),
-        Tachygram::from(Fp::ZERO),
-        &bucket.members,
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(err.to_string(), "QrUnspentInit: tested value is zero");
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (nf, bucket, mut witness) = honest_unspent_init(rng);
-    let (epoch, ..) = *bucket.pcd.data();
-
-    let other = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-    assert_ne!(other, nf);
-    let (_, _, _, ref mut sequence, _) = witness;
-    *sequence = NfSeqPoly::new(epoch, &[other]);
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrUnspentInit: sequence does not match the tested pair"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
 fn qr_unspent_init_rejects_a_twin_value() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
@@ -2278,33 +2250,16 @@ fn qr_unspent_init_rejects_a_twin_value() {
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrUnspentInit,
+        witness,
+        bucket.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
         assert_eq!(
             err.to_string(),
             "QrUnspentInit: sequence does not match the tested pair"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_unspent_init_rejects_foreign_contents() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
-
-    let foreign = iter::once(Tachygram::random(rng)).collect::<TachygramSetPoly>();
-    let (.., contents_commit) = *bucket.pcd.data();
-    assert_ne!(foreign.commit(), contents_commit);
-    let (.., ref mut contents) = witness;
-    *contents = foreign;
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrUnspentInit: contents do not match the bucket"
         );
     } else {
         panic!();
@@ -2357,7 +2312,16 @@ fn qr_unspent_init_accepts_ragged_depths() {
         let nf = Nullifier::from(value);
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
+        let unspent = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0;
         assert_eq!(
             *unspent.data(),
             (
@@ -2395,7 +2359,16 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
 
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
+        let unspent = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .unwrap()
+            .0;
         assert_eq!(
             *unspent.data(),
             (
@@ -2478,7 +2451,10 @@ fn unspent_lift_appends_one_epoch() {
         &[nf0],
         &bucket.members,
     );
-    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();
+    let lifted = PROOF_SYSTEM
+        .fuse(rng, UnspentLift, lift, segment, bucket.pcd.clone())
+        .unwrap()
+        .0;
 
     let fused = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch2));
     assert_eq!(*lifted.data(), *fused.data());
@@ -2508,7 +2484,10 @@ fn unspent_lift_carries_a_spendable() {
         &[mk.derive_nullifier(epoch1)],
         &bucket.members,
     );
-    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();
+    let lifted = PROOF_SYSTEM
+        .fuse(rng, UnspentLift, lift, segment, bucket.pcd.clone())
+        .unwrap()
+        .0;
 
     let carried = user.lift(rng, spendable, lifted, &note);
     assert_eq!(
@@ -2604,9 +2583,13 @@ fn unspent_lift_rejects_invalid_extensions() {
     ];
 
     for (label, lift_bucket, lift, expected) in cases {
-        if let Err(ragu_core::Error::InvalidWitness(err)) =
-            fuse_unspent_lift(rng, segment.clone(), lift_bucket, lift)
-        {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            UnspentLift,
+            lift,
+            segment.clone(),
+            lift_bucket.pcd.clone(),
+        ) {
             assert_eq!(err.to_string(), expected, "{label}");
         } else {
             panic!("{label}");
