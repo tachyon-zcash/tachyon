@@ -6,19 +6,12 @@ use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
-    Cycle as _, PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
-    pasta::{Pasta, PoseidonFp},
+    pasta::Pasta,
 };
-use ragu_primitives::{
-    Element, GadgetExt as _, Point,
-    allocator::Allocator,
-    io::Write,
-    poseidon::{Sponge, SpongeState},
-    vec::FixedVec,
-};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
@@ -32,7 +25,6 @@ use crate::{
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private, public::ACTION_AUTH_GENERATOR},
     note::{self, Note},
-    pasta,
     pasta::{EpAffine, Eq, Fp},
     primitives::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
@@ -365,20 +357,7 @@ impl Step<Pasta> for OutputAction {
         let cm_root = left_encoded.as_gadget().cm.clone();
         let pad_root = left_encoded.as_gadget().pad.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
-        let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-            Element::constant(
-                dr,
-                if index == PoseidonFp::RATE {
-                    Fp::from_u128(u128::from_le_bytes(*b"Tachyon-Output\0\0"))
-                } else {
-                    Fp::ZERO
-                },
-            )
-        }));
-        let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-        sponge.absorb(dr, &theta)?;
-        sponge.absorb(dr, &cm_root)?;
-        let alpha = sponge.squeeze(dr)?;
+        let alpha = poseidon::with_driver::alpha_output(dr, &theta, &cm_root)?;
         let alpha_bits = circuit::bits::<D, 255>(dr, &alpha)?;
         let generator = Point::constant(dr, *ACTION_AUTH_GENERATOR)?;
         let rk = curve::scale(dr, &generator, &alpha_bits)?;
@@ -537,20 +516,7 @@ impl Step<Pasta> for SpendAction {
         })?;
         let cm = left_encoded.as_gadget().cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
-        let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-            Element::constant(
-                dr,
-                if index == PoseidonFp::RATE {
-                    Fp::from_u128(u128::from_le_bytes(*b"Tachyon-Spend\0\0\0"))
-                } else {
-                    Fp::ZERO
-                },
-            )
-        }));
-        let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-        sponge.absorb(dr, &theta)?;
-        sponge.absorb(dr, &cm)?;
-        let alpha = sponge.squeeze(dr)?;
+        let alpha = poseidon::with_driver::alpha_spend(dr, &theta, &cm)?;
         let alpha_bits = circuit::bits::<D, 255>(dr, &alpha)?;
         let generator = Point::constant(dr, *ACTION_AUTH_GENERATOR)?;
         let rk = curve::add_scaled(dr, &ak, &generator, &alpha_bits)?;

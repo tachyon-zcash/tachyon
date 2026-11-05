@@ -69,15 +69,6 @@ fn tagged_sponge<'dr, D: Driver<'dr, F = Fp>, const L: usize>(
     Ok(sponge)
 }
 
-fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
-    *emulate(|driver| {
-        let elements = input.map(|value| Element::constant(driver, value));
-        tagged_sponge(driver, domain, elements.each_ref())?.squeeze(driver)
-    })
-    .value()
-    .take()
-}
-
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 
 /// A max fee note's value commitment blind,
@@ -175,7 +166,21 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// observer pair them off and recover the output count.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
-    hash::<4>(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi])
+    *emulate(|driver| {
+        let rcm_element = Element::constant(driver, rcm);
+        let pk_element = Element::constant(driver, pk);
+        let value_element = Element::constant(driver, Fp::from(value));
+        let psi_element = Element::constant(driver, psi);
+        with_driver::pad_tachygram(
+            driver,
+            &rcm_element,
+            &pk_element,
+            &value_element,
+            &psi_element,
+        )
+    })
+    .value()
+    .take()
 }
 
 const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
@@ -189,7 +194,13 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 /// $$
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
-    hash::<2>(NULLIFIER_MASTER_DOMAIN, [psi, nk])
+    *emulate(|driver| {
+        let psi_element = Element::constant(driver, psi);
+        let nk_element = Element::constant(driver, nk);
+        with_driver::nf_master(driver, &psi_element, &nk_element)
+    })
+    .value()
+    .take()
 }
 
 const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
@@ -201,7 +212,13 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 /// $$
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
-    hash::<2>(SPEND_ALPHA_DOMAIN, [theta, cm])
+    *emulate(|driver| {
+        let theta_element = Element::constant(driver, theta);
+        let cm_element = Element::constant(driver, cm);
+        with_driver::alpha_spend(driver, &theta_element, &cm_element)
+    })
+    .value()
+    .take()
 }
 
 const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
@@ -213,7 +230,13 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 /// $$
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
-    hash::<2>(OUTPUT_ALPHA_DOMAIN, [theta, cm])
+    *emulate(|driver| {
+        let theta_element = Element::constant(driver, theta);
+        let cm_element = Element::constant(driver, cm);
+        with_driver::alpha_output(driver, &theta_element, &cm_element)
+    })
+    .value()
+    .take()
 }
 
 const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
@@ -362,7 +385,13 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 /// anchor of the epoch before.
 #[must_use]
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
-    hash::<2>(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])
+    *emulate(|driver| {
+        let anchor_element = Element::constant(driver, anchor_prev);
+        let epoch_element = Element::constant(driver, epoch);
+        with_driver::anchor_next_epoch(driver, &anchor_element, &epoch_element)
+    })
+    .value()
+    .take()
 }
 
 /// Protocol hash definitions shared by steps and the native emulator wrappers.
@@ -371,9 +400,10 @@ pub(crate) mod with_driver {
     use ragu_primitives::Element;
 
     use super::{
-        ACTION_DIGEST_DOMAIN, ANCHOR_STAMP_DOMAIN, EVIDENCE_NODE_DOMAIN, FEE_BLIND_DOMAIN,
-        FEE_DIGEST_DOMAIN, NOTE_COMMITMENT_DOMAIN, NULLIFIER_DOMAIN, PAYMENT_KEY_DOMAIN,
-        QR_BUCKET_DOMAIN, tagged_sponge,
+        ACTION_DIGEST_DOMAIN, ANCHOR_EPOCH_DOMAIN, ANCHOR_STAMP_DOMAIN, EVIDENCE_NODE_DOMAIN,
+        FEE_BLIND_DOMAIN, FEE_DIGEST_DOMAIN, NOTE_COMMITMENT_DOMAIN, NULLIFIER_DOMAIN,
+        NULLIFIER_MASTER_DOMAIN, OUTPUT_ALPHA_DOMAIN, PAD_COMMITMENT_DOMAIN, PAYMENT_KEY_DOMAIN,
+        QR_BUCKET_DOMAIN, SPEND_ALPHA_DOMAIN, tagged_sponge,
     };
     use crate::{constants::EVIDENCE_TREE_ARITY, pasta::Fp};
 
@@ -420,6 +450,40 @@ pub(crate) mod with_driver {
         tagged_sponge(dr, NOTE_COMMITMENT_DOMAIN, [rcm, pk, value, psi])?.squeeze(dr)
     }
 
+    pub(crate) fn pad_tachygram<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        rcm: &Element<'dr, D>,
+        pk: &Element<'dr, D>,
+        value: &Element<'dr, D>,
+        psi: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        tagged_sponge(dr, PAD_COMMITMENT_DOMAIN, [rcm, pk, value, psi])?.squeeze(dr)
+    }
+
+    pub(crate) fn nf_master<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        psi: &Element<'dr, D>,
+        nk: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        tagged_sponge(dr, NULLIFIER_MASTER_DOMAIN, [psi, nk])?.squeeze(dr)
+    }
+
+    pub(crate) fn alpha_spend<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        theta: &Element<'dr, D>,
+        cm: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        tagged_sponge(dr, SPEND_ALPHA_DOMAIN, [theta, cm])?.squeeze(dr)
+    }
+
+    pub(crate) fn alpha_output<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        theta: &Element<'dr, D>,
+        cm: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        tagged_sponge(dr, OUTPUT_ALPHA_DOMAIN, [theta, cm])?.squeeze(dr)
+    }
+
     pub(crate) fn nullifier_group<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         master: &Element<'dr, D>,
@@ -446,6 +510,14 @@ pub(crate) mod with_driver {
             [anchor_prev, epoch, &bridge_hash[0], &bridge_hash[1]],
         )?
         .squeeze(dr)
+    }
+
+    pub(crate) fn anchor_next_epoch<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        anchor_prev: &Element<'dr, D>,
+        epoch: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        tagged_sponge(dr, ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])?.squeeze(dr)
     }
 
     pub(crate) fn evidence_tree_leaf<'dr, D: Driver<'dr, F = Fp>>(

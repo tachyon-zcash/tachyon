@@ -13,19 +13,13 @@ use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
-    Cycle as _, PoseidonPermutation as _,
+    PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
 };
-use ragu_primitives::{
-    Element, GadgetExt as _, Point,
-    allocator::Allocator,
-    io::Write,
-    poseidon::{Sponge, SpongeState},
-    vec::FixedVec,
-};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
@@ -37,7 +31,6 @@ use crate::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta,
     pasta::{EpAffine, Eq, Fp},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     relations::{
@@ -290,20 +283,7 @@ impl Step<Pasta> for NoteSeed {
         let ak = Point::alloc(dr, ak_assignment)?;
         let [ak_x, ak_y] = curve::coordinates(dr, &ak)?;
         let pk = poseidon::with_driver::payment_key(dr, (&ak_x, &ak_y), &nk)?;
-        let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-            Element::constant(
-                dr,
-                if index == PoseidonFp::RATE {
-                    Fp::from_u128(u128::from_le_bytes(*b"Tachyon-NfMaster"))
-                } else {
-                    Fp::ZERO
-                },
-            )
-        }));
-        let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-        sponge.absorb(dr, &psi)?;
-        sponge.absorb(dr, &nk)?;
-        let mk = sponge.squeeze(dr)?;
+        let mk = poseidon::with_driver::nf_master(dr, &psi, &nk)?;
         let cm = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &value, &psi)?;
         let output = D::just(|| {
             let (note_value, note_psi, note_rcm, _) = witness.take();

@@ -27,19 +27,13 @@ use alloc::vec::Vec;
 
 use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
-    Cycle as _, FixedGenerators as _, PoseidonPermutation as _,
+    Cycle as _, FixedGenerators as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
-    pasta::{Pasta, PoseidonFp},
+    pasta::Pasta,
 };
-use ragu_primitives::{
-    Boolean, Element, GadgetExt as _,
-    allocator::Allocator,
-    io::Write,
-    poseidon::{Sponge, SpongeState},
-    vec::FixedVec,
-};
+use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
@@ -1276,44 +1270,14 @@ impl Step<Pasta> for QrBucketSeal {
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let start = left_encoded.as_gadget().anchor_prev.clone();
         let end = left_encoded.as_gadget().anchor_end.clone();
-        let mut boundary_sponge = Sponge::resume(
-            SpongeState::from_elements(FixedVec::from_fn(|index| {
-                Element::constant(
-                    dr,
-                    if index == PoseidonFp::RATE {
-                        Fp::from_u128(u128::from_le_bytes(*b"Tachyon-AnchorEp"))
-                    } else {
-                        Fp::ZERO
-                    },
-                )
-            })),
-            Pasta::circuit_poseidon(pasta::baked()),
-        );
-        boundary_sponge.absorb(dr, &previous)?;
-        boundary_sponge.absorb(dr, &epoch_element)?;
-        let boundary = boundary_sponge.squeeze(dr)?;
+        let boundary = poseidon::with_driver::anchor_next_epoch(dr, &previous, &epoch_element)?;
         start.enforce_equal(dr, &boundary).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
                     .into(),
             )
         })?;
-        let mut crossing_sponge = Sponge::resume(
-            SpongeState::from_elements(FixedVec::from_fn(|index| {
-                Element::constant(
-                    dr,
-                    if index == PoseidonFp::RATE {
-                        Fp::from_u128(u128::from_le_bytes(*b"Tachyon-AnchorEp"))
-                    } else {
-                        Fp::ZERO
-                    },
-                )
-            })),
-            Pasta::circuit_poseidon(pasta::baked()),
-        );
-        crossing_sponge.absorb(dr, &end)?;
-        crossing_sponge.absorb(dr, &next)?;
-        let crossing = crossing_sponge.squeeze(dr)?;
+        let crossing = poseidon::with_driver::anchor_next_epoch(dr, &end, &next)?;
         let output = D::try_just(|| {
             let (epoch, anchor_prev, _, discriminant, profile, contents) = left.take();
 

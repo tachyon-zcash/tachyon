@@ -4,27 +4,19 @@ extern crate alloc;
 
 use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
-    Cycle as _, PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
-    pasta::{Pasta, PoseidonFp},
+    pasta::Pasta,
 };
-use ragu_primitives::{
-    Element, Point,
-    allocator::Allocator,
-    io::Write,
-    poseidon::{Sponge, SpongeState},
-    vec::FixedVec,
-};
-use udon::{curve::EndomorphismAffine, field::Field as _};
+use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
     constants::MAX_MONEY,
     digest::poseidon,
     note::Note,
-    pasta,
     pasta::{EpAffine, Fp, Fq},
     relations::{arithmetic as circuit, curve},
     value,
@@ -144,24 +136,8 @@ impl Step<Pasta> for OutputBind {
             &mut (),
             witness.as_ref().map(|data| Fp::from(data.0.psi)),
         )?;
-        let input = [rcm, pk, amount.clone(), psi];
-        let cm =
-            poseidon::with_driver::note_commitment(dr, &input[0], &input[1], &input[2], &input[3])?;
-        let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-            Element::constant(
-                dr,
-                if index == PoseidonFp::RATE {
-                    Fp::from_u128(u128::from_le_bytes(*b"Tachyon-CmOutPad"))
-                } else {
-                    Fp::ZERO
-                },
-            )
-        }));
-        let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-        for element in &input {
-            sponge.absorb(dr, element)?;
-        }
-        let pad = sponge.squeeze(dr)?;
+        let cm = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
+        let pad = poseidon::with_driver::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         let amount_bits = circuit::bits::<D, 51>(dr, &amount)?;
