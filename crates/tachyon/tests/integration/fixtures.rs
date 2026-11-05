@@ -22,7 +22,7 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     fee,
-    keys::{PaymentKey, ProofAuthorizingKey, private},
+    keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::{Eq, Fp},
@@ -59,36 +59,22 @@ pub fn stamp_coverage(descriptors: &[[u8; 64]], fees: &[fee::Descriptor]) -> [u8
     )
 }
 
-pub fn mock_txid(bundle_commitment: [u8; 32]) -> [u8; 32] {
-    let hash = blake2b_simd::Params::new()
+pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
+    let txid = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend txid")
         .to_state()
-        .update(&bundle_commitment)
+        .update(&bundle.commitment())
         .finalize();
-
-    let mut out = [0u8; 32];
-    out.copy_from_slice(hash.as_bytes());
-    out
-}
-
-pub fn mock_auth_digest(bundle_auth_digest: [u8; 32]) -> [u8; 32] {
-    let hash = blake2b_simd::Params::new()
+    let auth_digest = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend auth")
         .to_state()
-        .update(&bundle_auth_digest)
+        .update(&bundle.auth_digest())
         .finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(hash.as_bytes());
-    out
-}
-
-pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     let mut wtxid = [0u8; 64];
-    wtxid[..32].copy_from_slice(&mock_txid(bundle.commitment()));
-    wtxid[32..].copy_from_slice(&mock_auth_digest(bundle.auth_digest()));
-
+    wtxid[..32].copy_from_slice(txid.as_bytes());
+    wtxid[32..].copy_from_slice(auth_digest.as_bytes());
     AggregateId::try_from(wtxid).unwrap()
 }
 
@@ -195,8 +181,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
             fee_descriptors_a
                 .iter()
                 .copied()
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect::<ActionSetPoly>();
     let right_acts = descriptors_b
@@ -206,8 +191,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
             fee_descriptors_b
                 .iter()
                 .copied()
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect::<ActionSetPoly>();
     let left_tg = stamp_a
@@ -241,8 +225,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
                 .iter()
                 .chain(fee_descriptors_b)
                 .copied()
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect::<ActionSetPoly>();
     let merged_tg = stamp_a
@@ -333,10 +316,6 @@ impl PoolSimBlock {
             None => self.prev,
         }
     }
-
-    pub fn stamp_commits(&self) -> Vec<TachygramSetCommit> {
-        self.stamps.iter().map(|stamps| stamps.2).collect()
-    }
 }
 
 pub struct PoolSim {
@@ -355,7 +334,7 @@ impl PoolSim {
     }
 
     pub fn block(&self, height: BlockHeight) -> &PoolSimBlock {
-        self.history.get(usize::try_from(height).unwrap()).unwrap()
+        &self.history[usize::try_from(height).unwrap()]
     }
 
     fn push_block(&mut self, prev: Anchor, stamps: Vec<Vec<Tachygram>>) {
@@ -408,24 +387,6 @@ impl PoolSim {
         assert_eq!(cursor, end);
 
         entries
-    }
-
-    pub fn epoch_of(&self, tachygram: Tachygram) -> EpochIndex {
-        let height = self
-            .history
-            .iter()
-            .position(|block| {
-                block
-                    .stamps
-                    .iter()
-                    .any(|stamp| stamp.1.contains(&tachygram))
-            })
-            .unwrap();
-        BlockHeight::from(height).epoch()
-    }
-
-    pub fn epoch_at(&self, anchor: Anchor) -> EpochIndex {
-        self.anchor_index[&anchor].0.epoch()
     }
 
     pub fn advance(
@@ -599,7 +560,7 @@ pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
     discriminant: QrDiscriminant,
 ) -> QrIntakeEntry {
     let (entry, members) = (stamp.0, stamp.1.clone());
-    let epoch = pool.epoch_at(entry);
+    let epoch = pool.anchor_index[&entry].0.epoch();
     let witness = witness::qr_stamp_intake_seed(((), ()), entry, epoch, discriminant, &members);
     let (pcd, ()) = PROOF_SYSTEM
         .seed(rng, qr::QrStampIntakeSeed, witness)
@@ -1093,19 +1054,6 @@ pub(crate) fn shared_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
 }
 
-fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
-    let digest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .personal(b"Tachyon-NoteRnd")
-        .to_state()
-        .update(&Fp::from(pk).to_bytes())
-        .update(&value.to_le_bytes())
-        .finalize();
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(digest.as_bytes());
-    seed
-}
-
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
@@ -1132,9 +1080,18 @@ impl WalletSim {
     pub fn random_note(&self, value_amount: u64) -> Note {
         let pk = self.sk.derive_payment_key();
         let mut streams = self.notes.borrow_mut();
-        let notes = streams
-            .entry(value_amount)
-            .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
+        let notes = streams.entry(value_amount).or_insert_with(|| {
+            let digest = blake2b_simd::Params::new()
+                .hash_length(32)
+                .personal(b"Tachyon-NoteRnd")
+                .to_state()
+                .update(&Fp::from(pk).to_bytes())
+                .update(&value_amount.to_le_bytes())
+                .finalize();
+            let mut seed = [0u8; 32];
+            seed.copy_from_slice(digest.as_bytes());
+            StdRng::from_seed(seed)
+        });
         Note {
             pk,
             value: value::Positive::try_from(value_amount).unwrap(),
@@ -1269,16 +1226,15 @@ impl WalletSim {
                 .iter()
                 .map(|stamp| stamp.1.clone())
                 .collect::<Vec<_>>();
-            let stamp_commits = pool.block(init_height).stamp_commits();
             let cm_idx = stamps
                 .iter()
                 .position(|tgs| tgs.contains(&cm.into()))
                 .unwrap();
 
-            let anchor_prev = stamp_commits[..cm_idx]
+            let anchor_prev = pool.block(init_height).stamps[..cm_idx]
                 .iter()
-                .fold(pool.block(init_height).prev, |anchor, commit| {
-                    anchor.next_stamp(init_height.epoch(), commit).unwrap()
+                .fold(pool.block(init_height).prev, |anchor, stamp| {
+                    anchor.next_stamp(init_height.epoch(), &stamp.2).unwrap()
                 });
 
             (anchor_prev, stamps[cm_idx].clone())
@@ -1386,7 +1342,17 @@ impl WalletSim {
         note: &Note,
         target: EpochIndex,
     ) -> Pcd<spendable::NoteSpendable> {
-        let creation = pool.epoch_of(Tachygram::from(note.commitment()));
+        let creation_height = pool
+            .history
+            .iter()
+            .position(|block| {
+                block
+                    .stamps
+                    .iter()
+                    .any(|stamp| stamp.1.contains(&Tachygram::from(note.commitment())))
+            })
+            .unwrap();
+        let creation = BlockHeight::from(creation_height).epoch();
         let bucket = epoch_bucket(rng, pool, creation);
         let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| {
             self.pak
@@ -1600,14 +1566,4 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
     Fp::from_uniform_bytes(&wide)
-}
-
-pub fn cube_root_twin(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    (Fp::ZETA * (member + shift)) - shift
-}
-
-pub fn indexed_factor(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    (member + shift).pow_u64(3) - Fp::from(2)
 }

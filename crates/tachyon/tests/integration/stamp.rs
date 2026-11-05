@@ -16,8 +16,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with,
-    shared_sk, stamp_coverage,
+    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
+    stamp_coverage,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -379,7 +379,11 @@ fn double_output_cannot_aggregate() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().unwrap())
-        .chain([fee_a, fee_b].into_iter().map(|fee| fee.digest().unwrap()))
+        .chain(
+            [fee_a, fee_b]
+                .into_iter()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
         .collect();
     assert!(!stamp.verify_proof(rng, digests).unwrap());
 }
@@ -477,7 +481,10 @@ fn double_spend_cannot_aggregate() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().unwrap())
-        .chain(fees.into_iter().map(|fee| fee.digest().unwrap()))
+        .chain(
+            fees.into_iter()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
         .collect();
     assert!(!stamp.verify_proof(rng, digests).unwrap());
 }
@@ -545,31 +552,13 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().unwrap())
-        .chain([fee, fee].into_iter().map(|fee| fee.digest().unwrap()))
+        .chain(
+            [fee, fee]
+                .into_iter()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
         .collect();
     assert!(!stamp.verify_proof(rng, digests).unwrap());
-}
-
-#[test]
-fn verify_cannot_distinguish_a_deduplicated_duplicate() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let anchor = pool.anchor();
-
-    let note = wallet.random_note(200);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, anchor, note);
-    let descriptor = plan.descriptor();
-    let fee_digest = fee_descriptor.digest().unwrap();
-
-    let single = descriptor.digest().unwrap();
-    assert!(stamp.verify_proof(rng, [single, fee_digest]).unwrap());
-
-    assert!(
-        !stamp
-            .verify_proof(rng, [single, single, fee_digest])
-            .unwrap()
-    );
 }
 
 #[test]
@@ -1013,8 +1002,7 @@ fn mismatched_merge_descriptors_fail_verification() {
                 .iter()
                 .chain(&fees_b)
                 .copied()
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect();
 

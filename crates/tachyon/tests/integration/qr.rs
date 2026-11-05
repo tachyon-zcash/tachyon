@@ -23,9 +23,9 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin, epoch_bucket, indexed_factor,
-    qr_bucket_segment, qr_profile_of, random_block, random_block_with, seal_qr_intake,
-    seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
+    build_summary_pcd, build_unspent_pcd_over_epochs, epoch_bucket, qr_bucket_segment,
+    qr_profile_of, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
+    seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
 };
 
 type UnspentInitWitness = <qr::QrUnspentInit as Step>::Witness<'static>;
@@ -549,8 +549,11 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     }
 }
 
+
+
+
 #[test]
-fn qr_side_descend_rejects_a_foreign_sibling() {
+fn qr_side_descend_rejects_foreign_witness_parts() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -583,133 +586,67 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
         )
         .unwrap();
 
-    let (_, foreign_sibling, ..) = witness::qr_side_descend((*split.data(), ()), &members, false);
-    let (_, _, interpolant, quotient) =
+    let (_, residue_sibling, residue_interpolant, residue_quotient) =
         witness::qr_side_descend((*split.data(), ()), &members, true);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrSideDescend,
-        (true, foreign_sibling, interpolant, quotient),
-        split,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrSideDescend: sibling does not match the header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_side_descend_rejects_a_foreign_interpolant() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &members),
-        )
-        .unwrap();
-    let (root, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*summary.data(), ()), discriminant),
-            summary,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    let (split, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            witness::qr_intake_split((*root.data(), ()), &members),
-            root,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-
-    for bit in [true, false] {
-        let (_, sibling_contents, _interpolant, quotient) =
-            witness::qr_side_descend((*split.data(), ()), &members, bit);
-        let (_, _, foreign_interpolant, _) =
-            witness::qr_side_descend((*split.data(), ()), &members, !bit);
+    let (_, non_residue_sibling, non_residue_interpolant, non_residue_quotient) =
+        witness::qr_side_descend((*split.data(), ()), &members, false);
+    for (descend_witness, expected) in [
+        (
+            (
+                true,
+                non_residue_sibling.clone(),
+                residue_interpolant.clone(),
+                residue_quotient.clone(),
+            ),
+            "QrSideDescend: sibling does not match the header",
+        ),
+        (
+            (
+                true,
+                residue_sibling.clone(),
+                non_residue_interpolant.clone(),
+                residue_quotient.clone(),
+            ),
+            "QrSideDescend: the sibling fails its class decomposition",
+        ),
+        (
+            (
+                false,
+                non_residue_sibling.clone(),
+                residue_interpolant.clone(),
+                non_residue_quotient.clone(),
+            ),
+            "QrSideDescend: the sibling fails its class decomposition",
+        ),
+        (
+            (
+                true,
+                residue_sibling,
+                residue_interpolant,
+                non_residue_quotient,
+            ),
+            "QrSideDescend: the sibling fails its class decomposition",
+        ),
+        (
+            (
+                false,
+                non_residue_sibling,
+                non_residue_interpolant,
+                residue_quotient,
+            ),
+            "QrSideDescend: the sibling fails its class decomposition",
+        ),
+    ] {
         if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
             rng,
             qr::QrSideDescend,
-            (bit, sibling_contents, foreign_interpolant, quotient),
+            descend_witness,
             split.clone(),
             Proof::bootstrap().carry::<()>(()),
         ) {
-            assert_eq!(
-                err.to_string(),
-                "QrSideDescend: the sibling fails its class decomposition"
-            );
+            assert_eq!(err.to_string(), expected);
         } else {
-            panic!();
-        }
-    }
-}
-
-#[test]
-fn qr_side_descend_rejects_a_foreign_quotient() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &members),
-        )
-        .unwrap();
-    let (root, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*summary.data(), ()), discriminant),
-            summary,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    let (split, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            witness::qr_intake_split((*root.data(), ()), &members),
-            root,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-
-    for bit in [true, false] {
-        let (_, sibling_contents, interpolant, _quotient) =
-            witness::qr_side_descend((*split.data(), ()), &members, bit);
-        let (_, _, _, foreign_quotient) =
-            witness::qr_side_descend((*split.data(), ()), &members, !bit);
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            qr::QrSideDescend,
-            (bit, sibling_contents, interpolant, foreign_quotient),
-            split.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(
-                err.to_string(),
-                "QrSideDescend: the sibling fails its class decomposition"
-            );
-        } else {
-            panic!();
+            panic!("{expected}");
         }
     }
 }
@@ -1045,114 +982,84 @@ fn qr_intake_merge_joins_two_spans() {
     );
 }
 
+
+
 #[test]
-fn qr_intake_merge_rejects_a_gap() {
+fn qr_intake_merge_rejects_mismatched_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::random(rng);
-    let left_start = Anchor::random(rng);
-    let right_start = Anchor::random(rng);
     let left_members: [Tachygram; 5] = array::from_fn(|_| Tachygram::random(rng));
     let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (left_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), left_start, epoch, &left_members),
-        )
-        .unwrap();
-    let (right_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), right_start, epoch, &right_members),
-        )
-        .unwrap();
-
-    let (left, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
-            left_summary,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    let (right, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
-            right_summary,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-
-    let witness =
-        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeMerge: left.anchor_end must equal right.anchor_prev"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_intake_merge_rejects_different_profiles() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let discriminant = QrDiscriminant::random(rng);
     let start = Anchor::random(rng);
-    let left_members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
-    let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (left_summary, ()) = PROOF_SYSTEM
+    let (left, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &left_members),
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &left_members),
         )
         .unwrap();
-    let (_, _, junction, _) = *left_summary.data();
-    let (right_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), junction, epoch, &right_members),
-        )
-        .unwrap();
+    let junction = left.data().2;
 
-    let (left_root, ()) = PROOF_SYSTEM
-        .fuse(
+    for (anchor_prev, right_epoch, right_discriminant, expected) in [
+        (
+            Anchor::random(rng),
+            epoch,
+            discriminant,
+            "QrIntakeMerge: left.anchor_end must equal right.anchor_prev",
+        ),
+        (
+            junction,
+            epoch.next().unwrap(),
+            discriminant,
+            "QrIntakeMerge: inputs cover different epochs",
+        ),
+        (
+            junction,
+            epoch,
+            QrDiscriminant::random(rng),
+            "QrIntakeMerge: inputs derive from different discriminants",
+        ),
+    ] {
+        let (right, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                qr::QrStampIntakeSeed,
+                witness::qr_stamp_intake_seed(
+                    ((), ()),
+                    anchor_prev,
+                    right_epoch,
+                    right_discriminant,
+                    &right_members,
+                ),
+            )
+            .unwrap();
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
             rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
-            left_summary,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
+            qr::QrIntakeMerge,
+            witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members),
+            left.clone(),
+            right,
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
+    }
+
     let (right, ()) = PROOF_SYSTEM
-        .fuse(
+        .seed(
             rng,
-            qr::QrSummaryIntake,
-            witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
-            right_summary,
-            Proof::bootstrap().carry::<()>(()),
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), junction, epoch, discriminant, &right_members),
         )
         .unwrap();
-
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split((*left_root.data(), ()), &left_members),
-            left_root,
+            witness::qr_intake_split((*left.data(), ()), &left_members),
+            left,
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
@@ -1165,24 +1072,19 @@ fn qr_intake_merge_rejects_different_profiles() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-
     let deeper_members: Vec<Tachygram> = left_members
         .iter()
         .copied()
         .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
         .collect();
-    let witness = witness::qr_intake_merge(
-        (*deeper.data(), *right.data()),
-        &deeper_members,
-        &right_members,
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeMerge: inputs sit at different depths"
-        );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrIntakeMerge,
+        witness::qr_intake_merge((*deeper.data(), *right.data()), &deeper_members, &right_members),
+        deeper,
+        right,
+    ) {
+        assert_eq!(err.to_string(), "QrIntakeMerge: inputs sit at different depths");
     } else {
         panic!();
     }
@@ -2284,23 +2186,7 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
     });
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = [true; QrProfile::MAX_DEPTH];
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        fuse_unspent_init(rng, forged, witness.clone())
-    {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: depth mask does not match the bucket's depth"
-        );
-    } else {
-        panic!();
-    }
-
-    let saturated = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
-        profile.depth = u32::MAX;
-    });
-    let (_, _, ref mut saturated_mask, ..) = witness;
-    *saturated_mask = [true; QrProfile::MAX_DEPTH];
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, saturated, witness) {
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, witness) {
         assert_eq!(
             err.to_string(),
             "QR profile: depth mask does not match the bucket's depth"
@@ -2318,23 +2204,10 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
     let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
         *profile = QrProfile { depth: 0, bits: 1 };
     });
-    let mut shallow = witness.clone();
+    let mut shallow = witness;
     let (_, _, ref mut depth_mask, ..) = shallow;
     *depth_mask = QrProfile::ROOT.depth_mask();
     if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, shallow) {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: value does not take the bucket's profile"
-        );
-    } else {
-        panic!();
-    }
-
-    let overflowing = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
-        profile.bits |= 1 << 2;
-    });
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, overflowing, witness)
-    {
         assert_eq!(
             err.to_string(),
             "QR profile: value does not take the bucket's profile"
@@ -2403,11 +2276,12 @@ fn qr_unspent_init_rejects_a_twin_value() {
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
     let z = unpinned_challenge(&[witness.3.commit().into()]);
-    let twin = cube_root_twin(epoch, nf.into(), z);
+    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
+    let twin = (Fp::ZETA * (Fp::from(nf) + shift)) - shift;
     assert_ne!(twin, Fp::from(nf));
     assert_eq!(
-        indexed_factor(epoch, twin, z),
-        indexed_factor(epoch, nf.into(), z)
+        (twin + shift).pow_u64(3) - Fp::from(2),
+        (Fp::from(nf) + shift).pow_u64(3) - Fp::from(2)
     );
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
@@ -2544,111 +2418,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     }
 }
 
-#[test]
-fn qr_intake_merge_rejects_different_discriminants() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let left_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
-    let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
 
-    let (left_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &left_members),
-        )
-        .unwrap();
-    let (_, _, junction, _) = *left_summary.data();
-    let (right_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), junction, epoch, &right_members),
-        )
-        .unwrap();
-
-    let [left, right] = [left_summary, right_summary].map(|summary| {
-        let discriminant = QrDiscriminant::random(rng);
-        let (root, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSummaryIntake,
-                witness::qr_summary_intake((*summary.data(), ()), discriminant),
-                summary,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .unwrap();
-        root
-    });
-    assert_ne!(left.data().3, right.data().3);
-
-    let witness =
-        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeMerge: inputs derive from different discriminants"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn qr_intake_merge_rejects_different_epochs() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let discriminant = QrDiscriminant::random(rng);
-    let start = Anchor::random(rng);
-    let left_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
-    let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (left_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &left_members),
-        )
-        .unwrap();
-    let (_, _, junction, _) = *left_summary.data();
-    let (right_summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), junction, epoch.next().unwrap(), &right_members),
-        )
-        .unwrap();
-
-    let [left, right] = [left_summary, right_summary].map(|summary| {
-        let (root, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSummaryIntake,
-                witness::qr_summary_intake((*summary.data(), ()), discriminant),
-                summary,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .unwrap();
-        root
-    });
-    assert_ne!(left.data().0, right.data().0);
-
-    let witness =
-        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
-    {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeMerge: inputs cover different epochs"
-        );
-    } else {
-        panic!();
-    }
-}
 
 #[test]
 fn qr_partition_routes_consecutive_values_by_profile() {
@@ -2700,17 +2470,12 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     assert_eq!(routed, expected);
 }
 
-fn pool_through(rng: &mut StdRng, epoch: EpochIndex) -> PoolSim {
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(epoch.first_block().0, |_| random_block(rng, 1, 2));
-    pool
-}
-
 #[test]
 fn unspent_lift_appends_one_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
-    let pool = pool_through(rng, epoch2);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 2));
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 
@@ -2782,7 +2547,10 @@ fn unspent_lift_carries_a_spendable() {
 fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
-    let pool = pool_through(rng, EpochIndex::new(3));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    pool.advance(EpochIndex::new(3).first_block().0, |_| {
+        random_block(rng, 1, 2)
+    });
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 

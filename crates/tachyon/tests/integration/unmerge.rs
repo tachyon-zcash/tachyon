@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::vec;
+use core::iter;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -16,8 +17,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid,
-    random_block, shared_sk,
+    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
+    shared_sk,
 };
 
 #[test]
@@ -520,38 +521,26 @@ fn unmerge_binds_its_sets() {
         .chain(
             [alice.fee_descriptor(), bob.fee_descriptor()]
                 .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect();
     let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
     let alice_actions: ActionSetPoly = alice
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(
-            [alice.fee_descriptor()]
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
+        .chain(iter::once(alice.fee_descriptor().digest().unwrap()))
         .collect();
     let alice_tachygrams: TachygramSetPoly = alice.stamp.tachygrams.iter().copied().collect();
     let bob_actions: ActionSetPoly = bob
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(
-            [bob.fee_descriptor()]
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
+        .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
     let carol_actions: ActionSetPoly = carol
         .descriptors()
         .map(|desc| desc.digest().unwrap())
-        .chain(
-            [carol.fee_descriptor()]
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
+        .chain(iter::once(carol.fee_descriptor().digest().unwrap()))
         .collect();
     let carol_tachygrams: TachygramSetPoly = carol.stamp.tachygrams.iter().copied().collect();
 

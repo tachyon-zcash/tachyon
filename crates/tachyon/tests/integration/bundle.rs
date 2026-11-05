@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::{
-    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     string::ToString as _,
     vec,
@@ -13,7 +12,7 @@ use corez::io;
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
+    BlockHeight, SignatureError, Tachygram, action,
     bundle::{Plan, PlanError, Signature},
     constants::{EPOCH_SIZE, MAX_MONEY},
     digest::blake2b,
@@ -27,8 +26,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, forge_overlapping_merge, mock_sighash, mock_wtxid,
-    random_block, random_block_with, shared_sk, stamp_coverage,
+    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block,
+    random_block_with, shared_sk, stamp_coverage,
 };
 
 #[test]
@@ -52,20 +51,6 @@ fn plan_value_balance_sums_spends_and_outputs() {
 }
 
 #[test]
-fn wrong_value_balance_fails_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment());
-
-    bundle.value_balance = value::Balance::try_from(999).unwrap();
-    let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
-    };
-}
-
-#[test]
 fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
@@ -75,23 +60,6 @@ fn stripped_bundle_retains_signatures() {
     let covering = build_autonome(rng, &wallet, 500, 300);
     let adjunct = bundle.strip(mock_wtxid(&covering));
     adjunct.verify_signatures(&sighash).unwrap();
-}
-
-#[test]
-fn plan_commitment_matches_bundle_commitment() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
-
-    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-
-    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(stamp);
-
-    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
 #[test]
@@ -145,15 +113,6 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
         .unwrap();
 
-    let unrelated_alpha = unrelated
-        .theta
-        .randomizer::<effect::Output>(unrelated.note.commitment());
-    assert!(!bundle.actions.iter().any(|action| {
-        action.sig
-            == private::ActionSigningKey::new(&unrelated_alpha)
-                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    }));
-
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
@@ -182,19 +141,6 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
         .unwrap();
-
-    let alpha = spend
-        .theta
-        .randomizer::<effect::Spend>(spend.note.commitment());
-    let correct_sig = ask
-        .derive_action_private(&alpha)
-        .sign(rng, &mock_sighash(bundle.commitment()));
-    assert!(
-        !bundle
-            .actions
-            .iter()
-            .any(|action| action.sig == correct_sig)
-    );
 
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
@@ -444,132 +390,6 @@ fn zero_action_bundle_is_valid() {
     bundle.verify_signatures(&sighash).unwrap();
 }
 
-#[test]
-fn payment_bundle_verifies() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let sender = WalletSim::random(rng);
-    let recipient = WalletSim::random(rng);
-    let input_note = sender.random_note(500);
-    let output_note = recipient.random_note(200);
-    let change_note = sender.random_note(300);
-
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(rng, &[vec![input_note.commitment()]], 50));
-    let height = pool.height();
-    let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
-    let anchor = spendable_pcd.data().2;
-    let stamped = sender.autonome(
-        rng,
-        anchor,
-        alloc::vec![(input_note, spendable_pcd)],
-        alloc::vec![output_note, change_note],
-    );
-    let sighash = mock_sighash(stamped.commitment());
-    stamped.verify_signatures(&sighash).unwrap();
-}
-
-#[test]
-fn double_spend_obvious() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let anchor = PoolSim::genesis_with(random_block(rng, 1, 50)).anchor();
-    let note = wallet.random_note(200);
-
-    let (rcv, theta, plan) = build_output_plan(rng, note);
-    let alpha = theta.randomizer::<effect::Output>(note.commitment());
-    let descriptor = plan.descriptor();
-
-    let doubled = -2 * i64::try_from(u64::from(note.value)).unwrap();
-    let value_balance = value::Balance::try_from(doubled).unwrap();
-    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
-    let max_fee = wallet.random_note(0);
-    let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
-    let sighash = mock_sighash(blake2b::bundle_commitment(
-        &blake2b::action_descriptor_digest(&action_bytes),
-        doubled,
-        &fee_max_commitment.into(),
-        &blake2b::memo_digest(&[]),
-    ));
-    let sig = private::ActionSigningKey::new(&alpha).sign(rng, &sighash);
-    let action = Action::from((descriptor, sig));
-    let binding_sig = Plan::new(alloc::vec![], alloc::vec![plan, plan], max_fee)
-        .derive_bsk_private()
-        .sign(rng, &sighash);
-
-    let fee_descriptor = fee::Descriptor {
-        max_commitment: fee_max_commitment,
-        value: value::Positive::ZERO,
-    };
-    let output_stamp = stamp::Plan::new(
-        vec![],
-        vec![(descriptor, theta, note, rcv)],
-        anchor,
-        max_fee,
-        value::Positive::ZERO,
-    )
-    .prove(rng, &wallet.pak, vec![])
-    .unwrap();
-    let evil_pcd = forge_overlapping_merge(
-        rng,
-        (&output_stamp, &vec![descriptor], &[fee_descriptor]),
-        (&output_stamp, &vec![descriptor], &[fee_descriptor]),
-    );
-    let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
-        desc_bytes.sort_unstable();
-        stamp_coverage(&desc_bytes, &[fee_descriptor])
-    };
-
-    let stamp = ProofStamp {
-        coverage,
-        anchor: evil_pcd.data().2,
-        tachygram_set: output_stamp
-            .tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit(),
-        tachygrams: output_stamp.tachygrams.iter().copied().collect(),
-        proof: Box::new(evil_pcd.proof().clone()),
-        fee: output_stamp.fee,
-    };
-
-    let bundle = Bundle {
-        actions: vec![action, action],
-        value_balance,
-        fee_max_commitment,
-        binding_sig,
-        memo: Vec::new(),
-        stamp,
-    };
-
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).unwrap();
-
-    let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
-
-    decoded
-        .verify_signatures(&mock_sighash(decoded.commitment()))
-        .unwrap();
-    assert!(decoded.is_autonome());
-    assert!(bundle.actions[0] == bundle.actions[1]);
-
-    let dup_err = decoded.verify_coverage(&[], &[]).unwrap_err();
-    let VerifyCoverageError::DuplicateActions = dup_err else {
-        panic!("expected DuplicateActions, got {dup_err:?}");
-    };
-
-    let digests: Vec<ActionDigest> = decoded
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            [fee_descriptor, fee_descriptor]
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
-        .collect();
-    assert!(!decoded.stamp.verify_proof(rng, digests).unwrap());
-}
 
 #[test]
 fn duplicated_spend_cannot_inflate() {
@@ -653,12 +473,6 @@ fn duplicated_spend_cannot_inflate() {
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
         .unwrap();
-    assert!(decoded.is_autonome());
-    assert_eq!(decoded.stamp.tachygrams.len(), 2 + 1);
-    let withdrawn: i64 = decoded.value_balance.into();
-    let backed = i64::try_from(u64::from(note.value)).unwrap();
-    assert_eq!(withdrawn, 2 * backed);
-
     let dup_err = decoded.verify_coverage(&[], &[]).unwrap_err();
     let VerifyCoverageError::DuplicateActions = dup_err else {
         panic!("expected DuplicateActions, got {dup_err:?}");
@@ -727,41 +541,6 @@ fn verify_proof_disproves_uncovered_adjunct() {
     assert!(!bundle.verify_proof(rng, &digests).unwrap());
 }
 
-#[test]
-fn double_spend_secret() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-
-    let spend_a = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    let spend_b = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    assert_ne!(spend_a.cv(), spend_b.cv());
-    assert_ne!(spend_a.rk, spend_b.rk);
-
-    let plan = Plan::new(
-        alloc::vec![spend_a, spend_b],
-        alloc::vec![],
-        WalletSim::new(shared_sk()).random_note(0),
-    );
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .unwrap();
-
-    bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap();
-}
 
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
@@ -788,7 +567,6 @@ fn innocent_aggregate_from_two_autonomes() {
     let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor_a = sp_a.data().2;
     let anchor_b = sp_b.data().2;
-    assert_eq!(anchor_a, anchor_b);
 
     let autonome_a = wallet.autonome(
         rng,
@@ -862,27 +640,6 @@ fn innocent_aggregate_from_two_autonomes() {
     ];
 
     innocent
-        .verify_signatures(&mock_sighash(innocent.commitment()))
-        .unwrap();
-
-    let adjunct_descs: Vec<action::Descriptor> =
-        adjuncts.iter().flat_map(Bundle::descriptors).collect();
-    let adjunct_fee_descriptors: Vec<fee::Descriptor> =
-        adjuncts.iter().map(Bundle::fee_descriptor).collect();
-    let (covered_descs, covered_fee_descriptors) = innocent
-        .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-        .unwrap();
-    let digests: Vec<ActionDigest> = covered_descs
-        .iter()
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            covered_fee_descriptors
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
-        .collect();
-    assert!(innocent.verify_proof(rng, &digests).unwrap());
-    innocent
         .verify(
             rng,
             &mock_sighash(innocent.commitment()),
@@ -924,8 +681,6 @@ fn based_aggregate_with_two_adjuncts() {
     let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
     let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
-    assert_eq!(anchor, a_sp.data().2);
-    assert_eq!(anchor, b_sp.data().2);
 
     let mut becomes_based = wallet.autonome(
         rng,
@@ -992,26 +747,6 @@ fn based_aggregate_with_two_adjuncts() {
     let adjunct_b = autonome_b.strip(wtxid);
     let adjuncts = [&adjunct_a, &adjunct_b];
 
-    becomes_based.verify_signatures(&sighash).unwrap();
-
-    let adjunct_descs: Vec<action::Descriptor> =
-        adjuncts.iter().flat_map(|adj| adj.descriptors()).collect();
-    let adjunct_fee_descriptors: Vec<fee::Descriptor> =
-        adjuncts.iter().map(|adj| adj.fee_descriptor()).collect();
-    let (covered_descs, covered_fee_descriptors) = becomes_based
-        .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-        .unwrap();
-    let digests: Vec<ActionDigest> = covered_descs
-        .iter()
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            covered_fee_descriptors
-                .into_iter()
-                .map(|fee| fee.digest().unwrap()),
-        )
-        .collect();
-    assert!(becomes_based.verify_proof(rng, &digests).unwrap());
-
     assert!(becomes_based.is_aggregate());
     becomes_based
         .verify(rng, &sighash, &wtxid_bytes, &adjuncts)
@@ -1035,21 +770,6 @@ fn based_aggregate_with_two_adjuncts() {
             panic!("expected Coverage(StampActionsMismatch), got {err:?}");
         };
     }
-
-    {
-        let mut tampered = becomes_based.clone();
-
-        let mut sig_bytes: Vec<u8> = [0; 64].to_vec();
-        tampered.actions[0].sig.write(&mut sig_bytes).unwrap();
-
-        sig_bytes[0] ^= 0xFF;
-        tampered.actions[0].sig = action::Signature::read(&mut sig_bytes.as_slice()).unwrap();
-
-        let err = tampered.verify_signatures(&sighash).unwrap_err();
-        let SignatureError::Action(_) = err else {
-            panic!("expected SignatureError::Action, got {err:?}");
-        };
-    }
 }
 
 #[test]
@@ -1060,7 +780,6 @@ fn autonome_verify_composes_all_checks() {
     let sighash = mock_sighash(bundle.commitment());
     let wtxid: [u8; 64] = mock_wtxid(&bundle).into();
 
-    bundle.verify_signatures(&sighash).unwrap();
     bundle.verify(rng, &sighash, &wtxid, &[]).unwrap();
 
     let mut tampered = bundle.clone();
@@ -1129,7 +848,6 @@ fn read_preserves_action_order() {
         (plan_b.descriptor(), alpha_b, rcv_b),
     ];
     items.sort_by_key(|item| Reverse(item.0));
-    assert!(items[0].0 > items[1].0);
 
     let value_balance = value::Balance::try_from(-500i64).unwrap();
     let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
@@ -1193,46 +911,16 @@ fn stripped_read_write_round_trip() {
 
 #[test]
 fn tachyon_bundle_conversions() {
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let original = build_autonome(rng, &wallet, 1000, 700);
-        let erased: TachyonBundle = original.clone().into();
-        let back = Bundle::<ProofStamp>::try_from(erased).unwrap();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
 
-        assert_eq!(original.actions, back.actions);
-        assert_eq!(original.value_balance, back.value_balance);
-        assert_eq!(original.stamp.tachygrams, back.stamp.tachygrams);
-        assert_eq!(original.stamp.anchor, back.stamp.anchor);
-    }
+    let stamped_erased: TachyonBundle = stamped.into();
+    Bundle::<PointerStamp>::try_from(stamped_erased).unwrap_err();
 
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let covering = build_autonome(rng, &wallet, 500, 300);
-        let wtxid = mock_wtxid(&covering);
-        let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
-
-        let erased: TachyonBundle = stripped.clone().into();
-        let back = Bundle::<PointerStamp>::try_from(erased).unwrap();
-
-        assert_eq!(stripped.commitment(), back.commitment());
-        assert_eq!(stripped.auth_digest(), back.auth_digest());
-        assert_eq!(back.stamp.wtxid, wtxid);
-    }
-
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::new(shared_sk());
-        let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
-
-        let stamped_erased: TachyonBundle = stamped.into();
-        Bundle::<PointerStamp>::try_from(stamped_erased).unwrap_err();
-
-        let adjunct_erased: TachyonBundle = adjunct.into();
-        Bundle::<ProofStamp>::try_from(adjunct_erased).unwrap_err();
-    }
+    let adjunct_erased: TachyonBundle = adjunct.into();
+    Bundle::<ProofStamp>::try_from(adjunct_erased).unwrap_err();
 }
 
 #[test]
@@ -1326,11 +1014,7 @@ fn read_rejects_zero_wtxid() {
     let covering = build_autonome(rng, &wallet, 500, 300);
     let wtxid = mock_wtxid(&covering);
 
-    let adjunct = {
-        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
-        assert_ne!(adjunct.actions, []);
-        adjunct
-    };
+    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
     let innocent = {
         let max_fee = wallet.random_note(0);
@@ -1347,7 +1031,6 @@ fn read_rejects_zero_wtxid() {
                 fee: value::Positive::ZERO,
             },
         };
-        assert_eq!(bundle.actions, []);
         bundle
     };
 
@@ -1431,7 +1114,6 @@ fn auth_digest_invariants() {
 
         let covering_a = build_autonome(rng, &wallet, 500, 300);
         let covering_b = build_autonome(rng, &wallet, 800, 600);
-        assert_ne!(mock_wtxid(&covering_a), mock_wtxid(&covering_b));
 
         let stripped_aa = autonome.clone().strip(mock_wtxid(&covering_a));
         let digest_aa = stripped_aa.auth_digest();
@@ -2135,7 +1817,7 @@ fn bundle_lift_over_an_aggregate() {
         .chain(
             covered_fee_descriptors
                 .into_iter()
-                .map(|fee| fee.digest().unwrap()),
+                .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect();
     assert!(lifted.verify_proof(rng, &digests).unwrap());

@@ -12,55 +12,11 @@ use zcash_tachyon::{
 
 use crate::{
     fixtures::{
-        EvidenceLeaf, PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree,
-        build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
+        EvidenceLeaf, PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree, build_qr_partition,
+        open_evidence_tree, random_block, seal_qr_intake, shared_sk,
     },
     qr::{EPOCH_MEMBERS, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch},
 };
-
-fn pair_trees(
-    rng: &mut StdRng,
-    left: Pcd<evidence::EvidenceTree>,
-    right: Pcd<evidence::EvidenceTree>,
-) -> ragu_core::Result<Pcd<evidence::EvidenceTreePair>> {
-    PROOF_SYSTEM
-        .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
-        .map(|(pair, ())| pair)
-}
-
-fn fuse_trees(
-    rng: &mut StdRng,
-    left: Pcd<evidence::EvidenceTreePair>,
-    right: Pcd<evidence::EvidenceTreePair>,
-) -> ragu_core::Result<Pcd<evidence::EvidenceTree>> {
-    PROOF_SYSTEM
-        .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-        .map(|(tree, ())| tree)
-}
-
-fn assert_both_joins_reject(
-    rng: &mut StdRng,
-    left: Pcd<evidence::EvidenceTree>,
-    right: Pcd<evidence::EvidenceTree>,
-    complaint: &str,
-) {
-    let left_pair = pair_trees(rng, left.clone(), left.clone()).unwrap();
-    let right_pair = pair_trees(rng, right.clone(), right.clone()).unwrap();
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = pair_trees(rng, left, right) {
-        assert_eq!(
-            err.to_string(),
-            format!("EvidenceTreePairFuse: {complaint}")
-        );
-    } else {
-        panic!();
-    }
-    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_trees(rng, left_pair, right_pair) {
-        assert_eq!(err.to_string(), format!("EvidenceTreeFuse: {complaint}"));
-    } else {
-        panic!();
-    }
-}
 
 fn descend_to_leaf(
     rng: &mut StdRng,
@@ -224,8 +180,13 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch1));
 }
 
+
+
+
+
+
 #[test]
-fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
+fn evidence_tree_joins_reject_mismatched_trees() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
@@ -233,85 +194,52 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
+    let discriminant = QrDiscriminant::random(rng);
     let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
-    let first = qr_bucket_for(
+    let bucket0 = qr_bucket_at(
         rng,
         &pool,
         (Anchor::default(), final0),
+        discriminant,
         EPOCH_MEMBERS,
         0,
         value,
         Anchor::from(Fp::ZERO),
     );
-    let second = qr_bucket_for(
+    let bucket1 = qr_bucket_at(
         rng,
         &pool,
         (final0.next_epoch(epoch1).unwrap(), final1),
+        discriminant,
         EPOCH_MEMBERS,
         0,
         value,
         final0,
     );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        evidence::EvidenceTreeLeafPair,
+        (),
+        bucket0.pcd.clone(),
+        bucket1.pcd.clone(),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "EvidenceTreeLeafPair: inputs cover different epochs"
+        );
+    } else {
+        panic!();
+    }
+    let tree0 = build_evidence_tree(rng, vec![bucket0]).pcd;
+    let tree1 = build_evidence_tree(rng, vec![bucket1]).pcd;
 
-    let (left, right) = (
-        build_evidence_tree(rng, vec![first]).pcd,
-        build_evidence_tree(rng, vec![second]).pcd,
-    );
-    assert_both_joins_reject(rng, left, right, "inputs cover different epochs");
-}
-
-#[test]
-fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let span = (Anchor::default(), final_anchor);
-
-    let first = qr_bucket_for(
+    let other_discriminant = QrDiscriminant::random(rng);
+    let foreign = qr_bucket_at(
         rng,
         &pool,
-        span,
-        EPOCH_MEMBERS,
-        0,
-        value,
-        Anchor::from(Fp::ZERO),
-    );
-    let second = qr_bucket_for(
-        rng,
-        &pool,
-        span,
-        EPOCH_MEMBERS,
-        0,
-        value,
-        Anchor::from(Fp::ZERO),
-    );
-    assert_ne!(first.pcd.data().3, second.pcd.data().3);
-
-    let (left, right) = (
-        build_evidence_tree(rng, vec![first]).pcd,
-        build_evidence_tree(rng, vec![second]).pcd,
-    );
-    assert_both_joins_reject(
-        rng,
-        left,
-        right,
-        "inputs derive from different discriminants",
-    );
-}
-
-#[test]
-fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
-
-    let whole = qr_bucket_at(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
+        (Anchor::default(), final0),
+        other_discriminant,
         EPOCH_MEMBERS,
         0,
         value,
@@ -327,45 +255,19 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
         value,
         Anchor::from(Fp::ZERO),
     );
-
-    let (left, right) = (
-        build_evidence_tree(rng, vec![whole]).pcd,
-        build_evidence_tree(rng, vec![short]).pcd,
-    );
-    assert_both_joins_reject(rng, left, right, "inputs close at different anchors");
-}
-
-#[test]
-fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
-    let final0 = pool.block(epoch0.last_block()).anchor();
-    let final1 = pool.block(epoch1.last_block()).anchor();
-    let discriminant = QrDiscriminant::random(rng);
-    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
-
-    let genuine = qr_bucket_at(
-        rng,
-        &pool,
-        (final0.next_epoch(epoch1).unwrap(), final1),
-        discriminant,
-        EPOCH_MEMBERS,
-        0,
-        value,
-        final0,
-    );
-
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
-    let fake_prev = fake_anchor_final_prev.next_epoch(epoch1).unwrap();
     let members = [Tachygram::random(rng)];
     let (intake, ()) = PROOF_SYSTEM
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), fake_prev, epoch1, discriminant, &members),
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                fake_anchor_final_prev.next_epoch(epoch1).unwrap(),
+                epoch1,
+                discriminant,
+                &members,
+            ),
         )
         .unwrap();
     let elsewhere = seal_qr_intake(
@@ -377,55 +279,46 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
         fake_anchor_final_prev,
     );
 
-    let (left, right) = (
-        build_evidence_tree(rng, vec![genuine]).pcd,
-        build_evidence_tree(rng, vec![elsewhere]).pcd,
-    );
-    assert_both_joins_reject(rng, left, right, "inputs open at different anchors");
-}
-
-#[test]
-fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
-    let final0 = pool.block(epoch0.last_block()).anchor();
-    let final1 = pool.block(epoch1.last_block()).anchor();
-    let value = Fp::random(|bytes| rng.fill_bytes(bytes));
-
-    let bucket0 = qr_bucket_for(
-        rng,
-        &pool,
-        (Anchor::default(), final0),
-        EPOCH_MEMBERS,
-        0,
-        value,
-        Anchor::from(Fp::ZERO),
-    );
-    let bucket1 = qr_bucket_for(
-        rng,
-        &pool,
-        (final0.next_epoch(epoch1).unwrap(), final1),
-        EPOCH_MEMBERS,
-        0,
-        value,
-        final0,
-    );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        evidence::EvidenceTreeLeafPair,
-        (),
-        bucket0.pcd,
-        bucket1.pcd,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "EvidenceTreeLeafPair: inputs cover different epochs"
-        );
-    } else {
-        panic!();
+    for (left, right, complaint) in [
+        (tree0.clone(), tree1.clone(), "inputs cover different epochs"),
+        (
+            tree0.clone(),
+            build_evidence_tree(rng, vec![foreign]).pcd,
+            "inputs derive from different discriminants",
+        ),
+        (
+            tree0,
+            build_evidence_tree(rng, vec![short]).pcd,
+            "inputs close at different anchors",
+        ),
+        (
+            tree1,
+            build_evidence_tree(rng, vec![elsewhere]).pcd,
+            "inputs open at different anchors",
+        ),
+    ] {
+        let left_pair = PROOF_SYSTEM
+            .fuse(rng, evidence::EvidenceTreePairFuse, (), left.clone(), left.clone())
+            .unwrap()
+            .0;
+        let right_pair = PROOF_SYSTEM
+            .fuse(rng, evidence::EvidenceTreePairFuse, (), right.clone(), right.clone())
+            .unwrap()
+            .0;
+        if let Err(ragu_core::Error::InvalidWitness(err)) =
+            PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
+        {
+            assert_eq!(err.to_string(), format!("EvidenceTreePairFuse: {complaint}"));
+        } else {
+            panic!("{complaint}");
+        }
+        if let Err(ragu_core::Error::InvalidWitness(err)) =
+            PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
+        {
+            assert_eq!(err.to_string(), format!("EvidenceTreeFuse: {complaint}"));
+        } else {
+            panic!("{complaint}");
+        }
     }
 }
 
@@ -485,7 +378,7 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
         .into_iter()
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
-    let other_contents = sealed.get(1).unwrap().pcd.data().5;
+    let other_contents = sealed[1].pcd.data().5;
 
     let tree = build_evidence_tree(rng, sealed);
     let leaf = tree.leaves.first().unwrap();
@@ -546,9 +439,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
     let leaf = tree.leaves.first().unwrap();
 
     let mut path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(
-        leaf.path
-            .get(..evidence::EvidenceTreeDescend::LEVELS)
-            .unwrap(),
+        &leaf.path[..evidence::EvidenceTreeDescend::LEVELS],
     )
     .unwrap();
     let (_sides, ref mut children) = path[0];

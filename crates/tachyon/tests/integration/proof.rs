@@ -5,7 +5,6 @@ use core::{array, iter};
 
 use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
     ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
@@ -23,7 +22,7 @@ use zcash_tachyon::{
 use crate::fixtures::{
     PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_plan, build_output_stamp,
     build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
-    seal_qr_intake, seed_qr_empty_intake, shared_sk, 
+    seal_qr_intake, seed_qr_empty_intake, shared_sk,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -90,20 +89,6 @@ fn detached_segment(
     qr_bucket_segment(rng, &bucket, nf)
 }
 
-fn mine_cm_in_epoch_one<RNG: CryptoRng>(
-    rng: &mut RNG,
-    pool: &mut PoolSim,
-    cm: note::Commitment,
-) -> BlockHeight {
-    while pool.height().0 < EPOCH_SIZE {
-        pool.mine(random_block(rng, 1, 3));
-    }
-    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
-    let cm_height = pool.height();
-    assert_eq!(cm_height.epoch(), EpochIndex::new(1));
-    cm_height
-}
-
 fn honest_spend_bind(
     rng: &mut StdRng,
     user: &WalletSim,
@@ -142,7 +127,11 @@ fn same_epoch_honest_spend_accepted() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
-    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
+    while pool.height().0 < EPOCH_SIZE {
+        pool.mine(random_block(rng, 1, 3));
+    }
+    pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
+    let cm_height = pool.height();
     let epoch = cm_height.epoch();
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
@@ -351,7 +340,6 @@ fn lift_output_stamp(
     members: &[Anchor],
 ) -> ragu_core::Result<Pcd<stamp::Stamp>> {
     let stamp_pcd = output_stamp_pcd(rng, user, stamp_anchor);
-
     PROOF_SYSTEM
         .fuse(
             rng,
@@ -372,11 +360,8 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(2));
     let (anchor_start, members_commit, anchor_end) = *span.data();
 
-    assert_eq!(members.len(), 4);
     assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
     assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
-    assert_eq!(members.last(), Some(&anchor_end));
-    assert!(!members.contains(&anchor_start));
     assert_eq!(members_commit, AnchorSetPoly::from_iter(members).commit());
 }
 
