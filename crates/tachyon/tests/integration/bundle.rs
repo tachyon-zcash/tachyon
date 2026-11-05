@@ -85,10 +85,7 @@ fn plan_commitment_matches_bundle_commitment() {
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
-    let bundle = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign output bundle")
-        .stamp(stamp);
+    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(stamp);
 
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
@@ -105,10 +102,10 @@ fn sign_signs_an_honest_plan() {
 
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("honest plan signs");
+        .unwrap();
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
-        .expect("signatures verify");
+        .unwrap();
 }
 
 /// The output's `rk` is corrupted to an unrelated (but known) key after
@@ -139,7 +136,7 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
 
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
+        .unwrap();
 
     // We've applied a signature from the unrelated key
     let unrelated_alpha = unrelated
@@ -179,7 +176,7 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
 
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
-        .expect("signing works");
+        .unwrap();
 
     // The signature the spend's matching key would have produced.
     let alpha = spend
@@ -274,7 +271,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     // `self.descriptors()`'s canonical order.
     let mut sigs: Vec<action::Signature> = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works")
+        .unwrap()
         .actions
         .into_iter()
         .map(|action| action.sig)
@@ -286,7 +283,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
 
     let bundle = plan
         .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), authorized)
-        .expect("assembly succeeds regardless of sig order");
+        .unwrap();
 
     // but the mismatched pairing fails verification.
     let err = bundle
@@ -378,44 +375,40 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
     );
     spend_plan
         .sign(rng, &mock_sighash(spend_plan.commitment().unwrap()), &ask)
-        .expect("spends-only plan signs")
+        .unwrap()
         .verify_signatures(&mock_sighash(spend_plan.commitment().unwrap()))
-        .expect("spends-only bundle verifies");
+        .unwrap();
 
     let note = wallet.random_note(200);
     let (_rcv, _theta, output) = build_output_plan(rng, note);
     let output_plan = build_bundle_plan(alloc::vec![], alloc::vec![output]);
     output_plan
         .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
-        .expect("outputs-only plan signs")
+        .unwrap()
         .verify_signatures(&mock_sighash(output_plan.commitment().unwrap()))
-        .expect("outputs-only bundle verifies");
+        .unwrap();
 
     let empty_plan = build_bundle_plan(alloc::vec![], alloc::vec![]);
     empty_plan
         .sign(rng, &mock_sighash(empty_plan.commitment().unwrap()), &ask)
-        .expect("empty plan signs")
+        .unwrap()
         .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
-        .expect("empty bundle via sign verifies");
+        .unwrap();
     empty_plan
         .apply_signatures(
             rng,
             &mock_sighash(empty_plan.commitment().unwrap()),
             BTreeMap::new(),
         )
-        .expect("apply_signatures accepts zero sigs for an empty plan")
+        .unwrap()
         .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
-        .expect("empty bundle via apply_signatures verifies");
+        .unwrap();
 }
 
 #[test]
 fn no_bundle_commitment_differs_from_empty_bundle() {
     let empty_plan = build_bundle_plan(alloc::vec![], alloc::vec![]);
-    assert_ne!(
-        *blake2b::COMMIT_NO_BUNDLE,
-        empty_plan.commitment().unwrap(),
-        "absent bundle must differ from empty bundle"
-    );
+    assert_ne!(*blake2b::COMMIT_NO_BUNDLE, empty_plan.commitment().unwrap());
 }
 
 #[test]
@@ -464,9 +457,7 @@ fn payment_bundle_verifies() {
         alloc::vec![output_note, change_note],
     );
     let sighash = mock_sighash(stamped.commitment());
-    stamped
-        .verify_signatures(&sighash)
-        .expect("payment bundle must verify");
+    stamped.verify_signatures(&sighash).unwrap();
 }
 
 /// Two actions with identical descriptors clear the signature check but fail
@@ -487,8 +478,8 @@ fn double_spend_obvious() {
     // Two identical output actions net to twice the single-output balance, and
     // the binding key is the doubled trapdoor; the per-action signature is
     // shared because the actions are byte-identical.
-    let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
-    let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
+    let doubled = -2 * i64::try_from(u64::from(note.value)).unwrap();
+    let value_balance = value::Balance::try_from(doubled).unwrap();
     let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
     let max_fee = wallet.random_note(0);
     let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
@@ -518,7 +509,7 @@ fn double_spend_obvious() {
         value::Positive::ZERO,
     )
     .prove(rng, &wallet.pak, vec![])
-    .expect("prove an output stamp");
+    .unwrap();
     let evil_pcd = forge_overlapping_merge(
         rng,
         (&output_stamp, &vec![descriptor], &[fee_descriptor]),
@@ -556,30 +547,22 @@ fn double_spend_obvious() {
     };
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
+    bundle.write(&mut buf).unwrap();
 
     // The parser accepts the duplicate: the double action is wire-valid.
-    let decoded = Bundle::<ProofStamp>::read(&*buf).expect("duplicate descriptors are wire-valid");
+    let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
 
     // Every check ahead of the proof passes: the signatures verify and the
     // stamp's coverage matches the duplicated action set.
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
-        .expect("binding and action signatures verify");
-    assert!(
-        decoded.is_autonome(),
-        "the forged coverage matches the duplicated action set"
-    );
-    assert!(
-        bundle.actions[0] == bundle.actions[1],
-        "the actions are identical"
-    );
+        .unwrap();
+    assert!(decoded.is_autonome());
+    assert!(bundle.actions[0] == bundle.actions[1]);
 
     // `verify_coverage` rejects the duplicate; deduplicating the descriptors
     // shrinks the count below the wire multiset.
-    let dup_err = decoded
-        .verify_coverage(&[], &[])
-        .expect_err("duplicated actions must be rejected");
+    let dup_err = decoded.verify_coverage(&[], &[]).unwrap_err();
     let VerifyCoverageError::DuplicateActions = dup_err else {
         panic!("expected DuplicateActions, got {dup_err:?}");
     };
@@ -592,16 +575,10 @@ fn double_spend_obvious() {
     // whose (x-cm) cannot reconstruct the doubled tachygram the proof commits to.
     let digests: Vec<ActionDigest> = decoded
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests([fee_descriptor, fee_descriptor]))
         .collect();
-    assert!(
-        !decoded
-            .stamp
-            .verify_proof(rng, digests)
-            .expect("proof system verification"),
-        "the deduplicated tachygram set cannot reconstruct the doubled proof"
-    );
+    assert!(!decoded.stamp.verify_proof(rng, digests).unwrap());
 }
 
 /// A duplicated spend would mint value: one honest single-spend stamp,
@@ -640,13 +617,13 @@ fn duplicated_spend_cannot_inflate() {
     let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![], max_fee)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, vec![])])
-        .expect("prove the honest single spend");
+        .unwrap();
 
     // Assemble the duplicated-spend bundle by hand: two identical spend actions,
     // a value balance and binding key doubled to match, and coverage forged over
     // the doubled action set.
-    let doubled = 2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
-    let value_balance = value::Balance::try_from(doubled).expect("doubled balance in range");
+    let doubled = 2 * i64::try_from(u64::from(note.value)).unwrap();
+    let value_balance = value::Balance::try_from(doubled).unwrap();
     let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
@@ -692,33 +669,24 @@ fn duplicated_spend_cannot_inflate() {
     };
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
-    let decoded = Bundle::<ProofStamp>::read(&*buf).expect("duplicated spend is wire-valid");
+    bundle.write(&mut buf).unwrap();
+    let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
 
     // The cheap checks pass, and the balance would mint: one spent note (one
     // present/next nullifier pair) against a balance that withdraws twice its
     // value.
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
-        .expect("binding and action signatures verify");
-    assert!(
-        decoded.is_autonome(),
-        "the forged coverage matches the duplicated action set"
-    );
-    assert_eq!(
-        decoded.stamp.tachygrams.len(),
-        2 + 1,
-        "a single spend contributes exactly one present/next nullifier pair plus the fee change commitment"
-    );
+        .unwrap();
+    assert!(decoded.is_autonome());
+    assert_eq!(decoded.stamp.tachygrams.len(), 2 + 1);
     let withdrawn: i64 = decoded.value_balance.into();
-    let backed = i64::try_from(u64::from(note.value)).expect("note value fits i64");
-    assert_eq!(withdrawn, 2 * backed, "the bundle balances two spends");
+    let backed = i64::try_from(u64::from(note.value)).unwrap();
+    assert_eq!(withdrawn, 2 * backed);
 
     // `verify_coverage` rejects the duplicate; deduplicating the descriptors
     // shrinks the count below the wire multiset.
-    let dup_err = decoded
-        .verify_coverage(&[], &[])
-        .expect_err("the duplicated spend must be rejected");
+    let dup_err = decoded.verify_coverage(&[], &[]).unwrap_err();
     let VerifyCoverageError::DuplicateActions = dup_err else {
         panic!("expected DuplicateActions, got {dup_err:?}");
     };
@@ -728,15 +696,10 @@ fn duplicated_spend_cannot_inflate() {
     // to.
     let digests: Vec<ActionDigest> = decoded
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain([decoded.fee_descriptor().digest().expect("fee digest")])
+        .map(|desc| desc.digest().unwrap())
+        .chain([decoded.fee_descriptor().digest().unwrap()])
         .collect();
-    assert!(
-        !decoded
-            .verify_proof(rng, &digests)
-            .expect("proof system verification"),
-        "the doubled action must not verify against the single-spend proof"
-    );
+    assert!(!decoded.verify_proof(rng, &digests).unwrap());
 
     // `verify` catches the same duplicate at its coverage step
     let err = decoded
@@ -746,7 +709,7 @@ fn duplicated_spend_cannot_inflate() {
             &mock_wtxid(&decoded).into(),
             &[],
         )
-        .expect_err("the duplicated spend must fail full verification");
+        .unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::DuplicateActions) = err else {
         panic!("expected Coverage(DuplicateActions), got {err:?}");
     };
@@ -768,7 +731,7 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
     let adjunct_descs: Vec<action::Descriptor> = adjunct.descriptors().collect();
     let err = bundle
         .verify_coverage(&adjunct_descs, &[adjunct.fee_descriptor()])
-        .expect_err("an action shared across self and adjunct must be rejected");
+        .unwrap_err();
     let VerifyCoverageError::DuplicateActions = err else {
         panic!("expected DuplicateActions, got {err:?}");
     };
@@ -776,15 +739,10 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
     let digests: Vec<ActionDigest> = bundle
         .descriptors()
         .chain(adjunct.descriptors())
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain([bundle.fee_descriptor().digest().expect("fee digest")])
+        .map(|desc| desc.digest().unwrap())
+        .chain([bundle.fee_descriptor().digest().unwrap()])
         .collect();
-    assert!(
-        !bundle
-            .verify_proof(rng, &digests)
-            .expect("proof system verification"),
-        "the repeated multiset must not verify against the single-set proof"
-    );
+    assert!(!bundle.verify_proof(rng, &digests).unwrap());
 }
 
 /// A unique but uncovered adjunct action passes the duplicate check, but
@@ -804,15 +762,10 @@ fn verify_proof_disproves_uncovered_adjunct() {
     let digests: Vec<ActionDigest> = bundle
         .descriptors()
         .chain(adjunct.descriptors())
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain([bundle.fee_descriptor().digest().expect("fee digest")])
+        .map(|desc| desc.digest().unwrap())
+        .chain([bundle.fee_descriptor().digest().unwrap()])
         .collect();
-    assert!(
-        !bundle
-            .verify_proof(rng, &digests)
-            .expect("proof system verification"),
-        "a unique but uncovered adjunct action must not verify"
-    );
+    assert!(!bundle.verify_proof(rng, &digests).unwrap());
 }
 
 /// The same note spent under two independent randomizations yields distinct
@@ -838,24 +791,17 @@ fn double_spend_secret() {
         value::Trapdoor::random(rng),
         |alpha| ask.derive_action_private(&alpha).derive_action_public(),
     );
-    assert_ne!(
-        spend_a.cv(),
-        spend_b.cv(),
-        "independent rcv gives distinct cv"
-    );
-    assert_ne!(
-        spend_a.rk, spend_b.rk,
-        "independent theta gives distinct rk"
-    );
+    assert_ne!(spend_a.cv(), spend_b.cv());
+    assert_ne!(spend_a.rk, spend_b.rk);
 
     let plan = build_bundle_plan(alloc::vec![spend_a, spend_b], alloc::vec![]);
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
+        .unwrap();
 
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
-        .expect("two independently-randomized spends of the same note still verify");
+        .unwrap();
 }
 
 #[test]
@@ -883,7 +829,7 @@ fn innocent_aggregate_from_two_autonomes() {
     let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor_a = sp_a.data().2;
     let anchor_b = sp_b.data().2;
-    assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
+    assert_eq!(anchor_a, anchor_b);
 
     let autonome_a = wallet.autonome(
         rng,
@@ -914,7 +860,7 @@ fn innocent_aggregate_from_two_autonomes() {
         let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
         let seed = stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
             .prove(rng, &wallet.pak, vec![])
-            .expect("seed");
+            .unwrap();
         let descs = descriptors_a.union(&descriptors_b).copied().collect();
         let fees = fees_a.union(&fees_b).copied().collect();
         let adjuncts = stamp_a
@@ -923,7 +869,7 @@ fn innocent_aggregate_from_two_autonomes() {
                 (descriptors_a, fees_a),
                 (stamp_b, descriptors_b, fees_b),
             )
-            .expect("merge adjuncts");
+            .unwrap();
         let stamp = seed
             .merge(
                 rng,
@@ -937,7 +883,7 @@ fn innocent_aggregate_from_two_autonomes() {
                 ),
                 (adjuncts, descs, fees),
             )
-            .expect("merge seed");
+            .unwrap();
 
         Bundle {
             actions: alloc::vec![],
@@ -958,7 +904,7 @@ fn innocent_aggregate_from_two_autonomes() {
 
     innocent
         .verify_signatures(&mock_sighash(innocent.commitment()))
-        .expect("innocent binding sig should verify");
+        .unwrap();
 
     let adjunct_descs: Vec<action::Descriptor> =
         adjuncts.iter().flat_map(Bundle::descriptors).collect();
@@ -966,18 +912,13 @@ fn innocent_aggregate_from_two_autonomes() {
         adjuncts.iter().map(Bundle::fee_descriptor).collect();
     let (covered_descs, covered_fee_descriptors) = innocent
         .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-        .expect("the innocent aggregate covers its adjuncts");
+        .unwrap();
     let digests: Vec<ActionDigest> = covered_descs
         .iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(covered_fee_descriptors))
         .collect();
-    assert!(
-        innocent
-            .verify_proof(rng, &digests)
-            .expect("innocent aggregate proof verifies against its adjuncts"),
-        "innocent aggregate proof must verify against its adjuncts"
-    );
+    assert!(innocent.verify_proof(rng, &digests).unwrap());
     innocent
         .verify(
             rng,
@@ -985,7 +926,7 @@ fn innocent_aggregate_from_two_autonomes() {
             &mock_wtxid(&innocent).into(),
             &adjuncts.iter().collect::<Vec<_>>(),
         )
-        .expect("innocent verifies against both adjuncts");
+        .unwrap();
 }
 
 #[test]
@@ -1020,8 +961,8 @@ fn based_aggregate_with_two_adjuncts() {
     let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
     let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
-    assert_eq!(anchor, a_sp.data().2, "lifts land on a common anchor");
-    assert_eq!(anchor, b_sp.data().2, "lifts land on a common anchor");
+    assert_eq!(anchor, a_sp.data().2);
+    assert_eq!(anchor, b_sp.data().2);
 
     let mut becomes_based = wallet.autonome(
         rng,
@@ -1068,7 +1009,7 @@ fn based_aggregate_with_two_adjuncts() {
             (descriptors_a, fees_a),
             (stamp_b, descriptors_b, fees_b),
         )
-        .expect("innocent merge");
+        .unwrap();
 
     let based_fees = BTreeSet::from([becomes_based.fee_descriptor()]);
     let based_stamp = becomes_based
@@ -1078,7 +1019,7 @@ fn based_aggregate_with_two_adjuncts() {
             (based_descriptors, based_fees),
             (innocent_stamp, innocent_descriptors, innocent_fees),
         )
-        .expect("based merge");
+        .unwrap();
 
     becomes_based.stamp = based_stamp;
 
@@ -1088,9 +1029,7 @@ fn based_aggregate_with_two_adjuncts() {
     let adjunct_b = autonome_b.strip(wtxid);
     let adjuncts = [&adjunct_a, &adjunct_b];
 
-    becomes_based
-        .verify_signatures(&sighash)
-        .expect("based aggregate binding sig should verify");
+    becomes_based.verify_signatures(&sighash).unwrap();
 
     let adjunct_descs: Vec<action::Descriptor> =
         adjuncts.iter().flat_map(|adj| adj.descriptors()).collect();
@@ -1098,35 +1037,27 @@ fn based_aggregate_with_two_adjuncts() {
         adjuncts.iter().map(|adj| adj.fee_descriptor()).collect();
     let (covered_descs, covered_fee_descriptors) = becomes_based
         .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-        .expect("the based aggregate covers itself and its adjuncts");
+        .unwrap();
     let digests: Vec<ActionDigest> = covered_descs
         .iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(covered_fee_descriptors))
         .collect();
-    assert!(
-        becomes_based
-            .verify_proof(rng, &digests)
-            .expect("based aggregate proof verifies against its adjuncts"),
-        "based aggregate proof must verify against its adjuncts"
-    );
+    assert!(becomes_based.verify_proof(rng, &digests).unwrap());
 
     // `verify` composes the signature, pointer, coverage, tachygram, and proof
     // checks against the covering wtxid.
-    assert!(
-        becomes_based.is_aggregate(),
-        "a based aggregate does not cover its own actions alone"
-    );
+    assert!(becomes_based.is_aggregate());
     becomes_based
         .verify(rng, &sighash, &wtxid_bytes, &adjuncts)
-        .expect("based aggregate fully verifies against its adjuncts");
+        .unwrap();
 
     // A wtxid the adjuncts were not stripped with: the pointer check fails first.
     {
         let foreign = [0x5au8; 64];
         let err = becomes_based
             .verify(rng, &sighash, &foreign, &adjuncts)
-            .expect_err("adjuncts pointing to another aggregate must be rejected");
+            .unwrap_err();
         let VerificationError::Pointers(VerifyPointersError::AdjunctPointerMismatch) = err else {
             panic!("expected AdjunctPointerMismatch, got {err:?}");
         };
@@ -1136,7 +1067,7 @@ fn based_aggregate_with_two_adjuncts() {
     {
         let err = becomes_based
             .verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1])
-            .expect_err("a missing adjunct must mismatch coverage");
+            .unwrap_err();
         let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
             panic!("expected Coverage(StampActionsMismatch), got {err:?}");
         };
@@ -1147,17 +1078,12 @@ fn based_aggregate_with_two_adjuncts() {
         let mut tampered = becomes_based.clone();
 
         let mut sig_bytes: Vec<u8> = [0; 64].to_vec();
-        tampered.actions[0]
-            .sig
-            .write(&mut sig_bytes)
-            .expect("write");
+        tampered.actions[0].sig.write(&mut sig_bytes).unwrap();
 
         sig_bytes[0] ^= 0xFF;
-        tampered.actions[0].sig = action::Signature::read(&mut sig_bytes.as_slice()).expect("read");
+        tampered.actions[0].sig = action::Signature::read(&mut sig_bytes.as_slice()).unwrap();
 
-        let err = tampered
-            .verify_signatures(&sighash)
-            .expect_err("a corrupted action signature must fail signature verification");
+        let err = tampered.verify_signatures(&sighash).unwrap_err();
         let SignatureError::Action(_) = err else {
             panic!("expected SignatureError::Action, got {err:?}");
         };
@@ -1175,22 +1101,16 @@ fn autonome_verify_composes_all_checks() {
     let sighash = mock_sighash(bundle.commitment());
     let wtxid: [u8; 64] = mock_wtxid(&bundle).into();
 
-    bundle
-        .verify_signatures(&sighash)
-        .expect("honest autonome signatures verify");
-    bundle
-        .verify(rng, &sighash, &wtxid, &[])
-        .expect("honest autonome bundle verifies");
+    bundle.verify_signatures(&sighash).unwrap();
+    bundle.verify(rng, &sighash, &wtxid, &[]).unwrap();
 
     let mut tampered = bundle.clone();
     let mut sig_bytes: Vec<u8> = Vec::new();
-    tampered.binding_sig.write(&mut sig_bytes).expect("write");
+    tampered.binding_sig.write(&mut sig_bytes).unwrap();
     sig_bytes[0] ^= 0xFF;
-    tampered.binding_sig = Signature::read(&mut sig_bytes.as_slice()).expect("read");
+    tampered.binding_sig = Signature::read(&mut sig_bytes.as_slice()).unwrap();
 
-    let err = tampered
-        .verify_signatures(&sighash)
-        .expect_err("a corrupted binding signature must fail signature verification");
+    let err = tampered.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
@@ -1204,9 +1124,9 @@ fn invalid_action_sig_fails_verification() {
     let sighash = mock_sighash(bundle.commitment());
 
     let mut sig_bytes: Vec<u8> = Vec::new();
-    bundle.actions[0].sig.write(&mut sig_bytes).expect("write");
+    bundle.actions[0].sig.write(&mut sig_bytes).unwrap();
     sig_bytes[0] ^= 0xFF;
-    let bad_sig = action::Signature::read(&mut sig_bytes.as_slice()).expect("read");
+    let bad_sig = action::Signature::read(&mut sig_bytes.as_slice()).unwrap();
     bundle.actions[0].sig = bad_sig;
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
@@ -1222,8 +1142,8 @@ fn stamped_read_write_round_trip() {
     let wallet = WalletSim::new(shared_sk());
     let original = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
-    original.write(&mut buf).expect("write");
-    let deserialized = Bundle::<ProofStamp>::read(&*buf).expect("read");
+    original.write(&mut buf).unwrap();
+    let deserialized = Bundle::<ProofStamp>::read(&*buf).unwrap();
 
     assert_eq!(original.actions, deserialized.actions);
     assert_eq!(original.value_balance, deserialized.value_balance);
@@ -1231,9 +1151,7 @@ fn stamped_read_write_round_trip() {
     assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
 
     let sighash = mock_sighash(deserialized.commitment());
-    deserialized
-        .verify_signatures(&sighash)
-        .expect("deserialized bundle must verify");
+    deserialized.verify_signatures(&sighash).unwrap();
 }
 
 /// Actions are an ordered multiset: `read` reproduces the wire order exactly,
@@ -1259,14 +1177,11 @@ fn read_preserves_action_order() {
         (plan_b.descriptor(), alpha_b, rcv_b),
     ];
     items.sort_by_key(|item| Reverse(item.0));
-    assert!(
-        items[0].0 > items[1].0,
-        "assembled in non-canonical (descending) order"
-    );
+    assert!(items[0].0 > items[1].0);
 
     // Sign for this exact order: the commitment, and hence the sighash, depends
     // on it.
-    let value_balance = value::Balance::try_from(-500i64).expect("in range");
+    let value_balance = value::Balance::try_from(-500i64).unwrap();
     let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
     let max_fee = wallet.random_note(0);
     let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
@@ -1296,22 +1211,17 @@ fn read_preserves_action_order() {
         binding_sig,
         memo: Vec::new(),
         stamp: PointerStamp {
-            wtxid: AggregateId::try_from([0x11u8; 64]).expect("nonzero wtxid"),
+            wtxid: AggregateId::try_from([0x11u8; 64]).unwrap(),
             fee: value::Positive::ZERO,
         },
     };
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
-    let decoded = Bundle::<PointerStamp>::read(&*buf).expect("any action order is wire-valid");
+    bundle.write(&mut buf).unwrap();
+    let decoded = Bundle::<PointerStamp>::read(&*buf).unwrap();
 
-    assert_eq!(
-        bundle.actions, decoded.actions,
-        "read reproduces the wire order, it does not reorder"
-    );
-    decoded
-        .verify_signatures(&sighash)
-        .expect("signatures are valid for the constructed order");
+    assert_eq!(bundle.actions, decoded.actions);
+    decoded.verify_signatures(&sighash).unwrap();
 }
 
 #[test]
@@ -1323,8 +1233,8 @@ fn stripped_read_write_round_trip() {
     let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
     let mut buf = Vec::new();
-    stripped.write(&mut buf).expect("write");
-    let deserialized = Bundle::<PointerStamp>::read(&*buf).expect("read");
+    stripped.write(&mut buf).unwrap();
+    let deserialized = Bundle::<PointerStamp>::read(&*buf).unwrap();
 
     assert_eq!(stripped.commitment(), deserialized.commitment());
     assert_eq!(stripped.auth_digest(), deserialized.auth_digest());
@@ -1339,7 +1249,7 @@ fn tachyon_bundle_conversions() {
         let wallet = WalletSim::new(shared_sk());
         let original = build_autonome(rng, &wallet, 1000, 700);
         let erased: TachyonBundle = original.clone().into();
-        let back = Bundle::<ProofStamp>::try_from(erased).expect("stamped variant");
+        let back = Bundle::<ProofStamp>::try_from(erased).unwrap();
 
         assert_eq!(original.actions, back.actions);
         assert_eq!(original.value_balance, back.value_balance);
@@ -1356,7 +1266,7 @@ fn tachyon_bundle_conversions() {
         let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
         let erased: TachyonBundle = stripped.clone().into();
-        let back = Bundle::<PointerStamp>::try_from(erased).expect("stripped variant");
+        let back = Bundle::<PointerStamp>::try_from(erased).unwrap();
 
         assert_eq!(stripped.commitment(), back.commitment());
         assert_eq!(stripped.auth_digest(), back.auth_digest());
@@ -1371,10 +1281,10 @@ fn tachyon_bundle_conversions() {
         let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
 
         let stamped_erased: TachyonBundle = stamped.into();
-        Bundle::<PointerStamp>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
+        Bundle::<PointerStamp>::try_from(stamped_erased).unwrap_err();
 
         let adjunct_erased: TachyonBundle = adjunct.into();
-        Bundle::<ProofStamp>::try_from(adjunct_erased).expect_err("adjunct is not stamped");
+        Bundle::<ProofStamp>::try_from(adjunct_erased).unwrap_err();
     }
 }
 
@@ -1388,9 +1298,9 @@ fn tachyon_bundle_wire_round_trip() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let erased: TachyonBundle = stamped.clone().into();
         let mut buf = Vec::new();
-        erased.write(&mut buf).expect("write");
-        let decoded = TachyonBundle::read(&*buf).expect("read");
-        let back = Bundle::<ProofStamp>::try_from(decoded).expect("stamped variant");
+        erased.write(&mut buf).unwrap();
+        let decoded = TachyonBundle::read(&*buf).unwrap();
+        let back = Bundle::<ProofStamp>::try_from(decoded).unwrap();
 
         // Stamp carries a proof and is not PartialEq, so compare fields.
         assert_eq!(stamped.actions, back.actions);
@@ -1405,9 +1315,9 @@ fn tachyon_bundle_wire_round_trip() {
         let stripped = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&covering));
         let erased: TachyonBundle = stripped.clone().into();
         let mut buf = Vec::new();
-        erased.write(&mut buf).expect("write");
-        let decoded = TachyonBundle::read(&*buf).expect("read");
-        let back = Bundle::<PointerStamp>::try_from(decoded).expect("stripped variant");
+        erased.write(&mut buf).unwrap();
+        let decoded = TachyonBundle::read(&*buf).unwrap();
+        let back = Bundle::<PointerStamp>::try_from(decoded).unwrap();
 
         assert_eq!(stripped.commitment(), back.commitment());
         assert_eq!(stripped.auth_digest(), back.auth_digest());
@@ -1425,9 +1335,9 @@ fn wire_state_byte_dispatch() {
     {
         let buf: &[u8] = &[0x03];
         for err in [
-            Bundle::<ProofStamp>::read(buf).expect_err("invalid state byte must be rejected"),
-            Bundle::<PointerStamp>::read(buf).expect_err("invalid state byte must be rejected"),
-            TachyonBundle::read(buf).expect_err("invalid state byte must be rejected"),
+            Bundle::<ProofStamp>::read(buf).unwrap_err(),
+            Bundle::<PointerStamp>::read(buf).unwrap_err(),
+            TachyonBundle::read(buf).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
             assert_eq!(err.to_string(), "invalid bundle state");
@@ -1437,8 +1347,8 @@ fn wire_state_byte_dispatch() {
     // No-bundle (0x00): the enum reader decodes to NoBundle, not an error.
     {
         let buf: &[u8] = &[0x00];
-        let decoded = TachyonBundle::read(buf).expect("read");
-        assert!(decoded.is_no_bundle(), "0x00 must decode to NoBundle");
+        let decoded = TachyonBundle::read(buf).unwrap();
+        assert!(decoded.is_no_bundle());
     }
 
     // Valid-but-mismatched state byte: each definite reader rejects the other's.
@@ -1448,20 +1358,18 @@ fn wire_state_byte_dispatch() {
 
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let mut stamped_buf = Vec::new();
-        stamped.write(&mut stamped_buf).expect("write stamped");
+        stamped.write(&mut stamped_buf).unwrap();
 
         let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
         let mut adjunct_buf = Vec::new();
-        adjunct.write(&mut adjunct_buf).expect("write adjunct");
+        adjunct.write(&mut adjunct_buf).unwrap();
 
-        let adjunct_on_stamped = Bundle::<PointerStamp>::read(&*stamped_buf)
-            .expect_err("Adjunct::read must reject a stamped (0x01) buffer");
+        let adjunct_on_stamped = Bundle::<PointerStamp>::read(&*stamped_buf).unwrap_err();
         assert_eq!(
             adjunct_on_stamped.to_string(),
             "unexpected tachyonBundleState"
         );
-        let stamped_on_adjunct = Bundle::<ProofStamp>::read(&*adjunct_buf)
-            .expect_err("Stamped::read must reject a stripped (0x02) buffer");
+        let stamped_on_adjunct = Bundle::<ProofStamp>::read(&*adjunct_buf).unwrap_err();
         assert_eq!(
             stamped_on_adjunct.to_string(),
             "unexpected tachyonBundleState"
@@ -1509,23 +1417,21 @@ fn read_rejects_zero_wtxid() {
 
     for stripped in [adjunct, innocent] {
         let mut buf = Vec::new();
-        stripped.write(&mut buf).expect("write");
+        stripped.write(&mut buf).unwrap();
 
         // The wtxid is the trailing 64 bytes; zero it to forge the invalid shape.
         for byte in buf.iter_mut().rev().take(64) {
             *byte = 0;
         }
 
-        let adjunct_err =
-            Bundle::<PointerStamp>::read(&*buf).expect_err("Adjunct::read must reject zero wtxid");
+        let adjunct_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
         assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(
             adjunct_err.to_string(),
             "aggregate id is zero and refers to no aggregate"
         );
 
-        let enum_err =
-            TachyonBundle::read(&*buf).expect_err("TachyonBundle::read must reject zero wtxid");
+        let enum_err = TachyonBundle::read(&*buf).unwrap_err();
         assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(
             enum_err.to_string(),
@@ -1559,14 +1465,14 @@ fn innocent_round_trips_with_nonzero_wtxid() {
     };
 
     let mut buf = Vec::new();
-    innocent.write(&mut buf).expect("write innocent");
+    innocent.write(&mut buf).unwrap();
 
-    let via_adjunct = Bundle::<PointerStamp>::read(&*buf).expect("Adjunct::read innocent");
+    let via_adjunct = Bundle::<PointerStamp>::read(&*buf).unwrap();
     assert_eq!(innocent.commitment(), via_adjunct.commitment());
     assert_eq!(innocent.auth_digest(), via_adjunct.auth_digest());
 
-    let decoded = TachyonBundle::read(&*buf).expect("TachyonBundle::read");
-    let via_enum = Bundle::<PointerStamp>::try_from(decoded).expect("adjunct variant");
+    let decoded = TachyonBundle::read(&*buf).unwrap();
+    let via_enum = Bundle::<PointerStamp>::try_from(decoded).unwrap();
     assert_eq!(innocent.commitment(), via_enum.commitment());
     assert_eq!(innocent.auth_digest(), via_enum.auth_digest());
 }
@@ -1605,8 +1511,8 @@ fn auth_digest_invariants() {
         assert_ne!(digest_aa, digest_bb);
 
         let mut stripped_fee = stripped_aa;
-        stripped_fee.stamp.fee = value::Positive::try_from(u64::from(stripped_fee.stamp.fee) + 1)
-            .expect("test fee in range");
+        stripped_fee.stamp.fee =
+            value::Positive::try_from(u64::from(stripped_fee.stamp.fee) + 1).unwrap();
         assert_ne!(digest_aa, stripped_fee.auth_digest());
     }
 
@@ -1646,7 +1552,7 @@ fn auth_digest_invariants() {
 
         let mut altered_fee = stamped.clone();
         altered_fee.stamp.fee =
-            value::Positive::try_from(u64::from(stamped.stamp.fee) + 1).expect("test fee in range");
+            value::Positive::try_from(u64::from(stamped.stamp.fee) + 1).unwrap();
         assert_eq!(baseline_commitment, altered_fee.commitment());
         assert_ne!(baseline, altered_fee.auth_digest());
 
@@ -1742,7 +1648,7 @@ fn coverage_check_matches_stamp_actions() {
             (descriptors_a, fees_a),
             (stamp_b, descriptors_b, fees_b),
         )
-        .expect("innocent merge");
+        .unwrap();
 
     let based_stamp = becomes_based
         .stamp
@@ -1751,7 +1657,7 @@ fn coverage_check_matches_stamp_actions() {
             (based_descriptors, based_fees),
             (innocent_stamp, innocent_descriptors, innocent_fees),
         )
-        .expect("based merge");
+        .unwrap();
     becomes_based.stamp = based_stamp;
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
@@ -1759,22 +1665,13 @@ fn coverage_check_matches_stamp_actions() {
 
     // Coverage confirmation: the based aggregate's carried digest matches
     // its own actions plus both covered adjuncts'.
-    assert!(
-        becomes_based.is_covering(&[&adjunct_a, &adjunct_b]),
-        "full covered set matches hStampCoverageTachyon"
-    );
+    assert!(becomes_based.is_covering(&[&adjunct_a, &adjunct_b]));
 
     // Missing an adjunct: fewer descriptors, no match.
-    assert!(
-        !becomes_based.is_covering(&[&adjunct_a]),
-        "missing adjunct must mismatch"
-    );
+    assert!(!becomes_based.is_covering(&[&adjunct_a]));
 
     // Extra (duplicated) adjunct: more descriptors, no match.
-    assert!(
-        !becomes_based.is_covering(&[&adjunct_a, &adjunct_b, &adjunct_a]),
-        "extra adjunct must mismatch"
-    );
+    assert!(!becomes_based.is_covering(&[&adjunct_a, &adjunct_b, &adjunct_a]));
 }
 
 /// A stamp whose tachygrams are not in canonical order is rejected on read,
@@ -1785,10 +1682,10 @@ fn read_rejects_noncanonical_tachygrams() {
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let n = bundle.stamp.tachygrams.len();
-    assert!(n >= 2, "need at least two tachygrams to permute");
+    assert!(n >= 2);
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
+    bundle.write(&mut buf).unwrap();
 
     // The stamp's proof is the constant-size trailer; the n 32-byte tachygrams
     // sit immediately before it. A BTreeSet always serializes canonically, so
@@ -1800,8 +1697,7 @@ fn read_rejects_noncanonical_tachygrams() {
     let (head, tail) = buf.split_at_mut(last);
     head[first..first + 32].swap_with_slice(&mut tail[..32]);
 
-    let err =
-        Bundle::<ProofStamp>::read(&*buf).expect_err("non-canonical tachygrams must be rejected");
+    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
 }
@@ -1906,8 +1802,8 @@ fn read_accepts_value_balance_at_max_money_boundaries() {
         bundle.value_balance = vb;
 
         let mut buf = Vec::new();
-        bundle.write(&mut buf).expect("write");
-        let decoded = Bundle::<ProofStamp>::read(&*buf).expect("read must accept boundary balance");
+        bundle.write(&mut buf).unwrap();
+        let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
         assert_eq!(decoded.value_balance, vb);
     }
 }
@@ -1928,16 +1824,14 @@ fn read_rejects_value_balance_out_of_range() {
         let bundle = build_autonome(rng, &wallet, 1000, 700);
 
         let mut buf = Vec::new();
-        bundle.write(&mut buf).expect("write");
+        bundle.write(&mut buf).unwrap();
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
 
-        let stamp_err = Bundle::<ProofStamp>::read(&*buf)
-            .expect_err("Bundle::<ProofStamp>::read must reject out-of-range value balance");
+        let stamp_err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
         assert_eq!(stamp_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(stamp_err.to_string(), "value balance out of range");
 
-        let enum_err = TachyonBundle::read(&*buf)
-            .expect_err("TachyonBundle::read must reject out-of-range value balance");
+        let enum_err = TachyonBundle::read(&*buf).unwrap_err();
         assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(enum_err.to_string(), "value balance out of range");
     }
@@ -1957,24 +1851,22 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: PointerStamp {
-            wtxid: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+            wtxid: AggregateId::try_from([0x42u8; 64]).unwrap(),
             fee: value::Positive::ZERO,
         },
     };
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
+    bundle.write(&mut buf).unwrap();
 
-    let adjunct_err = Bundle::<PointerStamp>::read(&*buf)
-        .expect_err("Adjunct::read must reject zero actions with nonzero balance");
+    let adjunct_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
     assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(
         adjunct_err.to_string(),
         "bundle with no actions must have zero value balance"
     );
 
-    let enum_err = TachyonBundle::read(&*buf)
-        .expect_err("TachyonBundle::read must reject zero actions with nonzero balance");
+    let enum_err = TachyonBundle::read(&*buf).unwrap_err();
     assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(
         enum_err.to_string(),
@@ -2002,7 +1894,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: PointerStamp {
-            wtxid: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
+            wtxid: AggregateId::try_from([1u8; 64]).unwrap(),
             fee: value::Positive::ZERO,
         },
     };
@@ -2025,26 +1917,17 @@ fn verify_tachygrams_rejects_wrong_arity() {
     let pool = PoolSim::genesis(rng);
     let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
 
-    assert_eq!(
-        stamp.tachygrams.len(),
-        2 + 1,
-        "an output publishes cm and pad plus the fee change commitment"
-    );
+    assert_eq!(stamp.tachygrams.len(), 2 + 1);
 
     let mut short = stamp;
-    let dropped = *short.tachygrams.iter().next().expect("nonempty");
+    let dropped = *short.tachygrams.iter().next().unwrap();
     short.tachygrams.remove(&dropped);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let bundle = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign output bundle")
-        .stamp(short);
+    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(short);
 
-    let (covered, covered_fees) = bundle
-        .verify_coverage(&[], &[])
-        .expect("the arity rule is not coverage's business");
+    let (covered, covered_fees) = bundle.verify_coverage(&[], &[]).unwrap();
 
     let err = bundle
         .verify_tachygrams(covered.len(), covered_fees.len())
@@ -2068,7 +1951,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     // Swap one tachygram for another, keeping the count and the carried
     // commitment, so coverage has nothing to say about it.
     let mut tampered = stamp;
-    let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
+    let dropped = *tampered.tachygrams.iter().next().unwrap();
     tampered.tachygrams.remove(&dropped);
     tampered.tachygrams.insert(Tachygram::random(rng));
 
@@ -2076,16 +1959,14 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
-        .expect("sign output bundle")
+        .unwrap()
         .stamp(tampered);
 
-    let (covered, covered_fees) = bundle
-        .verify_coverage(&[], &[])
-        .expect("coverage over the one output action");
+    let (covered, covered_fees) = bundle.verify_coverage(&[], &[]).unwrap();
 
     let err = bundle
         .verify_tachygrams(covered.len(), covered_fees.len())
-        .expect_err("a tampered list must be rejected");
+        .unwrap_err();
     assert_eq!(
         err.to_string(),
         "tachygrams do not reproduce the set commitment"
@@ -2104,8 +1985,8 @@ fn memo_round_trips_present_and_absent() {
         bundle.memo = memo.clone();
 
         let mut buf = Vec::new();
-        bundle.write(&mut buf).expect("write");
-        let decoded = Bundle::<ProofStamp>::read(&*buf).expect("read");
+        bundle.write(&mut buf).unwrap();
+        let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
 
         assert_eq!(decoded.memo, memo);
         assert_eq!(decoded.stamp.tachygrams, bundle.stamp.tachygrams);
@@ -2157,10 +2038,7 @@ fn plan_memo_reaches_the_signed_bundle() {
         Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee).with_memo(memo.clone());
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
-    let bundle = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign output bundle")
-        .stamp(stamp);
+    let bundle = bundle_plan.sign(rng, &sighash, &ask).unwrap().stamp(stamp);
 
     assert_eq!(bundle.memo, memo);
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
@@ -2198,10 +2076,10 @@ fn read_rejects_truncated_memo() {
     bundle.memo = vec![0x33u8; DECLARED];
 
     let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
+    bundle.write(&mut buf).unwrap();
     buf.truncate(KEPT);
 
-    let err = Bundle::<ProofStamp>::read(&*buf).expect_err("declared memo length must be honoured");
+    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
@@ -2230,7 +2108,7 @@ fn bundle_lift_preserves_coverage() {
         vec![output_note],
     );
 
-    let descriptors = bundle.verify_coverage(&[], &[]).expect("autonome coverage");
+    let descriptors = bundle.verify_coverage(&[], &[]).unwrap();
 
     // Two following stamps, so the span fuses rather than standing on one
     // seed.
@@ -2239,18 +2117,11 @@ fn bundle_lift_preserves_coverage() {
     pool.mine_bundles(&[&next_a, &next_b]);
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
-    let lifted = bundle
-        .lift(rng, &[], vec![span])
-        .expect("lift an autonome bundle");
+    let lifted = bundle.lift(rng, &[], vec![span]).unwrap();
 
     assert_eq!(lifted.stamp.anchor, pool.anchor());
     assert!(lifted.is_autonome());
-    assert_eq!(
-        lifted
-            .verify_coverage(&[], &[])
-            .expect("coverage survives a lift"),
-        descriptors
-    );
+    assert_eq!(lifted.verify_coverage(&[], &[]).unwrap(), descriptors);
 }
 
 #[test]
@@ -2323,7 +2194,7 @@ fn bundle_lift_over_an_aggregate() {
     let seed = innocent_plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, vec![])
-        .expect("seed");
+        .unwrap();
     let descs = descriptors_a.union(&descriptors_b).copied().collect();
     let fees = fees_a.union(&fees_b).copied().collect();
     let adjunct_stamp = autonome_a
@@ -2334,7 +2205,7 @@ fn bundle_lift_over_an_aggregate() {
             (descriptors_a, fees_a),
             (autonome_b.stamp.clone(), descriptors_b, fees_b),
         )
-        .expect("merge adjuncts");
+        .unwrap();
     let innocent = Bundle {
         actions: vec![],
         value_balance: value::Balance::ZERO,
@@ -2356,7 +2227,7 @@ fn bundle_lift_over_an_aggregate() {
                 ),
                 (adjunct_stamp, descs, fees),
             )
-            .expect("merge seed"),
+            .unwrap(),
     };
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));
@@ -2370,9 +2241,7 @@ fn bundle_lift_over_an_aggregate() {
     pool.mine_bundles(&[&next]);
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
-    let lifted = innocent
-        .lift(rng, &adjuncts, vec![span])
-        .expect("lift an aggregate over its adjuncts");
+    let lifted = innocent.lift(rng, &adjuncts, vec![span]).unwrap();
 
     assert_eq!(lifted.stamp.anchor, pool.anchor());
 
@@ -2382,16 +2251,11 @@ fn bundle_lift_over_an_aggregate() {
         adjuncts.iter().map(|adj| adj.fee_descriptor()).collect();
     let (covered_descs, covered_fee_descriptors) = lifted
         .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-        .expect("a lift leaves the covered action set alone");
+        .unwrap();
     let digests: Vec<ActionDigest> = covered_descs
         .iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(covered_fee_descriptors))
         .collect();
-    assert!(
-        lifted
-            .verify_proof(rng, &digests)
-            .expect("a lifted aggregate verifies against its adjuncts"),
-        "a lifted aggregate must verify against its adjuncts"
-    );
+    assert!(lifted.verify_proof(rng, &digests).unwrap());
 }

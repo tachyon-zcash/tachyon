@@ -17,9 +17,7 @@ use crate::{
         EvidenceLeaf, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
         build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
     },
-    qr::{
-        EPOCH_MEMBERS, invalid_witness, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch,
-    },
+    qr::{EPOCH_MEMBERS, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch},
 };
 
 /// One sealed bucket as the smallest tree that holds it: the bucket repeated
@@ -58,18 +56,22 @@ fn assert_both_joins_reject(
     right: Pcd<evidence::EvidenceTree>,
     complaint: &str,
 ) {
-    let left_pair = pair_trees(rng, left.clone(), left.clone()).expect("one tree twice is a pair");
-    let right_pair =
-        pair_trees(rng, right.clone(), right.clone()).expect("one tree twice is a pair");
+    let left_pair = pair_trees(rng, left.clone(), left.clone()).unwrap();
+    let right_pair = pair_trees(rng, right.clone(), right.clone()).unwrap();
 
-    assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
-        format!("EvidenceTreePairFuse: {complaint}")
-    );
-    assert_eq!(
-        invalid_witness(fuse_trees(rng, left_pair, right_pair).err().unwrap()),
-        format!("EvidenceTreeFuse: {complaint}")
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = pair_trees(rng, left, right) {
+        assert_eq!(
+            err.to_string(),
+            format!("EvidenceTreePairFuse: {complaint}")
+        );
+    } else {
+        panic!();
+    }
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_trees(rng, left_pair, right_pair) {
+        assert_eq!(err.to_string(), format!("EvidenceTreeFuse: {complaint}"));
+    } else {
+        panic!();
+    }
 }
 
 /// Descend `tree` along one leaf's path.
@@ -80,8 +82,7 @@ fn descend_to_leaf(
 ) -> Pcd<evidence::EvidenceTree> {
     let mut node = tree;
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-        let path =
-            <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).expect("a full descent");
+        let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -90,7 +91,7 @@ fn descend_to_leaf(
                 node,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("EvidenceTreeDescend");
+            .unwrap();
         node = pcd;
     }
     node
@@ -131,7 +132,7 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         24,
         2,
     );
-    assert_eq!(routed.len(), 4, "two layers leave one intake per profile");
+    assert_eq!(routed.len(), 4);
     let sealed = routed
         .into_iter()
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
@@ -150,17 +151,12 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
             Anchor::default(),
             final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
             discriminant
-        ),
-        "the root carries the network every leaf belongs to"
+        )
     );
 
     for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
         let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
-        assert_eq!(
-            *replayed.pcd.data(),
-            *bucket,
-            "the leaf replays its bucket field for field"
-        );
+        assert_eq!(*replayed.pcd.data(), *bucket);
     }
 }
 
@@ -181,7 +177,7 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         24,
         3,
     );
-    assert_eq!(routed.len(), 8, "three layers leave one intake per profile");
+    assert_eq!(routed.len(), 8);
     let sealed = routed
         .into_iter()
         .take(5)
@@ -191,10 +187,10 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         .iter()
         .map(|bucket| *bucket.pcd.data())
         .collect::<Vec<_>>();
-    let last = *expected.last().expect("five buckets");
+    let last = *expected.last().unwrap();
 
     let tree = build_evidence_tree(rng, sealed);
-    assert_eq!(tree.leaves.len(), 16, "five buckets pad to two levels");
+    assert_eq!(tree.leaves.len(), 16);
 
     for (index, leaf) in tree.leaves.iter().enumerate() {
         let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
@@ -232,16 +228,12 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     let direct = qr_epoch_unspent(rng, &user, &note, &bucket);
 
     let tree = build_evidence_tree(rng, vec![bucket]);
-    let leaf = tree.leaves.first().expect("one leaf");
+    let leaf = tree.leaves.first().unwrap();
     let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
     assert_eq!(*replayed.pcd.data(), sealed);
 
     let bound = qr_epoch_unspent(rng, &user, &note, &replayed);
-    assert_eq!(
-        *bound.data(),
-        *direct.data(),
-        "the segment is the one the sealed bucket starts"
-    );
+    assert_eq!(*bound.data(), *direct.data());
     let (cm, _, epoch_start, epoch_next, _) = *bound.data();
     assert_eq!(cm, note.commitment());
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch1));
@@ -270,10 +262,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     let second = qr_bucket_for(
         rng,
         &pool,
-        (
-            final0.next_epoch(epoch1).expect("epoch one is nonzero"),
-            final1,
-        ),
+        (final0.next_epoch(epoch1).unwrap(), final1),
         EPOCH_MEMBERS,
         0,
         value,
@@ -311,11 +300,7 @@ fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_network() {
         value,
         Anchor::from(Fp::ZERO),
     );
-    assert_ne!(
-        first.pcd.data().3,
-        second.pcd.data().3,
-        "the two networks sampled different bases"
-    );
+    assert_ne!(first.pcd.data().3, second.pcd.data().3);
 
     let (left, right) = (tree_of(rng, first), tree_of(rng, second));
     assert_both_joins_reject(
@@ -375,10 +360,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     let genuine = qr_bucket_at(
         rng,
         &pool,
-        (
-            final0.next_epoch(epoch1).expect("epoch one is nonzero"),
-            final1,
-        ),
+        (final0.next_epoch(epoch1).unwrap(), final1),
         discriminant,
         EPOCH_MEMBERS,
         0,
@@ -389,9 +371,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     // An invented preceding anchor gives an epoch-one opening the chain never
     // produced; the seal takes it, since the opening matches its witness.
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
-    let fake_prev = fake_anchor_final_prev
-        .next_epoch(epoch1)
-        .expect("epoch one is nonzero");
+    let fake_prev = fake_anchor_final_prev.next_epoch(epoch1).unwrap();
     let members = [Tachygram::random(rng)];
     let (intake, ()) = PROOF_SYSTEM
         .seed(
@@ -399,7 +379,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
             qr::QrStampIntakeSeed,
             witness::qr_stamp_intake_seed(((), ()), fake_prev, epoch1, discriminant, &members),
         )
-        .expect("QrStampIntakeSeed");
+        .unwrap();
     let elsewhere = seal_qr_intake(
         rng,
         QrIntakeEntry {
@@ -438,29 +418,26 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     let bucket1 = qr_bucket_for(
         rng,
         &pool,
-        (
-            final0.next_epoch(epoch1).expect("epoch one is nonzero"),
-            final1,
-        ),
+        (final0.next_epoch(epoch1).unwrap(), final1),
         EPOCH_MEMBERS,
         0,
         value,
         final0,
     );
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            evidence::EvidenceTreeLeafPair,
-            (),
-            bucket0.pcd,
-            bucket1.pcd,
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "EvidenceTreeLeafPair: inputs cover different epochs"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        evidence::EvidenceTreeLeafPair,
+        (),
+        bucket0.pcd,
+        bucket1.pcd,
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "EvidenceTreeLeafPair: inputs cover different epochs"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A cap raises the root and leaves every other field alone.
@@ -493,7 +470,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
             tree.pcd,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("EvidenceTreeCap");
+        .unwrap();
     let raised = *capped.data();
     assert_eq!(
         (raised.0, raised.1, raised.2, raised.3),
@@ -524,10 +501,10 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
         .into_iter()
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
-    let other_contents = sealed.get(1).expect("a second bucket").pcd.data().5;
+    let other_contents = sealed.get(1).unwrap().pcd.data().5;
 
     let tree = build_evidence_tree(rng, sealed);
-    let leaf = tree.leaves.first().expect("one leaf");
+    let leaf = tree.leaves.first().unwrap();
     let QrProfile { depth, bits } = leaf.profile;
 
     let forgeries = [
@@ -548,17 +525,19 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
         (leaf.profile, other_contents),
     ];
     for (profile, contents) in forgeries {
-        let err = open_leaf(rng, tree.pcd.clone(), leaf, profile, contents)
-            .err()
-            .unwrap();
-        assert_eq!(
-            invalid_witness(err),
-            "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
-        );
+        if let Err(ragu_core::Error::InvalidWitness(err)) =
+            open_leaf(rng, tree.pcd.clone(), leaf, profile, contents)
+        {
+            assert_eq!(
+                err.to_string(),
+                "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
+            );
+        } else {
+            panic!();
+        }
     }
 
-    open_leaf(rng, tree.pcd.clone(), leaf, leaf.profile, leaf.contents)
-        .expect("the genuine preimage opens");
+    open_leaf(rng, tree.pcd.clone(), leaf, leaf.profile, leaf.contents).unwrap();
 }
 
 #[test]
@@ -580,32 +559,32 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
     let tree = build_evidence_tree(rng, sealed);
-    let leaf = tree.leaves.first().expect("one leaf");
+    let leaf = tree.leaves.first().unwrap();
 
     let mut path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(
         leaf.path
             .get(..evidence::EvidenceTreeDescend::LEVELS)
-            .expect("a full descent"),
+            .unwrap(),
     )
-    .expect("a full descent");
+    .unwrap();
     let (_sides, ref mut children) = path[0];
     children[EVIDENCE_TREE_ARITY - 1] =
         EvidenceTreeRoot(Fp::from(children[EVIDENCE_TREE_ARITY - 1]) + Fp::ONE);
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            evidence::EvidenceTreeDescend,
-            witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
-            tree.pcd,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "EvidenceTreeDescend: children do not hash to the node"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        evidence::EvidenceTreeDescend,
+        witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
+        tree.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "EvidenceTreeDescend: children do not hash to the node"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A node is not a leaf. Stopping a descent one level short leaves an interior
@@ -630,20 +609,20 @@ fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
     let tree = build_evidence_tree(rng, sealed);
-    let leaf = tree.leaves.first().expect("one leaf");
+    let leaf = tree.leaves.first().unwrap();
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            evidence::EvidenceTreeOpen,
-            witness::evidence_tree_open((*tree.pcd.data(), ()), leaf.profile, leaf.contents),
-            tree.pcd,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        evidence::EvidenceTreeOpen,
+        witness::evidence_tree_open((*tree.pcd.data(), ()), leaf.profile, leaf.contents),
+        tree.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
+        );
+    } else {
+        panic!();
+    }
 }

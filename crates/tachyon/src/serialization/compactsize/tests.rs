@@ -14,7 +14,11 @@ fn form_boundary_round_trips() {
         (
             u64::from(FLAG_TWO_BYTES),
             CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
-            [[FLAG_TWO_BYTES].as_slice(), &u16::from(FLAG_TWO_BYTES).to_le_bytes()].concat(),
+            [
+                [FLAG_TWO_BYTES].as_slice(),
+                &u16::from(FLAG_TWO_BYTES).to_le_bytes()
+            ]
+            .concat(),
         ),
         (
             u64::from(u16::MAX),
@@ -33,7 +37,11 @@ fn form_boundary_round_trips() {
         (
             u64::from(MAX_COMPACT_SIZE),
             CompactSize::FourBytes(MAX_COMPACT_SIZE),
-            [[FLAG_FOUR_BYTES].as_slice(), &MAX_COMPACT_SIZE.to_le_bytes()].concat(),
+            [
+                [FLAG_FOUR_BYTES].as_slice(),
+                &MAX_COMPACT_SIZE.to_le_bytes()
+            ]
+            .concat(),
         ),
     ];
 

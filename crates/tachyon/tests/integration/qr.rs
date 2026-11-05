@@ -66,14 +66,6 @@ fn fuse_unspent_lift(
         .map(|(unspent, ())| unspent)
 }
 
-/// The message of an `InvalidWitness` error.
-pub(crate) fn invalid_witness(err: ragu_core::Error) -> String {
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    inner.to_string()
-}
-
 /// Four blocks of epoch zero, two actions of three tachygrams each; with the
 /// final anchor.
 pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
@@ -137,8 +129,8 @@ pub(crate) fn qr_bucket_at(
         value,
         depth,
     );
-    assert_eq!(branch.len(), 1, "the value's profile fits one intake");
-    let intake = branch.pop().expect("one intake");
+    assert_eq!(branch.len(), 1);
+    let intake = branch.pop().unwrap();
     assert_eq!(intake.pcd.data().4, profile);
     seal_qr_intake(rng, intake, anchor_final_prev)
 }
@@ -157,7 +149,7 @@ pub(crate) fn qr_epoch_unspent(
         user.nf_at(note, epoch).into(),
         &bucket.members,
     );
-    let arbitrary = fuse_unspent_init(rng, bucket.pcd.clone(), witness).expect("QrUnspentInit");
+    let arbitrary = fuse_unspent_init(rng, bucket.pcd.clone(), witness).unwrap();
     user.unspent_bind(rng, arbitrary, note)
 }
 
@@ -175,7 +167,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, anchor_end, acc_commit) = *summary.data();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
@@ -185,7 +177,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     assert_eq!(
         *root.data(),
@@ -196,8 +188,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
             discriminant,
             QrProfile::ROOT,
             acc_commit
-        ),
-        "a root intake carries the summary's span and contents at depth zero"
+        )
     );
 }
 
@@ -206,7 +197,7 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::genesis_with(random_block(rng, 3, 1));
     let block = pool.block(BlockHeight(0));
-    let entry = block.stamps.first().expect("one stamp");
+    let entry = block.stamps.first().unwrap();
     let (anchor_prev, members, commit, anchor_end) = entry.clone();
     let (summary, _) = build_summary_pcd(rng, &pool, (anchor_prev, anchor_end));
 
@@ -221,8 +212,7 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
             discriminant,
             QrProfile::ROOT,
             commit
-        ),
-        "the seed folds the stamp into its anchor and roots at depth zero"
+        )
     );
     assert_eq!(stamp_root.members, members);
 
@@ -234,12 +224,8 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
-    assert_eq!(
-        *stamp_root.pcd.data(),
-        *summary_root.data(),
-        "a stamp-rooted intake matches the summary route over the same stamp"
-    );
+        .unwrap();
+    assert_eq!(*stamp_root.pcd.data(), *summary_root.data());
 }
 
 #[test]
@@ -247,24 +233,15 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor_prev = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let err = PROOF_SYSTEM
-        .seed(
-            rng,
-            qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(
-                ((), ()),
-                anchor_prev,
-                EpochIndex::new(3),
-                discriminant,
-                &[],
-            ),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "invalid anchor step");
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
+        rng,
+        qr::QrStampIntakeSeed,
+        witness::qr_stamp_intake_seed(((), ()), anchor_prev, EpochIndex::new(3), discriminant, &[]),
+    ) {
+        assert_eq!(err.to_string(), "invalid anchor step");
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -281,7 +258,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -290,16 +267,13 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
         .iter()
         .copied()
         .partition(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0);
-    assert!(
-        !residue.is_empty() && !non_residue.is_empty(),
-        "twelve random members reach both classes"
-    );
+    assert!(!residue.is_empty() && !non_residue.is_empty());
 
     let (split, ()) = PROOF_SYSTEM
         .fuse(
@@ -309,7 +283,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     assert_eq!(
         *split.data(),
@@ -338,8 +312,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
                 .copied()
                 .collect::<TachygramSetPoly>()
                 .commit()
-        ),
-        "the split emits each class as its own set, span and profile unchanged"
+        )
     );
 }
 
@@ -357,7 +330,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -366,26 +339,23 @@ fn qr_intake_split_rejects_a_forged_partition() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let (contents, non_residue, _residue) = witness::qr_intake_split((*root.data(), ()), &members);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            (contents, non_residue.clone(), non_residue),
-            root,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrIntakeSplit: the sides do not partition the contents"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrIntakeSplit,
+        (contents, non_residue.clone(), non_residue),
+        root,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeSplit: the sides do not partition the contents"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -406,7 +376,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -415,7 +385,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     // Moving one member across the partition leaves the product intact, so
     // only the opening at -R separates the two filings.
@@ -424,27 +394,24 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
             member != exceptional && qr::classify(Fp::from(member), Fp::from(discriminant)).0
         });
     let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            (
-                contents,
-                non_residue.iter().copied().collect(),
-                residue.iter().copied().collect(),
-            ),
-            root,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrIntakeSplit: exceptional value claimed the non-residue class"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrIntakeSplit,
+        (
+            contents,
+            non_residue.iter().copied().collect(),
+            residue.iter().copied().collect(),
+        ),
+        root,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeSplit: exceptional value claimed the non-residue class"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A split at `depth` opens the non-residue side at $-R_{\mathsf{depth}+1}$.
@@ -474,7 +441,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 summary::SummarySeed,
                 witness::summary_seed(((), ()), start, epoch, &members),
             )
-            .expect("SummarySeed");
+            .unwrap();
         let (root, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -483,7 +450,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 summary,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSummaryIntake");
+            .unwrap();
 
         // Reach the selected depth through honest splits and descents, keeping
         // the branch containing x rather than fabricating a deeper profile.
@@ -504,7 +471,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 intake.pcd.clone(),
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("honest QrIntakeSplit accepts the exceptional value");
+            .unwrap();
 
         // Moving only x across the partition leaves the product intact, so
         // only the opening at -R_{depth+1} separates the two filings.
@@ -515,24 +482,24 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         assert!(!residue.contains(&exceptional));
         assert!(non_residue.contains(&exceptional));
         let (contents, ..) = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
-        let err = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrIntakeSplit,
-                (
-                    contents,
-                    non_residue.iter().copied().collect(),
-                    residue.iter().copied().collect(),
-                ),
-                intake.pcd,
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .err()
-            .unwrap();
-        assert_eq!(
-            invalid_witness(err),
-            "QrIntakeSplit: exceptional value claimed the non-residue class"
-        );
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            qr::QrIntakeSplit,
+            (
+                contents,
+                non_residue.iter().copied().collect(),
+                residue.iter().copied().collect(),
+            ),
+            intake.pcd,
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(
+                err.to_string(),
+                "QrIntakeSplit: exceptional value claimed the non-residue class"
+            );
+        } else {
+            panic!();
+        }
     }
 }
 
@@ -550,7 +517,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -559,7 +526,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (_, _, anchor_end, ..) = *root.data();
     let (split, ()) = PROOF_SYSTEM
         .fuse(
@@ -569,7 +536,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     for side in [true, false] {
         let side_members: Vec<Tachygram> = members
@@ -585,7 +552,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 split.clone(),
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSideDescend");
+            .unwrap();
         assert_eq!(
             *child.data(),
             (
@@ -599,8 +566,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                     .copied()
                     .collect::<TachygramSetPoly>()
                     .commit()
-            ),
-            "a descent keeps the span and the discriminant"
+            )
         );
     }
 }
@@ -619,7 +585,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -628,7 +594,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -637,28 +603,25 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     let (_, foreign_sibling, ..) = witness::qr_side_descend((*split.data(), ()), &members, false);
     let (_, _, interpolant, quotient) =
         witness::qr_side_descend((*split.data(), ()), &members, true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (true, foreign_sibling, interpolant, quotient),
-            split,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: sibling does not match the header"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrSideDescend,
+        (true, foreign_sibling, interpolant, quotient),
+        split,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSideDescend: sibling does not match the header"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// The interpolant of the other side does not decompose the sibling at its
@@ -677,7 +640,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -686,7 +649,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -695,27 +658,27 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     for bit in [true, false] {
         let (_, sibling_contents, _interpolant, quotient) =
             witness::qr_side_descend((*split.data(), ()), &members, bit);
         let (_, _, foreign_interpolant, _) =
             witness::qr_side_descend((*split.data(), ()), &members, !bit);
-        let err = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSideDescend,
-                (bit, sibling_contents, foreign_interpolant, quotient),
-                split.clone(),
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .err()
-            .unwrap();
-        assert_eq!(
-            invalid_witness(err),
-            "QrSideDescend: the sibling fails its class decomposition"
-        );
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            qr::QrSideDescend,
+            (bit, sibling_contents, foreign_interpolant, quotient),
+            split.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(
+                err.to_string(),
+                "QrSideDescend: the sibling fails its class decomposition"
+            );
+        } else {
+            panic!();
+        }
     }
 }
 
@@ -735,7 +698,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -744,7 +707,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -753,27 +716,27 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     for bit in [true, false] {
         let (_, sibling_contents, interpolant, _quotient) =
             witness::qr_side_descend((*split.data(), ()), &members, bit);
         let (_, _, _, foreign_quotient) =
             witness::qr_side_descend((*split.data(), ()), &members, !bit);
-        let err = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSideDescend,
-                (bit, sibling_contents, interpolant, foreign_quotient),
-                split.clone(),
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .err()
-            .unwrap();
-        assert_eq!(
-            invalid_witness(err),
-            "QrSideDescend: the sibling fails its class decomposition"
-        );
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            qr::QrSideDescend,
+            (bit, sibling_contents, interpolant, foreign_quotient),
+            split.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(
+                err.to_string(),
+                "QrSideDescend: the sibling fails its class decomposition"
+            );
+        } else {
+            panic!();
+        }
     }
 }
 
@@ -791,7 +754,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -800,7 +763,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     // File one residue-class member on the non-residue side. The product
     // still holds, so the split accepts the misfiled partition.
@@ -808,9 +771,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .iter()
         .copied()
         .partition(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0);
-    let smuggled = short_residue
-        .pop()
-        .expect("twelve random members reach the residue class");
+    let smuggled = short_residue.pop().unwrap();
     padded_non_residue.push(smuggled);
     let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
     let (sides, ()) = PROOF_SYSTEM
@@ -825,32 +786,32 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     // Extracting the short residue child attests the padded sibling, which
     // holds a residue-class root and so has no non-residue decomposition; the
     // honest sibling's decomposition is the best a prover can offer.
     let (_, _, interpolant, quotient) =
         witness::qr_side_descend((*sides.data(), ()), &members, true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (
-                true,
-                padded_non_residue.iter().copied().collect(),
-                interpolant,
-                quotient,
-            ),
-            sides.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrSideDescend: the sibling fails its class decomposition"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrSideDescend,
+        (
+            true,
+            padded_non_residue.iter().copied().collect(),
+            interpolant,
+            quotient,
+        ),
+        sides.clone(),
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSideDescend: the sibling fails its class decomposition"
+        );
+    } else {
+        panic!();
+    }
 
     // The padded child is complete for its class, merely impure: its short
     // sibling is pure, so the extraction passes and carries the stray member.
@@ -867,7 +828,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             sides,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSideDescend");
+        .unwrap();
     let (.., child_profile, child_contents) = *child.data();
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
     assert_eq!(
@@ -876,8 +837,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             .iter()
             .copied()
             .collect::<TachygramSetPoly>()
-            .commit(),
-        "the impure child carries the stray member"
+            .commit()
     );
 }
 
@@ -899,7 +859,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let honest_discriminant = QrDiscriminant::random(rng);
     let (honest_root, ()) = PROOF_SYSTEM
         .fuse(
@@ -909,7 +869,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             honest_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (honest_split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -918,7 +878,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             honest_root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
     let (_, _, interpolant, quotient) =
         witness::qr_side_descend((*honest_split.data(), ()), &members, false);
 
@@ -934,8 +894,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
     assert!(
         misfiled
             .iter()
-            .any(|&member| !qr::classify(Fp::from(member), solved.at(0)).0),
-        "a non-residue member is filed on the residue side"
+            .any(|&member| !qr::classify(Fp::from(member), solved.at(0)).0)
     );
 
     let (summary, ()) = PROOF_SYSTEM
@@ -944,7 +903,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -953,7 +912,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -967,22 +926,22 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("the split's product does not read the discriminant");
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (false, sibling, interpolant, quotient),
-            sides,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
         .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrSideDescend: the sibling fails its class decomposition"
-    );
+
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrSideDescend,
+        (false, sibling, interpolant, quotient),
+        sides,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSideDescend: the sibling fails its class decomposition"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -999,7 +958,7 @@ fn qr_side_descend_refuses_a_full_register() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1008,7 +967,7 @@ fn qr_side_descend_refuses_a_full_register() {
             summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let mut intake = QrIntakeEntry {
         pcd: root,
@@ -1024,8 +983,7 @@ fn qr_side_descend_refuses_a_full_register() {
         QrProfile {
             depth: u32::BITS,
             bits: u32::MAX
-        },
-        "thirty-two residue sides reach the maximum depth"
+        }
     );
 
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
@@ -1037,25 +995,22 @@ fn qr_side_descend_refuses_a_full_register() {
             intake.pcd,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
-    let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            descend_witness,
-            sides,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
         .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: profile has no bit left for another side"
-    );
+    let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, true);
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrSideDescend,
+        descend_witness,
+        sides,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSideDescend: profile has no bit left for another side"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -1073,7 +1028,7 @@ fn qr_intake_merge_joins_two_spans() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &left_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, junction, _) = *left_summary.data();
     let (right_summary, ()) = PROOF_SYSTEM
         .seed(
@@ -1081,7 +1036,7 @@ fn qr_intake_merge_joins_two_spans() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), junction, epoch, &right_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, end, _) = *right_summary.data();
 
     let (left, ()) = PROOF_SYSTEM
@@ -1092,7 +1047,7 @@ fn qr_intake_merge_joins_two_spans() {
             left_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1101,13 +1056,13 @@ fn qr_intake_merge_joins_two_spans() {
             right_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
     let (merged, ()) = PROOF_SYSTEM
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
-        .expect("QrIntakeMerge");
+        .unwrap();
 
     let union = left_members
         .iter()
@@ -1123,8 +1078,7 @@ fn qr_intake_merge_joins_two_spans() {
             discriminant,
             QrProfile::ROOT,
             union.commit()
-        ),
-        "the merge spans both inputs and holds their union"
+        )
     );
 }
 
@@ -1144,14 +1098,14 @@ fn qr_intake_merge_rejects_a_gap() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), left_start, epoch, &left_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (right_summary, ()) = PROOF_SYSTEM
         .seed(
             rng,
             summary::SummarySeed,
             witness::summary_seed(((), ()), right_start, epoch, &right_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     let (left, ()) = PROOF_SYSTEM
         .fuse(
@@ -1161,7 +1115,7 @@ fn qr_intake_merge_rejects_a_gap() {
             left_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1170,21 +1124,20 @@ fn qr_intake_merge_rejects_a_gap() {
             right_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrIntakeMerge, witness, left, right)
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrIntakeMerge: left.anchor_end must equal right.anchor_prev"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeMerge: left.anchor_end must equal right.anchor_prev"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -1202,7 +1155,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &left_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, junction, _) = *left_summary.data();
     let (right_summary, ()) = PROOF_SYSTEM
         .seed(
@@ -1210,7 +1163,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), junction, epoch, &right_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     let (left_root, ()) = PROOF_SYSTEM
         .fuse(
@@ -1220,7 +1173,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             left_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1229,7 +1182,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             right_summary,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSummaryIntake");
+        .unwrap();
 
     let (split, ()) = PROOF_SYSTEM
         .fuse(
@@ -1239,7 +1192,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             left_root,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
     let (deeper, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1248,7 +1201,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             split,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrSideDescend");
+        .unwrap();
 
     let deeper_members: Vec<Tachygram> = left_members
         .iter()
@@ -1260,17 +1213,16 @@ fn qr_intake_merge_rejects_different_profiles() {
         &deeper_members,
         &right_members,
     );
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrIntakeMerge: inputs sit at different depths"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeMerge: inputs sit at different depths"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -1298,22 +1250,19 @@ fn qr_partition_covers_the_epoch_by_profile() {
         2,
     );
 
-    assert_eq!(routed.len(), 4, "two layers leave one intake per profile");
+    assert_eq!(routed.len(), 4);
     let mut profiles: Vec<u32> = routed
         .iter()
         .map(|intake| {
             let (_, anchor_prev, anchor_end, _, profile, ..) = *intake.pcd.data();
             assert_eq!(profile.depth, 2);
             assert_eq!(anchor_prev, Anchor::default());
-            assert_eq!(
-                anchor_end, final_anchor,
-                "every intake spans the whole epoch"
-            );
+            assert_eq!(anchor_end, final_anchor);
             profile.bits
         })
         .collect();
     profiles.sort_unstable();
-    assert_eq!(profiles, [0, 1, 2, 3], "the intakes are the four profiles");
+    assert_eq!(profiles, [0, 1, 2, 3]);
 
     let mut covered: Vec<Tachygram> = Vec::new();
     for intake in &routed {
@@ -1326,16 +1275,14 @@ fn qr_partition_covers_the_epoch_by_profile() {
                 .iter()
                 .copied()
                 .collect::<TachygramSetPoly>()
-                .commit(),
-            "an intake's header commits exactly the members it holds"
+                .commit()
         );
         for &member in &intake.members {
             for level in 0..profile.depth {
                 let side = ((profile.bits >> (profile.depth - 1 - level)) & 1) == 1;
                 assert_eq!(
                     qr::classify(Fp::from(member), discriminant.at(level)).0,
-                    side,
-                    "a member's class at every level is its intake's path"
+                    side
                 );
             }
         }
@@ -1346,11 +1293,7 @@ fn qr_partition_covers_the_epoch_by_profile() {
         tgs.sort_unstable_by_key(|&tg| Fp::from(tg).to_bytes());
         tgs
     };
-    assert_eq!(
-        sorted(covered),
-        sorted(published),
-        "the intakes partition the epoch's published tachygrams"
-    );
+    assert_eq!(sorted(covered), sorted(published));
 }
 
 /// A span past what one polynomial holds leaves each profile as a run of
@@ -1379,39 +1322,22 @@ fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
         1,
     );
 
-    assert!(
-        routed.len() > 2,
-        "no intake holds more than the capacity, so twenty-four members need three"
-    );
+    assert!(routed.len() > 2);
     let mut covered: Vec<Tachygram> = Vec::new();
     for side in [true, false] {
         let run: Vec<&QrIntakeEntry> = routed
             .iter()
             .filter(|intake| intake.pcd.data().4 == QrProfile::ROOT.descend(side))
             .collect();
-        let first = run.first().expect("each side carries an intake");
-        assert_eq!(
-            first.pcd.data().1,
-            Anchor::default(),
-            "the side's run opens at the span's start"
-        );
+        let first = run.first().unwrap();
+        assert_eq!(first.pcd.data().1, Anchor::default());
         let mut cursor = first.pcd.data().2;
         for pair in run.windows(2) {
-            assert_eq!(
-                pair[1].pcd.data().1,
-                cursor,
-                "the side's intakes cover adjacent spans"
-            );
-            assert!(
-                (pair[0].members.len() + pair[1].members.len()) > capacity,
-                "neighbours merge as far as the capacity allows"
-            );
+            assert_eq!(pair[1].pcd.data().1, cursor);
+            assert!((pair[0].members.len() + pair[1].members.len()) > capacity);
             cursor = pair[1].pcd.data().2;
         }
-        assert_eq!(
-            cursor, final_anchor,
-            "the side's run closes at the span's end"
-        );
+        assert_eq!(cursor, final_anchor);
         for intake in run {
             covered.extend(intake.members.iter().copied());
         }
@@ -1421,11 +1347,7 @@ fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
         tgs.sort_unstable_by_key(|&tg| Fp::from(tg).to_bytes());
         tgs
     };
-    assert_eq!(
-        sorted(covered),
-        sorted(published),
-        "the runs still partition the epoch's published tachygrams"
-    );
+    assert_eq!(sorted(covered), sorted(published));
 }
 
 #[test]
@@ -1446,12 +1368,9 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
         24,
         2,
     );
-    let intake = routed.into_iter().next().expect("one intake");
+    let intake = routed.into_iter().next().unwrap();
     let (epoch, anchor_prev, anchor_end, _, profile, contents) = *intake.pcd.data();
-    assert_eq!(
-        anchor_end, final_anchor,
-        "the intake ends on the final anchor"
-    );
+    assert_eq!(anchor_end, final_anchor);
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     assert_eq!(
@@ -1463,14 +1382,9 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             discriminant,
             profile,
             contents
-        ),
-        "the intake's anchor_prev becomes anchor_start, and anchor_next is the boundary digest of its last fold"
+        )
     );
-    assert_eq!(
-        anchor_prev,
-        Anchor::default(),
-        "epoch zero's opening anchor is the general rule at anchor_final_prev = 0"
-    );
+    assert_eq!(anchor_prev, Anchor::default());
 }
 
 #[test]
@@ -1487,25 +1401,22 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let start = pool.block(BlockHeight(0)).anchor();
 
     let routed = build_qr_partition(rng, &pool, (start, final_anchor), discriminant, 12, 1);
-    let intake = routed.into_iter().next().expect("one intake");
+    let intake = routed.into_iter().next().unwrap();
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrBucketSeal,
-            witness,
-            intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrBucketSeal,
+        witness,
+        intake.pcd,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// The seal does not know the epoch's final anchor: an intake that stops
@@ -1530,13 +1441,10 @@ fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
         6,
         0,
     );
-    let intake = routed.into_iter().next().expect("one intake");
+    let intake = routed.into_iter().next().unwrap();
     let (_, anchor_prev, anchor_end, ..) = *intake.pcd.data();
     assert_eq!(anchor_prev, Anchor::default());
-    assert_ne!(
-        anchor_end, final_anchor,
-        "the first root stops inside the epoch"
-    );
+    assert_ne!(anchor_end, final_anchor);
 
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
     assert_eq!(
@@ -1544,8 +1452,7 @@ fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
         (
             anchor_end.next_epoch(EpochIndex::new(1)).unwrap(),
             discriminant
-        ),
-        "the seal performs the boundary digest of the short extent and keeps its first discriminant"
+        )
     );
 }
 
@@ -1578,7 +1485,7 @@ fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
 
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
         assert_eq!(unspent.data().2, NfSeqPoly::new(epoch, &[nf]).commit());
     }
 }
@@ -1608,40 +1515,23 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let intake = routed
         .into_iter()
         .find(|intake| intake.pcd.data().4 == profile)
-        .expect("one intake carries the nullifier's own profile");
+        .unwrap();
     assert!(
         !intake
             .members
             .iter()
-            .any(|&member| Fp::from(member) == Fp::from(nf)),
-        "a fresh nullifier is absent from the epoch"
+            .any(|&member| Fp::from(member) == Fp::from(nf))
     );
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+    let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
 
     let (anchor_start, epoch_start, elapsed, segment_epoch_next, anchor_next) = *unspent.data();
-    assert_eq!(
-        anchor_start,
-        Anchor::default(),
-        "the segment opens on the epoch's entry anchor"
-    );
-    assert_eq!(
-        anchor_next,
-        final_anchor.next_epoch(epoch_next).unwrap(),
-        "and stops before the next epoch's entry anchor"
-    );
-    assert_eq!(
-        (epoch_start, segment_epoch_next),
-        (epoch, epoch_next),
-        "each epoch bound is the epoch of its anchor bound"
-    );
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(epoch, &[nf]).commit(),
-        "the one member is the bucket's own epoch; the crossing adds none"
-    );
+    assert_eq!(anchor_start, Anchor::default());
+    assert_eq!(anchor_next, final_anchor.next_epoch(epoch_next).unwrap());
+    assert_eq!((epoch_start, segment_epoch_next), (epoch, epoch_next));
+    assert_eq!(elapsed, NfSeqPoly::new(epoch, &[nf]).commit());
 }
 
 /// Every QR bucket ends on the boundary into the next epoch, so two
@@ -1682,21 +1572,13 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let mut segment = |bucket: QrBucketEntry, nf: Nullifier| {
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit")
+        fuse_unspent_init(rng, bucket.pcd, witness).unwrap()
     };
     let left = segment(bucket0, nf0);
     let right = segment(bucket1, nf1);
     let entry1 = final0.next_epoch(epoch1).unwrap();
-    assert_eq!(
-        left.data().4,
-        entry1,
-        "epoch zero's segment crosses to epoch one's entry anchor"
-    );
-    assert_eq!(
-        left.data().4,
-        right.data().0,
-        "which is exactly where epoch one's segment opens"
-    );
+    assert_eq!(left.data().4, entry1);
+    assert_eq!(left.data().4, right.data().0);
 
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
@@ -1706,17 +1588,13 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
             left,
             right,
         )
-        .expect("UnspentFuse straight across the boundary");
+        .unwrap();
 
     let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
     assert_eq!(anchor_start, Anchor::default());
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch2));
     assert_eq!(anchor_next, final1.next_epoch(epoch2).unwrap());
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(epoch0, &[nf0, nf1]).commit(),
-        "each epoch's member appears once, and epoch two's is the next segment's"
-    );
+    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
 }
 
 /// The empty bucket of `epoch`, rooted at `anchor` and sealed on
@@ -1751,26 +1629,17 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let final0 = pool.block(epoch0.last_block()).anchor();
     let entry1 = pool.block(epoch1.first_block()).prev;
     let entry2 = pool.block(epoch2.first_block()).prev;
-    assert_eq!(
-        pool.block(epoch1.last_block()).anchor(),
-        entry1,
-        "a stampless epoch's final anchor is its entry anchor"
-    );
+    assert_eq!(pool.block(epoch1.last_block()).anchor(), entry1);
 
     let bucket = empty_bucket(rng, entry1, epoch1, final0);
     let (epoch, anchor_start, anchor_next, _, profile, contents) = *bucket.pcd.data();
-    assert_eq!(
-        (epoch, anchor_start, anchor_next),
-        (epoch1, entry1, entry2),
-        "the empty bucket runs from epoch one's entry anchor to epoch two's"
-    );
+    assert_eq!((epoch, anchor_start, anchor_next), (epoch1, entry1, entry2));
     assert_eq!(
         (profile, contents),
         (
             QrProfile::ROOT,
             iter::empty().collect::<TachygramSetPoly>().commit()
-        ),
-        "and holds nothing"
+        )
     );
 
     let left = {
@@ -1785,12 +1654,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         );
         let witness =
             witness::qr_unspent_init((*bucket0.pcd.data(), ()), nf0.into(), &bucket0.members);
-        fuse_unspent_init(rng, bucket0.pcd, witness).expect("QrUnspentInit")
+        fuse_unspent_init(rng, bucket0.pcd, witness).unwrap()
     };
     let right = {
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf1.into(), &bucket.members);
-        fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit on the empty bucket")
+        fuse_unspent_init(rng, bucket.pcd, witness).unwrap()
     };
 
     let (fused, ()) = PROOF_SYSTEM
@@ -1801,16 +1670,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             left,
             right,
         )
-        .expect("UnspentFuse across the stampless epoch");
+        .unwrap();
     let (fused_anchor_start, _, elapsed, fused_epoch_next, fused_anchor_next) = *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(epoch0, &[nf0, nf1]).commit(),
-        "the stampless epoch still records its member"
-    );
+    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
 }
 
 /// An empty intake over an epoch that published stamps seals to a crossing
@@ -1825,8 +1690,7 @@ fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
     let bucket = empty_bucket(rng, Anchor::default(), epoch, Anchor::from(Fp::ZERO));
     assert_ne!(
         bucket.pcd.data().2,
-        final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
-        "the bucket ends on a crossing the pool never published"
+        final_anchor.next_epoch(epoch.next().unwrap()).unwrap()
     );
 }
 
@@ -1868,17 +1732,9 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         Fp::from(user.nf_at(&note, epoch0)),
         Anchor::from(Fp::ZERO),
     );
-    assert_ne!(
-        bucket.pcd.data().4,
-        nf_bucket.pcd.data().4,
-        "the commitment and the nullifier route to different buckets"
-    );
+    assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
     let (_, _, anchor_next, ..) = *bucket.pcd.data();
-    assert_eq!(
-        anchor_next,
-        span.1.next_epoch(epoch1).unwrap(),
-        "the bucket stops before epoch one's entry anchor"
-    );
+    assert_eq!(anchor_next, span.1.next_epoch(epoch1).unwrap());
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
 
     let (spendable, ()) = PROOF_SYSTEM
@@ -1889,19 +1745,15 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
             unspent,
             bucket.pcd,
         )
-        .expect("QrSpendableInit");
-    assert_eq!(
-        *spendable.data(),
-        (note.commitment(), epoch1, anchor_next),
-        "the spendable rests on epoch one's entry anchor"
-    );
+        .unwrap();
+    assert_eq!(*spendable.data(), (note.commitment(), epoch1, anchor_next));
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
     let secret = user.secret_pcd(rng, note);
     let rcv = value::Trapdoor::random(rng);
     let (bind, ()) = PROOF_SYSTEM
         .fuse(rng, spend::SpendBind, (rcv,), lifted, secret)
-        .expect("SpendBind");
+        .unwrap();
     let (bind_cm, nf_current, nf_next, ..) = *bind.data();
     assert_eq!(bind_cm, note.commitment());
     assert_eq!(
@@ -1928,12 +1780,8 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let short_anchor = pool.anchor();
     pool.mine(random_block(rng, 2, 1));
     let tip_anchor = pool.anchor();
-    assert_ne!(short_anchor, tip_anchor, "the bucket omits later stamps");
-    assert_eq!(
-        pool.height().epoch(),
-        epoch,
-        "no epoch boundary was crossed"
-    );
+    assert_ne!(short_anchor, tip_anchor);
+    assert_eq!(pool.height().epoch(), epoch);
 
     let bucket = qr_bucket_for(
         rng,
@@ -1946,11 +1794,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     );
     let epoch_next = epoch.next().unwrap();
     let unpublished = short_anchor.next_epoch(epoch_next).unwrap();
-    assert_eq!(
-        bucket.pcd.data().2,
-        unpublished,
-        "the seal performs the boundary digest of the short extent's own last anchor"
-    );
+    assert_eq!(bucket.pcd.data().2, unpublished);
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(
@@ -1960,17 +1804,15 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
             unspent,
             bucket.pcd,
         )
-        .expect("QrSpendableInit over the short extent");
+        .unwrap();
     assert_eq!(
         *spendable.data(),
-        (note.commitment(), epoch_next, unpublished),
-        "the spendable's anchor is a boundary digest the pool never published"
+        (note.commitment(), epoch_next, unpublished)
     );
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)
             .iter()
-            .all(|entry| entry.3 != unpublished),
-        "no published anchor equals the short extent's crossing"
+            .all(|entry| entry.3 != unpublished)
     );
 
     // The next epoch's segment opens on the published entry anchor, which the
@@ -1985,20 +1827,17 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         (epoch_next, epoch_next.next().unwrap()),
     );
     let bound_next = user.unspent_bind(rng, next, &note);
-    assert_ne!(
-        bound_next.data().1,
-        unpublished,
-        "the next segment opens on the published entry anchor"
-    );
-    let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "SpendableLift: unspent not adjacent to spendable",
-        "the lift rejects it"
-    );
+    assert_ne!(bound_next.data().1, unpublished);
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        PROOF_SYSTEM.fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
+    {
+        assert_eq!(
+            err.to_string(),
+            "SpendableLift: unspent not adjacent to spendable"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2022,23 +1861,17 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-            unspent,
-            bucket.pcd,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSpendableInit: commitment not in bucket"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        spendable::QrSpendableInit,
+        witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
+        unspent,
+        bucket.pcd,
+    ) {
+        assert_eq!(err.to_string(), "QrSpendableInit: commitment not in bucket");
+    } else {
+        panic!();
+    }
 }
 
 /// A bucket sealed short of the epoch opens at the real boundary but closes
@@ -2073,23 +1906,20 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
         Anchor::from(Fp::ZERO),
     );
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *short.pcd.data()), &short.members),
-            unspent,
-            short.pcd,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSpendableInit: segment does not close where the bucket does"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        spendable::QrSpendableInit,
+        witness::qr_spendable_init((*unspent.data(), *short.pcd.data()), &short.members),
+        unspent,
+        short.pcd,
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSpendableInit: segment does not close where the bucket does"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A bucket of the following epoch cannot pair with a segment over the
@@ -2119,30 +1949,27 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let later = qr_bucket_for(
         rng,
         &pool,
-        (
-            final0.next_epoch(epoch1).expect("epoch one is nonzero"),
-            final1,
-        ),
+        (final0.next_epoch(epoch1).unwrap(), final1),
         EPOCH_MEMBERS,
         0,
         Fp::from(Tachygram::from(note.commitment())),
         final0,
     );
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *later.pcd.data()), &later.members),
-            unspent,
-            later.pcd,
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrSpendableInit: segment does not start in the bucket's epoch"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        spendable::QrSpendableInit,
+        witness::qr_spendable_init((*unspent.data(), *later.pcd.data()), &later.members),
+        unspent,
+        later.pcd,
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSpendableInit: segment does not start in the bucket's epoch"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A bucket sealed over an invented boundary of the same epoch opens
@@ -2162,10 +1989,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let nf_bucket = qr_bucket_for(
         rng,
         &pool,
-        (
-            final0.next_epoch(epoch1).expect("epoch one is nonzero"),
-            final1,
-        ),
+        (final0.next_epoch(epoch1).unwrap(), final1),
         EPOCH_MEMBERS,
         0,
         Fp::from(user.nf_at(&note, epoch1)),
@@ -2177,9 +2001,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     // produced; the seal accepts it because the opening matches
     // `anchor_final_prev`.
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
-    let fake_prev = fake_anchor_final_prev
-        .next_epoch(epoch1)
-        .expect("epoch one is nonzero");
+    let fake_prev = fake_anchor_final_prev.next_epoch(epoch1).unwrap();
     let members = [Tachygram::from(note.commitment())];
     let discriminant = QrDiscriminant::random(rng);
     let (intake, ()) = PROOF_SYSTEM
@@ -2188,7 +2010,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
             qr::QrStampIntakeSeed,
             witness::qr_stamp_intake_seed(((), ()), fake_prev, epoch1, discriminant, &members),
         )
-        .expect("QrStampIntakeSeed");
+        .unwrap();
     let elsewhere = seal_qr_intake(
         rng,
         QrIntakeEntry {
@@ -2198,23 +2020,20 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
         fake_anchor_final_prev,
     );
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init(
-                (*unspent.data(), *elsewhere.pcd.data()),
-                &elsewhere.members,
-            ),
-            unspent,
-            elsewhere.pcd,
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrSpendableInit: segment does not open where the bucket does"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        spendable::QrSpendableInit,
+        witness::qr_spendable_init((*unspent.data(), *elsewhere.pcd.data()), &elsewhere.members),
+        unspent,
+        elsewhere.pcd,
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrSpendableInit: segment does not open where the bucket does"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2238,17 +2057,21 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
     let intake = routed
         .into_iter()
         .find(|intake| !intake.members.is_empty())
-        .expect("some intake holds a member");
-    let published = *intake.members.first().expect("a member");
+        .unwrap();
+    let published = *intake.members.first().unwrap();
     let nf = Nullifier::from(Fp::from(published));
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrUnspentInit: found nullifier in the bucket"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrUnspentInit: found nullifier in the bucket"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2274,15 +2097,19 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     let foreign = routed
         .into_iter()
         .find(|intake| intake.pcd.data().4 != profile)
-        .expect("three intakes carry another profile");
+        .unwrap();
     let bucket = seal_qr_intake(rng, foreign, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: value does not take the bucket's profile"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: value does not take the bucket's profile"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A fresh nullifier, its depth-two bucket over a small epoch, and the honest
@@ -2300,7 +2127,7 @@ fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentIn
         Anchor::from(Fp::ZERO),
     );
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).expect("the honest witness passes");
+    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).unwrap();
     (nf, bucket, witness)
 }
 
@@ -2315,11 +2142,15 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
     assert_ne!(off.square(), root.square());
     *root = off;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: root does not square to the claimed class"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: root does not square to the claimed class"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// Positions past the bucket's depth are compared to nothing, but still
@@ -2338,11 +2169,15 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = !*side;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: root does not square to the claimed class"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: root does not square to the claimed class"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// The exceptional value $-R_j$ has root zero under either class and is filed
@@ -2371,8 +2206,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         !bucket
             .members
             .iter()
-            .any(|&member| Fp::from(member) == value),
-        "the fixed point is absent from the epoch"
+            .any(|&member| Fp::from(member) == value)
     );
     let mut witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
@@ -2381,17 +2215,20 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         honest_roots[usize::try_from(position).unwrap()],
         QrClassRoot(true, Fp::ZERO)
     );
-    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone())
-        .expect("the fixed point passes on the residue side");
+    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).unwrap();
 
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = false;
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: exceptional discriminant claimed the non-residue class"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: exceptional discriminant claimed the non-residue class"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2402,11 +2239,12 @@ fn qr_unspent_init_rejects_a_non_prefix_mask() {
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = array::from_fn(|position| position == 0 || position == 2);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: depth mask is not a prefix"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(err.to_string(), "QR profile: depth mask is not a prefix");
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2417,11 +2255,15 @@ fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: depth mask does not match the bucket's depth"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: depth mask does not match the bucket's depth"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// Recarrying a proof under altered header data exercises the step's own
@@ -2454,7 +2296,7 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
     )
     .into_iter()
     .next()
-    .expect("one intake");
+    .unwrap();
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
 
@@ -2463,20 +2305,20 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
     data.1 = anchor_final_prev.next_epoch(final_epoch).unwrap();
     let forged = intake.pcd.proof().clone().carry::<qr::QrIntake>(data);
     let witness = witness::qr_bucket_seal((data, ()), anchor_final_prev);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrBucketSeal,
-            witness,
-            forged,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrBucketSeal: crossing past the final epoch"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        qr::QrBucketSeal,
+        witness,
+        forged,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "QrBucketSeal: crossing past the final epoch"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// No seal produces a bucket in the final epoch; a forged one has no next
@@ -2490,11 +2332,11 @@ fn qr_unspent_init_refuses_a_bucket_in_the_final_epoch() {
         *epoch = EpochIndex::new(EPOCH_MAX);
     });
     let witness = witness::qr_unspent_init((*forged.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, forged, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrUnspentInit: bucket has no next epoch"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, witness) {
+        assert_eq!(err.to_string(), "QrUnspentInit: bucket has no next epoch");
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2508,24 +2350,30 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
     let (_, _, ref mut depth_mask, ..) = witness;
     // Bypass the constructor's range check to exercise the step's constraint.
     *depth_mask = [true; QrProfile::MAX_DEPTH];
-    let err = fuse_unspent_init(rng, forged, witness.clone())
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: depth mask does not match the bucket's depth"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        fuse_unspent_init(rng, forged, witness.clone())
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: depth mask does not match the bucket's depth"
+        );
+    } else {
+        panic!();
+    }
 
     let saturated = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
         profile.depth = u32::MAX;
     });
     let (_, _, ref mut saturated_mask, ..) = witness;
     *saturated_mask = [true; QrProfile::MAX_DEPTH];
-    let saturated_err = fuse_unspent_init(rng, saturated, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(saturated_err),
-        "QR profile: depth mask does not match the bucket's depth"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, saturated, witness) {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: depth mask does not match the bucket's depth"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2539,20 +2387,27 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
     let mut shallow = witness.clone();
     let (_, _, ref mut depth_mask, ..) = shallow;
     *depth_mask = QrProfile::ROOT.depth_mask();
-    let err = fuse_unspent_init(rng, forged, shallow).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QR profile: value does not take the bucket's profile"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, forged, shallow) {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: value does not take the bucket's profile"
+        );
+    } else {
+        panic!();
+    }
 
     let overflowing = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
         profile.bits |= 1 << 2;
     });
-    let overflowing_err = fuse_unspent_init(rng, overflowing, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(overflowing_err),
-        "QR profile: value does not take the bucket's profile"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, overflowing, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QR profile: value does not take the bucket's profile"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2565,8 +2420,12 @@ fn qr_unspent_init_rejects_a_zero_value() {
         Tachygram::from(Fp::ZERO),
         &bucket.members,
     );
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(invalid_witness(err), "QrUnspentInit: tested value is zero");
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(err.to_string(), "QrUnspentInit: tested value is zero");
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2580,11 +2439,15 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     let (_, _, _, ref mut sequence, _) = witness;
     *sequence = NfSeqPoly::new(epoch, &[other]);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrUnspentInit: sequence does not match the tested pair"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrUnspentInit: sequence does not match the tested pair"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A cube-root twin of the tested value shares its factor at the challenge the
@@ -2613,17 +2476,20 @@ fn qr_unspent_init_rejects_a_twin_value() {
     assert_ne!(twin, Fp::from(nf));
     assert_eq!(
         indexed_factor(epoch, twin, z),
-        indexed_factor(epoch, nf.into(), z),
-        "the twin passes an unpinned identity"
+        indexed_factor(epoch, nf.into(), z)
     );
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrUnspentInit: sequence does not match the tested pair"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrUnspentInit: sequence does not match the tested pair"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2637,11 +2503,15 @@ fn qr_unspent_init_rejects_foreign_contents() {
     let (.., ref mut contents) = witness;
     *contents = foreign;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrUnspentInit: contents do not match the bucket"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = fuse_unspent_init(rng, bucket.pcd, witness)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrUnspentInit: contents do not match the bucket"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// The step reads one bucket's depth, so a router splits only what is over
@@ -2659,7 +2529,7 @@ fn qr_unspent_init_accepts_ragged_depths() {
     let shallow_side = qr::classify(shallow_value, discriminant.at(0)).0;
     let deep_value = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
         .find(|&value| qr::classify(value, discriminant.at(0)).0 != shallow_side)
-        .expect("a value on the other side");
+        .unwrap();
 
     let root = build_qr_partition(
         rng,
@@ -2670,7 +2540,7 @@ fn qr_unspent_init_accepts_ragged_depths() {
         0,
     )
     .pop()
-    .expect("one root");
+    .unwrap();
     let (non_residue, residue) = split_qr_intake(rng, root);
     let (shallow, mut deep) = if shallow_side {
         (residue, non_residue)
@@ -2694,7 +2564,7 @@ fn qr_unspent_init_accepts_ragged_depths() {
         let nf = Nullifier::from(value);
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
         assert_eq!(
             *unspent.data(),
             (
@@ -2734,7 +2604,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
 
         let witness =
             witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).unwrap();
         assert_eq!(
             *unspent.data(),
             (
@@ -2763,7 +2633,7 @@ fn qr_intake_merge_rejects_different_discriminants() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &left_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, junction, _) = *left_summary.data();
     let (right_summary, ()) = PROOF_SYSTEM
         .seed(
@@ -2771,7 +2641,7 @@ fn qr_intake_merge_rejects_different_discriminants() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), junction, epoch, &right_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     let [left, right] = [left_summary, right_summary].map(|summary| {
         let discriminant = QrDiscriminant::random(rng);
@@ -2783,21 +2653,23 @@ fn qr_intake_merge_rejects_different_discriminants() {
                 summary,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSummaryIntake");
+            .unwrap();
         root
     });
     assert_ne!(left.data().3, right.data().3);
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrIntakeMerge, witness, left, right)
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrIntakeMerge: inputs derive from different discriminants"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeMerge: inputs derive from different discriminants"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -2815,7 +2687,7 @@ fn qr_intake_merge_rejects_different_epochs() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &left_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, junction, _) = *left_summary.data();
     let (right_summary, ()) = PROOF_SYSTEM
         .seed(
@@ -2823,7 +2695,7 @@ fn qr_intake_merge_rejects_different_epochs() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), junction, epoch.next().unwrap(), &right_members),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     let [left, right] = [left_summary, right_summary].map(|summary| {
         let (root, ()) = PROOF_SYSTEM
@@ -2834,21 +2706,23 @@ fn qr_intake_merge_rejects_different_epochs() {
                 summary,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSummaryIntake");
+            .unwrap();
         root
     });
     assert_ne!(left.data().0, right.data().0);
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrIntakeMerge, witness, left, right)
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrIntakeMerge: inputs cover different epochs"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) =
+        PROOF_SYSTEM.fuse(rng, qr::QrIntakeMerge, witness, left, right)
+    {
+        assert_eq!(
+            err.to_string(),
+            "QrIntakeMerge: inputs cover different epochs"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// Routing consecutive values: each lands in the bucket of its own profile,
@@ -2872,7 +2746,7 @@ fn qr_partition_routes_consecutive_values_by_profile() {
             qr::QrStampIntakeSeed,
             witness::qr_stamp_intake_seed(((), ()), anchor_prev, epoch, discriminant, &members),
         )
-        .expect("QrStampIntakeSeed");
+        .unwrap();
     let mut layer = vec![QrIntakeEntry {
         pcd,
         members: members.clone(),
@@ -2901,7 +2775,7 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     routed.sort_by_key(|member| Fp::from(*member).to_bytes());
     let mut expected = members;
     expected.sort_by_key(|member| Fp::from(*member).to_bytes());
-    assert_eq!(routed, expected, "every value reaches exactly one leaf");
+    assert_eq!(routed, expected);
 }
 
 /// A pool whose epochs before `epoch` are closed, with `epoch`'s entry block
@@ -2931,7 +2805,7 @@ fn unspent_lift_appends_one_epoch() {
         &[nf0],
         &bucket.members,
     );
-    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).expect("UnspentLift");
+    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();
 
     let fused = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch2));
     assert_eq!(*lifted.data(), *fused.data());
@@ -2961,7 +2835,7 @@ fn unspent_lift_carries_a_spendable() {
         &[user.nf_at(&note, epoch1)],
         &bucket.members,
     );
-    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).expect("UnspentLift");
+    let lifted = fuse_unspent_lift(rng, segment, &bucket, lift).unwrap();
 
     let carried = user.lift(rng, spendable, lifted, &note);
     assert_eq!(
@@ -3054,9 +2928,12 @@ fn unspent_lift_rejects_invalid_extensions() {
     ];
 
     for (label, lift_bucket, lift, expected) in cases {
-        let err = fuse_unspent_lift(rng, segment.clone(), lift_bucket, lift)
-            .err()
-            .unwrap();
-        assert_eq!(invalid_witness(err), expected, "{label}");
+        if let Err(ragu_core::Error::InvalidWitness(err)) =
+            fuse_unspent_lift(rng, segment.clone(), lift_bucket, lift)
+        {
+            assert_eq!(err.to_string(), expected, "{label}");
+        } else {
+            panic!("{label}");
+        }
     }
 }

@@ -32,9 +32,7 @@ fn the_profile_reaches_the_maximum_depth() {
 fn class_roots_square_to_the_shifted_value() {
     let discriminant = QrDiscriminant::from(Fp::from(11));
     for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-        for (depth, QrClassRoot(side, root)) in
-            (0..).zip(QrClassRoot::along(value, discriminant))
-        {
+        for (depth, QrClassRoot(side, root)) in (0..).zip(QrClassRoot::along(value, discriminant)) {
             let shifted = value + discriminant.at(depth);
             assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
         }

@@ -65,7 +65,7 @@ fn fee_less_output_bundle(
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (output_plan.note, rcv))
-        .expect("OutputBind");
+        .unwrap();
     let (cm, pad, _cv) = *bind_pcd.data();
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
@@ -75,7 +75,7 @@ fn fee_less_output_bundle(
             bind_pcd,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("OutputAction");
+        .unwrap();
     let stamp = ProofStamp {
         coverage: stamp_coverage(&Vec::from_iter([output_plan.descriptor()]), &[]),
         anchor,
@@ -88,10 +88,10 @@ fn fee_less_output_bundle(
     let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
     plan.sign(
         rng,
-        &mock_sighash(plan.commitment().expect("bundle commitment")),
+        &mock_sighash(plan.commitment().unwrap()),
         &wallet.sk.derive_auth_private(),
     )
-    .expect("sign the fee-less bundle")
+    .unwrap()
     .stamp(stamp)
 }
 
@@ -124,7 +124,7 @@ fn fee_fuse_binds_its_sets() {
 
     let action_digests: BTreeSet<ActionDigest> = left
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .collect();
     let stamp_header = (
         action_digests
@@ -136,18 +136,12 @@ fn fee_fuse_binds_its_sets() {
         anchor,
     );
     let stamp_pcd = || left.stamp.proof.clone().carry::<Actions>(stamp_header);
-    assert!(
-        PROOF_SYSTEM
-            .verify(&stamp_pcd(), &mut *rng)
-            .expect("proof system verification"),
-        "the OutputAction proof verifies as Actions"
-    );
+    assert!(PROOF_SYSTEM.verify(&stamp_pcd(), &mut *rng).unwrap());
     assert!(
         !left
             .stamp
             .verify_proof(rng, action_digests.iter().copied())
-            .expect("proof system verification"),
-        "an Actions proof does not verify as a Stamp"
+            .unwrap()
     );
     let fee_witness = |fee: u64| {
         witness::fee_fuse(
@@ -168,7 +162,7 @@ fn fee_fuse_binds_its_sets() {
             stamp_pcd(),
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("a FeeFuse stamp");
+        .unwrap();
     let (.., other_output_sets, other_fee_sets) = fee_witness(50);
 
     let mut left_actions = valid.clone();
@@ -209,16 +203,17 @@ fn fee_fuse_binds_its_sets() {
             "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
-        let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.fuse(
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
             rng,
             FeeFuse,
             corrupt,
             stamp_pcd(),
             Proof::bootstrap().carry::<()>(()),
-        ) else {
-            panic!("expected InvalidWitness: {expected}");
-        };
-        assert_eq!(inner.to_string(), expected);
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 
     for (action_commit, tachygram_commit, expected) in [
@@ -229,12 +224,7 @@ fn fee_fuse_binds_its_sets() {
             .proof()
             .clone()
             .carry::<Stamp>((action_commit, tachygram_commit, anchor));
-        assert_eq!(
-            PROOF_SYSTEM
-                .verify(&pcd, &mut *rng)
-                .expect("proof system verification"),
-            expected,
-        );
+        assert_eq!(PROOF_SYSTEM.verify(&pcd, &mut *rng).unwrap(), expected,);
     }
 }
 
@@ -257,7 +247,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let zero = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let action_digests: BTreeSet<ActionDigest> = zero
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .collect();
     let stamp_header = (
         action_digests
@@ -276,40 +266,37 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         &zero.stamp.tachygrams,
     );
     excess_witness.1 = zat(301);
-    let excess = PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeFuse,
-            excess_witness,
-            zero.stamp
-                .proof
-                .as_ref()
-                .clone()
-                .carry::<Actions>(stamp_header),
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .expect("a fee above the maximum must not apply");
-    let ragu_core::Error::InvalidWitness(inner) = excess else {
-        panic!("expected InvalidWitness, got {excess:?}");
-    };
-    assert_eq!(inner.to_string(), "FeeFuse: change is out of range");
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        FeeFuse,
+        excess_witness,
+        zero.stamp
+            .proof
+            .as_ref()
+            .clone()
+            .carry::<Actions>(stamp_header),
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(err.to_string(), "FeeFuse: change is out of range");
+    } else {
+        panic!();
+    }
 
     let mut auth_digests = BTreeSet::new();
     for fee in [0u64, 120, 300] {
-        let bundle = prove(rng, fee).expect("prove with the fee");
+        let bundle = prove(rng, fee).unwrap();
 
         assert_eq!(u64::from(bundle.stamp.fee), fee);
         assert_eq!(bundle.commitment(), signed.commitment(), "fee {fee}");
         assert_eq!(bundle.binding_sig, signed.binding_sig, "fee {fee}");
         assert_eq!(bundle.stamp.tachygrams.len(), 2 * 2 + 1, "fee {fee}");
 
-        verify_alone(rng, &bundle, &sighash).expect("a fee-bearing bundle verifies");
+        verify_alone(rng, &bundle, &sighash).unwrap();
         auth_digests.insert(bundle.auth_digest());
     }
-    assert_eq!(auth_digests.len(), 3, "each fee has its own auth_digest");
+    assert_eq!(auth_digests.len(), 3);
 
-    let once = prove(rng, 120).expect("first fee application");
+    let once = prove(rng, 120).unwrap();
     let digests: BTreeSet<_> = once
         .descriptors()
         .map(|desc| desc.digest().unwrap())
@@ -334,7 +321,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             once.stamp.proof.clone().carry::<Actions>(header),
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("mock ragu permits a substituted child header");
+        .unwrap();
     let mut twice_stamp = once.stamp.clone();
     twice_stamp.proof = Box::new(twice_pcd.proof().clone());
     twice_stamp.tachygram_set = twice_pcd.data().1;
@@ -347,30 +334,23 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         ..once
     };
 
-    let mismatch =
-        verify_alone(rng, &twice, &sighash).expect_err("a second fee descriptor must be rejected");
+    let mismatch = verify_alone(rng, &twice, &sighash).unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
         panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
     };
 
     twice.stamp.coverage = coverage_of(&[twice.as_dyn()]);
-    let arity =
-        verify_alone(rng, &twice, &sighash).expect_err("a second fee change note must be rejected");
+    let arity = verify_alone(rng, &twice, &sighash).unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
         panic!("expected Tachygrams(WrongArity), got {arity:?}");
     };
 
     let published_digests: Vec<ActionDigest> = twice
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain([twice.fee_descriptor().digest().expect("fee digest")])
+        .map(|desc| desc.digest().unwrap())
+        .chain([twice.fee_descriptor().digest().unwrap()])
         .collect();
-    assert!(
-        !twice
-            .verify_proof(rng, &published_digests)
-            .expect("proof system verification"),
-        "the proof covers two fee descriptors against one published"
-    );
+    assert!(!twice.verify_proof(rng, &published_digests).unwrap());
 }
 
 /// A fee descriptor shared by two covered bundles is rejected, even forged.
@@ -386,7 +366,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         bundle_plan
             .stamp_plan(anchor, zat(120))
             .prove(rng, &wallet.pak, spend_pcds)
-            .expect("prove with the fee"),
+            .unwrap(),
     );
     let fee_bearing = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(500)]);
     let (aggregate_stamp, aggregate_desc, aggregate_fees) = merge_side(&aggregate, &[]);
@@ -396,7 +376,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             (aggregate_desc, aggregate_fees),
             merge_side(&fee_bearing, &[]),
         )
-        .expect("merge the aggregate");
+        .unwrap();
 
     let unapplied = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let unapplied_pcd = forge_overlapping_merge(
@@ -430,7 +410,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
         let err = aggregate
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
-            .expect_err("a shared fee descriptor must be rejected");
+            .unwrap_err();
         let VerificationError::Coverage(VerifyCoverageError::DuplicateFees) = err else {
             panic!("expected Coverage(DuplicateFees), got {err:?}");
         };
@@ -440,7 +420,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
         let forged = aggregate
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
-            .expect_err("a coverage forged over both bodies must be rejected");
+            .unwrap_err();
         let VerificationError::Coverage(VerifyCoverageError::DuplicateFees) = forged else {
             panic!("expected Coverage(DuplicateFees), got {forged:?}");
         };
@@ -459,15 +439,13 @@ fn verify_rejects_a_stamp_without_its_fee() {
     let mut fee_less = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let sighash = mock_sighash(fee_less.commitment());
 
-    let mismatch =
-        verify_alone(rng, &fee_less, &sighash).expect_err("a stamp without its fee must fail");
+    let mismatch = verify_alone(rng, &fee_less, &sighash).unwrap_err();
     let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
         panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
     };
 
     fee_less.stamp.coverage = coverage_of(&[fee_less.as_dyn()]);
-    let arity = verify_alone(rng, &fee_less, &sighash)
-        .expect_err("a stamp without a fee change note must fail");
+    let arity = verify_alone(rng, &fee_less, &sighash).unwrap_err();
     let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
         panic!("expected Tachygrams(WrongArity), got {arity:?}");
     };
@@ -484,8 +462,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let disproved = verify_alone(rng, &fee_less, &sighash)
-        .expect_err("a proof without the fee must not verify");
+    let disproved = verify_alone(rng, &fee_less, &sighash).unwrap_err();
     let VerificationError::Disproved = disproved else {
         panic!("expected Disproved, got {disproved:?}");
     };
@@ -511,13 +488,13 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         adjunct_plan
             .stamp_plan(anchor, zat(40))
             .prove(rng, &wallet.pak, vec![])
-            .expect("prove the adjunct with its fee"),
+            .unwrap(),
     );
 
     let aggregate_stamp = bundle_plan
         .stamp_plan(anchor, zat(120))
         .prove(rng, &wallet.pak, spend_pcds)
-        .expect("prove the aggregate with its fee");
+        .unwrap();
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
@@ -530,10 +507,10 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             (aggregate_descriptors, aggregate_fee_descriptors),
             merge_side(&adjunct, &[]),
         )
-        .expect("merge the aggregate's stamp with the adjunct's");
+        .unwrap();
     let aggregate = signed.stamp(merged_stamp);
 
-    assert_eq!(aggregate.stamp.fee, zat(120), "the receiver keeps its fee");
+    assert_eq!(aggregate.stamp.fee, zat(120));
     assert!(
         adjunct
             .stamp
@@ -546,10 +523,10 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     );
     let final_id = mock_wtxid(&aggregate);
     let stripped = adjunct.strip(final_id);
-    assert_eq!(stripped.stamp.fee, zat(40), "the adjunct keeps its fee");
+    assert_eq!(stripped.stamp.fee, zat(40));
     aggregate
         .verify(rng, &sighash, &final_id.into(), &[&stripped])
-        .expect("the aggregate verifies against the stripped adjunct");
+        .unwrap();
 }
 
 #[test]
@@ -574,7 +551,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         let stamp = plan
             .stamp_plan(anchor, zat(40))
             .prove(rng, &wallet.pak, pcds)
-            .expect("prove with the fee");
+            .unwrap();
         signed.stamp(stamp)
     });
     let sighash = mock_sighash(left.commitment());
@@ -583,7 +560,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         let (stamp, desc, fees) = merge_side(bundle, &[]);
         bundle.stamp = stamp
             .merge(rng, (desc, fees), merge_side(auto, &[]))
-            .expect("aggregate");
+            .unwrap();
     }
     let (left_stamp, left_desc, left_fees) = merge_side(&left, &[left_auto.as_dyn()]);
     left.stamp = left_stamp
@@ -592,7 +569,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             (left_desc, left_fees),
             merge_side(&right, &[right_auto.as_dyn()]),
         )
-        .expect("merge two aggregates");
+        .unwrap();
 
     pool.mine_bundles(&[&build_autonome(rng, &wallet, 400, 300)]);
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
@@ -602,7 +579,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             &[left_auto.as_dyn(), right.as_dyn(), right_auto.as_dyn()],
             vec![span],
         )
-        .expect("lift the merged aggregate");
+        .unwrap();
 
     let id = mock_wtxid(&lifted);
     lifted
@@ -616,7 +593,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
                 &right_auto.strip(id),
             ],
         )
-        .expect("the final aggregate verifies against every covered bundle");
+        .unwrap();
 }
 
 /// A zero-action bundle's `FeeSeed` stamp verifies and survives a round-trip.
@@ -630,12 +607,12 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     assert_eq!(bundle.actions.len(), 0);
     assert_eq!(bundle.stamp.tachygrams.len(), 1);
     assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
-    verify_alone(rng, &bundle, &sighash).expect("zero-action bundle verifies");
+    verify_alone(rng, &bundle, &sighash).unwrap();
     let mut bytes = Vec::new();
-    bundle.write(&mut bytes).expect("write");
-    let decoded = Bundle::<ProofStamp>::read(&*bytes).expect("read");
+    bundle.write(&mut bytes).unwrap();
+    let decoded = Bundle::<ProofStamp>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    verify_alone(rng, &decoded, &sighash).expect("decoded seed verifies");
+    verify_alone(rng, &decoded, &sighash).unwrap();
 }
 
 /// An innocent's seed stamp absorbs an adjunct, then strips under a parent.
@@ -653,7 +630,7 @@ fn innocent_seed_merges_and_strips() {
             (innocent_desc, innocent_fees),
             merge_side(&adjunct, &[]),
         )
-        .expect("merge seed and adjunct");
+        .unwrap();
     let id = mock_wtxid(&innocent);
     innocent
         .verify(
@@ -662,7 +639,7 @@ fn innocent_seed_merges_and_strips() {
             &id.into(),
             &[&adjunct.clone().strip(id)],
         )
-        .expect("innocent verifies");
+        .unwrap();
 
     let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
     let (parent_stamp, parent_desc, parent_fees) = merge_side(&parent, &[]);
@@ -672,7 +649,7 @@ fn innocent_seed_merges_and_strips() {
             (parent_desc, parent_fees),
             merge_side(&innocent, &[adjunct.as_dyn()]),
         )
-        .expect("merge innocent into parent");
+        .unwrap();
     let parent_id = mock_wtxid(&parent);
     let stripped_innocent = innocent.strip(parent_id);
     assert_eq!(stripped_innocent.actions.len(), 0);
@@ -683,7 +660,7 @@ fn innocent_seed_merges_and_strips() {
             &parent_id.into(),
             &[&adjunct.strip(parent_id), &stripped_innocent],
         )
-        .expect("parent verifies with the stripped innocent");
+        .unwrap();
 }
 
 /// `FeeSeed` rejects a nonzero max fee.
@@ -697,11 +674,11 @@ fn fee_seed_rejects_a_nonzero_max_fee() {
 
     let mut max_fee = valid;
     max_fee.0.value = zat(1);
-    let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.seed(rng, FeeSeed, max_fee)
-    else {
-        panic!("expected InvalidWitness");
-    };
-    assert_eq!(inner.to_string(), "FeeSeed: maximum fee must be zero");
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(rng, FeeSeed, max_fee) {
+        assert_eq!(err.to_string(), "FeeSeed: maximum fee must be zero");
+    } else {
+        panic!();
+    }
 }
 
 /// `FeeSeed` binds each singleton set to the fee digest or the fee change
@@ -730,16 +707,15 @@ fn fee_seed_binds_its_singletons_and_header() {
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         ),
     ] {
-        let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.seed(rng, FeeSeed, corrupt)
-        else {
-            panic!("expected InvalidWitness: {expected}");
-        };
-        assert_eq!(inner.to_string(), expected);
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(rng, FeeSeed, corrupt)
+        {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 
-    let (seed_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, FeeSeed, valid.clone())
-        .expect("a FeeSeed stamp");
+    let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),
         ((other.2.commit(), valid.3.commit(), anchor), false),
@@ -747,11 +723,6 @@ fn fee_seed_binds_its_singletons_and_header() {
         ((valid.2.commit(), valid.3.commit(), other_anchor), false),
     ] {
         let pcd = seed_pcd.proof().clone().carry::<Stamp>(header);
-        assert_eq!(
-            PROOF_SYSTEM
-                .verify(&pcd, &mut *rng)
-                .expect("proof system verification"),
-            expected,
-        );
+        assert_eq!(PROOF_SYSTEM.verify(&pcd, &mut *rng).unwrap(), expected,);
     }
 }

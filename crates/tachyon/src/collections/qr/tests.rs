@@ -134,8 +134,7 @@ fn the_decomposition_holds_on_both_sides() {
             .collect();
         let (residue, non_residue) = split(values, discriminant);
         let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-        let (u2, h2) =
-            decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
+        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
         verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
         verify_side(
             &non_residue,

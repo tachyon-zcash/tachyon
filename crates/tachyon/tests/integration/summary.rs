@@ -31,7 +31,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &stamp_a),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let commit_a = stamp_a
         .iter()
         .copied()
@@ -44,8 +44,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             start,
             start.next_stamp(epoch, &commit_a).unwrap(),
             commit_a
-        ),
-        "the seed's accumulator is the stamp's own commitment"
+        )
     );
 
     let (advanced, ()) = PROOF_SYSTEM
@@ -56,7 +55,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             seeded,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("SummaryAdvance");
+        .unwrap();
 
     let commit_b = stamp_b
         .iter()
@@ -74,11 +73,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap()
         .next_stamp(epoch, &commit_b)
         .unwrap();
-    assert_eq!(
-        *advanced.data(),
-        (epoch, start, expected_end, union),
-        "the product accumulator is the union's root polynomial"
-    );
+    assert_eq!(*advanced.data(), (epoch, start, expected_end, union));
 }
 
 #[test]
@@ -92,26 +87,14 @@ fn summary_over_an_anchor_span_matches_the_pool() {
     let (epoch, anchor_prev, anchor_end, acc_commit) = *pcd.data();
 
     assert_eq!(epoch, EpochIndex::new(0));
-    assert_eq!(
-        anchor_prev,
-        Anchor::default(),
-        "the summary opens at the span's start anchor"
-    );
-    assert_eq!(
-        anchor_end,
-        pool.anchor(),
-        "the summary closes at the span's end anchor"
-    );
+    assert_eq!(anchor_prev, Anchor::default());
+    assert_eq!(anchor_end, pool.anchor());
 
     let acc = members.iter().copied().collect::<TachygramSetPoly>();
-    assert_eq!(members.len(), 12, "every published tachygram accumulates");
+    assert_eq!(members.len(), 12);
     assert_eq!(acc_commit, acc.commit());
     for &tg in &members {
-        assert_eq!(
-            acc.eval(Fp::from(tg)),
-            Fp::ZERO,
-            "each member is a root of the accumulator"
-        );
+        assert_eq!(acc.eval(Fp::from(tg)), Fp::ZERO);
     }
 }
 
@@ -120,18 +103,15 @@ fn summary_seed_rejects_empty_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
 
-    let err = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "invalid anchor step");
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
+        rng,
+        summary::SummarySeed,
+        witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
+    ) {
+        assert_eq!(err.to_string(), "invalid anchor step");
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -149,25 +129,22 @@ fn summary_advance_rejects_wrong_accumulator() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &stamp_a),
         )
-        .expect("SummarySeed");
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            summary::SummaryAdvance,
-            witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            seeded,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
         .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SummaryAdvance: accumulator does not match header"
-    );
+
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        summary::SummaryAdvance,
+        witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
+        seeded,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "SummaryAdvance: accumulator does not match header"
+        );
+    } else {
+        panic!();
+    }
 }
 
 #[test]
@@ -184,30 +161,27 @@ fn summary_advance_rejects_forged_extension() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &stamp_a),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     // The stamp is folded into the anchor but dropped from the accumulator.
     let (acc, _extended, stamp) =
         witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
     let forged = stamp_a.iter().copied().collect::<TachygramSetPoly>();
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            summary::SummaryAdvance,
-            (acc, forged, stamp),
-            seeded,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SummaryAdvance: extended accumulator must fold the stamp"
-    );
+    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+        rng,
+        summary::SummaryAdvance,
+        (acc, forged, stamp),
+        seeded,
+        Proof::bootstrap().carry::<()>(()),
+    ) {
+        assert_eq!(
+            err.to_string(),
+            "SummaryAdvance: extended accumulator must fold the stamp"
+        );
+    } else {
+        panic!();
+    }
 }
 
 /// A wrong seed epoch is not detected in-step; it lands off the published
@@ -226,14 +200,14 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
             summary::SummarySeed,
             witness::summary_seed(((), ()), first.prev, EpochIndex::new(1), &first.stamps[0].1),
         )
-        .expect("SummarySeed");
+        .unwrap();
     let (_, _, anchor_end, _) = *seeded.data();
 
     for height in 0..=pool.height().0 {
         let block = pool.block(BlockHeight(height));
         assert_ne!(anchor_end, block.prev);
         for &(_, _, _, anchor) in &block.stamps {
-            assert_ne!(anchor_end, anchor, "the fold left the published chain");
+            assert_ne!(anchor_end, anchor);
         }
     }
 }

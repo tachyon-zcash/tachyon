@@ -23,7 +23,10 @@ fn distinct_actions_distinct_digests() {
         };
         let cv = value::Trapdoor::random(rng).commit(note.value);
         let alpha = ActionEntropy::random(rng).randomizer::<effect::Output>(note.commitment());
-        (cv, private::ActionSigningKey::new(&alpha).derive_action_public())
+        (
+            cv,
+            private::ActionSigningKey::new(&alpha).derive_action_public(),
+        )
     });
 
     assert_ne!(
@@ -53,8 +56,7 @@ fn digest_rejects_identity_cv() {
 fn digest_rejects_identity_rk() {
     let rng = &mut StdRng::seed_from_u64(0);
     let cv = value::Trapdoor::random(rng).commit(value::Positive::try_from(500u64).unwrap());
-    let rk =
-        public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
+    let rk = public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
     let Err(ActionDigestError::IdentityRk) = ActionDigest::new(cv, rk) else {
         panic!();
     };

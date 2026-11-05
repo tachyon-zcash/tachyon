@@ -61,8 +61,7 @@ pub fn build_bundle_plan(
 pub fn fee_digests(
     fees: impl IntoIterator<Item = fee::Descriptor>,
 ) -> impl Iterator<Item = ActionDigest> {
-    fees.into_iter()
-        .map(|fee| fee.digest().expect("fee digest"))
+    fees.into_iter().map(|fee| fee.digest().unwrap())
 }
 
 pub fn stamp_coverage(descriptors: &[[u8; 64]], fees: &[fee::Descriptor]) -> [u8; 32] {
@@ -111,7 +110,7 @@ pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     wtxid[..32].copy_from_slice(&mock_txid(bundle.commitment()));
     wtxid[32..].copy_from_slice(&mock_auth_digest(bundle.auth_digest()));
 
-    AggregateId::try_from(wtxid).expect("nonzero wtxid")
+    AggregateId::try_from(wtxid).unwrap()
 }
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
@@ -120,10 +119,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = build_bundle_plan(alloc::vec![], alloc::vec![plan]);
-    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-    let unproven = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign foreign output");
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
     unproven.actions[0]
 }
 
@@ -176,7 +173,7 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
         value::Positive::ZERO,
     )
     .prove(rng, &pak, vec![])
-    .expect("prove an output stamp");
+    .unwrap();
     (stamp, plan, max_fee_note)
 }
 
@@ -225,12 +222,12 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
 ) -> Pcd<Stamp> {
     let left_acts = descriptors_a
         .iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(fee_descriptors_a.iter().copied()))
         .collect::<ActionSetPoly>();
     let right_acts = descriptors_b
         .iter()
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(fee_descriptors_b.iter().copied()))
         .collect::<ActionSetPoly>();
     let left_tg = stamp_a
@@ -258,7 +255,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let merged_acts = descriptors_a
         .iter()
         .chain(descriptors_b.iter())
-        .map(|desc| desc.digest().expect("action digest"))
+        .map(|desc| desc.digest().unwrap())
         .chain(fee_digests(
             fee_descriptors_a.iter().chain(fee_descriptors_b).copied(),
         ))
@@ -282,7 +279,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
             left_pcd,
             right_pcd,
         )
-        .expect("multiset merge must prove");
+        .unwrap();
 
     pcd
 }
@@ -306,10 +303,7 @@ pub fn random_block_with<RNG: CryptoRng>(
     stamps_cms: &[Vec<note::Commitment>],
     n_stamps: usize,
 ) -> Vec<Vec<Tachygram>> {
-    assert!(
-        n_stamps >= stamps_cms.len(),
-        "n_stamps must accommodate every stamp in stamps_cms"
-    );
+    assert!(n_stamps >= stamps_cms.len());
     let mut stamps: Vec<Vec<Tachygram>> = stamps_cms
         .iter()
         .map(|cms| cms.iter().map(|&cm| Tachygram::from(cm)).collect())
@@ -392,9 +386,7 @@ impl PoolSim {
     }
 
     pub fn block(&self, height: BlockHeight) -> &PoolSimBlock {
-        self.history
-            .get(usize::try_from(height).expect("fits usize"))
-            .expect("query height should exist")
+        self.history.get(usize::try_from(height).unwrap()).unwrap()
     }
 
     /// Append a block entered at `prev`, indexing the cursor each of its
@@ -450,16 +442,14 @@ impl PoolSim {
             .map(|(_, entry)| entry)
             .collect();
 
-        let (first, rest) = entries
-            .split_first()
-            .expect("anchor span must cover at least one stamp");
-        assert_eq!(first.0, start, "the span opens at its start anchor");
+        let (first, rest) = entries.split_first().unwrap();
+        assert_eq!(first.0, start);
         let mut cursor = first.3;
         for entry in rest {
-            assert_eq!(entry.0, cursor, "the span's stamps chain without a gap");
+            assert_eq!(entry.0, cursor);
             cursor = entry.3;
         }
-        assert_eq!(cursor, end, "the span closes at its end anchor");
+        assert_eq!(cursor, end);
 
         entries
     }
@@ -475,7 +465,7 @@ impl PoolSim {
                     .iter()
                     .any(|stamp| stamp.1.contains(&tachygram))
             })
-            .expect("the tachygram was published");
+            .unwrap();
         BlockHeight::from(height).epoch()
     }
 
@@ -532,7 +522,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
 ) -> (Pcd<pool::AnchorSpan>, Vec<Anchor>) {
     let start = *range.start();
     let end = *range.end();
-    assert_eq!(start.epoch(), end.epoch(), "AnchorSpan single-epoch range");
+    assert_eq!(start.epoch(), end.epoch());
     assert!(start <= end);
 
     let mut state = pool.block(start).prev;
@@ -545,7 +535,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
             let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
-                .expect("AnchorSpanSeed");
+                .unwrap();
             span = Some(match span.take() {
                 None => seed,
                 Some(left) => {
@@ -556,7 +546,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
                     );
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, seed)
-                        .expect("AnchorSpanFuse");
+                        .unwrap();
                     fused
                 },
             });
@@ -569,10 +559,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
         height = height.next().unwrap();
     }
 
-    (
-        span.expect("AnchorSpan range must cover at least one stamp"),
-        members,
-    )
+    (span.unwrap(), members)
 }
 
 /// [`build_anchor_span_pcd`] in the form a lift takes: the span with its
@@ -601,22 +588,17 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
 ) -> (Pcd<summary::Summary>, Vec<Tachygram>) {
     let entries = pool.stamps_between(start, end);
     let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
-    assert!(
-        members < (1 << ProductionRank::RANK),
-        "span exceeds one summary"
-    );
+    assert!(members < (1 << ProductionRank::RANK));
     let epoch = pool.anchor_index[&start].0.epoch();
 
-    let (first, rest) = entries
-        .split_first()
-        .expect("anchor span must cover at least one stamp");
+    let (first, rest) = entries.split_first().unwrap();
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
             rng,
             summary::SummarySeed,
             witness::summary_seed(((), ()), start, epoch, &first.1),
         )
-        .expect("SummarySeed");
+        .unwrap();
 
     let mut acc = first.1.clone();
     let mut pcd = seeded;
@@ -629,11 +611,11 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
                 pcd,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("SummaryAdvance");
+            .unwrap();
         acc.extend(entry.1.iter().copied());
         pcd = advanced;
     }
-    assert_eq!(pcd.data().2, end, "the summary closes at the span's end");
+    assert_eq!(pcd.data().2, end);
 
     (pcd, acc)
 }
@@ -666,7 +648,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
             intake.pcd,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrBucketSeal");
+        .unwrap();
     QrBucketEntry {
         pcd,
         members: intake.members,
@@ -686,7 +668,7 @@ pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
     let witness = witness::qr_stamp_intake_seed(((), ()), entry, epoch, discriminant, &members);
     let (pcd, ()) = PROOF_SYSTEM
         .seed(rng, qr::QrStampIntakeSeed, witness)
-        .expect("QrStampIntakeSeed");
+        .unwrap();
     QrIntakeEntry { pcd, members }
 }
 
@@ -727,10 +709,7 @@ fn build_qr_roots<RNG: CryptoRng>(
 
     let mut roots = Vec::with_capacity(runs.len());
     for run in runs {
-        let (first, last) = (
-            run.first().expect("nonempty run"),
-            run.last().expect("nonempty run"),
-        );
+        let (first, last) = (run.first().unwrap(), run.last().unwrap());
         if run.len() == 1 && first.1.len() > capacity {
             roots.push(seed_qr_stamp_intake(rng, pool, first, discriminant));
             continue;
@@ -745,7 +724,7 @@ fn build_qr_roots<RNG: CryptoRng>(
                 summary,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSummaryIntake");
+            .unwrap();
         roots.push(QrIntakeEntry { pcd, members });
     }
     roots
@@ -791,7 +770,7 @@ fn merge_qr_run<RNG: CryptoRng>(
                     .collect::<Vec<_>>();
                 let (pcd, ()) = PROOF_SYSTEM
                     .fuse(rng, qr::QrIntakeMerge, witness, left.pcd, right.pcd)
-                    .expect("QrIntakeMerge");
+                    .unwrap();
                 Some(QrIntakeEntry { pcd, members })
             },
         };
@@ -815,7 +794,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             intake.pcd,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrIntakeSplit");
+        .unwrap();
 
     let mut descend = |side: bool| {
         let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, side);
@@ -835,7 +814,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 sides.clone(),
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("QrSideDescend");
+            .unwrap();
         QrIntakeEntry { pcd, members }
     };
     let non_residue = descend(false);
@@ -931,7 +910,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     mut buckets: Vec<QrBucketEntry>,
 ) -> EvidenceTreeEntry {
-    assert!(!buckets.is_empty(), "a tree holds at least one bucket");
+    assert!(!buckets.is_empty());
 
     let mut width = EVIDENCE_TREE_ARITY;
     let mut depth = 1;
@@ -940,7 +919,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
         depth += 1;
     }
     while buckets.len() < width {
-        let last = buckets.last().expect("nonempty tree");
+        let last = buckets.last().unwrap();
         buckets.push(QrBucketEntry {
             pcd: last.pcd.clone(),
             members: last.members.clone(),
@@ -961,7 +940,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     while let (Some(first), Some(second)) = (admitted.next(), admitted.next()) {
         let (pair, ()) = PROOF_SYSTEM
             .fuse(rng, evidence::EvidenceTreeLeafPair, (), first, second)
-            .expect("EvidenceTreeLeafPair");
+            .unwrap();
         pairs.push(pair);
     }
 
@@ -976,7 +955,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     while let (Some(left), Some(right)) = (halves.next(), halves.next()) {
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-            .expect("EvidenceTreeFuse");
+            .unwrap();
         layer.push(pcd);
     }
     levels.push(layer.iter().map(|pcd| pcd.data().4).collect());
@@ -992,20 +971,20 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
         ) {
             let (left, ()) = PROOF_SYSTEM
                 .fuse(rng, evidence::EvidenceTreePairFuse, (), first, second)
-                .expect("EvidenceTreePairFuse");
+                .unwrap();
             let (right, ()) = PROOF_SYSTEM
                 .fuse(rng, evidence::EvidenceTreePairFuse, (), third, fourth)
-                .expect("EvidenceTreePairFuse");
+                .unwrap();
             let (pcd, ()) = PROOF_SYSTEM
                 .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-                .expect("EvidenceTreeFuse");
+                .unwrap();
             parents.push(pcd);
         }
         levels.push(parents.iter().map(|pcd| pcd.data().4).collect());
         layer = parents;
     }
 
-    let mut root = layer.pop().expect("one root");
+    let mut root = layer.pop().unwrap();
     let mut caps = Vec::new();
     while (depth + caps.len()) % evidence::EvidenceTreeDescend::LEVELS != 0 {
         caps.push(root.data().4);
@@ -1017,7 +996,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
                 root,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("EvidenceTreeCap");
+            .unwrap();
         root = pcd;
     }
 
@@ -1063,8 +1042,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
 ) -> QrBucketEntry {
     let mut node = tree;
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-        let path =
-            <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).expect("a full descent");
+        let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
         let witness = witness::evidence_tree_descend((*node.data(), ()), path);
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -1074,7 +1052,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
                 node,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("EvidenceTreeDescend");
+            .unwrap();
         node = pcd;
     }
 
@@ -1087,7 +1065,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
             node,
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("EvidenceTreeOpen");
+        .unwrap();
     QrBucketEntry {
         pcd,
         members: leaf.members.clone(),
@@ -1117,7 +1095,7 @@ pub(crate) fn seed_qr_empty_intake<RNG: CryptoRng>(
             qr::QrEmptyIntakeSeed,
             witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
         )
-        .expect("QrEmptyIntakeSeed");
+        .unwrap();
     QrIntakeEntry {
         pcd,
         members: Vec::new(),
@@ -1150,8 +1128,8 @@ pub(crate) fn epoch_bucket<RNG: CryptoRng>(
             (1 << ProductionRank::RANK) - 1,
             0,
         );
-        assert_eq!(roots.len(), 1, "the epoch fits one polynomial");
-        roots.pop().expect("one root")
+        assert_eq!(roots.len(), 1);
+        roots.pop().unwrap()
     };
     seal_qr_intake(rng, intake, anchor_final_prev)
 }
@@ -1174,7 +1152,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
             bucket.pcd.clone(),
             Proof::bootstrap().carry::<()>(()),
         )
-        .expect("QrUnspentInit");
+        .unwrap();
     segment
 }
 
@@ -1188,10 +1166,7 @@ pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     nf: impl Fn(EpochIndex) -> Nullifier,
     (epoch_start, epoch_next): (EpochIndex, EpochIndex),
 ) -> Pcd<pool::ArbitraryUnspent> {
-    assert!(
-        u32::from(epoch_start) < u32::from(epoch_next),
-        "a segment covers at least one epoch"
-    );
+    assert!(u32::from(epoch_start) < u32::from(epoch_next));
     let mut segments = Vec::new();
     for epoch in (u32::from(epoch_start)..u32::from(epoch_next)).map(EpochIndex::new) {
         let bucket = epoch_bucket(rng, pool, epoch);
@@ -1215,32 +1190,28 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
     base: EpochIndex,
     mut chains: Vec<Pcd<pool::ArbitraryUnspent>>,
 ) -> Pcd<pool::ArbitraryUnspent> {
-    assert!(!chains.is_empty(), "tree fuses at least one chain");
+    assert!(!chains.is_empty());
     if chains.len() == 1 {
-        return chains.pop().expect("single chain");
+        return chains.pop().unwrap();
     }
     let right_chains = chains.split_off(chains.len() / 2);
     let left = fuse_unspent_tree(rng, nf, base, chains);
     let right = fuse_unspent_tree(rng, nf, base, right_chains);
 
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
-        let from = usize::try_from(u64::from(lo - base)).expect("epoch within span");
-        let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
+        let from = usize::try_from(u64::from(lo - base)).unwrap();
+        let to = usize::try_from(u64::from(hi - base)).unwrap();
         &nf[from..to]
     };
     let (_, left_epoch_start, _, left_epoch_next, _) = *left.data();
     let (_, right_epoch_start, _, right_epoch_next, _) = *right.data();
     let left_el = elapsed_slice(left_epoch_start, left_epoch_next);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
-    assert_eq!(
-        u32::from(right_epoch_start),
-        u32::from(left_epoch_next),
-        "fused chains must meet at one epoch"
-    );
+    assert_eq!(u32::from(right_epoch_start), u32::from(left_epoch_next));
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(rng, pool::UnspentFuse, witness, left, right)
-        .expect("UnspentFuse");
+        .unwrap();
     fused
 }
 
@@ -1314,7 +1285,7 @@ impl WalletSim {
             .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
             pk,
-            value: value::Positive::try_from(value_amount).expect("fixture value in range"),
+            value: value::Positive::try_from(value_amount).unwrap(),
             psi: nullifier::Trapdoor::random(notes),
             rcm: note::CommitmentTrapdoor::random(notes),
         }
@@ -1360,7 +1331,7 @@ impl WalletSim {
                 delegation::NoteSeed,
                 witness::note_seed(((), ()), note, self.pak),
             )
-            .expect("NoteSeed");
+            .unwrap();
 
         self.secrets.borrow_mut().insert(cm, pcd.clone());
         pcd
@@ -1402,7 +1373,7 @@ impl WalletSim {
                     secret.clone(),
                     Proof::bootstrap().carry::<()>(()),
                 )
-                .expect("NullifierDerive");
+                .unwrap();
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {
@@ -1424,12 +1395,12 @@ impl WalletSim {
                             left,
                             leaf,
                         )
-                        .expect("NullifierFuse");
+                        .unwrap();
                     fused
                 },
             });
         }
-        let pcd = merged.expect("nonempty range");
+        let pcd = merged.unwrap();
 
         self.derivations.borrow_mut().insert(key, pcd.clone());
         pcd
@@ -1450,7 +1421,7 @@ impl WalletSim {
             let cm_idx = stamps
                 .iter()
                 .position(|tgs| tgs.contains(&cm.into()))
-                .expect("cm not found in any stamp at the cm-block");
+                .unwrap();
 
             // Anchor immediately before the cm-stamp (the cm-block prefix fold).
             let anchor_prev = stamp_commits[..cm_idx]
@@ -1471,7 +1442,7 @@ impl WalletSim {
                 deriv,
                 Proof::bootstrap().carry::<()>(()),
             )
-            .expect("SpendableInit");
+            .unwrap();
         spendable
     }
 
@@ -1510,7 +1481,7 @@ impl WalletSim {
                 arbitrary,
                 range,
             )
-            .expect("UnspentBind");
+            .unwrap();
         unspent
     }
 
@@ -1524,7 +1495,7 @@ impl WalletSim {
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
-            .expect("SpendableLift");
+            .unwrap();
         lifted
     }
 
@@ -1575,7 +1546,7 @@ impl WalletSim {
                 unspent,
                 bucket.pcd,
             )
-            .expect("QrSpendableInit");
+            .unwrap();
         self.lift_to_epoch(rng, pool, note, spendable, target)
     }
 
@@ -1589,9 +1560,7 @@ impl WalletSim {
         let (bundle_plan, unproven, spend_pcds) =
             self.signed(rng, spends, output_notes, self.random_note(0));
         let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);
-        let stamp = stamp_plan
-            .prove(rng, &self.pak, spend_pcds)
-            .expect("prove autonome stamp");
+        let stamp = stamp_plan.prove(rng, &self.pak, spend_pcds).unwrap();
 
         unproven.stamp(stamp)
     }
@@ -1637,10 +1606,8 @@ impl WalletSim {
             .collect();
 
         let bundle_plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
-        let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-        let unproven = bundle_plan
-            .sign(rng, &sighash, &ask)
-            .expect("sign autonome");
+        let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+        let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
 
         (bundle_plan, unproven, spend_pcds)
     }
@@ -1750,11 +1717,10 @@ impl SyncSim {
             .entries
             .iter()
             .position(|entry| entry.handle == handle)
-            .expect("no delegation for handle");
+            .unwrap();
         let entry = &self.entries[idx];
         let nf = |epoch: EpochIndex| {
-            entry.nfs[usize::try_from(u32::from(epoch) - u32::from(entry.epoch_start))
-                .expect("fits usize")]
+            entry.nfs[usize::try_from(u32::from(epoch) - u32::from(entry.epoch_start)).unwrap()]
         };
         let unspent =
             build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_next));
@@ -1766,7 +1732,7 @@ impl SyncSim {
         self.entries
             .iter()
             .find(|entry| entry.handle == handle)
-            .expect("no delegation for handle")
+            .unwrap()
     }
 }
 
