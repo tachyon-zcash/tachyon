@@ -15,24 +15,178 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::GadgetExt as _;
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::curve::Projective as _;
 
 use super::qr::QrBucket;
-pub use crate::stamp::headers::evidence::{EvidenceTree, EvidenceTreePair};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
     pasta::{Eq, Fp},
-    primitives::{EvidenceTreeRoot, QrProfile, TachygramSetPoly},
+    primitives::{
+        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetPoly,
+    },
     ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_equal,
 };
+
+/// A Poseidon Merkle root over one network's sealed buckets.
+///
+/// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
+/// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
+/// this header carries. A one-leaf tree's root is that leaf's digest, and
+/// [`EvidenceTreeDescend`] is what produces one.
+///
+/// The tree claims nothing about which buckets it holds. A tree holding one
+/// bucket four times is as valid as a tree over a whole network, and a builder
+/// that omits a bucket can only fail to answer for it. Each bucket's exclusion
+/// claim already covers the whole epoch.
+#[derive(Clone, Debug)]
+pub struct EvidenceTree;
+
+/// The `EvidenceTree` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("EvidenceTreeOutput(..)")]
+pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
+    /// The `epoch` field.
+    pub epoch: Element<'dr, D>,
+    /// The `anchor_start` field.
+    pub anchor_start: Element<'dr, D>,
+    /// The `anchor_next` field.
+    pub anchor_next: Element<'dr, D>,
+    /// The `discriminant` field.
+    pub discriminant: Element<'dr, D>,
+    /// The `root` field.
+    pub root: Element<'dr, D>,
+}
+
+impl Header<Fp> for EvidenceTree {
+    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
+    type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(12);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(EvidenceTreeOutput {
+            epoch: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            discriminant: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            root: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+        })
+    }
+}
+
+/// Two sibling subtree roots of one network: half of a node.
+///
+/// A [`EVIDENCE_TREE_ARITY`]-child node reaches one hash through two steps,
+/// since a [`Step`] takes at most two predecessor proofs. This header is a node
+/// half-assembled: the left and right children of one side, under the four
+/// network fields both already agree on.
+#[derive(Clone, Debug)]
+pub struct EvidenceTreePair;
+
+/// The `EvidenceTreePair` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("EvidenceTreePairOutput(..)")]
+pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
+    /// The `epoch` field.
+    pub epoch: Element<'dr, D>,
+    /// The `anchor_start` field.
+    pub anchor_start: Element<'dr, D>,
+    /// The `anchor_next` field.
+    pub anchor_next: Element<'dr, D>,
+    /// The `discriminant` field.
+    pub discriminant: Element<'dr, D>,
+    /// The `first` field.
+    pub first: Element<'dr, D>,
+    /// The `second` field.
+    pub second: Element<'dr, D>,
+}
+
+impl Header<Fp> for EvidenceTreePair {
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        EvidenceTreeRoot,
+        EvidenceTreeRoot,
+    );
+    type Output = Kind![Fp; EvidenceTreePairOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(13);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(EvidenceTreePairOutput {
+            epoch: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            discriminant: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            first: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+            second: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.5)),
+            )?,
+        })
+    }
+}
 
 /// Admit two sealed [`QrBucket`]s as one half of a node.
 ///
@@ -58,10 +212,6 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 
     const INDEX: Index = Index::new(30);
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "two certified bucket digests and their common network checks stay together"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -152,42 +302,6 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let left_header = left_encoded.as_gadget();
-        let first = poseidon::evidence_tree_leaf_gadget(
-            dr,
-            [
-                &left_header.epoch.element,
-                &left_header.anchor_start.element,
-                &left_header.anchor_next.element,
-                &left_header.discriminant.element,
-                &left_header.profile.depth,
-                &left_header.profile.bits,
-            ],
-            &left_header.contents_digest.limbs,
-        )?;
-        let right_header = right_encoded.as_gadget();
-        let second = poseidon::evidence_tree_leaf_gadget(
-            dr,
-            [
-                &right_header.epoch.element,
-                &right_header.anchor_start.element,
-                &right_header.anchor_next.element,
-                &right_header.discriminant.element,
-                &right_header.profile.depth,
-                &right_header.profile.bits,
-            ],
-            &right_header.contents_digest.limbs,
-        )?;
-        encoded
-            .as_gadget()
-            .first
-            .element
-            .enforce_equal(dr, &first)?;
-        encoded
-            .as_gadget()
-            .second
-            .element
-            .enforce_equal(dr, &second)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -664,31 +778,9 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let header = encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        for (actual, expected) in header
-            .contents_digest
-            .limbs
-            .iter()
-            .zip(oracles.bridge_hash())
-        {
+        for (actual, expected) in header.contents_digest.iter().zip(oracles.bridge_hash()) {
             actual.enforce_equal(dr, expected)?;
         }
-        let leaf = poseidon::evidence_tree_leaf_gadget(
-            dr,
-            [
-                &header.epoch.element,
-                &header.anchor_start.element,
-                &header.anchor_next.element,
-                &header.discriminant.element,
-                &header.profile.depth,
-                &header.profile.bits,
-            ],
-            oracles.bridge_hash(),
-        )?;
-        left_encoded
-            .as_gadget()
-            .root
-            .element
-            .enforce_equal(dr, &leaf)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

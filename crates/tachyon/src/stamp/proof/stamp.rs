@@ -3,18 +3,22 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{Cycle as _, Encoded, Header, Index, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, Index, Slot, Step, Suffix};
 use ragu_core::{
-    FixedGenerators as _,
+    Cycle as _, FixedGenerators as _,
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
 use ragu_pcd::pasta::baked;
-use ragu_primitives::{Element, GadgetExt as _};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
-pub use crate::stamp::headers::stamp::{Actions, Stamp};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
@@ -23,11 +27,216 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Eq, Fp, Fq},
-    primitives::{ActionDigest, Anchor, AnchorSetPoly, effect},
+    primitives::{
+        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+    },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
 };
+
+/// Non-empty proven action content with no fee in its lineage.
+///
+/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
+/// the action-digest and tachygram sets. Each leaf step
+/// ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
+/// and enforces them against their roots at a Fiat-Shamir challenge.
+/// The action set is enforced against the action the step derives,
+/// the tachygram set against the pair bound on the left bind header.
+/// [`ActionMerge`] binds its witnessed input sets to the child headers
+/// and enforces each output commitment as the product of its inputs.
+///
+/// `anchor` is a free witness at [`OutputAction`]. At [`SpendAction`] it comes
+/// from the left [`SpendHeader`]. At [`ActionMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`ActionLift`] the step checks that
+/// `anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member, and moves
+/// it to the span's `anchor_end`.
+#[derive(Debug)]
+pub struct Actions;
+
+/// The `Actions` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("ActionsOutput(..)")]
+pub struct ActionsOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `action_commit` field.
+    pub action_commit: [Element<'dr, D>; 2],
+    /// The `stamp_tg_commit` field.
+    pub stamp_tg_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for Actions {
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    type Output = Kind![Fp; ActionsOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(15);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let commitments = D::try_just(|| {
+            let fields = witness.clone().take();
+            let mut limbs = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in limbs
+                .iter_mut()
+                .zip([Eq::from(fields.0), Eq::from(fields.1)])
+            {
+                let point = commitment.to_affine();
+                if point.is_identity() {
+                    return Err(ragu_core::Error::InvalidWitness(
+                        "cannot encode the identity commitment".into(),
+                    ));
+                }
+                let bytes = point.to_bytes();
+                let (low, high) = bytes.split_at(16);
+                *output = [
+                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                ];
+            }
+            Ok(limbs)
+        })?;
+        Ok(ActionsOutput {
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            action_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][1]),
+                )?,
+            ],
+            stamp_tg_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][1]),
+                )?,
+            ],
+        })
+    }
+}
+
+/// Header for one or more fee-bearing lineages.
+///
+/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
+/// the action-digest and tachygram sets.
+/// [`StampMerge`] binds its witnessed input sets to the child headers
+/// and enforces each output commitment as the product of its inputs.
+///
+/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
+/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
+///
+/// `anchor` is a free witness at [`FeeSeed`]. At [`FeeFuse`] it comes from
+/// the left [`Actions`]. At [`StampMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
+/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
+/// and moves it to the span's `anchor_end`.
+#[derive(Debug)]
+pub struct Stamp;
+
+/// The `Stamp` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("StampOutput(..)")]
+pub struct StampOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `action_commit` field.
+    pub action_commit: [Element<'dr, D>; 2],
+    /// The `stamp_tg_commit` field.
+    pub stamp_tg_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for Stamp {
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    type Output = Kind![Fp; StampOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(6);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let commitments = D::try_just(|| {
+            let fields = witness.clone().take();
+            let mut limbs = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in limbs
+                .iter_mut()
+                .zip([Eq::from(fields.0), Eq::from(fields.1)])
+            {
+                let point = commitment.to_affine();
+                if point.is_identity() {
+                    return Err(ragu_core::Error::InvalidWitness(
+                        "cannot encode the identity commitment".into(),
+                    ));
+                }
+                let bytes = point.to_bytes();
+                let (low, high) = bytes.split_at(16);
+                *output = [
+                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                ];
+            }
+            Ok(limbs)
+        })?;
+        Ok(StampOutput {
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            action_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][1]),
+                )?,
+            ],
+            stamp_tg_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][1]),
+                )?,
+            ],
+        })
+    }
+}
 
 /// Fix the fee roots before ζ; the witness phase independently derives them.
 fn fee_roots(

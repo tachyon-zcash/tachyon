@@ -3,11 +3,11 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
-use ragu::{
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::{
     PoseidonPermutation as _,
     pasta::{Pasta, PoseidonFp},
 };
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{

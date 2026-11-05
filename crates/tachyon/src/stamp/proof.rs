@@ -31,8 +31,9 @@ pub mod summary;
 use alloc::vec::Vec;
 
 use lazy_static::lazy_static;
-use ragu::{Application, ApplicationBuilder, pasta::Pasta};
+use ragu::{Application, ApplicationBuilder};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::pasta::Pasta;
 use udon::field::Field as _;
 
 use crate::pasta;

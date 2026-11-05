@@ -10,21 +10,100 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::GadgetExt as _;
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
-pub use crate::stamp::headers::summary::Summary;
 use crate::{
-    digest::poseidon,
     pasta::{Eq, Fp},
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     ragu_constraint::enforce_equal_point,
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
+
+/// One summarized run of an epoch's stamps.
+///
+/// `acc_commit` commits the root polynomial of every tachygram in the run,
+/// which is exactly the set of stamps folded over the coverage extent
+/// `(anchor_prev, anchor_end]`.
+#[derive(Clone, Debug)]
+pub struct Summary;
+
+/// The `Summary` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("SummaryOutput(..)")]
+pub struct SummaryOutput<'dr, D: Driver<'dr>> {
+    /// The `epoch` field.
+    pub epoch: Element<'dr, D>,
+    /// The `anchor_prev` field.
+    pub anchor_prev: Element<'dr, D>,
+    /// The `anchor_end` field.
+    pub anchor_end: Element<'dr, D>,
+    /// The `acc_commit` field.
+    pub acc_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for Summary {
+    type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
+    type Output = Kind![Fp; SummaryOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(9);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let limbs = D::try_just(|| {
+            let point = Eq::from(witness.clone().take().3).to_affine();
+            if point.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "cannot encode the identity commitment".into(),
+                ));
+            }
+            let bytes = point.to_bytes();
+            let (low, high) = bytes.split_at(16);
+            Ok([
+                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+            ])
+        })?;
+        Ok(SummaryOutput {
+            epoch: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_prev: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor_end: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            acc_commit: [
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+            ],
+        })
+    }
+}
 
 /// Start a summary from one stamp. The step performs the same fold as
 /// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and puts the stamp's
@@ -89,15 +168,7 @@ impl Step<Pasta> for SummarySeed {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let header = encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let anchor = poseidon::anchor_next_stamp_gadget(
-            dr,
-            &header.anchor_prev.element,
-            &header.epoch.element,
-            oracles.bridge_hash(),
-        )?;
-        header.anchor_end.element.enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -194,17 +265,6 @@ impl Step<Pasta> for SummaryAdvance {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let anchor = poseidon::anchor_next_stamp_gadget(
-            dr,
-            &left_encoded.as_gadget().anchor_end.element,
-            &left_encoded.as_gadget().epoch.element,
-            oracles.bridge_hash(),
-        )?;
-        encoded
-            .as_gadget()
-            .anchor_end
-            .element
-            .enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

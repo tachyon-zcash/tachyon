@@ -1,20 +1,103 @@
 //! Spend nullifier-binding header and step.
 
 extern crate alloc;
-use ragu::{Encoded, Header, Index, Oracles, Step, pasta::Pasta};
+use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
+use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
-pub use crate::stamp::headers::spend::SpendHeader;
 use crate::{
     constants::MAX_MONEY,
-    pasta::Fp,
+    keys, note, nullifier,
+    pasta::{EpAffine, Fp},
+    primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
 };
+
+/// Header binding a spend to its lineage note, epoch nullifier pair and value
+/// commitment.
+///
+/// Carries the note commitment `cm`, the lineage's nullifier and its
+/// neighbour `(nf_current, nf_next)` derived from the note's master key, the
+/// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
+/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
+/// ties its `ak` to `pk`, and produces `rk`.
+#[derive(Debug)]
+pub struct SpendHeader;
+
+/// The `SpendHeader` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("SpendHeaderOutput(..)")]
+pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `nf_current` field.
+    pub nf_current: Element<'dr, D>,
+    /// The `nf_next` field.
+    pub nf_next: Element<'dr, D>,
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `pk` field.
+    pub pk: Element<'dr, D>,
+    /// The `cv` field.
+    pub cv: Point<'dr, D, C>,
+}
+
+impl Header<Fp> for SpendHeader {
+    type Data = (
+        note::Commitment,
+        nullifier::Nullifier,
+        nullifier::Nullifier,
+        Anchor,
+        keys::PaymentKey,
+        value::Commitment,
+    );
+    type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
+
+    const SUFFIX: Suffix = Suffix::new(5);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(SpendHeaderOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            nf_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            nf_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+            cv: Point::alloc(dr, witness.as_ref().map(|fields| EpAffine::from(fields.5)))?,
+        })
+    }
+}
 
 /// Derives a spend's epoch nullifier pair from the note's master key, commits
 /// the note's value, and binds both to the spendable lineage.

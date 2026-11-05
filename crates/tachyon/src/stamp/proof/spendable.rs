@@ -11,21 +11,72 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
-pub use crate::stamp::headers::spendable::NoteSpendable;
 use crate::{
-    digest::poseidon,
+    note,
     pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
 };
+
+/// Wallet's spendable position, certified up to this point in every
+/// coordinate.
+///
+/// `cm` keeps the spent value from drifting to a different same-`mk` note.
+#[derive(Clone, Debug)]
+pub struct NoteSpendable;
+
+/// The `NoteSpendable` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("NoteSpendableOutput(..)")]
+pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `epoch_current` field.
+    pub epoch_current: Element<'dr, D>,
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteSpendable {
+    type Data = (note::Commitment, EpochIndex, Anchor);
+    type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(2);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteSpendableOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+        })
+    }
+}
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
@@ -92,11 +143,6 @@ impl Step<Pasta> for SpendableInit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let anchor_prev_element = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|fields| Fp::from(fields.0)),
-        )?;
         let native = D::try_just(|| {
             let (anchor_prev, creation_set, creation_epoch) = witness.take();
             let (cm, ..) = left.take();
@@ -114,14 +160,6 @@ impl Step<Pasta> for SpendableInit {
         })?;
         let data = native.map(|(_, _, output)| output);
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let header = encoded.as_gadget();
-        let anchor = poseidon::anchor_next_stamp_gadget(
-            dr,
-            &anchor_prev_element,
-            &header.epoch_current.element,
-            oracles.bridge_hash(),
-        )?;
-        header.anchor.element.enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }

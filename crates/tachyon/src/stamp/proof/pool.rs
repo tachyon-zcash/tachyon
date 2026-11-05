@@ -23,29 +23,282 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::array;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _};
-use udon::field::Field as _;
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use super::{
     delegation::NoteNullifiers,
     qr::{QrBucket, enforce_value_profile},
 };
-pub use crate::stamp::headers::pool::{AnchorSpan, ArbitraryUnspent, NoteUnspent};
 use crate::{
-    digest::poseidon,
+    note,
     pasta::{Eq, Fp},
     primitives::{
-        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile,
-        Tachygram, TachygramSetPoly,
+        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
+        QrProfile, Tachygram, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
+
+/// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
+///
+/// The tested values are arbitrary field elements until [`UnspentBind`]
+/// attributes them to a note's derivation. No step producing one touches a
+/// note, `cm`, or `mk`, so the segment is safe to delegate.
+///
+/// A segment covers whole epochs, half-open on both axes:
+/// `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`.
+/// `anchor_start` is the entry anchor of `epoch_start`, and `anchor_next` is
+/// the entry anchor of `epoch_next`. It starts at
+/// [`QrUnspentInit`](super::qr::QrUnspentInit) over one epoch's [`QrBucket`],
+/// [`UnspentLift`] appends the next epoch's bucket, and [`UnspentFuse`] joins
+/// segments on a shared boundary. Each producer takes an anchor bound and its
+/// epoch from the same bucket or the same half, and
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
+///
+/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
+/// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
+/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
+/// on `anchor_next`.
+///
+/// Every producer maintains the provenance [`UnspentBind`]'s completeness
+/// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
+/// because `QrUnspentInit` and [`UnspentLift`] encode their member from the
+/// bucket's own epoch. Each epoch carries exactly one member: `QrUnspentInit`
+/// pins its one member by its challenge identity, `UnspentLift` adds exactly
+/// one at `epoch_next` by its, and [`UnspentFuse`]'s identity determines the
+/// combined polynomial exactly, so the property composes by induction.
+#[derive(Clone, Debug)]
+pub struct ArbitraryUnspent;
+
+/// The `ArbitraryUnspent` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("ArbitraryUnspentOutput(..)")]
+pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor_start` field.
+    pub anchor_start: Element<'dr, D>,
+    /// The `epoch_start` field.
+    pub epoch_start: Element<'dr, D>,
+    /// The `epoch_next` field.
+    pub epoch_next: Element<'dr, D>,
+    /// The `anchor_next` field.
+    pub anchor_next: Element<'dr, D>,
+    /// The `elapsed` field.
+    pub elapsed: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for ArbitraryUnspent {
+    type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
+    type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(1);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let limbs = D::try_just(|| {
+            let point = Eq::from(witness.clone().take().2).to_affine();
+            if point.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "cannot encode the identity commitment".into(),
+                ));
+            }
+            let bytes = point.to_bytes();
+            let (low, high) = bytes.split_at(16);
+            Ok([
+                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+            ])
+        })?;
+        Ok(ArbitraryUnspentOutput {
+            anchor_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            epoch_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            anchor_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+            elapsed: [
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+            ],
+        })
+    }
+}
+
+/// A note proven unspent across a span: an [`ArbitraryUnspent`] whose values
+/// [`UnspentBind`] has attributed to the note's genuine derivation.
+#[derive(Clone, Debug)]
+pub struct NoteUnspent;
+
+/// The `NoteUnspent` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("NoteUnspentOutput(..)")]
+pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `anchor_start` field.
+    pub anchor_start: Element<'dr, D>,
+    /// The `epoch_start` field.
+    pub epoch_start: Element<'dr, D>,
+    /// The `epoch_next` field.
+    pub epoch_next: Element<'dr, D>,
+    /// The `anchor_next` field.
+    pub anchor_next: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteUnspent {
+    type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
+    type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(3);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteUnspentOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            epoch_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            epoch_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            anchor_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+        })
+    }
+}
+
+/// An anchor path with a commitment to the anchors inside it.
+///
+/// `members` commits to a polynomial with one root for each stamp folded into
+/// the span. The root is the anchor that fold produces. `anchor_end` is a
+/// member and `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// advance a stamp's anchor. A spendable's anchor advances through
+/// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
+///
+/// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
+/// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt` domain.
+/// Entering the next epoch takes [`Anchor::next_epoch`], which hashes under
+/// `Tachyon-AnchorEp`. Among the proof steps, only
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) computes it. Consensus also
+/// rejects a tachygram published twice within two epochs. That check catches a
+/// tachygram already published earlier in the epoch a stamp is lifted across.
+///
+/// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
+/// is not tied to the published chain. Consensus ties it when it checks the
+/// anchor of the stamp that [`super::stamp::StampLift`] outputs.
+#[derive(Clone, Debug)]
+pub struct AnchorSpan;
+
+/// The `AnchorSpan` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("AnchorSpanOutput(..)")]
+pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor_start` field.
+    pub anchor_start: Element<'dr, D>,
+    /// The `anchor_end` field.
+    pub anchor_end: Element<'dr, D>,
+    /// The `members` field.
+    pub members: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for AnchorSpan {
+    type Data = (Anchor, AnchorSetCommit, Anchor);
+    type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(14);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let limbs = D::try_just(|| {
+            let point = Eq::from(witness.clone().take().1).to_affine();
+            if point.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "cannot encode the identity commitment".into(),
+                ));
+            }
+            let bytes = point.to_bytes();
+            let (low, high) = bytes.split_at(16);
+            Ok([
+                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+            ])
+        })?;
+        Ok(AnchorSpanOutput {
+            anchor_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_end: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            members: [
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+            ],
+        })
+    }
+}
 
 /// Start an [`AnchorSpan`] from one stamp.
 ///
@@ -110,16 +363,11 @@ impl Step<Pasta> for AnchorSpanSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let epoch = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|fields| Fp::from(fields.1)),
-        )?;
         let output = D::try_just(|| {
-            let (anchor_start, epoch_index, stamp) = witness.take();
+            let (anchor_start, epoch, stamp) = witness.take();
             let stamp_commit = stamp.commit();
             let anchor_end = anchor_start
-                .next_stamp(epoch_index, &stamp_commit)
+                .next_stamp(epoch, &stamp_commit)
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
             Ok((
@@ -138,16 +386,9 @@ impl Step<Pasta> for AnchorSpanSeed {
             dr,
             oracles,
             &Slot::output(0),
-            array::from_ref(&header.anchor_end.element),
+            array::from_ref(&header.anchor_end),
             "AnchorSpanSeed: members must contain the resulting anchor",
         )?;
-        let anchor = poseidon::anchor_next_stamp_gadget(
-            dr,
-            &header.anchor_start.element,
-            &epoch,
-            oracles.bridge_hash(),
-        )?;
-        header.anchor_end.element.enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

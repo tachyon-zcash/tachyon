@@ -1,17 +1,73 @@
 //! Output tachygram-binding header and step.
 
 extern crate alloc;
-use ragu::{Encoded, Header, Index, Oracles, Step, pasta::Pasta};
+use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
+};
+use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use udon::curve::EndomorphismAffine;
+
+use crate::{
+    Tachygram,
+    constants::MAX_MONEY,
+    digest::poseidon,
+    note::Note,
+    pasta::{EpAffine, Fp},
+    ragu_constraint::enforce_nonzero,
+    value,
 };
 
-pub use crate::stamp::headers::output::OutputHeader;
-use crate::{
-    Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note, pasta::Fp,
-    ragu_constraint::enforce_nonzero, value,
-};
+/// Header binding an output's tachygram pair and value to one note
+/// (wallet-only).
+///
+/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
+/// value commitment `cv`, all derived from the same note. `rk` is produced
+/// downstream at [`OutputAction`](super::stamp::OutputAction).
+#[derive(Debug)]
+pub struct OutputHeader;
+
+/// The `OutputHeader` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("OutputHeaderOutput(..)")]
+pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `pad` field.
+    pub pad: Element<'dr, D>,
+    /// The `cv` field.
+    pub cv: Point<'dr, D, C>,
+}
+
+impl Header<Fp> for OutputHeader {
+    type Data = (Tachygram, Tachygram, value::Commitment);
+    type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
+
+    const SUFFIX: Suffix = Suffix::new(7);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(OutputHeaderOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            pad: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            cv: Point::alloc(dr, witness.as_ref().map(|fields| EpAffine::from(fields.2)))?,
+        })
+    }
+}
 
 /// Derives an output's tachygram pair from one note, and commits its negated
 /// value as
