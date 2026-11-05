@@ -16,7 +16,7 @@
 //! The proof is of one action-free stamp, proved at initialization, so the
 //! input never pays for proving.
 
-use std::{cmp, collections::BTreeSet, iter, sync::LazyLock};
+use std::{assert_matches, cmp, collections::BTreeSet, iter, sync::LazyLock};
 
 use libfuzzer_sys::{arbitrary::Unstructured, fuzz_target};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -295,17 +295,15 @@ fuzz_target!(
         let wtxid: [u8; 64] = AggregateId::try_from((&head.commitment(), &head.auth_digest()))
             .unwrap()
             .into();
-        let verified = head.verify(
-            &mut StdRng::seed_from_u64(0),
-            &head.commitment(),
-            &wtxid,
-            &tail.iter().collect::<Vec<_>>(),
+        assert_matches!(
+            head.verify(
+                &mut StdRng::seed_from_u64(0),
+                &head.commitment(),
+                &wtxid,
+                &tail.iter().collect::<Vec<_>>(),
+            ),
+            Err(err) if edited || matches!(err, VerificationError::Disproved)
         );
-        match verified {
-            Ok(()) => panic!(),
-            Err(VerificationError::Disproved) => {},
-            Err(_) => assert!(edited),
-        }
 
         if !edited {
             assert!(rest.is_empty());
