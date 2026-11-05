@@ -39,7 +39,7 @@ use crate::{
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_product, open_poly_pair},
+    relations::enforce::enforce_poly_product,
 };
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
@@ -364,8 +364,13 @@ impl Step for UnspentFuse {
         )?;
         // The factor is not absorbed into the challenge. Its member is
         // `(left.epoch_next − 1, left.nf_last)`, both fields of the left header.
-        let (z, prefix_at_z, elapsed_at_z) =
-            open_poly_pair(ctx, left_prefix_seq.as_ref(), left_elapsed_seq.as_ref())?;
+        let prefix_commit = left_prefix_seq.commit();
+        let elapsed_commit = left_elapsed_seq.commit();
+        let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
+        let prefix_at_z = left_prefix_seq.eval(z);
+        let elapsed_at_z = left_elapsed_seq.eval(z);
+        ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
         let factor = indexed_multiset::direct_eval(
             [(u64::from(left_epoch_next) - 1, left_nf_last.into())],
             z,
@@ -499,8 +504,13 @@ impl Step for UnspentLift {
         // The factor is not absorbed into the challenge. Its member is
         // `(epoch_next − 1, nf_last)`, both fields of the left header.
         {
-            let (z, prefix_at_z, elapsed_at_z) =
-                open_poly_pair(ctx, prefix_seq.as_ref(), elapsed_seq.as_ref())?;
+            let prefix_commit = prefix_seq.commit();
+            let elapsed_commit = elapsed_seq.commit();
+            let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
+            let prefix_at_z = prefix_seq.eval(z);
+            let elapsed_at_z = elapsed_seq.eval(z);
+            ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
+            ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
             let factor = indexed_multiset::direct_eval(
                 [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
                 z,
@@ -639,8 +649,13 @@ impl Step for UnspentBind {
         )?;
         // The factor is not absorbed into the challenge. Its member is
         // `(epoch_next − 1, nf_last)`, both fields of the left header.
-        let (z, prefix_at_z, elapsed_at_z) =
-            open_poly_pair(ctx, prefix_seq.as_ref(), elapsed_seq.as_ref())?;
+        let prefix_commit = prefix_seq.commit();
+        let elapsed_commit = elapsed_seq.commit();
+        let z = ctx.derive_challenge(&[prefix_commit.into(), elapsed_commit.into()])?;
+        let prefix_at_z = prefix_seq.eval(z);
+        let elapsed_at_z = elapsed_seq.eval(z);
+        ctx.enforce_poly_query(prefix_commit.into(), z, prefix_at_z)?;
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
         let factor = indexed_multiset::direct_eval(
             [(u64::from(unspent_epoch_next) - 1, unspent_nf_last.into())],
             z,

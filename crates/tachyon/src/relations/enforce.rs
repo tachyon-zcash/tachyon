@@ -4,10 +4,9 @@
 //! prover-supplied (built off-circuit) rather than computed by the relation,
 //! the relation computes each operand's commitment internally, derives a
 //! Fiat-Shamir challenge `z` from those commitments, checks the defining
-//! algebraic identity at `z` (or leaves it to the caller), and emits one
-//! opening claim per operand at `(commitment, z, eval(z))`. These functions
-//! only *record* the openings; actually verifying them is the proof system's
-//! job, not done here.
+//! algebraic identity at `z`, and emits one opening claim per operand at
+//! `(commitment, z, eval(z))`. These functions only *record* the openings;
+//! actually verifying them is the proof system's job, not done here.
 //!
 //! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
 //! into `z`, so the operands are fixed *before* `z` exists and the identity at
@@ -82,34 +81,6 @@ pub(crate) fn enforce_poly_product(
     ctx.enforce_poly_query(product_com, z, product.eval(z))?;
 
     Ok(())
-}
-
-/// Open two committed polynomials at a shared Fiat-Shamir challenge.
-/// Returns `(z, multiplicand_at_z, product_at_z)` for the caller's relation.
-///
-/// # Caller obligation (soundness)
-///
-/// `multiplicand` and `product` are committed and absorbed into `z`; the
-/// module-level binding obligation applies to both. A factor in the caller's
-/// relation `product = multiplicand · F` is *not* absorbed: every scalar it is
-/// built from must already be pinned before `z`, and the call site states its
-/// pin.
-pub(crate) fn open_poly_pair(
-    ctx: &mut StepCtx<'_>,
-    multiplicand: &Polynomial<Fp, ProductionRank>,
-    product: &Polynomial<Fp, ProductionRank>,
-) -> Result<(Fp, Fp, Fp)> {
-    let generators = Pasta::host_generators(pasta::baked());
-    let multiplicand_com = multiplicand.commit(generators);
-    let product_com = product.commit(generators);
-    let z = ctx.derive_challenge(&[multiplicand_com, product_com])?;
-
-    let multiplicand_at_z = multiplicand.eval(z);
-    let product_at_z = product.eval(z);
-    ctx.enforce_poly_query(multiplicand_com, z, multiplicand_at_z)?;
-    ctx.enforce_poly_query(product_com, z, product_at_z)?;
-
-    Ok((z, multiplicand_at_z, product_at_z))
 }
 
 /// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the

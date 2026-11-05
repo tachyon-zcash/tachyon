@@ -20,7 +20,7 @@ use crate::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_product, enforce_poly_roots, open_poly_pair},
+    relations::enforce::{enforce_poly_product, enforce_poly_roots},
     value,
 };
 
@@ -607,8 +607,13 @@ impl Step for FeeFuse {
         // over the witnessed max fee note and fee, so a root solved from a
         // challenge needs a Poseidon preimage.
         {
-            let (z, left_at_z, output_at_z) =
-                open_poly_pair(ctx, left_action_set.as_ref(), output_action_set.as_ref())?;
+            let left_commit = left_action_set.commit();
+            let output_commit = output_action_set.commit();
+            let z = ctx.derive_challenge(&[left_commit.into(), output_commit.into()])?;
+            let left_at_z = left_action_set.eval(z);
+            let output_at_z = output_action_set.eval(z);
+            ctx.enforce_poly_query(left_commit.into(), z, left_at_z)?;
+            ctx.enforce_poly_query(output_commit.into(), z, output_at_z)?;
             if output_at_z != left_at_z * (z - fee_digest) {
                 return Err(ragu_core::Error::InvalidWitness(
                     "FeeFuse: output action set must be the product of left and fee action sets"
@@ -617,11 +622,13 @@ impl Step for FeeFuse {
             }
         }
         {
-            let (z, left_at_z, output_at_z) = open_poly_pair(
-                ctx,
-                left_tachygram_set.as_ref(),
-                output_tachygram_set.as_ref(),
-            )?;
+            let left_commit = left_tachygram_set.commit();
+            let output_commit = output_tachygram_set.commit();
+            let z = ctx.derive_challenge(&[left_commit.into(), output_commit.into()])?;
+            let left_at_z = left_tachygram_set.eval(z);
+            let output_at_z = output_tachygram_set.eval(z);
+            ctx.enforce_poly_query(left_commit.into(), z, left_at_z)?;
+            ctx.enforce_poly_query(output_commit.into(), z, output_at_z)?;
             if output_at_z != left_at_z * (z - fee_change_commitment) {
                 return Err(ragu_core::Error::InvalidWitness(
                     "FeeFuse: output tachygram set must be the product of left and fee tachygram sets".into(),
