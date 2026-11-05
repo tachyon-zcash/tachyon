@@ -557,7 +557,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9#0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=001172dfe8bc56db892eb99e2eabc06c5f451990#001172dfe8bc56db892eb99e2eabc06c5f451990"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -570,7 +570,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=001172dfe8bc56db892eb99e2eabc06c5f451990#001172dfe8bc56db892eb99e2eabc06c5f451990"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9#0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9"
 dependencies = [
  "num-bigint",
  "num-traits",
