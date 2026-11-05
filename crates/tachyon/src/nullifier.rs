@@ -41,15 +41,4 @@ impl Trapdoor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_nullifier_trapdoor_redacts_value() {
-        let psi = Trapdoor::from(Fp::from(0xCAFEu64));
-        let dbg = alloc::format!("{psi:?}");
-        assert!(dbg.contains("Trapdoor"), "must name the type");
-        assert!(!dbg.contains("CAFE"), "must not leak field element");
-        assert!(!dbg.contains("51966"), "must not leak decimal value");
-    }
-}
+mod tests;
