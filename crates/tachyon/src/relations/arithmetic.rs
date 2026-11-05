@@ -11,7 +11,11 @@ use ragu_primitives::{
 };
 use udon::field::Field as _;
 
-use crate::pasta::{Fp, Fq};
+use crate::{
+    constants::EPOCH_MAX,
+    pasta::{Fp, Fq},
+    primitives::EpochIndex,
+};
 /// Unique little-endian decomposition. The canonical comparison matters at
 /// 255 bits, where a modular recomposition alone would allow aliases.
 #[expect(clippy::indexing_slicing, reason = "fixed field and bit widths")]
@@ -101,6 +105,28 @@ pub(crate) fn scalar_bits<'dr, D: Driver<'dr, F = Fp>>(
         }
     }
     Ok(bits)
+}
+
+/// A bounded epoch successor, including the input's unsigned range.
+pub(crate) fn epoch_next<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    epoch: &Element<'dr, D>,
+) -> Result<Element<'dr, D>> {
+    bounded::<D, 32>(dr, epoch, u64::from(EPOCH_MAX))?;
+    let one = Element::constant(dr, Fp::ONE);
+    let next = epoch.add(dr, &one);
+    bounded::<D, 32>(dr, &next, u64::from(EPOCH_MAX))?;
+    Ok(next)
+}
+
+/// Read a range-checked epoch into the prover-side header carrier.
+pub(crate) fn epoch_value<'dr, D: Driver<'dr, F = Fp>>(
+    epoch: &Element<'dr, D>,
+) -> DriverValue<D, EpochIndex> {
+    epoch.value().map(|candidate| {
+        let [first, second, third, fourth, ..] = candidate.to_bytes();
+        EpochIndex::new(u32::from_le_bytes([first, second, third, fourth]))
+    })
 }
 
 #[cfg(test)]

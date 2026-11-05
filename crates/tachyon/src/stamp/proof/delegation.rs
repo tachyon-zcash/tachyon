@@ -10,35 +10,199 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{
-    Cycle as _, Encoded, Header, HeaderInput, Index, Oracles, PoseidonPermutation as _, Slot, Step,
-    pasta::{EpAffine, Pasta, PoseidonFp},
-};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
+    Cycle as _, PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{
-    Element, GadgetExt as _,
+    Element, GadgetExt as _, Point,
+    allocator::Allocator,
+    io::Write,
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
-pub use crate::stamp::headers::delegation::{NoteNullifiers, NoteSecret};
 use crate::{
     constants::{EPOCH_MAX, MAX_MONEY},
     digest::poseidon,
-    gadgets::arithmetic as circuit,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
     pasta,
-    pasta::Fp,
-    primitives::{EpochIndex, NfSeqPoly},
-    relations::enforce::{enforce_poly_product, indexed_member_factor},
+    pasta::{EpAffine, Eq, Fp},
+    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    relations::{
+        arithmetic as circuit, curve,
+        enforce::{enforce_poly_product, indexed_member_factor},
+    },
     value,
 };
+
+/// A note's certified record: its commitment, its opening, and its master key
+/// (wallet-only).
+///
+/// `mk` is derived from the note's secrets by [`NoteSeed`] and certified here,
+/// so every consuming [`NullifierDerive`] threads a genuine master key without
+/// re-witnessing the note. `note` is the opening `cm` commits to.
+/// [`SpendBind`](super::spend::SpendBind) reads it.
+#[derive(Clone, Debug)]
+pub struct NoteSecret;
+
+/// The `NoteSecret` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("NoteSecretOutput(..)")]
+pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The note's `rcm` field.
+    pub rcm: Element<'dr, D>,
+    /// The note's `pk` field.
+    pub pk: Element<'dr, D>,
+    /// The note's `value` field.
+    pub value: Element<'dr, D>,
+    /// The note's `psi` field.
+    pub psi: Element<'dr, D>,
+    /// The `mk` field.
+    pub mk: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteSecret {
+    type Data = (note::Commitment, Note, NoteMasterKey);
+    type Output = Kind![Fp; NoteSecretOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(8);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteSecretOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            rcm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
+            )?,
+            value: Element::alloc(
+                dr,
+                allocator,
+                witness
+                    .as_ref()
+                    .map(|fields| Fp::from(u64::from(fields.1.value))),
+            )?,
+            psi: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.psi)),
+            )?,
+            mk: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
+        })
+    }
+}
+
+/// A proven contiguous range of derived nullifiers (wallet-only).
+///
+/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
+/// `[epoch_start, epoch_end]`; `nf_commit` commits the range's nullifier
+/// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
+/// invariant is established at [`NullifierDerive`], preserved by
+/// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
+/// lean on for per-epoch completeness. `cm` binds the range to the real
+/// note.
+///
+/// No consumer reads the range. It serves [`NullifierFuse`]'s contiguity
+/// check, which keeps the product squarefree, and squarefreeness forces a
+/// tested sequence's members distinct at
+/// [`UnspentBind`](super::pool::UnspentBind).
+///
+/// Masking is the consuming step's responsibility.
+#[derive(Clone, Debug)]
+pub struct NoteNullifiers;
+
+/// The `NoteNullifiers` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("NoteNullifiersOutput(..)")]
+pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `epoch_start` field.
+    pub epoch_start: Element<'dr, D>,
+    /// The `epoch_end` field.
+    pub epoch_end: Element<'dr, D>,
+    /// The `nf_commit` field.
+    pub nf_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for NoteNullifiers {
+    type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
+    type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(0);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let limbs = D::try_just(|| {
+            let point = Eq::from(witness.clone().take().2).to_affine();
+            if point.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "cannot encode the identity commitment".into(),
+                ));
+            }
+            let bytes = point.to_bytes();
+            let (low, high) = bytes.split_at(16);
+            Ok([
+                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+            ])
+        })?;
+        Ok(NoteNullifiersOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            epoch_end: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            nf_commit: [
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+            ],
+        })
+    }
+}
 
 /// Certify a note's commitment and master key.
 ///
@@ -114,8 +278,9 @@ impl Step<Pasta> for NoteSeed {
             EpAffine::from_bytes(bytes)
                 .ok_or_else(|| ragu_core::Error::InvalidWitness("invalid ak encoding".into()))
         })?;
-        let ak = crate::gadgets::point::CurvePoint::alloc(dr, &mut (), ak_assignment)?;
-        let pk = poseidon::payment_key_circuit(dr, &[ak.x, ak.y, nk.clone()])?;
+        let ak = Point::alloc(dr, ak_assignment)?;
+        let [ak_x, ak_y] = curve::coordinates(dr, &ak)?;
+        let pk = poseidon::payment_key_circuit(dr, &[ak_x, ak_y, nk.clone()])?;
         let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
             Element::constant(
                 dr,
@@ -148,15 +313,13 @@ impl Step<Pasta> for NoteSeed {
                 NoteMasterKey(*mk.value().take()),
             )
         });
-        let fields = crate::stamp::headers::delegation::NoteSecretOutput {
-            cm: (cm).into(),
-            note: crate::gadgets::note::NoteGadget {
-                rcm: (rcm).into(),
-                pk: (pk).into(),
-                value: (value).into(),
-                psi: (psi).into(),
-            },
-            mk: (mk).into(),
+        let fields = NoteSecretOutput {
+            cm,
+            rcm,
+            pk,
+            value,
+            psi,
+            mk,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -284,7 +447,7 @@ impl Step<Pasta> for NullifierDerive {
                 "NullifierDerive: window exceeds the epoch range".into(),
             )
         })?;
-        let mk = left_encoded.as_gadget().mk.element.clone();
+        let mk = left_encoded.as_gadget().mk.clone();
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
         let mut window_at_z = Element::constant(dr, Fp::ONE);
@@ -312,16 +475,14 @@ impl Step<Pasta> for NullifierDerive {
                 left.take().0,
                 start,
                 seq.commit(),
-                crate::gadgets::epoch::EpochIndexGadget::from((epoch_end).clone())
-                    .value()
-                    .take(),
+                circuit::epoch_value(&epoch_end).take(),
             )
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = crate::stamp::headers::delegation::NoteNullifiersOutput {
-            cm: (left_encoded.as_gadget().cm.element.clone()).into(),
-            epoch_start: (epoch_start).into(),
-            epoch_end: (epoch_end).into(),
+        let fields = NoteNullifiersOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_start,
+            epoch_end,
             nf_commit: encoded.as_gadget().nf_commit.clone(),
         };
         Ok((
@@ -409,13 +570,13 @@ impl Step<Pasta> for NullifierFuse {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_cm = left_encoded.as_gadget().cm.element.clone();
-        let right_cm = right_encoded.as_gadget().cm.element.clone();
+        let left_cm = left_encoded.as_gadget().cm.clone();
+        let right_cm = right_encoded.as_gadget().cm.clone();
         left_cm.enforce_equal(dr, &right_cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
         })?;
-        let end = left_encoded.as_gadget().epoch_end.element.clone();
-        let start = right_encoded.as_gadget().epoch_start.element.clone();
+        let end = left_encoded.as_gadget().epoch_end.clone();
+        let start = right_encoded.as_gadget().epoch_start.clone();
         let one = Element::constant(dr, Fp::ONE);
         end.add(dr, &one)
             .enforce_equal(dr, &start)
@@ -446,10 +607,10 @@ impl Step<Pasta> for NullifierFuse {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = crate::stamp::headers::delegation::NoteNullifiersOutput {
-            cm: (left_encoded.as_gadget().cm.element.clone()).into(),
-            epoch_start: (left_encoded.as_gadget().epoch_start.element.clone()).into(),
-            epoch_end: (right_encoded.as_gadget().epoch_end.element.clone()).into(),
+        let fields = NoteNullifiersOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_start: left_encoded.as_gadget().epoch_start.clone(),
+            epoch_end: right_encoded.as_gadget().epoch_end.clone(),
             nf_commit: encoded.as_gadget().nf_commit.clone(),
         };
         Ok((

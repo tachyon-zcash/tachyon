@@ -2,31 +2,81 @@
 
 extern crate alloc;
 
-use ragu::{
-    Cycle as _, Encoded, Header, Index, Oracles, PoseidonPermutation as _, Step,
+use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
+use ragu_core::{
+    Cycle as _, PoseidonPermutation as _,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
 };
-use ragu_core::{
-    drivers::{Driver, DriverValue},
-    maybe::Maybe as _,
-};
 use ragu_primitives::{
-    Element,
+    Element, Point,
+    allocator::Allocator,
+    io::Write,
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Projective as _, field::Field as _};
+use udon::{curve::EndomorphismAffine, field::Field as _};
 
 use crate::{
     Tachygram,
     constants::MAX_MONEY,
     digest::poseidon,
-    gadgets::arithmetic as circuit,
     note::Note,
     pasta,
-    pasta::{Fp, Fq},
+    pasta::{EpAffine, Fp, Fq},
+    relations::{arithmetic as circuit, curve},
     value,
 };
+
+/// Header binding an output's tachygram pair and value to one note
+/// (wallet-only).
+///
+/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
+/// value commitment `cv`, all derived from the same note. `rk` is produced
+/// downstream at [`OutputAction`](super::stamp::OutputAction).
+#[derive(Debug)]
+pub struct OutputHeader;
+
+/// The `OutputHeader` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("OutputHeaderOutput(..)")]
+pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `pad` field.
+    pub pad: Element<'dr, D>,
+    /// The `cv` field.
+    pub cv: Point<'dr, D, C>,
+}
+
+impl Header<Fp> for OutputHeader {
+    type Data = (Tachygram, Tachygram, value::Commitment);
+    type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
+
+    const SUFFIX: Suffix = Suffix::new(7);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(OutputHeaderOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            pad: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            cv: Point::alloc(dr, witness.as_ref().map(|fields| EpAffine::from(fields.2)))?,
+        })
+    }
+}
 
 /// Derives an output's tachygram pair from one note, and commits its negated
 /// value as
@@ -111,16 +161,7 @@ impl Step<Pasta> for OutputBind {
         pad.clone().enforce_nonzero(dr)?;
         let amount_bits = circuit::bits::<D, 51>(dr, &amount)?;
         let rcv_bits = circuit::scalar_bits(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
-        let value_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, (-*value::VALUE_COMMIT_V).to_affine())?;
-        let blind_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
-        let value_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &value_generator, &amount_bits)?;
-        let blind_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &blind_generator, &rcv_bits)?;
-        let cv = crate::gadgets::point::CurvePoint::add(dr, &value_point, &blind_point)?;
-        cv.enforce_nonidentity(dr)?;
+        let cv = curve::commitment(dr, &amount_bits, &rcv_bits, true)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),
@@ -128,11 +169,7 @@ impl Step<Pasta> for OutputBind {
                 value::Commitment::from(cv.value().take()),
             )
         });
-        let fields = crate::stamp::headers::output::OutputHeaderOutput {
-            cm: (cm).into(),
-            pad: (pad).into(),
-            cv: (cv).into(),
-        };
+        let fields = OutputHeaderOutput { cm, pad, cv };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             output,
@@ -140,5 +177,3 @@ impl Step<Pasta> for OutputBind {
         ))
     }
 }
-
-pub use crate::stamp::headers::output::OutputHeader;

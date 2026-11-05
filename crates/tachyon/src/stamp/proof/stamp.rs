@@ -3,16 +3,18 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{
-    Cycle as _, Encoded, Header, HeaderInput, Index, Oracles, PoseidonPermutation as _, Slot, Step,
-    pasta::{EpAffine, Pasta, PoseidonFp},
-};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
+    Cycle as _, PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{
-    Element, GadgetExt as _,
+    Element, GadgetExt as _, Point,
+    allocator::Allocator,
+    io::Write,
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
@@ -28,15 +30,220 @@ use crate::{
     digest::poseidon,
     effect,
     entropy::ActionEntropy,
-    gadgets::arithmetic as circuit,
     keys::{ProofAuthorizingKey, private, public::ACTION_AUTH_GENERATOR},
     note::{self, Note},
     pasta,
-    pasta::Fp,
-    primitives::{ActionDigest, Anchor, AnchorSetPoly},
-    relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
+    pasta::{EpAffine, Eq, Fp},
+    primitives::{ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit},
+    relations::{
+        arithmetic as circuit, curve,
+        enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
+    },
     value,
 };
+
+/// Non-empty proven action content with no fee in its lineage.
+///
+/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
+/// the action-digest and tachygram sets. Each leaf step
+/// ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
+/// and enforces them against their roots at a Fiat-Shamir challenge.
+/// The action set is enforced against the action the step derives,
+/// the tachygram set against the pair bound on the left bind header.
+/// [`ActionMerge`] binds its witnessed input sets to the child headers
+/// and enforces each output commitment as the product of its inputs.
+///
+/// `anchor` is a free witness at [`OutputAction`]. At [`SpendAction`] it comes
+/// from the left [`SpendHeader`]. At [`ActionMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`ActionLift`] the step checks that
+/// `anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member, and moves
+/// it to the span's `anchor_end`.
+#[derive(Debug)]
+pub struct Actions;
+
+/// The `Actions` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("ActionsOutput(..)")]
+pub struct ActionsOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `action_commit` field.
+    pub action_commit: [Element<'dr, D>; 2],
+    /// The `stamp_tg_commit` field.
+    pub stamp_tg_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for Actions {
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    type Output = Kind![Fp; ActionsOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(15);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let commitments = D::try_just(|| {
+            let fields = witness.clone().take();
+            let mut limbs = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in limbs
+                .iter_mut()
+                .zip([Eq::from(fields.0), Eq::from(fields.1)])
+            {
+                let point = commitment.to_affine();
+                if point.is_identity() {
+                    return Err(ragu_core::Error::InvalidWitness(
+                        "cannot encode the identity commitment".into(),
+                    ));
+                }
+                let bytes = point.to_bytes();
+                let (low, high) = bytes.split_at(16);
+                *output = [
+                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                ];
+            }
+            Ok(limbs)
+        })?;
+        Ok(ActionsOutput {
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            action_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][1]),
+                )?,
+            ],
+            stamp_tg_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][1]),
+                )?,
+            ],
+        })
+    }
+}
+
+/// Header for one or more fee-bearing lineages.
+///
+/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
+/// the action-digest and tachygram sets.
+/// [`StampMerge`] binds its witnessed input sets to the child headers
+/// and enforces each output commitment as the product of its inputs.
+///
+/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
+/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
+///
+/// `anchor` is a free witness at [`FeeSeed`]. At [`FeeFuse`] it comes from
+/// the left [`Actions`]. At [`StampMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
+/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
+/// and moves it to the span's `anchor_end`.
+#[derive(Debug)]
+pub struct Stamp;
+
+/// The `Stamp` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("StampOutput(..)")]
+pub struct StampOutput<'dr, D: Driver<'dr>> {
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `action_commit` field.
+    pub action_commit: [Element<'dr, D>; 2],
+    /// The `stamp_tg_commit` field.
+    pub stamp_tg_commit: [Element<'dr, D>; 2],
+}
+
+impl Header<Fp> for Stamp {
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    type Output = Kind![Fp; StampOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(6);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
+        let commitments = D::try_just(|| {
+            let fields = witness.clone().take();
+            let mut limbs = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in limbs
+                .iter_mut()
+                .zip([Eq::from(fields.0), Eq::from(fields.1)])
+            {
+                let point = commitment.to_affine();
+                if point.is_identity() {
+                    return Err(ragu_core::Error::InvalidWitness(
+                        "cannot encode the identity commitment".into(),
+                    ));
+                }
+                let bytes = point.to_bytes();
+                let (low, high) = bytes.split_at(16);
+                *output = [
+                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                ];
+            }
+            Ok(limbs)
+        })?;
+        Ok(StampOutput {
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            action_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[0][1]),
+                )?,
+            ],
+            stamp_tg_commit: [
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    commitments.as_ref().map(|values| values[1][1]),
+                )?,
+            ],
+        })
+    }
+}
 
 /// Prover-side fee roots used to validate the retained singleton witnesses.
 fn fee_roots(note: Note, fee: value::Positive) -> ragu_core::Result<[Fp; 2]> {
@@ -145,8 +352,8 @@ impl Step<Pasta> for OutputAction {
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
         let action_handle = Slot::output(0);
         let tachygram_handle = Slot::output(1);
-        let cm_root = left_encoded.as_gadget().cm.element.clone();
-        let pad_root = left_encoded.as_gadget().pad.element.clone();
+        let cm_root = left_encoded.as_gadget().cm.clone();
+        let pad_root = left_encoded.as_gadget().pad.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
         let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
             Element::constant(
@@ -163,11 +370,12 @@ impl Step<Pasta> for OutputAction {
         sponge.absorb(dr, &cm_root)?;
         let alpha = sponge.squeeze(dr)?;
         let alpha_bits = circuit::bits::<D, 255>(dr, &alpha)?;
-        let generator = crate::gadgets::point::CurvePoint::constant(dr, *ACTION_AUTH_GENERATOR)?;
-        let rk = crate::gadgets::point::CurvePoint::scale(dr, &generator, &alpha_bits)?;
-        rk.enforce_nonidentity(dr)?;
-        let cv = left_encoded.as_gadget().cv.point.clone();
-        let action_root = poseidon::action_digest_circuit(dr, &[cv.x, cv.y, rk.x, rk.y])?;
+        let generator = Point::constant(dr, *ACTION_AUTH_GENERATOR)?;
+        let rk = curve::scale(dr, &generator, &alpha_bits)?;
+        let cv = left_encoded.as_gadget().cv.clone();
+        let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
+        let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
+        let action_root = poseidon::action_digest_circuit(dr, &[cv_x, cv_y, rk_x, rk_y])?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         action_root.enforce_equal(dr, &oracles.staged()[0])?;
         let action_roots = [action_root];
@@ -190,8 +398,8 @@ impl Step<Pasta> for OutputAction {
             (action_set.commit(), tachygram_set.commit(), anchor)
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = crate::stamp::headers::stamp::ActionsOutput {
-            anchor: (anchor_element).into(),
+        let fields = ActionsOutput {
+            anchor: anchor_element,
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -298,18 +506,19 @@ impl Step<Pasta> for SpendAction {
             EpAffine::from_bytes(bytes)
                 .ok_or_else(|| ragu_core::Error::InvalidWitness("invalid ak encoding".into()))
         })?;
-        let ak = crate::gadgets::point::CurvePoint::alloc(dr, &mut (), ak_assignment)?;
+        let ak = Point::alloc(dr, ak_assignment)?;
         let nk = Element::alloc(
             dr,
             &mut (),
             witness.as_ref().map(|data| Fp::from(data.1.nk)),
         )?;
-        let derived_pk = poseidon::payment_key_circuit(dr, &[ak.x.clone(), ak.y.clone(), nk])?;
-        let pk = left_encoded.as_gadget().pk.element.clone();
+        let [ak_x, ak_y] = curve::coordinates(dr, &ak)?;
+        let derived_pk = poseidon::payment_key_circuit(dr, &[ak_x, ak_y, nk])?;
+        let pk = left_encoded.as_gadget().pk.clone();
         pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
         })?;
-        let cm = left_encoded.as_gadget().cm.element.clone();
+        let cm = left_encoded.as_gadget().cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
         let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
             Element::constant(
@@ -326,12 +535,12 @@ impl Step<Pasta> for SpendAction {
         sponge.absorb(dr, &cm)?;
         let alpha = sponge.squeeze(dr)?;
         let alpha_bits = circuit::bits::<D, 255>(dr, &alpha)?;
-        let generator = crate::gadgets::point::CurvePoint::constant(dr, *ACTION_AUTH_GENERATOR)?;
-        let randomization = crate::gadgets::point::CurvePoint::scale(dr, &generator, &alpha_bits)?;
-        let rk = crate::gadgets::point::CurvePoint::add(dr, &ak, &randomization)?;
-        rk.enforce_nonidentity(dr)?;
-        let cv = left_encoded.as_gadget().cv.point.clone();
-        let action_root = poseidon::action_digest_circuit(dr, &[cv.x, cv.y, rk.x, rk.y])?;
+        let generator = Point::constant(dr, *ACTION_AUTH_GENERATOR)?;
+        let rk = curve::add_scaled(dr, &ak, &generator, &alpha_bits)?;
+        let cv = left_encoded.as_gadget().cv.clone();
+        let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
+        let [rk_x, rk_y] = curve::coordinates(dr, &rk)?;
+        let action_root = poseidon::action_digest_circuit(dr, &[cv_x, cv_y, rk_x, rk_y])?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         action_root.enforce_equal(dr, &oracles.staged()[0])?;
         enforce_poly_roots(
@@ -341,8 +550,8 @@ impl Step<Pasta> for SpendAction {
             &[action_root],
             "SpendAction: action set does not commit to the action",
         )?;
-        let current_root = left_encoded.as_gadget().nf_current.element.clone();
-        let next_root = left_encoded.as_gadget().nf_next.element.clone();
+        let current_root = left_encoded.as_gadget().nf_current.clone();
+        let next_root = left_encoded.as_gadget().nf_next.clone();
         enforce_poly_roots(
             dr,
             oracles,
@@ -355,8 +564,8 @@ impl Step<Pasta> for SpendAction {
             (action_set.commit(), tachygram_set.commit(), left.take().3)
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = crate::stamp::headers::stamp::ActionsOutput {
-            anchor: (left_encoded.as_gadget().anchor.element.clone()).into(),
+        let fields = ActionsOutput {
+            anchor: left_encoded.as_gadget().anchor.clone(),
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -464,8 +673,8 @@ impl Step<Pasta> for StampMerge {
             &merged_tachygram_handle,
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
-        let left_anchor_element = left_encoded.as_gadget().anchor.element.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.element.clone();
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
             .enforce_equal(dr, &right_anchor_element)
             .map_err(|_err| {
@@ -485,8 +694,8 @@ impl Step<Pasta> for StampMerge {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = crate::stamp::headers::stamp::StampOutput {
-            anchor: (left_anchor_element).into(),
+        let fields = StampOutput {
+            anchor: left_anchor_element,
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -594,8 +803,8 @@ impl Step<Pasta> for ActionMerge {
             &merged_tachygram_handle,
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
-        let left_anchor_element = left_encoded.as_gadget().anchor.element.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.element.clone();
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
             .enforce_equal(dr, &right_anchor_element)
             .map_err(|_err| {
@@ -615,8 +824,8 @@ impl Step<Pasta> for ActionMerge {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = crate::stamp::headers::stamp::ActionsOutput {
-            anchor: (left_anchor_element).into(),
+        let fields = ActionsOutput {
+            anchor: left_anchor_element,
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -698,8 +907,8 @@ impl Step<Pasta> for StampLift {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = left_encoded.as_gadget().anchor.element.clone();
-        let anchor_start = right_encoded.as_gadget().anchor_start.element.clone();
+        let anchor = left_encoded.as_gadget().anchor.clone();
+        let anchor_start = right_encoded.as_gadget().anchor_start.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
@@ -717,10 +926,10 @@ impl Step<Pasta> for StampLift {
             ))
         })?;
         let (data, aux) = output.cast();
-        let fields = crate::stamp::headers::stamp::StampOutput {
-            anchor: (right_encoded.as_gadget().anchor_end.element.clone()).into(),
-            action_commit: (left_encoded.as_gadget().action_commit.encoding.clone()).into(),
-            stamp_tg_commit: (left_encoded.as_gadget().stamp_tg_commit.encoding.clone()).into(),
+        let fields = StampOutput {
+            anchor: right_encoded.as_gadget().anchor_end.clone(),
+            action_commit: left_encoded.as_gadget().action_commit.clone(),
+            stamp_tg_commit: left_encoded.as_gadget().stamp_tg_commit.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -786,8 +995,8 @@ impl Step<Pasta> for ActionLift {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = left_encoded.as_gadget().anchor.element.clone();
-        let anchor_start = right_encoded.as_gadget().anchor_start.element.clone();
+        let anchor = left_encoded.as_gadget().anchor.clone();
+        let anchor_start = right_encoded.as_gadget().anchor_start.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
@@ -809,10 +1018,10 @@ impl Step<Pasta> for ActionLift {
             ))
         })?;
         let (data, aux) = output.cast();
-        let fields = crate::stamp::headers::stamp::ActionsOutput {
-            anchor: (right_encoded.as_gadget().anchor_end.element.clone()).into(),
-            action_commit: (left_encoded.as_gadget().action_commit.encoding.clone()).into(),
-            stamp_tg_commit: (left_encoded.as_gadget().stamp_tg_commit.encoding.clone()).into(),
+        let fields = ActionsOutput {
+            anchor: right_encoded.as_gadget().anchor_end.clone(),
+            action_commit: left_encoded.as_gadget().action_commit.clone(),
+            stamp_tg_commit: left_encoded.as_gadget().stamp_tg_commit.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -958,17 +1167,9 @@ impl Step<Pasta> for FeeFuse {
         }
         let maximum_bits = circuit::bits::<D, 51>(dr, &maximum)?;
         let blind_bits = circuit::bits::<D, 255>(dr, &blind)?;
-        let value_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, (-*value::VALUE_COMMIT_V).to_affine())?;
-        let blind_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
-        let value_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &value_generator, &maximum_bits)?;
-        let blind_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &blind_generator, &blind_bits)?;
-        let cv = crate::gadgets::point::CurvePoint::add(dr, &value_point, &blind_point)?;
-        cv.enforce_nonidentity(dr)?;
-        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv.x, cv.y, fee])?;
+        let cv = curve::commitment(dr, &maximum_bits, &blind_bits, true)?;
+        let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
+        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv_x, cv_y, fee])?;
         let fee_change = poseidon::note_commitment_circuit(dr, &[rcm, pk, change, psi])?;
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
@@ -999,8 +1200,8 @@ impl Step<Pasta> for FeeFuse {
             (actions.commit(), tachygrams.commit(), left.take().2)
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = crate::stamp::headers::stamp::StampOutput {
-            anchor: (left_encoded.as_gadget().anchor.element.clone()).into(),
+        let fields = StampOutput {
+            anchor: left_encoded.as_gadget().anchor.clone(),
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -1110,12 +1311,11 @@ impl Step<Pasta> for FeeSeed {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
         let blind_bits = circuit::bits::<D, 255>(dr, &blind)?;
-        let blind_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
-        let cv = crate::gadgets::point::CurvePoint::scale(dr, &blind_generator, &blind_bits)?;
-        cv.enforce_nonidentity(dr)?;
+        let blind_generator = Point::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
+        let cv = curve::scale(dr, &blind_generator, &blind_bits)?;
+        let [cv_x, cv_y] = curve::coordinates(dr, &cv)?;
         let zero = Element::constant(dr, Fp::ZERO);
-        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv.x, cv.y, zero.clone()])?;
+        let fee_digest = poseidon::fee_digest_circuit(dr, &[cv_x, cv_y, zero.clone()])?;
         let fee_change = poseidon::note_commitment_circuit(dr, &[rcm, pk, zero, psi])?;
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
@@ -1138,8 +1338,8 @@ impl Step<Pasta> for FeeSeed {
             (actions.commit(), tachygrams.commit(), anchor)
         });
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = crate::stamp::headers::stamp::StampOutput {
-            anchor: (anchor_element).into(),
+        let fields = StampOutput {
+            anchor: anchor_element,
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -1284,8 +1484,8 @@ impl Step<Pasta> for StampUnmerge {
             &dividend_tachygram_handle,
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
-        let left_anchor_element = left_encoded.as_gadget().anchor.element.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.element.clone();
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
             .enforce_equal(dr, &right_anchor_element)
             .map_err(|_err| {
@@ -1305,8 +1505,8 @@ impl Step<Pasta> for StampUnmerge {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = crate::stamp::headers::stamp::StampOutput {
-            anchor: (left_anchor_element).into(),
+        let fields = StampOutput {
+            anchor: left_anchor_element,
             action_commit: encoded.as_gadget().action_commit.clone(),
             stamp_tg_commit: encoded.as_gadget().stamp_tg_commit.clone(),
         };
@@ -1317,5 +1517,3 @@ impl Step<Pasta> for StampUnmerge {
         ))
     }
 }
-
-pub use crate::stamp::headers::stamp::{Actions, Stamp};

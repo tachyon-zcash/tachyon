@@ -19,3 +19,21 @@ fn bounded_amount_rejects_raw_out_of_range_assignments() {
         assert_eq!(result.is_ok(), valid);
     }
 }
+
+#[test]
+fn epoch_successor_rejects_raw_final_and_out_of_domain_assignments() {
+    for (index, valid) in [
+        (Fp::ZERO, true),
+        (Fp::from(u64::from(EPOCH_MAX - 1)), true),
+        (-Fp::ONE, false),
+        (Fp::from(u64::from(EPOCH_MAX)), false),
+        (Fp::from(u64::from(EPOCH_MAX) + 1), false),
+    ] {
+        let result = Simulator::<Fp>::simulate(index, |driver, assignment| {
+            let epoch = Element::alloc(driver, &mut (), assignment)?;
+            epoch_next(driver, &epoch)?;
+            Ok(())
+        });
+        assert_eq!(result.is_ok(), valid);
+    }
+}

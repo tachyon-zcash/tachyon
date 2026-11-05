@@ -9,7 +9,6 @@
 
 extern crate alloc;
 
-pub mod headers;
 pub mod proof;
 
 use alloc::{boxed::Box, collections::BTreeSet, format, vec, vec::Vec};
@@ -24,8 +23,9 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::{PROOF_SIZE_COMPRESSED, pasta::Pasta};
+use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},

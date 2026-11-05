@@ -96,8 +96,8 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use ragu::pasta::Pasta;
 use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::curve::Affine as _;
 

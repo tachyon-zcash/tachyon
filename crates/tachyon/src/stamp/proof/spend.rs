@@ -2,22 +2,105 @@
 
 extern crate alloc;
 
-use ragu::{Encoded, Header, Index, Oracles, Step, pasta::Pasta};
+use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _};
-use udon::{curve::Projective as _, field::Field as _};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use udon::{curve::EndomorphismAffine, field::Field as _};
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
     constants::{EPOCH_MAX, MAX_MONEY},
-    gadgets::arithmetic as circuit,
+    digest::poseidon,
+    keys, note,
     nullifier::Nullifier,
-    pasta::{Fp, Fq},
+    pasta::{EpAffine, Fp, Fq},
+    primitives::Anchor,
+    relations::{arithmetic as circuit, curve},
     value,
 };
+
+/// Header binding a spend to its lineage note, epoch nullifier pair and value
+/// commitment.
+///
+/// Carries the note commitment `cm`, the lineage's nullifier and its
+/// neighbour `(nf_current, nf_next)` derived from the note's master key, the
+/// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
+/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
+/// ties its `ak` to `pk`, and produces `rk`.
+#[derive(Debug)]
+pub struct SpendHeader;
+
+/// The `SpendHeader` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("SpendHeaderOutput(..)")]
+pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `nf_current` field.
+    pub nf_current: Element<'dr, D>,
+    /// The `nf_next` field.
+    pub nf_next: Element<'dr, D>,
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+    /// The `pk` field.
+    pub pk: Element<'dr, D>,
+    /// The `cv` field.
+    pub cv: Point<'dr, D, C>,
+}
+
+impl Header<Fp> for SpendHeader {
+    type Data = (
+        note::Commitment,
+        Nullifier,
+        Nullifier,
+        Anchor,
+        keys::PaymentKey,
+        value::Commitment,
+    );
+    type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
+
+    const SUFFIX: Suffix = Suffix::new(5);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(SpendHeaderOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            nf_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            nf_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+            cv: Point::alloc(dr, witness.as_ref().map(|fields| EpAffine::from(fields.5)))?,
+        })
+    }
+}
 
 /// Derives a spend's epoch nullifier pair from the note's master key, commits
 /// the note's value, and binds both to the spendable lineage.
@@ -41,6 +124,28 @@ use crate::{
 /// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
 pub struct SpendBind;
+
+/// Derive one group and select its lane using the epoch's constrained low bits.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::missing_asserts_for_indexing,
+    reason = "the epoch decomposition has exactly 32 bits"
+)]
+fn derive_nullifier<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    master: &Element<'dr, D>,
+    epoch: &Element<'dr, D>,
+) -> ragu_core::Result<Element<'dr, D>> {
+    let bits = circuit::bits::<D, 32>(dr, epoch)?;
+    let low = &bits[0];
+    let high = &bits[1];
+    let twice_high = high.element().double(dr);
+    let group = epoch.sub(dr, &low.element()).sub(dr, &twice_high);
+    let [first, second, third, fourth] = poseidon::nullifier_group_circuit(dr, master, &group)?;
+    let lower = low.conditional_select(dr, &first, &second)?;
+    let upper = low.conditional_select(dr, &third, &fourth)?;
+    high.conditional_select(dr, &lower, &upper)
+}
 
 impl Step<Pasta> for SpendBind {
     type Aux<'source> = ();
@@ -74,29 +179,21 @@ impl Step<Pasta> for SpendBind {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let cm = left_encoded.as_gadget().cm.element.clone();
-        let secret_cm = right_encoded.as_gadget().cm.element.clone();
+        let cm = left_encoded.as_gadget().cm.clone();
+        let secret_cm = right_encoded.as_gadget().cm.clone();
         cm.enforce_equal(dr, &secret_cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
-        let value = right_encoded.as_gadget().note.value.element.clone();
+        let value = right_encoded.as_gadget().value.clone();
         circuit::bounded::<D, 51>(dr, &value, MAX_MONEY)?;
-        let epoch = left_encoded.as_gadget().epoch_current.element.clone();
+        let epoch = left_encoded.as_gadget().epoch_current.clone();
         let one = Element::constant(dr, Fp::ONE);
         let next = epoch.add(dr, &one);
         circuit::bounded::<D, 32>(dr, &next, u64::from(EPOCH_MAX)).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
-        let nf_current = right_encoded
-            .as_gadget()
-            .mk
-            .derive_nullifier(dr, &epoch)?
-            .element;
-        let nf_next = right_encoded
-            .as_gadget()
-            .mk
-            .derive_nullifier(dr, &next)?
-            .element;
+        let nf_current = derive_nullifier(dr, &right_encoded.as_gadget().mk, &epoch)?;
+        let nf_next = derive_nullifier(dr, &right_encoded.as_gadget().mk, &next)?;
         nf_current.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: current-epoch nullifier is zero".into())
         })?;
@@ -106,16 +203,7 @@ impl Step<Pasta> for SpendBind {
 
         let value_bits = circuit::bits::<D, 51>(dr, &value)?;
         let rcv_bits = circuit::scalar_bits(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
-        let value_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_V.to_affine())?;
-        let blind_generator =
-            crate::gadgets::point::CurvePoint::constant(dr, value::VALUE_COMMIT_R.to_affine())?;
-        let value_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &value_generator, &value_bits)?;
-        let blind_point =
-            crate::gadgets::point::CurvePoint::scale(dr, &blind_generator, &rcv_bits)?;
-        let cv = crate::gadgets::point::CurvePoint::add(dr, &value_point, &blind_point)?;
-        cv.enforce_nonidentity(dr)?;
+        let cv = curve::commitment(dr, &value_bits, &rcv_bits, false)?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
@@ -128,13 +216,13 @@ impl Step<Pasta> for SpendBind {
                 value::Commitment::from(cv.value().take()),
             )
         });
-        let fields = crate::stamp::headers::spend::SpendHeaderOutput {
-            cm: (cm).into(),
-            nf_current: (nf_current).into(),
-            nf_next: (nf_next).into(),
-            anchor: (left_encoded.as_gadget().anchor.element.clone()).into(),
-            pk: (right_encoded.as_gadget().note.pk.element.clone()).into(),
-            cv: (cv).into(),
+        let fields = SpendHeaderOutput {
+            cm,
+            nf_current,
+            nf_next,
+            anchor: left_encoded.as_gadget().anchor.clone(),
+            pk: right_encoded.as_gadget().pk.clone(),
+            cv,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -143,5 +231,3 @@ impl Step<Pasta> for SpendBind {
         ))
     }
 }
-
-pub use crate::stamp::headers::spend::SpendHeader;

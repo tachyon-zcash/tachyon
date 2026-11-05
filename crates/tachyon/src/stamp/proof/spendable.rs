@@ -11,18 +11,73 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
+    digest::poseidon,
+    note,
     pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    relations::arithmetic as circuit,
 };
+
+/// Wallet's spendable position, certified up to this point in every
+/// coordinate.
+///
+/// `cm` keeps the spent value from drifting to a different same-`mk` note.
+#[derive(Clone, Debug)]
+pub struct NoteSpendable;
+
+/// The `NoteSpendable` header gadget.
+#[derive(Gadget, Write, derive_more::Debug)]
+#[debug("NoteSpendableOutput(..)")]
+pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
+    /// The `cm` field.
+    pub cm: Element<'dr, D>,
+    /// The `epoch_current` field.
+    pub epoch_current: Element<'dr, D>,
+    /// The `anchor` field.
+    pub anchor: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteSpendable {
+    type Data = (note::Commitment, EpochIndex, Anchor);
+    type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(2);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteSpendableOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+        })
+    }
+}
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
@@ -90,10 +145,9 @@ impl Step<Pasta> for SpendableInit {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
-        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous)
-            .next_stamp(dr, &epoch, oracles.bridge_hash().clone())?
-            .element;
-        let x = left_encoded.as_gadget().cm.element.clone();
+        let anchor =
+            poseidon::anchor_next_stamp_circuit(dr, &previous, &epoch, oracles.bridge_hash())?;
+        let x = left_encoded.as_gadget().cm.clone();
         let evaluation = oracles.query(dr, Slot::output(1), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
@@ -105,10 +159,10 @@ impl Step<Pasta> for SpendableInit {
                 Anchor::from(*anchor.value().take()),
             )
         });
-        let fields = crate::stamp::headers::spendable::NoteSpendableOutput {
-            cm: (left_encoded.as_gadget().cm.element.clone()).into(),
-            epoch_current: (epoch).into(),
-            anchor: (anchor).into(),
+        let fields = NoteSpendableOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_current: epoch,
+            anchor,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -187,8 +241,8 @@ impl Step<Pasta> for QrSpendableInit {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let bucket_epoch = right_encoded.as_gadget().epoch.element.clone();
-        let unspent_epoch = left_encoded.as_gadget().epoch_start.element.clone();
+        let bucket_epoch = right_encoded.as_gadget().epoch.clone();
+        let unspent_epoch = left_encoded.as_gadget().epoch_start.clone();
         bucket_epoch
             .enforce_equal(dr, &unspent_epoch)
             .map_err(|_err| {
@@ -196,8 +250,8 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not start in the bucket's epoch".into(),
                 )
             })?;
-        let bucket_start = right_encoded.as_gadget().anchor_start.element.clone();
-        let unspent_start = left_encoded.as_gadget().anchor_start.element.clone();
+        let bucket_start = right_encoded.as_gadget().anchor_start.clone();
+        let unspent_start = left_encoded.as_gadget().anchor_start.clone();
         bucket_start
             .enforce_equal(dr, &unspent_start)
             .map_err(|_err| {
@@ -205,44 +259,35 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not open where the bucket does".into(),
                 )
             })?;
-        let bucket_end = right_encoded.as_gadget().anchor_next.element.clone();
-        let unspent_end = left_encoded.as_gadget().anchor_next.element.clone();
+        let bucket_end = right_encoded.as_gadget().anchor_next.clone();
+        let unspent_end = left_encoded.as_gadget().anchor_next.clone();
         bucket_end.enforce_equal(dr, &unspent_end).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSpendableInit: segment does not close where the bucket does".into(),
             )
         })?;
-        let next = crate::gadgets::epoch::EpochIndexGadget::from((bucket_epoch).clone())
-            .next(dr)
-            .map(|epoch| epoch.element)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
-            })?;
-        let unspent_next = left_encoded.as_gadget().epoch_next.element.clone();
+        let next = circuit::epoch_next(dr, &bucket_epoch).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+        })?;
+        let unspent_next = left_encoded.as_gadget().epoch_next.clone();
         next.enforce_equal(dr, &unspent_next).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSpendableInit: segment does not end in the epoch after the bucket's".into(),
             )
         })?;
-        let x = left_encoded.as_gadget().cm.element.clone();
+        let x = left_encoded.as_gadget().cm.clone();
         let evaluation = oracles.query(dr, Slot::right(0), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
         })?;
         let output = D::just(|| {
             let data = left.take();
-            (
-                data.0,
-                crate::gadgets::epoch::EpochIndexGadget::from((next).clone())
-                    .value()
-                    .take(),
-                data.4,
-            )
+            (data.0, circuit::epoch_value(&next).take(), data.4)
         });
-        let fields = crate::stamp::headers::spendable::NoteSpendableOutput {
-            cm: (left_encoded.as_gadget().cm.element.clone()).into(),
-            epoch_current: (next).into(),
-            anchor: (unspent_end).into(),
+        let fields = NoteSpendableOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_current: next,
+            anchor: unspent_end,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -307,8 +352,8 @@ impl Step<Pasta> for SpendableLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let spendable_cm = left_encoded.as_gadget().cm.element.clone();
-        let unspent_cm = right_encoded.as_gadget().cm.element.clone();
+        let spendable_cm = left_encoded.as_gadget().cm.clone();
+        let unspent_cm = right_encoded.as_gadget().cm.clone();
         spendable_cm
             .enforce_equal(dr, &unspent_cm)
             .map_err(|_err| {
@@ -316,8 +361,8 @@ impl Step<Pasta> for SpendableLift {
                     "SpendableLift: unspent cm does not match spendable".into(),
                 )
             })?;
-        let spendable_epoch = left_encoded.as_gadget().epoch_current.element.clone();
-        let unspent_epoch = right_encoded.as_gadget().epoch_start.element.clone();
+        let spendable_epoch = left_encoded.as_gadget().epoch_current.clone();
+        let unspent_epoch = right_encoded.as_gadget().epoch_start.clone();
         spendable_epoch
             .enforce_equal(dr, &unspent_epoch)
             .map_err(|_err| {
@@ -325,8 +370,8 @@ impl Step<Pasta> for SpendableLift {
                     "SpendableLift: segment does not start at the lineage epoch".into(),
                 )
             })?;
-        let spendable_anchor = left_encoded.as_gadget().anchor.element.clone();
-        let unspent_anchor = right_encoded.as_gadget().anchor_start.element.clone();
+        let spendable_anchor = left_encoded.as_gadget().anchor.clone();
+        let unspent_anchor = right_encoded.as_gadget().anchor_start.clone();
         spendable_anchor
             .enforce_equal(dr, &unspent_anchor)
             .map_err(|_err| {
@@ -339,10 +384,10 @@ impl Step<Pasta> for SpendableLift {
             let (_, _, _, unspent_epoch_next, unspent_anchor_next) = right.take();
             (output_cm, unspent_epoch_next, unspent_anchor_next)
         });
-        let fields = crate::stamp::headers::spendable::NoteSpendableOutput {
-            cm: (spendable_cm).into(),
-            epoch_current: (right_encoded.as_gadget().epoch_next.element.clone()).into(),
-            anchor: (right_encoded.as_gadget().anchor_next.element.clone()).into(),
+        let fields = NoteSpendableOutput {
+            cm: spendable_cm,
+            epoch_current: right_encoded.as_gadget().epoch_next.clone(),
+            anchor: right_encoded.as_gadget().anchor_next.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -351,5 +396,3 @@ impl Step<Pasta> for SpendableLift {
         ))
     }
 }
-
-pub use crate::stamp::headers::spendable::NoteSpendable;

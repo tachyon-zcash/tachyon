@@ -8,17 +8,14 @@
 
 use core::array;
 
-use ragu::{
-    Cycle as _, PoseidonPermutation as _,
-    pasta::{Pasta, PoseidonFp},
-};
 use ragu_core::{
-    Result,
+    Cycle as _, FixedGenerators as _, PoseidonPermutation as _, Result,
     drivers::{
         Driver,
         emulator::{Emulator, Wireless},
     },
     maybe::{Always, Maybe as _},
+    pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{
     Element,
@@ -28,41 +25,37 @@ use ragu_primitives::{
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    constants::EVIDENCE_TREE_ARITY,
+    constants::{EPOCH_MAX, EVIDENCE_TREE_ARITY},
     pasta,
     pasta::{EqAffine, Fp},
+    relations::arithmetic::bounded,
     stamp::proof::PROOF_SYSTEM,
 };
+
+/// The wireless emulator that evaluates the real in-circuit sponge natively:
+/// witness values are always present and no wires are tracked, so absorb and
+/// squeeze compute field values without building constraints.
+type Emu = Emulator<Wireless<Always<()>, Fp>>;
 
 #[expect(
     clippy::expect_used,
     reason = "sponge squeeze cannot fail in wireless `Always` mode"
 )]
-fn squeeze(
-    emulator: &mut Emulator<Wireless<Always<()>, Fp>>,
-    sponge: &mut Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
-) -> Fp {
+fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
     let squeezed = sponge.squeeze(emulator).expect("infallible");
     *squeezed.value().take()
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
 /// zero rate, then absorbs `input`.
-#[expect(
-    clippy::type_complexity,
-    reason = "keep the real sponge driver type explicit"
-)]
 fn tagged_sponge<const L: usize>(
     domain: &[u8; 16],
     input: [Fp; L],
-) -> (
-    Emulator<Wireless<Always<()>, Fp>>,
-    Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
-) {
+) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
     let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
 
-    let mut emulator = Emulator::<Wireless<Always<()>, Fp>>::execute();
+    let mut emulator = Emu::execute();
     let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
         let value = if index == PoseidonFp::RATE {
             capacity
@@ -86,30 +79,6 @@ fn tagged_sponge<const L: usize>(
 fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     let (mut emulator, mut sponge) = tagged_sponge(domain, input);
     squeeze(&mut emulator, &mut sponge)
-}
-
-fn hash_gadget<'dr, D: Driver<'dr, F = Fp>, const L: usize>(
-    dr: &mut D,
-    domain: &[u8; 16],
-    input: [&Element<'dr, D>; L],
-) -> Result<Element<'dr, D>> {
-    let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
-    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
-        Element::constant(
-            dr,
-            if index == PoseidonFp::RATE {
-                capacity
-            } else {
-                Fp::ZERO
-            },
-        )
-    }));
-    let mut sponge =
-        Sponge::<_, PoseidonFp>::resume(state, Pasta::circuit_poseidon(pasta::baked()));
-    for value in input {
-        sponge.absorb(dr, value)?;
-    }
-    sponge.squeeze(dr)
 }
 
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
@@ -389,15 +358,7 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    anchor_next_stamp_digest(anchor_prev, epoch, commitment_digest(tgs))
-}
-
-/// The circuit-side fold reads the digest from `Oracles::bridge_hash`.
-pub(crate) fn anchor_next_stamp_digest(
-    anchor_prev: Fp,
-    epoch: Fp,
-    (digest_x, digest_y): (Fp, Fp),
-) -> Fp {
+    let (digest_x, digest_y) = commitment_digest(tgs);
     hash::<4>(
         ANCHOR_STAMP_DOMAIN,
         [anchor_prev, epoch, digest_x, digest_y],
@@ -405,17 +366,42 @@ pub(crate) fn anchor_next_stamp_digest(
 }
 
 /// Fold a slot's certified bridge digest into an anchor.
-pub(crate) fn anchor_next_stamp_gadget<'dr, D: Driver<'dr, F = Fp>>(
+pub(crate) fn anchor_next_stamp_circuit<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     anchor_prev: &Element<'dr, D>,
     epoch: &Element<'dr, D>,
     digest: &[Element<'dr, D>; 2],
 ) -> Result<Element<'dr, D>> {
-    hash_gadget(
-        dr,
-        ANCHOR_STAMP_DOMAIN,
-        [anchor_prev, epoch, &digest[0], &digest[1]],
-    )
+    let generator = *Pasta::host_generators(pasta::baked())
+        .g()
+        .first()
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("fixed generator table is empty".into()))?;
+    let (low, high) = commitment_digest(generator);
+    let low_element = Element::constant(dr, low);
+    let high_element = Element::constant(dr, high);
+    let equal_low = digest[0].is_equal(dr, &mut (), &low_element)?;
+    let equal_high = digest[1].is_equal(dr, &mut (), &high_element)?;
+    equal_low
+        .and(dr, &equal_high)?
+        .element()
+        .enforce_zero(dr)
+        .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+    bounded::<D, 32>(dr, epoch, u64::from(EPOCH_MAX))?;
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            dr,
+            if index == PoseidonFp::RATE {
+                Fp::from_u128(u128::from_le_bytes(*ANCHOR_STAMP_DOMAIN))
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
+    for element in [anchor_prev, epoch, &digest[0], &digest[1]] {
+        sponge.absorb(dr, element)?;
+    }
+    sponge.squeeze(dr)
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
@@ -436,27 +422,7 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    evidence_tree_leaf_digest(
-        epoch,
-        anchor_start,
-        anchor_next,
-        discriminant,
-        depth,
-        bits,
-        commitment_digest(contents),
-    )
-}
-
-/// Hash a bucket using its certified bridge digest.
-pub(crate) fn evidence_tree_leaf_digest(
-    epoch: Fp,
-    anchor_start: Fp,
-    anchor_next: Fp,
-    discriminant: Fp,
-    depth: Fp,
-    bits: Fp,
-    (digest_x, digest_y): (Fp, Fp),
-) -> Fp {
+    let (digest_x, digest_y) = commitment_digest(contents);
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -473,26 +439,36 @@ pub(crate) fn evidence_tree_leaf_digest(
 }
 
 /// Hash the fields of a bucket and its certified bridge digest.
-pub(crate) fn evidence_tree_leaf_gadget<'dr, D: Driver<'dr, F = Fp>>(
+pub(crate) fn evidence_tree_leaf_circuit<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     fields: [&Element<'dr, D>; 6],
     digest: &[Element<'dr, D>; 2],
 ) -> Result<Element<'dr, D>> {
     let [epoch, anchor_start, anchor_next, discriminant, depth, bits] = fields;
-    hash_gadget(
-        dr,
-        QR_BUCKET_DOMAIN,
-        [
-            epoch,
-            anchor_start,
-            anchor_next,
-            discriminant,
-            depth,
-            bits,
-            &digest[0],
-            &digest[1],
-        ],
-    )
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            dr,
+            if index == PoseidonFp::RATE {
+                Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN))
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(pasta::baked()));
+    for element in [
+        epoch,
+        anchor_start,
+        anchor_next,
+        discriminant,
+        depth,
+        bits,
+        &digest[0],
+        &digest[1],
+    ] {
+        sponge.absorb(dr, element)?;
+    }
+    sponge.squeeze(dr)
 }
 
 /// Folds four subtree roots into their parent node of a evidence tree.

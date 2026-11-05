@@ -25,11 +25,7 @@ fn profile_rejects_invalid_depth_and_register() {
                     &mut (),
                     assignment.map(|value| Fp::from(u64::from(value.1))),
                 )?;
-                QrProfileGadget {
-                    depth,
-                    bits: register,
-                }
-                .validate(driver)?;
+                validate(driver, &depth, &register)?;
                 Ok(())
             });
         assert_eq!(result.is_ok(), valid);

@@ -7,12 +7,13 @@
 use alloc::{string::ToString as _, vec::Vec};
 use core::{iter, marker::PhantomData};
 
-use ragu::{ApplicationBuilder, Encoded, Header, HeaderInput, Index, Oracles, Step, pasta::Pasta};
+use ragu::{ApplicationBuilder, Encoded, Header, HeaderInput, Index, Oracles, Step};
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe as _,
+    pasta::Pasta,
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 
