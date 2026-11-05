@@ -12,6 +12,7 @@ fn randomizer_embeds_the_poseidon_output() {
     let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
     let output: Fq = theta.randomizer::<effect::Output>(cm).into();
 
+    assert_ne!(spend, output);
     assert_eq!(
         spend.to_bytes(),
         poseidon::alpha_spend(theta.0, cm.into()).to_bytes()
