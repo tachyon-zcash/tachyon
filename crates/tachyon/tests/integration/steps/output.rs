@@ -94,27 +94,35 @@ fn output_steps_reject_corruptions() {
         .take(2)
         .collect::<TachygramSetPoly>();
     let fuse = |fuse_rng: &mut StdRng, action_witness| {
-        PROOF_SYSTEM
-            .fuse(
-                fuse_rng,
-                stamp::OutputAction,
-                action_witness,
-                bind.clone(),
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .map(drop)
+        PROOF_SYSTEM.fuse(
+            fuse_rng,
+            stamp::OutputAction,
+            action_witness,
+            bind.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        )
     };
 
-    assert_eq!(
-        fuse(rng, (theta, anchor, action_set, foreign_tachygrams))
-            .unwrap_err()
-            .to_string(),
-        "invalid witness: OutputAction: tachygram set does not commit to the bound pair",
-    );
-    assert_eq!(
-        fuse(rng, (theta, anchor, foreign_action_set, tachygram_set))
-            .unwrap_err()
-            .to_string(),
-        "invalid witness: OutputAction: action set does not commit to the action",
-    );
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) =
+            fuse(rng, (theta, anchor, action_set, foreign_tachygrams))
+        else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "OutputAction: tachygram set does not commit to the bound pair"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) =
+            fuse(rng, (theta, anchor, foreign_action_set, tachygram_set))
+        else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "OutputAction: action set does not commit to the action"
+        );
+    }
 }

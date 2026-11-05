@@ -198,56 +198,69 @@ fn delegation_steps_reject_corruptions() {
     );
 
     let derive = |derive_rng: &mut StdRng, at: EpochIndex, seq: NfSeqPoly| {
-        PROOF_SYSTEM
-            .fuse(
-                derive_rng,
-                delegation::NullifierDerive,
-                (at, seq),
-                secret_pcd.clone(),
-                Proof::bootstrap().carry::<()>(()),
-            )
-            .map(drop)
+        PROOF_SYSTEM.fuse(
+            derive_rng,
+            delegation::NullifierDerive,
+            (at, seq),
+            secret_pcd.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        )
     };
     let fuse = |fuse_rng: &mut StdRng, fuse_witness, with: &Pcd<delegation::NoteNullifiers>| {
-        PROOF_SYSTEM
-            .fuse(
-                fuse_rng,
-                delegation::NullifierFuse,
-                fuse_witness,
-                left.clone(),
-                with.clone(),
-            )
-            .map(drop)
+        PROOF_SYSTEM.fuse(
+            fuse_rng,
+            delegation::NullifierFuse,
+            fuse_witness,
+            left.clone(),
+            with.clone(),
+        )
     };
 
-    assert_eq!(
-        derive(rng, left_start, foreign_seq)
-            .unwrap_err()
-            .to_string(),
-        "invalid witness: NullifierDerive: sequence does not match the derived window",
-    );
-    assert_eq!(
-        derive(rng, misaligned, honest_seq).unwrap_err().to_string(),
-        "invalid witness: NullifierDerive: epoch_start is not group-aligned",
-    );
-    assert_eq!(
-        derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[]))
-            .unwrap_err()
-            .to_string(),
-        "invalid witness: NullifierDerive: window exceeds the epoch range",
-    );
-    assert_eq!(
-        fuse(rng, gapped_witness, &gapped).unwrap_err().to_string(),
-        "invalid witness: NullifierFuse: ranges not contiguous",
-    );
-    assert_eq!(
-        fuse(rng, foreign_witness, &foreign_right)
-            .unwrap_err()
-            .to_string(),
-        "invalid witness: NullifierFuse: note commitments differ",
-    );
-    assert_eq!(
-        fuse(
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, left_start, foreign_seq)
+        else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierDerive: sequence does not match the derived window"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = derive(rng, misaligned, honest_seq) else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierDerive: epoch_start is not group-aligned"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) =
+            derive(rng, past_the_end, NfSeqPoly::new(past_the_end, &[]))
+        else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierDerive: window exceeds the epoch range"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, gapped_witness, &gapped) else {
+            panic!();
+        };
+        assert_eq!(err.to_string(), "NullifierFuse: ranges not contiguous");
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(rng, foreign_witness, &foreign_right)
+        else {
+            panic!();
+        };
+        assert_eq!(err.to_string(), "NullifierFuse: note commitments differ");
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
             rng,
             (
                 NfSeqPoly::new(left_start, &right_nfs),
@@ -255,13 +268,16 @@ fn delegation_steps_reject_corruptions() {
                 right_seq.clone(),
             ),
             &right,
-        )
-        .unwrap_err()
-        .to_string(),
-        "invalid witness: NullifierFuse: left polynomial does not match header",
-    );
-    assert_eq!(
-        fuse(
+        ) else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierFuse: left polynomial does not match header"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
             rng,
             (
                 left_seq.clone(),
@@ -269,19 +285,25 @@ fn delegation_steps_reject_corruptions() {
                 NfSeqPoly::new(right_start, &reversed),
             ),
             &right,
-        )
-        .unwrap_err()
-        .to_string(),
-        "invalid witness: NullifierFuse: right polynomial does not match header",
-    );
-    assert_eq!(
-        fuse(
+        ) else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierFuse: right polynomial does not match header"
+        );
+    }
+    {
+        let Err(ragu_core::Error::InvalidWitness(err)) = fuse(
             rng,
             (left_seq, NfSeqPoly::new(left_start, &junk), right_seq),
             &right,
-        )
-        .unwrap_err()
-        .to_string(),
-        "invalid witness: NullifierFuse: merged is not the concat of the halves",
-    );
+        ) else {
+            panic!();
+        };
+        assert_eq!(
+            err.to_string(),
+            "NullifierFuse: merged is not the concat of the halves"
+        );
+    }
 }
