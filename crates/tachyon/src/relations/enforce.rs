@@ -130,10 +130,11 @@ pub(crate) fn enforce_poly_linear_factor(
 ///
 /// `product` is prover-supplied and the relation works only from the
 /// two commitments and their openings at `z` -- it does not multiply the
-/// inputs. The point-wise identity `product(z) = multiplicand(z)·F(index, value)(z)`
-/// at a random `z` confirms the relation: with both operands committed and
-/// absorbed into `z`, the difference `product − multiplicand·F(index, value)` is
-/// a fixed polynomial pinned to zero by Schwartz-Zippel.
+/// inputs. The point-wise identity `product(z) = multiplicand(z)·F(index,
+/// value)(z)` at a random `z` confirms the relation: with both operands
+/// committed and absorbed into `z`, the difference `product −
+/// multiplicand·F(index, value)` is a fixed polynomial pinned to zero by
+/// Schwartz-Zippel.
 ///
 /// # Caller obligation (soundness)
 ///
