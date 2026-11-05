@@ -15,12 +15,40 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ u,\ v)
 $$
 
-where $e$ is the containing block's epoch and $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
+where $e$ is the containing block's epoch and $(u, v)$ is the bridge hash of the stamp's tachygram-set commitment[^tachygrams].
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
+
+### Bridge hash
+
+For a Vesta commitment $C = (x, y)$, with $x, y \in \mathbb{F}_q$, the bridge hash is the Pallas point
+
+$$
+H^\mathsf{bridge}(C) = [x]G_i + [y]G_j = (u, v).
+$$
+
+Pallas's scalar field is $\mathbb{F}_q$, so the coordinates need no reduction. Evidence-leaf hashes use the same bridge representation of their contents commitment.
+
+The indices follow ragu's bridge-stage layout. For rank $r$, let
+
+$$
+n = 2^{r-2}, \qquad
+s = 1 + \left\lceil\frac{143 + 94}{2}\right\rceil = 120, \qquad
+i = 2n - 1 - s, \qquad j = 4n - 1 - s.
+$$
+
+Here 143 is `ENDOSCALAR_BITS` and 94 is `ENDOSCALAR_PRODUCTS`; a change to that encoding changes $s$ and the indices. Tachyon uses `R<13>`, so $n = 2048$, $i = 3975$ and $j = 8071$.
+
+Each nested Pallas generator is derived independently as
+
+```text
+G[k] = pallas::Point::hash_to_curve("Ragu-Parameters")(0x00 || u32_le(k))
+```
+
+The message is five bytes: the zero tag followed by the little-endian index. This is the `pasta_curves` hash-to-curve construction. A device can derive just these two points or store them as constants, checked against `Pasta::nested_generators(params).g()` at indices 3975 and 8071. Computing the bridge hash needs no application or proof-system setup.
 
 ## Epoch boundary
 
