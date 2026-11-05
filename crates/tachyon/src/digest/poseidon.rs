@@ -13,7 +13,10 @@ use ragu::{
     pasta::{Pasta, PoseidonFp},
 };
 use ragu_core::{
-    drivers::emulator::{Emulator, Wireless},
+    drivers::{
+        Driver,
+        emulator::{Emulator, Wireless},
+    },
     maybe::{Always, Maybe as _},
 };
 use ragu_primitives::{
@@ -27,6 +30,7 @@ use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
+    stamp::proof::PROOF_SYSTEM,
 };
 
 #[expect(
@@ -81,6 +85,30 @@ fn tagged_sponge<const L: usize>(
 fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     let (mut emulator, mut sponge) = tagged_sponge(domain, input);
     squeeze(&mut emulator, &mut sponge)
+}
+
+fn hash_gadget<'dr, D: Driver<'dr, F = Fp>, const L: usize>(
+    dr: &mut D,
+    domain: &[u8; 16],
+    input: [&Element<'dr, D>; L],
+) -> ragu_core::Result<Element<'dr, D>> {
+    let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            dr,
+            if index == PoseidonFp::RATE {
+                capacity
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge =
+        Sponge::<_, PoseidonFp>::resume(state, Pasta::circuit_poseidon(pasta::baked()));
+    for value in input {
+        sponge.absorb(dr, value)?;
+    }
+    sponge.squeeze(dr)
 }
 
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
@@ -196,28 +224,21 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     array::from_fn(|_| squeeze(&mut emulator, &mut sponge))
 }
 
-/// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.
-///
-/// The 32-byte encoding carries $x$ with the sign of $y$ in its high bit, so
-/// the limb pair determines the point. Each limb reads 16 bytes little-endian,
-/// far below the $\mathbb{F}_p$ modulus.
+/// Native counterpart of the framework's output-slot bridge digest.
 ///
 /// # Panics
 ///
 /// Panics if `point` is the identity.
-#[expect(clippy::expect_used, reason = "constant-size decomposition")]
-fn point_limbs(point: EqAffine) -> (Fp, Fp) {
-    assert!(
-        !point.is_identity(),
-        "commitment must not be the identity point"
-    );
-
-    let encoding = point.to_bytes();
-    let (lo, hi) = encoding.as_ref().split_at(16);
-    (
-        Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),
-        Fp::from_u128(u128::from_le_bytes(hi.try_into().expect("16 bytes"))),
-    )
+#[expect(
+    clippy::expect_used,
+    reason = "nonidentity commitment has a bridge digest"
+)]
+pub(crate) fn commitment_digest(point: EqAffine) -> (Fp, Fp) {
+    PROOF_SYSTEM
+        .bridge_hash(point)
+        .expect("commitment must not be the identity point")
+        .coordinates()
+        .expect("bridge digest must not be the identity point")
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
@@ -230,8 +251,33 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (tgs_lo, tgs_hi) = point_limbs(tgs);
-    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
+    anchor_next_stamp_digest(anchor_prev, epoch, commitment_digest(tgs))
+}
+
+/// The circuit-side fold reads the digest from `Oracles::bridge_hash`.
+pub(crate) fn anchor_next_stamp_digest(
+    anchor_prev: Fp,
+    epoch: Fp,
+    (digest_x, digest_y): (Fp, Fp),
+) -> Fp {
+    hash::<4>(
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, digest_x, digest_y],
+    )
+}
+
+/// Fold a slot's certified bridge digest into an anchor.
+pub(crate) fn anchor_next_stamp_gadget<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    anchor_prev: &Element<'dr, D>,
+    epoch: &Element<'dr, D>,
+    digest: &[Element<'dr, D>; 2],
+) -> ragu_core::Result<Element<'dr, D>> {
+    hash_gadget(
+        dr,
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, &digest[0], &digest[1]],
+    )
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
@@ -252,7 +298,27 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (contents_lo, contents_hi) = point_limbs(contents);
+    evidence_tree_leaf_digest(
+        epoch,
+        anchor_start,
+        anchor_next,
+        discriminant,
+        depth,
+        bits,
+        commitment_digest(contents),
+    )
+}
+
+/// Hash a bucket using its certified bridge digest.
+pub(crate) fn evidence_tree_leaf_digest(
+    epoch: Fp,
+    anchor_start: Fp,
+    anchor_next: Fp,
+    discriminant: Fp,
+    depth: Fp,
+    bits: Fp,
+    (digest_x, digest_y): (Fp, Fp),
+) -> Fp {
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -262,8 +328,31 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents_lo,
-            contents_hi,
+            digest_x,
+            digest_y,
+        ],
+    )
+}
+
+/// Hash the fields of a bucket and its certified bridge digest.
+pub(crate) fn evidence_tree_leaf_gadget<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    fields: [&Element<'dr, D>; 6],
+    digest: &[Element<'dr, D>; 2],
+) -> ragu_core::Result<Element<'dr, D>> {
+    let [epoch, anchor_start, anchor_next, discriminant, depth, bits] = fields;
+    hash_gadget(
+        dr,
+        QR_BUCKET_DOMAIN,
+        [
+            epoch,
+            anchor_start,
+            anchor_next,
+            discriminant,
+            depth,
+            bits,
+            &digest[0],
+            &digest[1],
         ],
     )
 }

@@ -7,7 +7,7 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{Pcd, Proof};
+use ragu::pasta::Pasta;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
@@ -20,12 +20,12 @@ use zcash_tachyon::{
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
-    stamp::proof::{HEADER_SIZE, PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
+    stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
     value, witness,
 };
 
 use crate::fixtures::{
-    PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_plan, build_output_stamp,
+    Pcd, PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_plan, build_output_stamp,
     build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
     seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
 };
@@ -130,7 +130,7 @@ fn honest_spend_stamp(
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("SpendAction honest");
     stamp
@@ -216,7 +216,7 @@ fn spendable_init_rejects_tg_absent() {
                 EpochIndex::new(0),
             ),
             nf_header,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -283,7 +283,7 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
         let seed_witness =
             witness::anchor_span_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]);
         let right_members = [bogus_start
-            .next_stamp(seed_witness.1, &seed_witness.2)
+            .next_stamp(seed_witness.1, &seed_witness.2.commit())
             .unwrap()];
         let (right, ()) = PROOF_SYSTEM
             .seed(rng, pool::AnchorSpanSeed, seed_witness)
@@ -675,7 +675,7 @@ fn spend_rejects_invalid_note() {
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -713,7 +713,7 @@ fn step_accepts_zero_value_note() {
                 stamp::OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), out_theta, out_anchor),
                 bind_pcd,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("output of a zero-value note");
     }
@@ -733,7 +733,7 @@ fn step_accepts_zero_value_note() {
                 stamp::SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
                 bind_pcd,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("spend of a zero-value note");
     }
@@ -1315,7 +1315,7 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
 }
 
 /// Expect `PROOF_SYSTEM.fuse` to fail with the given `InvalidWitness` text.
-fn expect_invalid<H: ragu::Header, S>(
+fn expect_invalid<H: ragu::Header<Fp>, S>(
     rng: &mut StdRng,
     step: S,
     witness: S::Witness<'_>,
@@ -1323,7 +1323,7 @@ fn expect_invalid<H: ragu::Header, S>(
     right: Pcd<S::Right>,
     message: &str,
 ) where
-    S: ragu::Step<Output = H>,
+    S: ragu::Step<Pasta, Output = H>,
 {
     let err = PROOF_SYSTEM
         .fuse(rng, step, witness, left, right)
@@ -1426,7 +1426,7 @@ fn nullifier_derive_rejects_a_foreign_sequence() {
         delegation::NullifierDerive,
         (epoch_start, foreign_seq),
         secret_a,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "NullifierDerive: sequence does not match the derived window",
     );
 }
@@ -1445,7 +1445,7 @@ fn nullifier_derive_rejects_a_misaligned_epoch_start() {
         delegation::NullifierDerive,
         (EpochIndex::new(14), seq),
         secret,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "NullifierDerive: epoch_start is not group-aligned",
     );
 }
@@ -1474,7 +1474,7 @@ fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
             delegation::NullifierDerive,
             (epoch_start, NfSeqPoly::new(epoch_start, &[])),
             secret,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -1682,7 +1682,7 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
         stamp::SpendAction,
         (theta, user.pak, action_set, forged),
         bind_pcd,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "SpendAction: tachygram set does not commit to the nullifier pair",
     );
 }
@@ -1712,7 +1712,7 @@ fn spend_stamp_rejects_a_foreign_action_set() {
         stamp::SpendAction,
         (theta, user.pak, foreign, tachygram_set),
         bind_pcd,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "SpendAction: action set does not commit to the action",
     );
 }
@@ -1842,7 +1842,7 @@ fn output_stamp_publishes_the_note_pair() {
             stamp::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("OutputAction honest");
 
@@ -1878,7 +1878,7 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
         stamp::OutputAction,
         (theta, anchor, action_set, forged),
         bind_pcd,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "OutputAction: tachygram set does not commit to the bound pair",
     );
 }
@@ -1916,7 +1916,7 @@ fn output_stamp_rejects_a_foreign_action_set() {
         stamp::OutputAction,
         (theta, anchor, foreign, tachygram_set),
         bind_pcd,
-        Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         "OutputAction: action set does not commit to the action",
     );
 }
@@ -1939,7 +1939,7 @@ fn output_action_commit(
             stamp::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("OutputAction honest");
     pcd.data().0
@@ -1983,7 +1983,7 @@ fn spend_action_commit(
             stamp::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("SpendAction honest");
     pcd.data().0

@@ -1278,7 +1278,7 @@ fn mismatched_merge_descriptors_fail_verification() {
         "the foreign descriptor must not be covered by the second stamp"
     );
 
-    // The computed input encoding must match the actual child's proof.
+    // The merged output must be the product of the actual child polynomials.
     let rejected = bundle_a
         .stamp
         .clone()
@@ -1297,7 +1297,7 @@ fn mismatched_merge_descriptors_fail_verification() {
     };
     assert_eq!(
         message.to_string(),
-        "input header does not match child proof"
+        "StampMerge: merged action set must be the product of left and right action sets"
     );
     let foreign_digests = descriptors_a
         .iter()

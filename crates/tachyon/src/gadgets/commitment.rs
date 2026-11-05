@@ -16,7 +16,7 @@ use ragu_primitives::{
 };
 use udon::{curve::Affine as _, field::Field};
 
-use crate::pasta::Fp;
+use crate::{digest::poseidon, pasta::Fp};
 
 /// The compressed host-curve commitment representation used by Ragu handles.
 #[derive(Gadget, Debug)]
@@ -43,6 +43,28 @@ impl<F: Field> Write<F> for HostCommitment<'static, PhantomData<F>> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> HostCommitment<'dr, D> {
+    /// Allocate a native bridge digest, for headers which thread that digest.
+    /// The producing step must bind these coordinates to
+    /// `Oracles::bridge_hash`.
+    pub(crate) fn alloc_digest<A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        point: DriverValue<D, EqAffine>,
+    ) -> Result<Self> {
+        let digest = D::try_just(|| {
+            let candidate = point.take();
+            if candidate.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "cannot hash the identity commitment".into(),
+                ));
+            }
+            Ok(<[Fp; 2]>::from(poseidon::commitment_digest(candidate)))
+        })?;
+        let x = Element::alloc(dr, allocator, digest.as_ref().map(|values| values[0]))?;
+        let y = Element::alloc(dr, allocator, digest.as_ref().map(|values| values[1]))?;
+        Ok(Self { limbs: [x, y] })
+    }
+
     /// Allocate the same two compressed limbs as a host polynomial handle.
     #[expect(
         clippy::expect_used,

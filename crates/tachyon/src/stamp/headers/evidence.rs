@@ -40,7 +40,7 @@ output_gadget!(EvidenceTreeOutput, "EvidenceTreeOutput(..)", {
     root: EvidenceTreeRootGadget,
 });
 
-impl Header for EvidenceTree {
+impl Header<Fp> for EvidenceTree {
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
@@ -105,7 +105,7 @@ output_gadget!(EvidenceTreePairOutput, "EvidenceTreePairOutput(..)", {
     second: EvidenceTreeRootGadget,
 });
 
-impl Header for EvidenceTreePair {
+impl Header<Fp> for EvidenceTreePair {
     type Data = (
         EpochIndex,
         Anchor,

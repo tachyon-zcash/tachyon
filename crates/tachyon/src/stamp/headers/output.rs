@@ -29,7 +29,7 @@ output_gadget!(OutputHeaderOutput, "OutputHeaderOutput(..)", {
     cv: ValueCommitmentGadget,
 });
 
-impl Header for OutputHeader {
+impl Header<Fp> for OutputHeader {
     type Data = (Tachygram, Tachygram, value::Commitment);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _>];
 

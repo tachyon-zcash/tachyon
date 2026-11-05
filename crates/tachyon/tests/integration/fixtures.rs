@@ -4,16 +4,10 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
 use ragu::{
-    Cycle as _, Pcd, PoseidonPermutation as _, Proof,
+    PoseidonPermutation as _,
     pasta::{Pasta, PoseidonFp},
 };
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::{
-    drivers::emulator::{Emulator, Wireless},
-    maybe::{Always, Maybe as _},
-};
-use ragu_pcd::pasta;
-use ragu_primitives::{Element, poseidon::Sponge};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{
@@ -37,13 +31,15 @@ use zcash_tachyon::{
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
-            HEADER_SIZE, PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
+            PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
             summary,
         },
     },
     value, witness,
 };
+
+pub(crate) type Pcd<H> = ragu::Pcd<Pasta, ProductionRank, H>;
 
 pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let hash = blake2b_simd::Params::new()
@@ -550,7 +546,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     loop {
         for tgs in &pool.block(height).tachygrams() {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
+            let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .expect("AnchorSpanSeed");
@@ -635,7 +631,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
                 summary::SummaryAdvance,
                 witness::summary_advance((*pcd.data(), ()), &acc, &entry.1),
                 pcd,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("SummaryAdvance");
         acc.extend(entry.1.iter().copied());
@@ -672,7 +668,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
             qr::QrBucketSeal,
             witness,
             intake.pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("QrBucketSeal");
     QrBucketEntry {
@@ -751,7 +747,7 @@ fn build_qr_roots<RNG: CryptoRng>(
                 qr::QrSummaryIntake,
                 witness,
                 summary,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
         roots.push(QrIntakeEntry { pcd, members });
@@ -821,7 +817,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             qr::QrIntakeSplit,
             split_witness,
             intake.pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -841,7 +837,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 qr::QrSideDescend,
                 descend_witness,
                 sides.clone(),
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("QrSideDescend");
         QrIntakeEntry { pcd, members }
@@ -1023,7 +1019,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeCap,
                 (),
                 root,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("EvidenceTreeCap");
         root = pcd;
@@ -1080,20 +1076,26 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeDescend,
                 witness,
                 node,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("EvidenceTreeDescend");
         node = pcd;
     }
 
-    let witness = witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents);
+    let contents = leaf.members.iter().copied().collect::<TachygramSetPoly>();
+    assert_eq!(
+        contents.commit(),
+        leaf.contents,
+        "the leaf's members match its commitment"
+    );
+    let witness = witness::evidence_tree_open((*node.data(), ()), leaf.profile, contents);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             evidence::EvidenceTreeOpen,
             witness,
             node,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("EvidenceTreeOpen");
     QrBucketEntry {
@@ -1180,7 +1182,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
             qr::QrUnspentInit,
             witness,
             bucket.pcd.clone(),
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("QrUnspentInit");
     segment
@@ -1408,7 +1410,7 @@ impl WalletSim {
                     delegation::NullifierDerive,
                     witness::nullifier_derive((*secret.data(), ()), chunk_start),
                     secret.clone(),
-                    Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .expect("NullifierDerive");
             merged = Some(match merged {
@@ -1477,7 +1479,7 @@ impl WalletSim {
                 spendable::SpendableInit,
                 witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
                 deriv,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("SpendableInit");
         spendable
@@ -1784,35 +1786,19 @@ impl Default for SyncSim {
     }
 }
 
-/// The mock's Fiat-Shamir challenge over `commitments` alone: the `z` a
-/// prover knows before choosing a free scalar the challenge does not absorb.
+/// A commitments-only counterfactual challenge, omitting headers and staged
+/// values. This deliberately does not reconstruct the mock's actual ζ: it
+/// models the unbound transcript against which the adversarial identities
+/// succeed, before the full transcript rejects them.
 pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
-    let mut emulator = Emulator::<Wireless<Always<()>, _>>::execute();
-    let mut sponge = Sponge::new(&mut emulator, Pasta::circuit_poseidon(pasta::baked()));
-    let domain = Element::constant(
-        &mut emulator,
-        Fp::from_u128(u128::from(u64::from_le_bytes(*b"raguchal"))),
-    );
-    sponge
-        .absorb(&mut emulator, &domain)
-        .expect("sponge absorb succeeds");
+    let mut transcript = blake2b_simd::Params::new()
+        .hash_length(64)
+        .personal(b"MkRagu_Zeta____\0")
+        .to_state();
     for com in commitments {
-        let encoding = com.to_affine().to_bytes();
-        for bytes in encoding.chunks(16) {
-            let limb = Fp::from_u128(u128::from_le_bytes(
-                bytes.try_into().expect("a commitment limb is 16 bytes"),
-            ));
-            let element = Element::constant(&mut emulator, limb);
-            sponge
-                .absorb(&mut emulator, &element)
-                .expect("sponge absorb succeeds");
-        }
+        transcript.update(com.to_affine().to_bytes().as_ref());
     }
-    *sponge
-        .squeeze(&mut emulator)
-        .expect("sponge squeeze succeeds")
-        .value()
-        .take()
+    Fp::from_uniform_bytes(transcript.finalize().as_array())
 }
 
 /// Another member at `epoch` whose indexed factor

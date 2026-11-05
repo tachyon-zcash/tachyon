@@ -3,7 +3,6 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::iter;
 
-use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
@@ -13,7 +12,7 @@ use zcash_tachyon::{
     stamp::{
         ProofStamp, StampState,
         proof::{
-            HEADER_SIZE, PROOF_SYSTEM, output,
+            PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
         },
     },
@@ -72,7 +71,7 @@ fn fee_less_output_bundle(
             OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("OutputAction");
     let stamp = ProofStamp {
@@ -165,7 +164,7 @@ fn fee_fuse_binds_its_sets() {
             FeeFuse,
             valid.clone(),
             stamp_pcd(),
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("a FeeFuse stamp");
     let (.., other_output_sets, other_fee_sets) = fee_witness(50);
@@ -213,7 +212,7 @@ fn fee_fuse_binds_its_sets() {
             FeeFuse,
             corrupt,
             stamp_pcd(),
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         ) else {
             panic!("expected InvalidWitness: {expected}");
         };
@@ -285,7 +284,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 .as_ref()
                 .clone()
                 .carry::<Actions>(stamp_header),
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .expect("a fee above the maximum must not apply");
@@ -333,7 +332,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             FeeFuse,
             repeated_witness.clone(),
             once.stamp.proof.carry::<Actions>(header),
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .expect("a Stamp proof cannot be substituted for Actions");
@@ -342,7 +341,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     };
     assert_eq!(
         message.to_string(),
-        "input header does not match child proof"
+        "child proof is not accepted by this application"
     );
     // Keep the independent verifier checks using malformed published data;
     // the connected step API no longer produces a proof for this substitution.

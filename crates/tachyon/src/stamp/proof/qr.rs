@@ -25,10 +25,11 @@
 )]
 
 extern crate alloc;
-use ragu::{Encoded, Header, Index, Step, StepCtx};
+use alloc::vec::Vec;
+
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, GadgetExt as _};
@@ -44,7 +45,7 @@ use crate::{
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{bind_poly_handle, enforce_poly_product, poly_handle_limbs},
+    relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 pub use crate::{
     collections::qr::classify,
@@ -59,40 +60,49 @@ pub use crate::{
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
-impl Step for QrSummaryIntake {
+impl Step<Pasta> for QrSummaryIntake {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    type Shared = ();
     /// `(discriminant)`
     type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(15);
 
+    fn polynomials(
+        &self,
+        _: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0].clone_from(&left.polynomials[0]);
+        Ok(polynomials)
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (discriminant,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
@@ -111,8 +121,9 @@ impl Step for QrSummaryIntake {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -126,42 +137,51 @@ impl Step for QrSummaryIntake {
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
-impl Step for QrStampIntakeSeed {
+impl Step<Pasta> for QrStampIntakeSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    type Shared = ();
     /// `(anchor_prev, epoch, discriminant, stamp_commit)`
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetCommit);
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetPoly);
 
     const INDEX: Index = Index::new(21);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let stamp = super::coefficients(witness.3.as_ref());
+        Ok([stamp.clone(), stamp, alloc::vec![Fp::ONE]])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let (anchor_prev, epoch, discriminant, stamp_commit) = witness.take();
+            let (anchor_prev, epoch, discriminant, stamp) = witness.take();
+            let stamp_commit = stamp.commit();
             let () = left.take();
             let () = right.take();
             let anchor_end = anchor_prev
@@ -180,8 +200,17 @@ impl Step for QrStampIntakeSeed {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let header = encoded.as_gadget();
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let anchor = poseidon::anchor_next_stamp_gadget(
+            dr,
+            &header.anchor_prev.element,
+            &header.epoch.element,
+            oracles.bridge_hash(),
+        )?;
+        header.anchor_end.element.enforce_equal(dr, &anchor)?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -200,12 +229,11 @@ impl Step for QrStampIntakeSeed {
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
-impl Step for QrEmptyIntakeSeed {
+impl Step<Pasta> for QrEmptyIntakeSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    type Shared = ();
     /// `(anchor, epoch, discriminant)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
 
@@ -213,27 +241,26 @@ impl Step for QrEmptyIntakeSeed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (anchor, epoch, discriminant) = witness.take();
             let () = left.take();
@@ -251,8 +278,8 @@ impl Step for QrEmptyIntakeSeed {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -266,76 +293,55 @@ impl Step for QrEmptyIntakeSeed {
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
-impl Step for QrIntakeMerge {
+impl Step<Pasta> for QrIntakeMerge {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    type Shared = ();
     /// `(left_contents, right_contents, merged)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(16);
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the native merge also returns three encoded headers"
-    )]
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.as_ref());
+        Ok(polynomials)
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let left_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(left_contents, ..)| left_contents.as_ref().clone()),
-        )?;
-        let right_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, right_contents, _)| right_contents.as_ref().clone()),
-        )?;
-        let merged_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, _, merged)| merged.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &left_handle,
-            left.as_ref().map(|data| Eq::from(data.5).to_affine()),
-            "QrIntakeMerge: left contents do not match header",
-        )?;
-        bind_poly_handle(
-            ctx,
-            &right_handle,
-            right.as_ref().map(|data| Eq::from(data.5).to_affine()),
-            "QrIntakeMerge: right contents do not match header",
-        )?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_product(
-            ctx,
-            &left_handle,
-            &right_handle,
-            &merged_handle,
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "QrIntakeMerge: merged contents are not the union of the inputs",
         )?;
         let output = D::try_just(|| {
@@ -399,8 +405,8 @@ impl Step for QrIntakeMerge {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -412,93 +418,77 @@ impl Step for QrIntakeMerge {
 /// [`QrSideDescend`] attests each child's sibling. The exceptional value $-R$
 /// has root $0$ under either class, so the non-residue side must open nonzero
 /// there.
+/// `L0` is contents; `O0/O1` are non-residue/residue, with `O0` opened twice.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
-impl Step for QrIntakeSplit {
+impl Step<Pasta> for QrIntakeSplit {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrIntakeSides;
     type Right = ();
-    type Shared = ();
     /// `(contents, non_residue, residue)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(17);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        Ok([
+            super::coefficients(witness.1.as_ref()),
+            super::coefficients(witness.2.as_ref()),
+            alloc::vec![Fp::ONE],
+        ])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let contents_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(contents, ..)| contents.as_ref().clone()),
-        )?;
-        let non_residue_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, non_residue, _)| non_residue.as_ref().clone()),
-        )?;
-        let residue_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, _, residue)| residue.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &contents_handle,
-            left.as_ref().map(|data| Eq::from(data.5).to_affine()),
-            "QrIntakeSplit: contents do not match header",
-        )?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_product(
-            ctx,
-            &non_residue_handle,
-            &residue_handle,
-            &contents_handle,
+            dr,
+            oracles,
+            &Slot::output(0),
+            &Slot::output(1),
+            &Slot::left(0),
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
         let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
-        let exceptional_element = Element::alloc(ctx.dr, &mut (), exceptional)?;
-        let non_residue_assignment = ctx.evaluate(
-            &non_residue_handle,
-            exceptional_element.value().map(|value| *value),
-        )?;
-        let non_residue_at_exceptional = Element::alloc(ctx.dr, &mut (), non_residue_assignment)?;
+        let exceptional_element = Element::alloc(dr, &mut (), exceptional)?;
+        let non_residue_at_exceptional =
+            oracles.query(dr, Slot::output(0), &exceptional_element)?;
         let nonzero_value = Element::promote(
             non_residue_at_exceptional.wire().clone(),
             non_residue_at_exceptional.value().map(|value| *value),
         );
-        nonzero_value.enforce_nonzero(ctx.dr).map_err(|_err| {
+        nonzero_value.enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrIntakeSplit: exceptional value claimed the non-residue class".into(),
             )
         })?;
-        ctx.enforce_poly_query(
-            &non_residue_handle,
-            exceptional_element,
-            non_residue_at_exceptional,
-        )?;
 
         let output = D::try_just(|| {
             let (contents, non_residue, residue) = witness.take();
@@ -524,8 +514,8 @@ impl Step for QrIntakeSplit {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -556,47 +546,72 @@ impl Step for QrIntakeSplit {
 /// at the same $R_0$ as every other step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
+///
+/// Polynomial inventory: `L0/L1` are the sides; `O0` is selected, `O1` the
+/// interpolant and `O2` the quotient. Five openings; the side bit is staged.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
-impl Step for QrSideDescend {
+impl Step<Pasta> for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = ();
-    type Shared = ();
     /// `(bit, sibling_contents, interpolant, quotient)`
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
     const INDEX: Index = Index::new(18);
+    const NUM_STAGED: usize = 1;
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the step binds three handles, checks the fixed class identity, and returns the selected header"
-    )]
+    fn staged(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Vec<Fp>> {
+        Ok(alloc::vec![Fp::from(u64::from(witness.0))])
+    }
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "a boolean selects index zero or one in a three-slot header"
+        )]
+        let selected = &left.polynomials[usize::from(witness.0)];
+        Ok([
+            selected.clone(),
+            super::coefficients(witness.2.as_ref()),
+            super::coefficients(witness.3.as_ref()),
+        ])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // TODO: a real circuit needs a bit decomposition of `depth` here; mock
         // ragu accepts the native comparison.
         let witness_for_native = witness.clone();
@@ -641,98 +656,54 @@ impl Step for QrSideDescend {
                 Eq::from(sibling_commit).to_affine(),
             ))
         })?;
-        let sibling_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, sibling, ..)| sibling.as_ref().clone()),
-        )?;
-        let interpolant_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, _, interpolant, _)| interpolant.as_ref().clone()),
-        )?;
-        let quotient_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|(_, _, _, quotient)| quotient.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &sibling_handle,
-            native
-                .as_ref()
-                .map(|(_, _, _, sibling_commit)| *sibling_commit),
-            "QrSideDescend: sibling does not match the header",
-        )?;
-
-        let [sibling_lo, sibling_hi] = poly_handle_limbs(ctx.dr, &sibling_handle)?;
-        let [interpolant_lo, interpolant_hi] = poly_handle_limbs(ctx.dr, &interpolant_handle)?;
-        let [quotient_lo, quotient_hi] = poly_handle_limbs(ctx.dr, &quotient_handle)?;
         let discriminant_element = Element::alloc(
-            ctx.dr,
+            dr,
             &mut (),
             native
                 .clone()
                 .map(|(_, _, discriminant_at_depth, _)| discriminant_at_depth),
         )?;
-        let z = ctx.derive_challenge(&(
-            [sibling_lo, sibling_hi],
-            (
-                [interpolant_lo, interpolant_hi],
-                ([quotient_lo, quotient_hi], discriminant_element.clone()),
-            ),
-        ))?;
-        let sibling_assignment =
-            ctx.evaluate(&sibling_handle, z.value().map(|challenge| *challenge))?;
-        let interpolant_assignment =
-            ctx.evaluate(&interpolant_handle, z.value().map(|challenge| *challenge))?;
-        let quotient_assignment =
-            ctx.evaluate(&quotient_handle, z.value().map(|challenge| *challenge))?;
-        let sibling_at_z = Element::alloc(ctx.dr, &mut (), sibling_assignment)?;
-        let interpolant_at_z = Element::alloc(ctx.dr, &mut (), interpolant_assignment)?;
-        let quotient_at_z = Element::alloc(ctx.dr, &mut (), quotient_assignment)?;
+        let z = oracles.zeta().clone();
+        let non_residue_at_z = oracles.query_at_zeta(dr, Slot::left(0))?;
+        let residue_at_z = oracles.query_at_zeta(dr, Slot::left(1))?;
+        let interpolant_at_z = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let quotient_at_z = oracles.query_at_zeta(dr, Slot::output(2))?;
         let bit_element = Element::alloc(
-            ctx.dr,
+            dr,
             &mut (),
             native.clone().map(|(_, bit, ..)| Fp::from(u64::from(bit))),
         )?;
-        let shifted = z.add(ctx.dr, &discriminant_element);
-        let sibling_product = sibling_at_z.mul(ctx.dr, &quotient_at_z)?;
-        let interpolant_square = interpolant_at_z.square(ctx.dr)?;
-        let class_residual = interpolant_square.sub(ctx.dr, &sibling_product);
-        let multiplier_delta = Element::constant(ctx.dr, Fp::from(4));
-        let scaled_bit = bit_element.mul(ctx.dr, &multiplier_delta)?;
-        let one = Element::constant(ctx.dr, Fp::ONE);
-        let sibling_multiplier = scaled_bit.add(ctx.dr, &one);
-        let expected_class = sibling_multiplier.mul(ctx.dr, &shifted)?;
+        let shifted = z.add(dr, &discriminant_element);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the framework enforces NUM_STAGED = 1"
+        )]
+        bit_element.enforce_equal(dr, &oracles.staged()[0])?;
+        let sibling_delta = non_residue_at_z.sub(dr, &residue_at_z);
+        let selected_delta = bit_element.mul(dr, &sibling_delta)?;
+        let sibling_at_z = residue_at_z.add(dr, &selected_delta);
+        let selected_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let selected_expected = non_residue_at_z.sub(dr, &selected_delta);
+        selected_at_z.enforce_equal(dr, &selected_expected)?;
+        let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
+        let interpolant_square = interpolant_at_z.square(dr)?;
+        let class_residual = interpolant_square.sub(dr, &sibling_product);
+        let multiplier_delta = Element::constant(dr, Fp::from(4));
+        let scaled_bit = bit_element.mul(dr, &multiplier_delta)?;
+        let one = Element::constant(dr, Fp::ONE);
+        let sibling_multiplier = scaled_bit.add(dr, &one);
+        let expected_class = sibling_multiplier.mul(dr, &shifted)?;
         class_residual
-            .enforce_equal(ctx.dr, &expected_class)
+            .enforce_equal(dr, &expected_class)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrSideDescend: the sibling fails its class decomposition".into(),
                 )
             })?;
-        ctx.enforce_poly_query(
-            &sibling_handle,
-            Element::promote(z.wire().clone(), z.value().map(|challenge| *challenge)),
-            sibling_at_z,
-        )?;
-        ctx.enforce_poly_query(
-            &interpolant_handle,
-            Element::promote(z.wire().clone(), z.value().map(|challenge| *challenge)),
-            interpolant_at_z,
-        )?;
-        ctx.enforce_poly_query(&quotient_handle, z, quotient_at_z)?;
 
         let output = native.map(|(output, ..)| output);
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
-        Ok((
-            (left_encoded, right_encoded, encoded),
-            (),
-            output,
-            D::unit(),
-        ))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }
 
@@ -769,43 +740,52 @@ impl Step for QrSideDescend {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
+/// `L0` is copied to `O0/O1`; the header certifies `O1`'s bridge digest.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
-impl Step for QrBucketSeal {
+impl Step<Pasta> for QrBucketSeal {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrBucket;
     type Right = ();
-    type Shared = ();
     /// `(anchor_final_prev)`
     type Witness<'source> = (Anchor,);
 
     const INDEX: Index = Index::new(20);
 
+    fn polynomials(
+        &self,
+        _: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let contents = left.polynomials[0].clone();
+        Ok([contents.clone(), contents, alloc::vec![Fp::ONE]])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (anchor_final_prev,) = witness.take();
             let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = left.take();
@@ -837,8 +817,22 @@ impl Step for QrBucketSeal {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let input_contents = oracles.query_at_zeta(dr, Slot::left(0))?;
+        let carried_contents = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let bridge_contents = oracles.query_at_zeta(dr, Slot::output(1))?;
+        input_contents.enforce_equal(dr, &carried_contents)?;
+        carried_contents.enforce_equal(dr, &bridge_contents)?;
+        for (actual, expected) in encoded
+            .as_gadget()
+            .contents_digest
+            .limbs
+            .iter()
+            .zip(oracles.bridge_hash())
+        {
+            actual.enforce_equal(dr, expected)?;
+        }
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -952,12 +946,11 @@ pub(super) fn enforce_value_profile(
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
-impl Step for QrUnspentInit {
+impl Step<Pasta> for QrUnspentInit {
     type Aux<'source> = ();
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    type Shared = ();
     /// `(value, classes, mask, sequence, contents)`
     type Witness<'source> = (
         Tachygram,
@@ -968,35 +961,50 @@ impl Step for QrUnspentInit {
     );
 
     const INDEX: Index = Index::new(19);
+    const NUM_STAGED: usize = 1;
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the step checks a fixed-depth profile and two polynomial openings"
-    )]
+    fn staged(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Vec<Fp>> {
+        Ok(alloc::vec![Fp::from(witness.0)])
+    }
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.3.as_ref());
+        Ok(polynomials)
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let left_header = left.clone();
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
             let (value, classes, mask, sequence, contents) = witness.take();
             let (
@@ -1027,77 +1035,49 @@ impl Step for QrUnspentInit {
             );
             Ok((sequence, contents, value, bucket_epoch, output))
         })?;
-        let sequence_handle = ctx.witness_polynomial(
-            native
-                .clone()
-                .map(|(sequence, ..)| sequence.as_ref().clone()),
-        )?;
-        let contents_handle = ctx.witness_polynomial(
-            native
-                .clone()
-                .map(|(_, contents, ..)| contents.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &contents_handle,
-            left_header
-                .as_ref()
-                .map(|data| Eq::from(data.5).to_affine()),
-            "QrUnspentInit: contents do not match the bucket",
-        )?;
-
-        let [sequence_lo, sequence_hi] = poly_handle_limbs(ctx.dr, &sequence_handle)?;
         let value_element = Element::alloc(
-            ctx.dr,
+            dr,
             &mut (),
             native.clone().map(|(_, _, value, ..)| Fp::from(value)),
         )?;
-        let z = ctx.derive_challenge(&([sequence_lo, sequence_hi], value_element.clone()))?;
-        let sequence_assignment =
-            ctx.evaluate(&sequence_handle, z.value().map(|challenge| *challenge))?;
-        let sequence_at_z = Element::alloc(ctx.dr, &mut (), sequence_assignment)?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the framework enforces NUM_STAGED = 1"
+        )]
+        value_element.enforce_equal(dr, &oracles.staged()[0])?;
+        let z = oracles.zeta().clone();
+        let sequence_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
         let index_element = Element::alloc(
-            ctx.dr,
+            dr,
             &mut (),
             native
                 .as_ref()
                 .map(|(_, _, _, bucket_epoch, _)| Fp::from(u64::from(*bucket_epoch)) + Fp::ONE),
         )?;
-        let index_times_z = index_element.mul(ctx.dr, &z)?;
-        let shifted = value_element.add(ctx.dr, &index_times_z);
-        let square = shifted.square(ctx.dr)?;
-        let cube = square.mul(ctx.dr, &shifted)?;
-        let two = Element::constant(ctx.dr, Fp::from(2));
-        let expected_sequence = cube.sub(ctx.dr, &two);
+        let index_times_z = index_element.mul(dr, &z)?;
+        let shifted = value_element.add(dr, &index_times_z);
+        let square = shifted.square(dr)?;
+        let cube = square.mul(dr, &shifted)?;
+        let two = Element::constant(dr, Fp::from(2));
+        let expected_sequence = cube.sub(dr, &two);
         sequence_at_z
-            .enforce_equal(ctx.dr, &expected_sequence)
+            .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrUnspentInit: sequence does not match the tested pair".into(),
                 )
             })?;
-        ctx.enforce_poly_query(&sequence_handle, z, sequence_at_z)?;
-
-        let contents_assignment =
-            ctx.evaluate(&contents_handle, value_element.value().map(|value| *value))?;
-        let contents_at_value = Element::alloc(ctx.dr, &mut (), contents_assignment)?;
+        let contents_at_value = oracles.query(dr, Slot::left(0), &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
             contents_at_value.value().map(|value| *value),
         );
-        nonzero_value.enforce_nonzero(ctx.dr).map_err(|_err| {
+        nonzero_value.enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrUnspentInit: found nullifier in the bucket".into())
         })?;
-        ctx.enforce_poly_query(&contents_handle, value_element, contents_at_value)?;
 
         let output = native.map(|(_, _, _, _, output)| output);
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
-        Ok((
-            (left_encoded, right_encoded, encoded),
-            (),
-            output,
-            D::unit(),
-        ))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }

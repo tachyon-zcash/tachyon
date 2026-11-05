@@ -584,10 +584,6 @@ fn unmerge_binds_its_sets() {
         (alice_actions, alice_tachygrams),
         (bob_actions.clone(), bob_tachygrams),
     );
-    #[expect(
-        clippy::redundant_clone,
-        reason = "false positive: the loop below carries both proofs again"
-    )]
     PROOF_SYSTEM
         .fuse(
             rng,

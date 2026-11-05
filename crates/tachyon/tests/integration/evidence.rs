@@ -1,20 +1,19 @@
 //! Evidence trees: folding sealed QR buckets under one root and replaying them.
 
-use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetCommit,
+    TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     pasta::Fp,
-    stamp::proof::{HEADER_SIZE, PROOF_SYSTEM, evidence, qr},
+    stamp::proof::{PROOF_SYSTEM, evidence, qr},
     witness,
 };
 
 use crate::{
     fixtures::{
-        EvidenceLeaf, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
+        EvidenceLeaf, Pcd, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
         build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
     },
     qr::{
@@ -88,7 +87,7 @@ fn descend_to_leaf(
                 evidence::EvidenceTreeDescend,
                 witness::evidence_tree_descend((*node.data(), ()), path),
                 node,
-                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .expect("EvidenceTreeDescend");
         node = pcd;
@@ -103,7 +102,7 @@ fn open_leaf(
     tree: Pcd<evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
     profile: QrProfile,
-    contents: TachygramSetCommit,
+    contents: TachygramSetPoly,
 ) -> ragu_core::Result<Pcd<qr::QrBucket>> {
     let node = descend_to_leaf(rng, tree, leaf);
     PROOF_SYSTEM
@@ -112,7 +111,7 @@ fn open_leaf(
             evidence::EvidenceTreeOpen,
             witness::evidence_tree_open((*node.data(), ()), profile, contents),
             node,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .map(|(bucket, ())| bucket)
 }
@@ -491,7 +490,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
             evidence::EvidenceTreeCap,
             (),
             tree.pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("EvidenceTreeCap");
     let raised = *capped.data();
@@ -524,7 +523,13 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
         .into_iter()
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
-    let other_contents = sealed.get(1).expect("a second bucket").pcd.data().5;
+    let other_contents = sealed
+        .get(1)
+        .expect("a second bucket")
+        .members
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
 
     let tree = build_evidence_tree(rng, sealed);
     let leaf = tree.leaves.first().expect("one leaf");
@@ -536,14 +541,14 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
                 depth: depth + 1,
                 bits,
             },
-            leaf.contents,
+            leaf.members.iter().copied().collect(),
         ),
         (
             QrProfile {
                 depth,
                 bits: bits ^ 1,
             },
-            leaf.contents,
+            leaf.members.iter().copied().collect(),
         ),
         (leaf.profile, other_contents),
     ];
@@ -557,8 +562,14 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
         );
     }
 
-    open_leaf(rng, tree.pcd.clone(), leaf, leaf.profile, leaf.contents)
-        .expect("the genuine preimage opens");
+    open_leaf(
+        rng,
+        tree.pcd.clone(),
+        leaf,
+        leaf.profile,
+        leaf.members.iter().copied().collect(),
+    )
+    .expect("the genuine preimage opens");
 }
 
 #[test]
@@ -598,7 +609,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
             evidence::EvidenceTreeDescend,
             witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
             tree.pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -636,9 +647,13 @@ fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
         .fuse(
             rng,
             evidence::EvidenceTreeOpen,
-            witness::evidence_tree_open((*tree.pcd.data(), ()), leaf.profile, leaf.contents),
+            witness::evidence_tree_open(
+                (*tree.pcd.data(), ()),
+                leaf.profile,
+                leaf.members.iter().copied().collect(),
+            ),
             tree.pcd,
-            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .err()
         .unwrap();

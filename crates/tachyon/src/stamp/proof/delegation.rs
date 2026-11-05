@@ -8,14 +8,18 @@
 //! [`NoteNullifiers`].
 
 extern crate alloc;
-use ragu::{Encoded, Header, Index, PoseidonPermutation as _, Step, StepCtx, pasta::PoseidonFp};
+use alloc::vec::Vec;
+
+use ragu::{
+    Encoded, Header, HeaderInput, Index, Oracles, PoseidonPermutation as _, Slot, Step,
+    pasta::{Pasta, PoseidonFp},
+};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, GadgetExt as _};
-use udon::{curve::Projective as _, field::Field as _};
+use udon::field::Field as _;
 
 pub use crate::stamp::headers::delegation::{NoteNullifiers, NoteSecret};
 use crate::{
@@ -27,7 +31,7 @@ use crate::{
     pasta::{Eq, Fp},
     primitives::{EpochIndex, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
-    relations::enforce::{bind_poly_handle, enforce_poly_product},
+    relations::enforce::enforce_poly_product,
     value,
 };
 
@@ -48,12 +52,11 @@ use crate::{
 #[derive(Debug)]
 pub struct NoteSeed;
 
-impl Step for NoteSeed {
+impl Step<Pasta> for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = NoteSecret;
     type Right = ();
-    type Shared = ();
     /// `(value, psi, rcm, pak)`
     type Witness<'source> = (
         value::Positive,
@@ -66,27 +69,26 @@ impl Step for NoteSeed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (value, psi, rcm, pak) = witness.take();
             let note = Note {
@@ -100,8 +102,8 @@ impl Step for NoteSeed {
             Ok(((cm, note, mk), ()))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -129,47 +131,68 @@ impl Step for NoteSeed {
 /// circuit needs a low-bit decomposition of the witnessed epoch, since
 /// $4q = e$ is always solvable in the field.)
 ///
-/// The epoch indices need no absorbing into $z$, each being `epoch_start`
-/// plus a circuit constant. The nullifier scalars are sponge outputs of the
+/// `epoch_start` is staged before $z$; each epoch index is that start plus a
+/// circuit constant. The nullifier scalars are sponge outputs of the
 /// threaded `mk`, pinned in-circuit, so the product identity alone forces
 /// every member.
+///
+/// Polynomial inventory: `O0` is the derived sequence; stage `epoch_start`.
 #[derive(Debug)]
 pub struct NullifierDerive;
 
-impl Step for NullifierDerive {
+impl Step<Pasta> for NullifierDerive {
     type Aux<'source> = ();
     type Left = NoteSecret;
     type Output = NoteNullifiers;
     type Right = ();
-    type Shared = ();
     /// `(epoch_start, seq)`
     type Witness<'source> = (EpochIndex, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
+    const NUM_STAGED: usize = 1;
+
+    fn staged(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Vec<Fp>> {
+        Ok(alloc::vec![Fp::from(witness.0)])
+    }
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
+    }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         #[expect(
             clippy::as_conversions,
             clippy::integer_division_remainder_used,
@@ -207,11 +230,18 @@ impl Step for NullifierDerive {
             let output = (cm, epoch_start, seq.commit(), epoch_end);
             Ok((seq, output, nullifiers))
         })?;
-        let seq_handle =
-            ctx.witness_polynomial(native.as_ref().map(|result| result.0.as_ref().clone()))?;
-        let z = ctx.derive_challenge(&seq_handle)?;
-        let seq_assignment = ctx.evaluate(&seq_handle, z.value().map(|challenge| *challenge))?;
-        let seq_at_z = Element::alloc(ctx.dr, &mut (), seq_assignment)?;
+        let epoch_start = Element::alloc(
+            dr,
+            &mut (),
+            native.as_ref().map(|result| Fp::from(result.1.1)),
+        )?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the framework enforces NUM_STAGED = 1"
+        )]
+        epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
+        let z = oracles.zeta().clone();
+        let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
         let output = native.as_ref().map(|result| result.1);
         let z_value = z.value().map(|challenge| *challenge);
         let window_at_z = D::try_just(|| {
@@ -222,23 +252,16 @@ impl Step for NullifierDerive {
                 challenge,
             ))
         })?;
-        let window_assignment = Element::alloc(ctx.dr, &mut (), window_at_z)?;
+        let window_assignment = Element::alloc(dr, &mut (), window_at_z)?;
         seq_at_z
-            .enforce_equal(ctx.dr, &window_assignment)
+            .enforce_equal(dr, &window_assignment)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "NullifierDerive: sequence does not match the derived window".into(),
                 )
             })?;
-        ctx.enforce_poly_query(&seq_handle, z, seq_at_z)?;
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
-        Ok((
-            (left_encoded, right_encoded, encoded),
-            (),
-            output,
-            D::unit(),
-        ))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }
 
@@ -262,43 +285,55 @@ impl Step for NullifierDerive {
 /// halves'. The contiguity check preserves the header invariant established
 /// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
+///
+/// Polynomial inventory: `L0` and `R0` are the halves, `O0` their
+/// concatenation.
 #[derive(Debug)]
 pub struct NullifierFuse;
 
-impl Step for NullifierFuse {
+impl Step<Pasta> for NullifierFuse {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    type Shared = ();
     /// `(left_seq, merged_seq, right_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(12);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let _precheck = D::try_just(|| {
             let (left_seq, _, right_seq) = witness.clone().take();
             let (left_cm, _, left_nf_commit, left_epoch_end) = left.clone().take();
@@ -323,38 +358,12 @@ impl Step for NullifierFuse {
             )?;
             Ok(())
         })?;
-        let left_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|sequences| sequences.0.as_ref().clone()),
-        )?;
-        let merged_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|sequences| sequences.1.as_ref().clone()),
-        )?;
-        let right_handle = ctx.witness_polynomial(
-            witness
-                .as_ref()
-                .map(|sequences| sequences.2.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &left_handle,
-            left.as_ref().map(|data| Eq::from(data.2).to_affine()),
-            "NullifierFuse: left polynomial does not match header",
-        )?;
-        bind_poly_handle(
-            ctx,
-            &right_handle,
-            right.as_ref().map(|data| Eq::from(data.2).to_affine()),
-            "NullifierFuse: right polynomial does not match header",
-        )?;
         enforce_poly_product(
-            ctx,
-            &left_handle,
-            &right_handle,
-            &merged_handle,
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         let output = D::try_just(|| {
@@ -372,7 +381,7 @@ impl Step for NullifierFuse {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

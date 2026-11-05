@@ -9,22 +9,22 @@
 //! segments.
 
 extern crate alloc;
-use ragu::{Encoded, Header, Index, Step, StepCtx};
+use alloc::vec::Vec;
+
+use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, pasta::Pasta};
 use ragu_core::{
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
     maybe::Maybe as _,
 };
-use ragu_primitives::Element;
-use udon::curve::Projective as _;
+use ragu_primitives::{Element, GadgetExt as _};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 pub use crate::stamp::headers::spendable::NoteSpendable;
 use crate::{
+    digest::poseidon,
     pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
-    relations::enforce::bind_poly_handle,
 };
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
@@ -49,40 +49,54 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendableInit;
 
-impl Step for SpendableInit {
+impl Step<Pasta> for SpendableInit {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteSpendable;
     type Right = ();
-    type Shared = ();
     /// `(anchor_prev, creation_set, creation_epoch)`
     type Witness<'source> = (Anchor, TachygramSetPoly, EpochIndex);
 
     const INDEX: Index = Index::new(4);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        let mut polynomials = super::unit_polynomials();
+        polynomials[1] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let anchor_prev_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|fields| Fp::from(fields.0)),
+        )?;
         let native = D::try_just(|| {
             let (anchor_prev, creation_set, creation_epoch) = witness.take();
             let (cm, ..) = left.take();
@@ -93,25 +107,22 @@ impl Step for SpendableInit {
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
             Ok((creation_set, cm, (cm, creation_epoch, anchor)))
         })?;
-        let handle = ctx.witness_polynomial(
-            native
-                .clone()
-                .map(|(creation_set, ..)| creation_set.as_ref().clone()),
-        )?;
-        let x = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native.clone().map(|(_, cm, _)| Fp::from(cm)),
-        )?;
-        let evaluation_assignment = ctx.evaluate(&handle, x.value().map(|candidate| *candidate))?;
-        let evaluation = Element::alloc(ctx.dr, &mut (), evaluation_assignment)?;
-        evaluation.enforce_zero(ctx.dr).map_err(|_err| {
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(_, cm, _)| Fp::from(cm)))?;
+        let evaluation = oracles.query(dr, Slot::output(1), &x)?;
+        evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
         })?;
-        ctx.enforce_poly_query(&handle, x, evaluation)?;
         let data = native.map(|(_, _, output)| output);
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, D::unit()))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let header = encoded.as_gadget();
+        let anchor = poseidon::anchor_next_stamp_gadget(
+            dr,
+            &anchor_prev_element,
+            &header.epoch_current.element,
+            oracles.bridge_hash(),
+        )?;
+        header.anchor.element.enforce_equal(dr, &anchor)?;
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -139,12 +150,11 @@ impl Step for SpendableInit {
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
-impl Step for QrSpendableInit {
+impl Step<Pasta> for QrSpendableInit {
     type Aux<'source> = ();
     type Left = NoteUnspent;
     type Output = NoteSpendable;
     type Right = QrBucket;
-    type Shared = ();
     /// `(contents)`
     type Witness<'source> = (TachygramSetPoly,);
 
@@ -152,28 +162,26 @@ impl Step for QrSpendableInit {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let right_header = right.clone();
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
             let (contents,) = witness.take();
             let (
@@ -211,42 +219,16 @@ impl Step for QrSpendableInit {
             )?;
             Ok((contents, cm, bucket_epoch_next, unspent_anchor_next))
         })?;
-        let contents_handle = ctx.witness_polynomial(
-            native
-                .clone()
-                .map(|(contents, ..)| contents.as_ref().clone()),
-        )?;
-        bind_poly_handle(
-            ctx,
-            &contents_handle,
-            right_header
-                .as_ref()
-                .map(|data| Eq::from(data.5).to_affine()),
-            "QrSpendableInit: contents do not match the bucket",
-        )?;
-        let x = Element::alloc(
-            ctx.dr,
-            &mut (),
-            native.clone().map(|(_, cm, ..)| Fp::from(cm)),
-        )?;
-        let evaluation_assignment =
-            ctx.evaluate(&contents_handle, x.value().map(|candidate| *candidate))?;
-        let evaluation = Element::alloc(ctx.dr, &mut (), evaluation_assignment)?;
-        evaluation.enforce_zero(ctx.dr).map_err(|_err| {
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(_, cm, ..)| Fp::from(cm)))?;
+        let evaluation = oracles.query(dr, Slot::right(0), &x)?;
+        evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
         })?;
-        ctx.enforce_poly_query(&contents_handle, x, evaluation)?;
         let output = native.map(|(_, cm, bucket_epoch_next, unspent_anchor_next)| {
             (cm, bucket_epoch_next, unspent_anchor_next)
         });
-        let encoded =
-            Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), output.clone())?;
-        Ok((
-            (left_encoded, right_encoded, encoded),
-            (),
-            output,
-            D::unit(),
-        ))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }
 
@@ -274,39 +256,37 @@ impl Step for QrSpendableInit {
 #[derive(Debug)]
 pub struct SpendableLift;
 
-impl Step for SpendableLift {
+impl Step<Pasta> for SpendableLift {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = NoteSpendable;
     type Right = NoteUnspent;
-    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(5);
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D>,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header>::Data>,
-        right: DriverValue<D, <Self::Right as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
-        Bound<'dr, D, Self::Shared>,
-        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let () = witness.take();
             let (spendable_cm, spendable_epoch_current, spendable_anchor) = left.take();
@@ -332,7 +312,7 @@ impl Step for SpendableLift {
             Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

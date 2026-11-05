@@ -16,6 +16,7 @@
 //! `EvidenceTreeOpen`.
 
 extern crate alloc;
+use core::array;
 
 pub mod delegation;
 pub mod evidence;
@@ -27,11 +28,33 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
+use alloc::vec::Vec;
+
 use lazy_static::lazy_static;
-pub use ragu::Proof;
-use ragu::{Application, ApplicationBuilder};
+use ragu::{Application, ApplicationBuilder, pasta::Pasta};
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use udon::field::Field as _;
 
 use crate::pasta;
+
+/// Application proof with the production polynomial rank.
+pub type Proof = ragu::Proof<Pasta, ProductionRank>;
+
+/// Prover-side conversion to ascending-degree coefficients.
+fn coefficients(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<pasta::Fp> {
+    let mut coefficients = poly.iter_coeffs().collect::<Vec<_>>();
+    coefficients.truncate(
+        coefficients
+            .iter()
+            .rposition(|coefficient| *coefficient != pasta::Fp::ZERO)
+            .map_or(1, |index| index + 1),
+    );
+    coefficients
+}
+
+fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
+    array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
+}
 
 /// Application-wide encoded header width, including one suffix element.
 ///
@@ -54,13 +77,15 @@ use crate::pasta;
 /// | AnchorSpan | 2 | 0 | 1 | 4 |
 ///
 /// Points write two coordinates; commitments write two compressed limbs.
+/// `QrBucket` writes its certified bridge digest's two coordinates instead
+/// of its native contents commitment's compressed limbs.
 /// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
-/// have one application fragment and export no cross-fragment witness schema:
-/// their `Shared` is `()`, independently of their encoded header gadgets.
+/// have one application fragment.
 pub const HEADER_SIZE: usize = 11;
 
-fn make_app() -> Result<Application<'static, HEADER_SIZE>, ragu_core::Error> {
-    ApplicationBuilder::<HEADER_SIZE>::new(pasta::baked())
+fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
+{
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?
@@ -99,12 +124,12 @@ fn make_app() -> Result<Application<'static, HEADER_SIZE>, ragu_core::Error> {
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
-        .finalize()
+        .finalize(pasta::baked())
 }
 
 lazy_static! {
     /// A static ref to the mock ragu application.
-    pub static ref PROOF_SYSTEM: Application<'static, HEADER_SIZE> = {
+    pub static ref PROOF_SYSTEM: Application<'static, Pasta, ProductionRank, HEADER_SIZE> = {
         #[expect(
             clippy::expect_used,
             reason = "hardcoded step ordering must register cleanly"
@@ -120,10 +145,7 @@ mod tests {
     use ragu::Header;
     use ragu_core::{drivers::Driver as _, maybe::Maybe as _};
     use ragu_primitives::{GadgetExt as _, Simulator};
-    use udon::{
-        curve::{Affine as _, Projective as _},
-        field::Field as _,
-    };
+    use udon::curve::{Affine as _, Projective as _};
 
     use super::*;
     use crate::{
@@ -135,7 +157,7 @@ mod tests {
         value,
     };
 
-    fn payload_width<H: Header>(data: H::Data) -> usize {
+    fn payload_width<H: Header<Fp>>(data: H::Data) -> usize {
         let mut driver = Simulator::<Fp>::new();
         let header = H::encode(&mut driver, &mut (), Simulator::<Fp>::just(|| data))
             .expect("valid header data");
@@ -146,7 +168,7 @@ mod tests {
         fields.len()
     }
 
-    fn payload_values<H: Header>(data: H::Data) -> Vec<Fp> {
+    fn payload_values<H: Header<Fp>>(data: H::Data) -> Vec<Fp> {
         let mut driver = Simulator::<Fp>::new();
         let header = H::encode(&mut driver, &mut (), Simulator::<Fp>::just(|| data))
             .expect("valid semantic fields");

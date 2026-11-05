@@ -49,7 +49,7 @@ output_gadget!(ActionsOutput, "ActionsOutput(..)", {
     stamp_tg_commit: TachygramSetCommitGadget,
 });
 
-impl Header for Actions {
+impl Header<Fp> for Actions {
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
     type Output = Kind![Fp; ActionsOutput<'_, _>];
 
@@ -119,7 +119,7 @@ output_gadget!(StampOutput, "StampOutput(..)", {
     stamp_tg_commit: TachygramSetCommitGadget,
 });
 
-impl Header for Stamp {
+impl Header<Fp> for Stamp {
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
