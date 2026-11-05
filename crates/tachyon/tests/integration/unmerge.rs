@@ -22,15 +22,15 @@ use crate::fixtures::{
 };
 
 #[test]
-fn unmerge_removes_one_contributor() {
+fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
-    let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
 
-    let alice_bob = alice
+    let all_three = alice
         .stamp
         .clone()
         .merge(
@@ -45,8 +45,7 @@ fn unmerge_removes_one_contributor() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .unwrap();
-    let all_three = alice_bob
+        .unwrap()
         .merge(
             rng,
             (
@@ -61,38 +60,66 @@ fn unmerge_removes_one_contributor() {
         )
         .unwrap();
 
-    alice.stamp = all_three
-        .unmerge(
-            rng,
-            (
-                alice
-                    .descriptors()
-                    .chain(bob.descriptors())
-                    .chain(carol.descriptors())
-                    .collect(),
-                [
-                    alice.fee_descriptor(),
-                    bob.fee_descriptor(),
-                    carol.fee_descriptor(),
-                ]
-                .into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
-        )
-        .unwrap();
-    let wtxid = mock_wtxid(&alice);
-    alice
-        .verify(
-            rng,
-            &mock_sighash(alice.commitment()),
-            &wtxid.into(),
-            &[&carol.strip(wtxid)],
-        )
-        .unwrap();
+    for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
+        (
+            bob.stamp.clone(),
+            bob.descriptors().collect(),
+            [bob.fee_descriptor()].into(),
+            vec![carol.clone()],
+        ),
+        (
+            bob.stamp
+                .clone()
+                .merge(
+                    rng,
+                    (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
+                    (
+                        carol.stamp.clone(),
+                        carol.descriptors().collect(),
+                        [carol.fee_descriptor()].into(),
+                    ),
+                )
+                .unwrap(),
+            bob.descriptors().chain(carol.descriptors()).collect(),
+            [bob.fee_descriptor(), carol.fee_descriptor()].into(),
+            vec![],
+        ),
+    ] {
+        let mut unmerged = alice.clone();
+        unmerged.stamp = all_three
+            .clone()
+            .unmerge(
+                rng,
+                (
+                    alice
+                        .descriptors()
+                        .chain(bob.descriptors())
+                        .chain(carol.descriptors())
+                        .collect(),
+                    [
+                        alice.fee_descriptor(),
+                        bob.fee_descriptor(),
+                        carol.fee_descriptor(),
+                    ]
+                    .into(),
+                ),
+                (divisor, divisor_descriptors, divisor_fees),
+            )
+            .unwrap();
+        let wtxid = mock_wtxid(&unmerged);
+        let stripped: Vec<_> = adjuncts
+            .into_iter()
+            .map(|adjunct| adjunct.strip(wtxid))
+            .collect();
+        unmerged
+            .verify(
+                rng,
+                &mock_sighash(unmerged.commitment()),
+                &wtxid.into(),
+                &stripped.iter().collect::<Vec<_>>(),
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -214,88 +241,6 @@ fn unmerge_keeps_the_dividend_fee() {
             &carol_wtxid.into(),
             &[&bob.strip(carol_wtxid)],
         )
-        .unwrap();
-}
-
-#[test]
-fn unmerge_by_a_divisor_across_merge_boundaries() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::random(rng);
-    let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-
-    let alice_bob = alice
-        .stamp
-        .clone()
-        .merge(
-            rng,
-            (
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
-        )
-        .unwrap();
-    let mined = bob
-        .stamp
-        .clone()
-        .merge(
-            rng,
-            (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
-            (
-                carol.stamp.clone(),
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
-        )
-        .unwrap();
-    let all_three = alice_bob
-        .merge(
-            rng,
-            (
-                alice.descriptors().chain(bob.descriptors()).collect(),
-                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
-            ),
-            (
-                carol.stamp.clone(),
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
-        )
-        .unwrap();
-
-    alice.stamp = all_three
-        .unmerge(
-            rng,
-            (
-                alice
-                    .descriptors()
-                    .chain(bob.descriptors())
-                    .chain(carol.descriptors())
-                    .collect(),
-                [
-                    alice.fee_descriptor(),
-                    bob.fee_descriptor(),
-                    carol.fee_descriptor(),
-                ]
-                .into(),
-            ),
-            (
-                mined,
-                bob.descriptors().chain(carol.descriptors()).collect(),
-                [bob.fee_descriptor(), carol.fee_descriptor()].into(),
-            ),
-        )
-        .unwrap();
-    let wtxid = mock_wtxid(&alice);
-    alice
-        .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
         .unwrap();
 }
 
@@ -573,51 +518,61 @@ fn unmerge_binds_its_sets() {
         )
         .unwrap();
 
-    let mut wrong_dividend_actions = valid.clone();
-    wrong_dividend_actions.0.0 = carol_actions.clone();
-    let mut wrong_dividend_tachygrams = valid.clone();
-    wrong_dividend_tachygrams.0.1 = carol_tachygrams.clone();
-    let mut wrong_divisor_actions = valid.clone();
-    wrong_divisor_actions.2.0 = carol_actions;
-    let mut wrong_divisor_tachygrams = valid.clone();
-    wrong_divisor_tachygrams.2.1 = carol_tachygrams;
-    let mut wrong_action_quotient = valid.clone();
-    wrong_action_quotient.1.0 = bob_actions;
-    let alice_tachygram = *alice.stamp.tachygrams.first().unwrap();
-    let bob_tachygram = *bob.stamp.tachygrams.first().unwrap();
-    let mut wrong_tachygram_quotient = valid;
-    wrong_tachygram_quotient.1.1 = alice
-        .stamp
-        .tachygrams
-        .iter()
-        .copied()
-        .filter(|&tachygram| tachygram != alice_tachygram)
-        .chain([bob_tachygram])
-        .collect();
-
     for (corrupt, expected) in [
         (
-            wrong_dividend_actions,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.0.0 = carol_actions.clone();
+                corrupt
+            },
             "StampUnmerge: dividend action accumulator must commit to header commit",
         ),
         (
-            wrong_divisor_actions,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.2.0 = carol_actions;
+                corrupt
+            },
             "StampUnmerge: divisor action accumulator must commit to header commit",
         ),
         (
-            wrong_dividend_tachygrams,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.0.1 = carol_tachygrams.clone();
+                corrupt
+            },
             "StampUnmerge: dividend tachygram accumulator must commit to header commit",
         ),
         (
-            wrong_divisor_tachygrams,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.2.1 = carol_tachygrams;
+                corrupt
+            },
             "StampUnmerge: divisor tachygram accumulator must commit to header commit",
         ),
         (
-            wrong_action_quotient,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.1.0 = bob_actions;
+                corrupt
+            },
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
         ),
         (
-            wrong_tachygram_quotient,
+            {
+                let mut corrupt = valid;
+                let dropped = *alice.stamp.tachygrams.first().unwrap();
+                corrupt.1.1 = alice
+                    .stamp
+                    .tachygrams
+                    .iter()
+                    .copied()
+                    .filter(|&tachygram| tachygram != dropped)
+                    .chain([*bob.stamp.tachygrams.first().unwrap()])
+                    .collect();
+                corrupt
+            },
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         ),
     ] {
