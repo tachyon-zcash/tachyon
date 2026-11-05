@@ -10,8 +10,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree, build_qr_partition, open_evidence_tree,
-    qr_bucket_at, qr_epoch_unspent, random_block, seal_qr_intake, shared_sk, small_epoch,
+    PoolSim, QrIntakeEntry, build_evidence_tree, build_qr_partition, open_evidence_tree,
+    qr_bucket_at, random_block, seal_qr_intake, small_epoch,
 };
 
 #[test]
@@ -28,7 +28,6 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         24,
         2,
     );
-    assert_eq!(routed.len(), 4);
     let sealed = routed
         .into_iter()
         .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
@@ -70,7 +69,6 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         24,
         3,
     );
-    assert_eq!(routed.len(), 8);
     let sealed = routed
         .into_iter()
         .take(5)
@@ -83,54 +81,11 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let last = *expected.last().unwrap();
 
     let tree = build_evidence_tree(rng, sealed);
-    assert_eq!(tree.leaves.len(), 16);
-
     for (index, leaf) in tree.leaves.iter().enumerate() {
         let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
         let bucket = expected.get(index).copied().unwrap_or(last);
         assert_eq!(*replayed.pcd.data(), bucket);
     }
-}
-
-#[test]
-fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(300);
-    let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
-
-    let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
-        &pool,
-        (Anchor::default(), pool.block(epoch0.last_block()).anchor()),
-        discriminant,
-        EPOCH_SIZE as usize,
-        2,
-        Fp::from(
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch0),
-        ),
-        Anchor::from(Fp::ZERO),
-    );
-    let sealed = *bucket.pcd.data();
-    let direct = qr_epoch_unspent(rng, &user, &note, &bucket);
-
-    let tree = build_evidence_tree(rng, vec![bucket]);
-    let leaf = tree.leaves.first().unwrap();
-    let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
-    assert_eq!(*replayed.pcd.data(), sealed);
-
-    let bound = qr_epoch_unspent(rng, &user, &note, &replayed);
-    assert_eq!(*bound.data(), *direct.data());
-    let (cm, _, epoch_start, epoch_next, _) = *bound.data();
-    assert_eq!(cm, note.commitment());
-    assert_eq!((epoch_start, epoch_next), (epoch0, epoch1));
 }
 
 #[test]

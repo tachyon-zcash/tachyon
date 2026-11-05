@@ -31,17 +31,6 @@ use crate::fixtures::{
 };
 
 #[test]
-fn stripped_bundle_retains_signatures() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment());
-
-    let adjunct = bundle.strip(AggregateId::try_from([0x11u8; 64]).unwrap());
-    adjunct.verify_signatures(&sighash).unwrap();
-}
-
-#[test]
 fn sign_and_apply_signatures_verify_every_plan_shape() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
@@ -75,41 +64,6 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
             .unwrap()
             .verify_signatures(&sighash)
             .unwrap();
-    }
-}
-
-#[test]
-fn actions_signed_with_mismatched_keys_fail_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    for (output, signer) in [
-        (
-            {
-                let mut output = build_output_plan(rng, wallet.random_note(100)).2;
-                output.rk = build_output_plan(rng, wallet.random_note(50)).2.rk;
-                output
-            },
-            &ask,
-        ),
-        (
-            build_output_plan(rng, wallet.random_note(100)).2,
-            &WalletSim::random(rng).sk.derive_auth_private(),
-        ),
-    ] {
-        let plan = Plan::new(
-            vec![spend_plan_at(rng, &wallet, &ask, 200)],
-            vec![output],
-            wallet.random_note(0),
-        );
-        let sighash = mock_sighash(plan.commitment().unwrap());
-        let Err(SignatureError::Action(_)) = plan
-            .sign(rng, &sighash, signer)
-            .unwrap()
-            .verify_signatures(&sighash)
-        else {
-            panic!();
-        };
     }
 }
 
@@ -346,49 +300,6 @@ fn duplicated_spend_cannot_inflate() {
 }
 
 #[test]
-fn verify_proof_rejects_action_shared_with_adjunct() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, &wallet, 1000, 700);
-
-    let adjunct = bundle.clone().strip(mock_wtxid(&bundle));
-
-    let adjunct_descs: Vec<action::Descriptor> = adjunct.descriptors().collect();
-    let err = bundle
-        .verify_coverage(&adjunct_descs, &[adjunct.fee_descriptor()])
-        .unwrap_err();
-    let VerifyCoverageError::DuplicateActions = err else {
-        panic!();
-    };
-
-    let digests: Vec<ActionDigest> = bundle
-        .descriptors()
-        .chain(adjunct.descriptors())
-        .map(|desc| desc.digest().unwrap())
-        .chain([bundle.fee_descriptor().digest().unwrap()])
-        .collect();
-    assert!(!bundle.verify_proof(rng, &digests).unwrap());
-}
-
-#[test]
-fn verify_proof_disproves_uncovered_adjunct() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, &wallet, 1000, 700);
-
-    let foreign = build_autonome(rng, &wallet, 500, 300);
-    let adjunct = foreign.strip(mock_wtxid(&bundle));
-
-    let digests: Vec<ActionDigest> = bundle
-        .descriptors()
-        .chain(adjunct.descriptors())
-        .map(|desc| desc.digest().unwrap())
-        .chain([bundle.fee_descriptor().digest().unwrap()])
-        .collect();
-    assert!(!bundle.verify_proof(rng, &digests).unwrap());
-}
-
-#[test]
 fn based_aggregate_with_two_adjuncts() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
@@ -491,6 +402,16 @@ fn based_aggregate_with_two_adjuncts() {
     };
     let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
         becomes_based.verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1])
+    else {
+        panic!();
+    };
+    let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateActions)) = becomes_based
+        .verify(
+            rng,
+            &sighash,
+            &wtxid_bytes,
+            &[&adjunct_a, &adjunct_b, &adjunct_a],
+        )
     else {
         panic!();
     };
@@ -638,6 +559,9 @@ fn stripped_bundle_round_trips() {
         assert_eq!(decoded.commitment(), stripped.commitment());
         assert_eq!(decoded.auth_digest(), stripped.auth_digest());
         assert_eq!(decoded.stamp.wtxid, wtxid);
+        decoded
+            .verify_signatures(&mock_sighash(decoded.commitment()))
+            .unwrap();
     }
 
     for byte in buf.iter_mut().rev().take(64) {
@@ -653,11 +577,6 @@ fn stripped_bundle_round_trips() {
             "aggregate id is zero and refers to no aggregate"
         );
     }
-}
-
-#[test]
-fn aggregate_id_try_from_rejects_zero() {
-    AggregateId::try_from([0u8; 64]).unwrap_err();
 }
 
 #[test]

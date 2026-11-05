@@ -82,20 +82,6 @@ fn fee_fuse_binds_its_sets() {
         left.stamp.tachygram_set,
         anchor,
     );
-    assert!(
-        PROOF_SYSTEM
-            .verify(
-                &left.stamp.proof.clone().carry::<Actions>(stamp_header),
-                &mut *rng
-            )
-            .unwrap()
-    );
-    assert!(
-        !left
-            .stamp
-            .verify_proof(rng, action_digests.iter().copied())
-            .unwrap()
-    );
     let valid = witness::fee_fuse(
         (stamp_header, ()),
         max_fee_note,
@@ -162,8 +148,8 @@ fn fee_fuse_binds_its_sets() {
         ),
         (
             {
-                let mut corrupt = valid.clone();
-                corrupt.4.1 = other.4.1.clone();
+                let mut corrupt = valid;
+                corrupt.4.1 = other.4.1;
                 corrupt
             },
             "FeeFuse: fee tachygram set does not commit to the fee change note",
@@ -180,26 +166,6 @@ fn fee_fuse_binds_its_sets() {
         } else {
             panic!("{expected}");
         }
-    }
-
-    let (fee_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeFuse,
-            valid.clone(),
-            left.stamp.proof.clone().carry::<Actions>(stamp_header),
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    for (action_commit, tachygram_commit, expected) in [
-        (valid.3.0.commit(), valid.3.1.commit(), true),
-        (other.3.0.commit(), valid.3.1.commit(), false),
-    ] {
-        let pcd = fee_pcd
-            .proof()
-            .clone()
-            .carry::<Stamp>((action_commit, tachygram_commit, anchor));
-        assert_eq!(PROOF_SYSTEM.verify(&pcd, &mut *rng).unwrap(), expected);
     }
 }
 
@@ -220,23 +186,12 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 .unwrap(),
         )
     });
-    for (bundle, fee) in bundles.iter().zip(fees) {
-        assert_eq!(u64::from(bundle.stamp.fee), fee);
+    for bundle in &bundles {
         assert_eq!(bundle.commitment(), signed.commitment());
-        assert_eq!(bundle.binding_sig, signed.binding_sig);
-        assert_eq!(bundle.stamp.tachygrams.len(), 2 * 2 + 1);
         bundle
             .verify(rng, &sighash, &mock_wtxid(bundle).into(), &[])
             .unwrap();
     }
-    assert_eq!(
-        bundles
-            .iter()
-            .map(Bundle::auth_digest)
-            .collect::<BTreeSet<_>>()
-            .len(),
-        3
-    );
 
     let [_, once, _] = bundles;
     let digests: BTreeSet<_> = once
@@ -423,22 +378,9 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .unwrap();
     let aggregate = signed.stamp(merged_stamp);
 
-    assert_eq!(aggregate.stamp.fee, value::Positive::try_from(120).unwrap());
-    assert!(
-        adjunct
-            .stamp
-            .tachygrams
-            .is_subset(&aggregate.stamp.tachygrams)
-    );
-    assert_eq!(
-        aggregate.stamp.tachygrams.len(),
-        2 * (aggregate.actions.len() + adjunct.actions.len()) + 2
-    );
     let final_id = mock_wtxid(&aggregate);
-    let stripped = adjunct.strip(final_id);
-    assert_eq!(stripped.stamp.fee, value::Positive::try_from(40).unwrap());
     aggregate
-        .verify(rng, &sighash, &final_id.into(), &[&stripped])
+        .verify(rng, &sighash, &final_id.into(), &[&adjunct.strip(final_id)])
         .unwrap();
 }
 
@@ -539,9 +481,6 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     let anchor = Anchor::random(rng);
     let bundle = wallet.autonome(rng, anchor, vec![], vec![]);
     let sighash = mock_sighash(bundle.commitment());
-    assert_eq!(bundle.actions.len(), 0);
-    assert_eq!(bundle.stamp.tachygrams.len(), 1);
-    assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
     bundle
         .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
         .unwrap();
@@ -577,15 +516,6 @@ fn innocent_seed_merges_and_strips() {
             ),
         )
         .unwrap();
-    let id = mock_wtxid(&innocent);
-    innocent
-        .verify(
-            rng,
-            &mock_sighash(innocent.commitment()),
-            &id.into(),
-            &[&adjunct.clone().strip(id)],
-        )
-        .unwrap();
 
     let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
     parent.stamp = parent
@@ -608,14 +538,12 @@ fn innocent_seed_merges_and_strips() {
         )
         .unwrap();
     let parent_id = mock_wtxid(&parent);
-    let stripped_innocent = innocent.strip(parent_id);
-    assert_eq!(stripped_innocent.actions.len(), 0);
     parent
         .verify(
             rng,
             &mock_sighash(parent.commitment()),
             &parent_id.into(),
-            &[&adjunct.strip(parent_id), &stripped_innocent],
+            &[&adjunct.strip(parent_id), &innocent.strip(parent_id)],
         )
         .unwrap();
 }

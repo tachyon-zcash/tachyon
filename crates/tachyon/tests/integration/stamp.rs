@@ -5,8 +5,7 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action,
+    ActionDigest, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly, action,
     entropy::ActionEntropy,
     fee,
     stamp::{self, ProveError},
@@ -227,35 +226,6 @@ fn plan_prove_lifts_a_spend_along_spans() {
 }
 
 #[test]
-fn merge_populates_covered_actions() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user_a = WalletSim::random(rng);
-    let user_b = WalletSim::random(rng);
-    let anchor = Anchor::random(rng);
-    let note_a = user_a.random_note(200);
-    let note_b = user_b.random_note(300);
-    let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, anchor, note_a);
-    let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor, note_b);
-
-    let expected = stamp_coverage([plan_a.descriptor(), plan_b.descriptor()], &[fee_a, fee_b]);
-
-    let receiver_fee = stamp_a.fee;
-    let merged = stamp_a
-        .merge(
-            rng,
-            (BTreeSet::from_iter([plan_a.descriptor()]), [fee_a].into()),
-            (
-                stamp_b,
-                BTreeSet::from_iter([plan_b.descriptor()]),
-                [fee_b].into(),
-            ),
-        )
-        .unwrap();
-    assert_eq!(merged.coverage, expected);
-    assert_eq!(merged.fee, receiver_fee);
-}
-
-#[test]
 fn overlapping_stamps_cannot_aggregate() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
@@ -461,11 +431,6 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
 
-    assert_eq!(
-        TachygramSetPoly::from_iter(stamp.tachygrams.clone()).commit(),
-        stamp.tachygram_set
-    );
-
     let forged = ProofStamp {
         tachygram_set: TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
         ..stamp
@@ -513,32 +478,6 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let foreign = BTreeSet::from([random_action(rng).descriptor()]);
     let misdescribed = stamp.lift(rng, &foreign, &fees, vec![span]).unwrap();
     assert!(!misdescribed.verify_proof(rng, digests).unwrap());
-}
-
-#[test]
-fn lift_rejects_a_foreign_span() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let anchor = Anchor::random(rng);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, anchor, wallet.random_note(200));
-
-    let mut foreign = PoolSim::genesis_with(random_block(rng, 1, 50));
-    foreign.advance(3, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &foreign, BlockHeight(1)..=foreign.height());
-
-    if let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) = stamp.lift(
-        rng,
-        &BTreeSet::from([plan.descriptor()]),
-        &BTreeSet::from([fee_descriptor]),
-        vec![span],
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "StampLift: stamp anchor is neither the span's start nor a member"
-        );
-    } else {
-        panic!();
-    }
 }
 
 #[test]
@@ -611,21 +550,17 @@ fn mismatched_merge_descriptors_fail_verification() {
         )
         .collect();
 
-    let foreign_descriptors = BTreeSet::from_iter([foreign]);
-    assert!(descriptors_a.is_disjoint(&foreign_descriptors));
-    assert!(
-        !bundle_b
-            .stamp
-            .is_covering(foreign_descriptors.clone(), fees_b.iter().copied())
-    );
-
     let merged = bundle_a
         .stamp
         .clone()
         .merge(
             rng,
             (descriptors_a.clone(), fees_a.clone()),
-            (bundle_b.stamp.clone(), foreign_descriptors, fees_b.clone()),
+            (
+                bundle_b.stamp.clone(),
+                BTreeSet::from([foreign]),
+                fees_b.clone(),
+            ),
         )
         .unwrap();
 

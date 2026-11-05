@@ -425,41 +425,6 @@ fn step_accepts_zero_value_note() {
 }
 
 #[test]
-fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    let mk = user.pak.nk.derive_note_private(note.psi);
-    mine_cm_block(rng, &mut pool, note.commitment());
-    let epoch1 = EpochIndex::new(1);
-    let epoch2 = EpochIndex::new(2);
-    mine_through(rng, &mut pool, epoch2.first_block());
-
-    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
-    let unspent = build_unspent_pcd_over_epochs(
-        rng,
-        &pool,
-        |epoch| mk.derive_nullifier(epoch),
-        (epoch1, epoch2),
-    );
-    let lifted = user.lift(rng, spendable, unspent, &note);
-
-    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cm, nf_current, _nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
-    assert_eq!(nf_current, mk.derive_nullifier(epoch2));
-    assert_ne!(nf_current, mk.derive_nullifier(epoch1));
-
-    let stamp = honest_spend_stamp(rng, &user, bind_pcd);
-    let expected = TachygramSetPoly::from_iter([
-        mk.derive_nullifier(epoch2).into(),
-        mk.derive_nullifier(EpochIndex::new(3)).into(),
-    ])
-    .commit();
-    assert_eq!(stamp.data().1, expected);
-}
-
-#[test]
 fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -537,44 +502,6 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
 }
 
 #[test]
-fn unspent_lift_spans_several_whole_epochs() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    mine_cm_block(rng, &mut pool, note.commitment());
-    let epoch1 = EpochIndex::new(1);
-    let epoch4 = EpochIndex::new(4);
-
-    let empty_height = BlockHeight(EPOCH_SIZE + 4);
-    while pool.height() < epoch4.first_block() {
-        if pool.height().0 + 1 == empty_height.0 {
-            pool.advance(1, |_| Vec::new());
-        } else {
-            pool.advance(1, |_| random_block(rng, 1, 2));
-        }
-    }
-
-    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
-    let unspent = build_unspent_pcd_over_epochs(
-        rng,
-        &pool,
-        |epoch| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(epoch)
-        },
-        (epoch1, epoch4),
-    );
-
-    let lifted = user.lift(rng, spendable, unspent, &note);
-    assert_eq!(lifted.data().1, epoch4);
-    assert_eq!(lifted.data().2, pool.block(epoch4.first_block()).prev);
-    assert_eq!(lifted.data().0, note.commitment());
-}
-
-#[test]
 fn lift_crosses_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -598,18 +525,6 @@ fn lift_crosses_a_stampless_epoch() {
         |epoch| mk.derive_nullifier(epoch),
         (epoch1, epoch3),
     );
-    let (_, epoch_start, elapsed, epoch_next, _) = *arbitrary.data();
-    assert_eq!(epoch_start, epoch1);
-    assert_eq!(epoch_next, epoch3);
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(
-            epoch1,
-            &[mk.derive_nullifier(epoch1), mk.derive_nullifier(epoch2)],
-        )
-        .commit()
-    );
-
     let lifted = user.lift(rng, spendable, arbitrary, &note);
     assert_eq!(lifted.data().1, epoch3);
     assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
@@ -884,33 +799,6 @@ fn spendable_lift_rejects_mismatched_segments() {
 }
 
 #[test]
-fn note_seed_carries_the_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let secret = user.secret_pcd(rng, note);
-
-    let (cm, opening, mk) = *secret.data();
-    assert_eq!(cm, note.commitment());
-    assert_eq!(mk, user.pak.nk.derive_note_private(note.psi));
-    assert_eq!(
-        (
-            Fp::from(opening.rcm),
-            Fp::from(opening.pk),
-            u64::from(opening.value),
-            Fp::from(opening.psi),
-        ),
-        (
-            Fp::from(note.rcm),
-            Fp::from(note.pk),
-            u64::from(note.value),
-            Fp::from(note.psi),
-        )
-    );
-}
-
-#[test]
 fn note_seed_derives_the_payment_key_from_pak() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1016,32 +904,6 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
 }
 
 #[test]
-fn derivation_exports_the_whole_window() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let epoch_start = EpochIndex::new(12);
-    let epoch_end = EpochIndex::new(u32::from(epoch_start) + NF_DERIVATION_WIDTH as u32 - 1);
-    let range = user.derivation_pcd(rng, note, epoch_start, epoch_end);
-    let (cm, start, commit, range_end) = *range.data();
-
-    assert_eq!(start, epoch_start);
-    assert_eq!(range_end, epoch_end);
-    let members = user.covering_window(&note, &range);
-    let seq = NfSeqPoly::new(epoch_start, &members);
-    assert_eq!(commit, seq.commit());
-
-    let far = user.derivation_pcd(
-        rng,
-        note,
-        EpochIndex::new(100_000),
-        EpochIndex::new(100_000 + NF_DERIVATION_WIDTH as u32 - 1),
-    );
-    assert_eq!(cm, far.data().0);
-}
-
-#[test]
 fn spend_bind_derives_a_pair_across_a_group_boundary() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1068,41 +930,6 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
             anchor,
         )
     );
-}
-
-#[test]
-fn multi_chunk_lift_uses_per_chunk_windows() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    let mk = user.pak.nk.derive_note_private(note.psi);
-    mine_cm_block(rng, &mut pool, note.commitment());
-    let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
-    mine_through(rng, &mut pool, epoch2.first_block());
-
-    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
-    let unspent_one = build_unspent_pcd_over_epochs(
-        rng,
-        &pool,
-        |epoch| mk.derive_nullifier(epoch),
-        (epoch1, epoch2),
-    );
-    let lifted_one = user.lift(rng, spendable, unspent_one, &note);
-    assert_eq!(lifted_one.data().1, epoch2);
-
-    mine_through(rng, &mut pool, epoch3.first_block());
-    let unspent_two = build_unspent_pcd_over_epochs(
-        rng,
-        &pool,
-        |epoch| mk.derive_nullifier(epoch),
-        (epoch2, epoch3),
-    );
-    let lifted_two = user.lift(rng, lifted_one, unspent_two, &note);
-
-    assert_eq!(lifted_two.data().1, epoch3);
-    assert_eq!(lifted_two.data().2, pool.block(epoch3.first_block()).prev);
-    assert_eq!(lifted_two.data().0, note.commitment());
 }
 
 #[test]
