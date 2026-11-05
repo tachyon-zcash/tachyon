@@ -1,3 +1,5 @@
+use core::assert_matches;
+
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -32,10 +34,12 @@ fn next_stamp_binds_the_order_and_the_epoch() {
 fn anchor_steps_reject_degenerate_inputs() {
     let anchor = Anchor::random(&mut StdRng::seed_from_u64(0));
     let zero_set = TachygramSetCommit::from(Eq::identity());
-    let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex::new(7), &zero_set) else {
-        panic!();
-    };
-    let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex::new(0)) else {
-        panic!();
-    };
+    assert_matches!(
+        anchor.next_stamp(EpochIndex::new(7), &zero_set),
+        Err(AnchorError::NextStampZero)
+    );
+    assert_matches!(
+        anchor.next_epoch(EpochIndex::new(0)),
+        Err(AnchorError::NextEpochZero)
+    );
 }

@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{array, iter};
+use core::{array, assert_matches, iter};
 
 use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -71,15 +71,22 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor_prev = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
-        rng,
-        qr::QrStampIntakeSeed,
-        witness::qr_stamp_intake_seed(((), ()), anchor_prev, EpochIndex::new(3), discriminant, &[]),
-    ) {
-        assert_eq!(err.to_string(), "invalid anchor step");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .seed(
+                rng,
+                qr::QrStampIntakeSeed,
+                witness::qr_stamp_intake_seed(
+                    ((), ()),
+                    anchor_prev,
+                    EpochIndex::new(3),
+                    discriminant,
+                    &[],
+                ),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "invalid anchor step"
+    );
 }
 
 #[test]
@@ -162,20 +169,19 @@ fn qr_intake_split_rejects_a_forged_partition() {
         .unwrap();
 
     let (contents, non_residue, _residue) = witness::qr_intake_split((*root.data(), ()), &members);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrIntakeSplit,
-        (contents, non_residue.clone(), non_residue),
-        root,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeSplit: the sides do not partition the contents"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                (contents, non_residue.clone(), non_residue),
+                root,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrIntakeSplit: the sides do not partition the contents"
+    );
 }
 
 #[test]
@@ -221,24 +227,23 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 *member != exceptional && qr::classify(Fp::from(*member), discriminant.at(depth)).0
             });
         let (contents, ..) = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            qr::QrIntakeSplit,
-            (
-                contents,
-                non_residue.iter().copied().collect(),
-                residue.iter().copied().collect(),
-            ),
-            intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(
-                err.to_string(),
-                "QrIntakeSplit: exceptional value claimed the non-residue class"
-            );
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrIntakeSplit,
+                    (
+                        contents,
+                        non_residue.iter().copied().collect(),
+                        residue.iter().copied().collect(),
+                    ),
+                    intake.pcd,
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
+                == "QrIntakeSplit: exceptional value claimed the non-residue class"
+        );
     }
 }
 
@@ -377,17 +382,18 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
             "QrSideDescend: the sibling fails its class decomposition",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            qr::QrSideDescend,
-            descend_witness,
-            split.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrSideDescend,
+                    descend_witness,
+                    split.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -430,25 +436,24 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
 
     let (_, _, interpolant, quotient) =
         witness::qr_side_descend((*sides.data(), ()), &members, true);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrSideDescend,
-        (
-            true,
-            padded_non_residue.iter().copied().collect(),
-            interpolant,
-            quotient,
-        ),
-        sides.clone(),
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrSideDescend: the sibling fails its class decomposition"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                (
+                    true,
+                    padded_non_residue.iter().copied().collect(),
+                    interpolant,
+                    quotient,
+                ),
+                sides.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideDescend: the sibling fails its class decomposition"
+    );
 
     let members_without_smuggled: Vec<Tachygram> = members
         .iter()
@@ -541,20 +546,19 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
         )
         .unwrap();
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrSideDescend,
-        (false, sibling, interpolant, quotient),
-        sides,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrSideDescend: the sibling fails its class decomposition"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                (false, sibling, interpolant, quotient),
+                sides,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideDescend: the sibling fails its class decomposition"
+    );
 }
 
 #[test]
@@ -601,20 +605,19 @@ fn qr_side_descend_refuses_a_full_register() {
         )
         .unwrap();
     let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, true);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrSideDescend,
-        descend_witness,
-        sides,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrSideDescend: profile has no bit left for another side"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                descend_witness,
+                sides,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideDescend: profile has no bit left for another side"
+    );
 }
 
 #[test]
@@ -717,17 +720,22 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                 ),
             )
             .unwrap();
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            qr::QrIntakeMerge,
-            witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members),
-            left.clone(),
-            right,
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrIntakeMerge,
+                    witness::qr_intake_merge(
+                        (*left.data(), *right.data()),
+                        &left_members,
+                        &right_members,
+                    ),
+                    left.clone(),
+                    right,
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (right, ()) = PROOF_SYSTEM
@@ -760,24 +768,23 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .copied()
         .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
         .collect();
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrIntakeMerge,
-        witness::qr_intake_merge(
-            (*deeper.data(), *right.data()),
-            &deeper_members,
-            &right_members,
-        ),
-        deeper,
-        right,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrIntakeMerge: inputs sit at different depths"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrIntakeMerge,
+                witness::qr_intake_merge(
+                    (*deeper.data(), *right.data()),
+                    &deeper_members,
+                    &right_members,
+                ),
+                deeper,
+                right,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrIntakeMerge: inputs sit at different depths"
+    );
 }
 
 #[test]
@@ -822,20 +829,19 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let routed = build_qr_partition(rng, &pool, (start, final_anchor), discriminant, 12, 1);
     let intake = routed.into_iter().next().unwrap();
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrBucketSeal,
-        witness,
-        intake.pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrBucketSeal,
+                witness,
+                intake.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
+            == "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
+    );
 }
 
 #[test]
@@ -1027,16 +1033,13 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     );
     let bound_next = user.unspent_bind(rng, next, &note);
     assert_ne!(bound_next.data().1, unpublished);
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
-    {
-        assert_eq!(
-            err.to_string(),
-            "SpendableLift: unspent not adjacent to spendable"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "SpendableLift: unspent not adjacent to spendable"
+    );
 }
 
 #[test]
@@ -1125,17 +1128,21 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
             "QrSpendableInit: segment does not open where the bucket does",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-            unspent,
-            bucket.pcd,
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    spendable::QrSpendableInit,
+                    witness::qr_spendable_init(
+                        (*unspent.data(), *bucket.pcd.data()),
+                        &bucket.members,
+                    ),
+                    unspent,
+                    bucket.pcd,
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -1161,17 +1168,19 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        spendable::QrSpendableInit,
-        witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-        unspent,
-        bucket.pcd,
-    ) {
-        assert_eq!(err.to_string(), "QrSpendableInit: commitment not in bucket");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::QrSpendableInit,
+                witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
+                unspent,
+                bucket.pcd,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSpendableInit: commitment not in bucket"
+    );
 }
 
 #[test]
@@ -1310,17 +1319,18 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             "QrUnspentInit: contents do not match the bucket",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            qr::QrUnspentInit,
-            init_witness,
-            bucket_pcd,
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    qr::QrUnspentInit,
+                    init_witness,
+                    bucket_pcd,
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -1370,20 +1380,19 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = false;
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrUnspentInit,
-        witness,
-        bucket.pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QR profile: exceptional discriminant claimed the non-residue class"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
+            == "QR profile: exceptional discriminant claimed the non-residue class"
+    );
 }
 
 #[test]
@@ -1410,20 +1419,19 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
     data.1 = anchor_final_prev.next_epoch(final_epoch).unwrap();
     let forged = intake.pcd.proof().clone().carry::<qr::QrIntake>(data);
     let witness = witness::qr_bucket_seal((data, ()), anchor_final_prev);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrBucketSeal,
-        witness,
-        forged,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrBucketSeal: crossing past the final epoch"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrBucketSeal,
+                witness,
+                forged,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrBucketSeal: crossing past the final epoch"
+    );
 }
 
 #[test]
@@ -1457,20 +1465,19 @@ fn qr_unspent_init_rejects_a_twin_value() {
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        qr::QrUnspentInit,
-        witness,
-        bucket.pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "QrUnspentInit: sequence does not match the tested pair"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                witness,
+                bucket.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrUnspentInit: sequence does not match the tested pair"
+    );
 }
 
 #[test]
@@ -1622,16 +1629,17 @@ fn unspent_lift_rejects_invalid_extensions() {
             "QR profile: root does not square to the claimed class",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            UnspentLift,
-            lift,
-            segment.clone(),
-            lift_bucket.pcd.clone(),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    UnspentLift,
+                    lift,
+                    segment.clone(),
+                    lift_bucket.pcd.clone(),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }

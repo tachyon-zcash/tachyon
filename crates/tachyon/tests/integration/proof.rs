@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{array, iter};
+use core::{array, assert_matches, iter};
 
 use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -83,22 +83,24 @@ fn spendable_init_rejects_tg_absent() {
     let nf_header = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let absent_tg = Tachygram::random(rng);
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        spendable::SpendableInit,
-        witness::spendable_init(
-            (*nf_header.data(), ()),
-            Anchor::default(),
-            &[absent_tg],
-            EpochIndex::new(0),
-        ),
-        nf_header,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(err.to_string(), "SpendableInit: commitment not in set");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableInit,
+                witness::spendable_init(
+                    (*nf_header.data(), ()),
+                    Anchor::default(),
+                    &[absent_tg],
+                    EpochIndex::new(0),
+                ),
+                nf_header,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "SpendableInit: commitment not in set"
+    );
 }
 
 #[test]
@@ -115,20 +117,19 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(1)));
     let third =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(3)));
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentFuse,
-        witness::unspent_fuse((*first.data(), *third.data()), &[nf0], &[nf2]),
-        first,
-        third,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentFuse: left.anchor_next must equal right.anchor_start"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::UnspentFuse,
+                witness::unspent_fuse((*first.data(), *third.data()), &[nf0], &[nf2]),
+                first,
+                third,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentFuse: left.anchor_next must equal right.anchor_start"
+    );
 
     let left =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
@@ -160,17 +161,18 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
             "UnspentFuse: combined is not the concatenation of the halves",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            pool::UnspentFuse,
-            fuse_witness,
-            left.clone(),
-            right.clone(),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    pool::UnspentFuse,
+                    fuse_witness,
+                    left.clone(),
+                    right.clone(),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (start, end) = (left.data().0, right.data().4);
@@ -256,11 +258,10 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             span.clone(),
         );
         if let Some(message) = expected {
-            if let Err(ragu_core::Error::InvalidWitness(err)) = lifted {
-                assert_eq!(err.to_string(), message);
-            } else {
-                panic!();
-            }
+            assert_matches!(
+                lifted.err(),
+                Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == message
+            );
         } else {
             assert_eq!(lifted.unwrap().0.data().2, anchor_end);
         }
@@ -317,13 +318,12 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
             "AnchorSpanFuse: spans do not share a vertex",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) =
-            PROOF_SYSTEM.fuse(rng, pool::AnchorSpanFuse, fuse_witness, first, second)
-        {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(rng, pool::AnchorSpanFuse, fuse_witness, first, second)
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -344,31 +344,35 @@ fn spend_rejects_invalid_note() {
     };
     let secret_pcd = user.secret_pcd(rng, phantom);
     let rcv = value::Trapdoor::random(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        spend::SpendBind,
-        (rcv,),
-        spendable_pcd.clone(),
-        secret_pcd,
-    ) {
-        assert_eq!(err.to_string(), "SpendBind: secret does not match note");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                spend::SpendBind,
+                (rcv,),
+                spendable_pcd.clone(),
+                secret_pcd,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "SpendBind: secret does not match note"
+    );
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let theta = ActionEntropy::random(rng);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        stamp::SpendAction,
-        witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
-        bind_pcd,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(err.to_string(), "SpendAction: pak not related to note");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                stamp::SpendAction,
+                witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
+                bind_pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "SpendAction: pak not related to note"
+    );
 }
 
 #[test]
@@ -451,17 +455,18 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
             "SpendAction: action set does not commit to the action",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            stamp::SpendAction,
-            action_witness,
-            bind_pcd.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    stamp::SpendAction,
+                    action_witness,
+                    bind_pcd.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (pcd, ()) = PROOF_SYSTEM
@@ -549,16 +554,13 @@ fn unspent_bind_rejects_a_forged_member() {
         &[forged],
     );
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, pool::UnspentBind, witness, unspent, range)
-    {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(rng, pool::UnspentBind, witness, unspent, range)
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentBind: sequence does not match the derivation"
+    );
 }
 
 #[test]
@@ -681,17 +683,18 @@ fn unspent_bind_rejects_mismatched_sequences() {
             "UnspentBind: sequence does not match the derivation",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            pool::UnspentBind,
-            bind_witness,
-            unspent.clone(),
-            bind_range,
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    pool::UnspentBind,
+                    bind_witness,
+                    unspent.clone(),
+                    bind_range,
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -712,16 +715,13 @@ fn unspent_bind_rejects_uncovered_end() {
         NfSeqPoly::new(EpochIndex::new(0), &[]),
     );
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) =
-        PROOF_SYSTEM.fuse(rng, pool::UnspentBind, witness, unspent, range)
-    {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(rng, pool::UnspentBind, witness, unspent, range)
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentBind: sequence does not match the derivation"
+    );
 }
 
 #[test]
@@ -774,17 +774,18 @@ fn spendable_lift_rejects_mismatched_segments() {
             "SpendableLift: segment does not start at the lineage epoch",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            spendable::SpendableLift,
-            (),
-            spendable.clone(),
-            unspent,
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    spendable::SpendableLift,
+                    (),
+                    spendable.clone(),
+                    unspent,
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -841,17 +842,18 @@ fn nullifier_derive_rejects_invalid_windows() {
             "NullifierDerive: window exceeds the epoch range",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            delegation::NullifierDerive,
-            derive_witness,
-            secret.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    delegation::NullifierDerive,
+                    derive_witness,
+                    secret.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -883,13 +885,12 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             &user.covering_window(&note, &left),
             &user.covering_window(&right_note, &right),
         );
-        if let Err(ragu_core::Error::InvalidWitness(err)) =
-            PROOF_SYSTEM.fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
-        {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -967,17 +968,18 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             "OutputAction: action set does not commit to the action",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            stamp::OutputAction,
-            action_witness,
-            bind_pcd.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    stamp::OutputAction,
+                    action_witness,
+                    bind_pcd.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (pcd, ()) = PROOF_SYSTEM
@@ -1028,24 +1030,23 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
         iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
             .take(32)
             .collect();
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        delegation::NullifierFuse,
-        (
-            left_seq.clone(),
-            NfSeqPoly::new(EpochIndex::new(0), &wrong_members),
-            right_seq.clone(),
-        ),
-        left.clone(),
-        right.clone(),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "NullifierFuse: merged is not the concat of the halves"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NullifierFuse,
+                (
+                    left_seq.clone(),
+                    NfSeqPoly::new(EpochIndex::new(0), &wrong_members),
+                    right_seq.clone(),
+                ),
+                left.clone(),
+                right.clone(),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "NullifierFuse: merged is not the concat of the halves"
+    );
 
     let (merged, ()) = PROOF_SYSTEM
         .fuse(
@@ -1087,20 +1088,19 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
         &[mk.derive_nullifier(EpochIndex::new(0))],
     );
     let nf_seq = NfSeqPoly::new(EpochIndex::new(0), &user.covering_window(&note, &range));
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        pool::UnspentBind,
-        (elapsed_seq, nf_seq, complement_seq),
-        unspent,
-        range,
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "UnspentBind: sequence does not match the derivation"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::UnspentBind,
+                (elapsed_seq, nf_seq, complement_seq),
+                unspent,
+                range,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentBind: sequence does not match the derivation"
+    );
 }
 
 #[test]

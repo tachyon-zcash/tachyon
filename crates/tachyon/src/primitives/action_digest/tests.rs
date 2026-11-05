@@ -1,3 +1,5 @@
+use core::assert_matches;
+
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 
@@ -16,11 +18,12 @@ fn digest_rejects_identity_points() {
     let identity_rk =
         public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
 
-    let Err(ActionDigestError::IdentityCv) = ActionDigest::new(value::Commitment::default(), rk)
-    else {
-        panic!();
-    };
-    let Err(ActionDigestError::IdentityRk) = ActionDigest::new(cv, identity_rk) else {
-        panic!();
-    };
+    assert_matches!(
+        ActionDigest::new(value::Commitment::default(), rk),
+        Err(ActionDigestError::IdentityCv)
+    );
+    assert_matches!(
+        ActionDigest::new(cv, identity_rk),
+        Err(ActionDigestError::IdentityRk)
+    );
 }

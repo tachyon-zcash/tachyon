@@ -6,7 +6,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::cmp::Reverse;
+use core::{assert_matches, cmp::Reverse};
 
 use corez::io;
 use ragu::PROOF_SIZE_COMPRESSED;
@@ -126,12 +126,10 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
         .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), authorized)
         .unwrap();
 
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!();
-    };
+    assert_matches!(
+        bundle.verify_signatures(&mock_sighash(bundle.commitment())),
+        Err(SignatureError::Action(_))
+    );
 }
 
 #[test]
@@ -152,11 +150,10 @@ fn edited_bundles_fail_binding_verification() {
         },
     ] {
         assert_ne!(edited.commitment(), original.commitment());
-        let Err(SignatureError::Binding(_)) =
-            edited.verify_signatures(&mock_sighash(edited.commitment()))
-        else {
-            panic!();
-        };
+        assert_matches!(
+            edited.verify_signatures(&mock_sighash(edited.commitment())),
+            Err(SignatureError::Binding(_))
+        );
     }
 }
 
@@ -196,9 +193,10 @@ fn zero_action_bundle_requires_a_zero_balance() {
                 assert_eq!(decoded.auth_digest(), bundle.auth_digest());
             }
         } else {
-            let Err(SignatureError::Binding(_)) = bundle.verify_signatures(&sighash) else {
-                panic!();
-            };
+            assert_matches!(
+                bundle.verify_signatures(&sighash),
+                Err(SignatureError::Binding(_))
+            );
             for err in [
                 Bundle::<PointerStamp>::read(&*buf).unwrap_err(),
                 TachyonBundle::read(&*buf).unwrap_err(),
@@ -289,14 +287,17 @@ fn duplicated_spend_cannot_inflate() {
         .collect();
     assert!(!decoded.verify_proof(rng, &digests).unwrap());
 
-    let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateActions)) = decoded.verify(
-        rng,
-        &mock_sighash(decoded.commitment()),
-        &mock_wtxid(&decoded).into(),
-        &[],
-    ) else {
-        panic!();
-    };
+    assert_matches!(
+        decoded.verify(
+            rng,
+            &mock_sighash(decoded.commitment()),
+            &mock_wtxid(&decoded).into(),
+            &[],
+        ),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::DuplicateActions
+        ))
+    );
 }
 
 #[test]
@@ -395,26 +396,29 @@ fn based_aggregate_with_two_adjuncts() {
         .verify(rng, &sighash, &wtxid_bytes, &adjuncts)
         .unwrap();
 
-    let Err(VerificationError::Pointers(VerifyPointersError::AdjunctPointerMismatch)) =
-        becomes_based.verify(rng, &sighash, &[0x5au8; 64], &adjuncts)
-    else {
-        panic!();
-    };
-    let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
-        becomes_based.verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1])
-    else {
-        panic!();
-    };
-    let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateActions)) = becomes_based
-        .verify(
+    assert_matches!(
+        becomes_based.verify(rng, &sighash, &[0x5au8; 64], &adjuncts),
+        Err(VerificationError::Pointers(
+            VerifyPointersError::AdjunctPointerMismatch
+        ))
+    );
+    assert_matches!(
+        becomes_based.verify(rng, &sighash, &wtxid_bytes, &adjuncts[..1]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
+    assert_matches!(
+        becomes_based.verify(
             rng,
             &sighash,
             &wtxid_bytes,
             &[&adjunct_a, &adjunct_b, &adjunct_a],
-        )
-    else {
-        panic!();
-    };
+        ),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::DuplicateActions
+        ))
+    );
 }
 
 #[test]
@@ -431,11 +435,10 @@ fn autonome_verify_rejects_flipped_signatures() {
     binding_bytes[0] ^= 0xFF;
     let mut bad_binding = bundle.clone();
     bad_binding.binding_sig = Signature::read(&mut binding_bytes.as_slice()).unwrap();
-    let Err(VerificationError::Signatures(SignatureError::Binding(_))) =
-        bad_binding.verify(rng, &sighash, &wtxid, &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        bad_binding.verify(rng, &sighash, &wtxid, &[]),
+        Err(VerificationError::Signatures(SignatureError::Binding(_)))
+    );
 
     let mut action_bytes = Vec::new();
     bundle.actions[0].sig.write(&mut action_bytes).unwrap();
@@ -443,12 +446,10 @@ fn autonome_verify_rejects_flipped_signatures() {
     let bad_sig = action::Signature::read(&mut action_bytes.as_slice()).unwrap();
     let mut bad_action = bundle;
     bad_action.actions[0].sig = bad_sig;
-    let Err(VerificationError::Signatures(SignatureError::Action(sig))) =
-        bad_action.verify(rng, &sighash, &wtxid, &[])
-    else {
-        panic!();
-    };
-    assert_eq!(sig, bad_sig);
+    assert_matches!(
+        bad_action.verify(rng, &sighash, &wtxid, &[]),
+        Err(VerificationError::Signatures(SignatureError::Action(sig))) if sig == bad_sig
+    );
 }
 
 #[test]
@@ -893,12 +894,10 @@ fn bundle_lift_preserves_coverage() {
 
     let descriptors = bundle.verify_coverage(&[], &[]).unwrap();
 
-    let Err(ProveError::MissingPcd(reason)) = bundle.clone().lift(rng, &[], vec![]) else {
-        panic!();
-    };
-    assert_eq!(
-        reason.to_string(),
-        "no anchor span proof for no anchor advance"
+    assert_matches!(
+        bundle.clone().lift(rng, &[], vec![]),
+        Err(ProveError::MissingPcd(reason))
+            if reason.to_string() == "no anchor span proof for no anchor advance"
     );
 
     pool.mine(random_block(rng, 1, 2));

@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::string::ToString as _;
-use core::array;
+use core::{array, assert_matches};
 
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -54,17 +54,18 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             "SummaryAdvance: extended accumulator must fold the stamp",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            summary::SummaryAdvance,
-            advance_witness,
-            seeded.clone(),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    summary::SummaryAdvance,
+                    advance_witness,
+                    seeded.clone(),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (advanced, ()) = PROOF_SYSTEM
@@ -101,13 +102,14 @@ fn summary_seed_rejects_empty_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(
-        rng,
-        summary::SummarySeed,
-        witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
-    ) {
-        assert_eq!(err.to_string(), "invalid anchor step");
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .seed(
+                rng,
+                summary::SummarySeed,
+                witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "invalid anchor step"
+    );
 }

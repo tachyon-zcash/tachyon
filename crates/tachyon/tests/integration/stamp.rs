@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
+use core::assert_matches;
 
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -80,10 +81,10 @@ fn plan_prove_rejects_invalid_inputs() {
             "cannot prove 2 spend actions with 3 spendbind inputs",
         ),
     ] {
-        let Err(ProveError::MissingPcd(reason)) = plan.clone().prove(rng, &user.pak, pcds) else {
-            panic!();
-        };
-        assert_eq!(reason.to_string(), expected);
+        assert_matches!(
+            plan.clone().prove(rng, &user.pak, pcds),
+            Err(ProveError::MissingPcd(reason)) if reason.to_string() == expected
+        );
     }
 
     let swapped = plan
@@ -196,16 +197,14 @@ fn plan_prove_lifts_a_spend_along_spans() {
         vec![],
         vec![build_lift_span(rng, &pool, cm_height..=middle)],
     ] {
-        let Err(ProveError::MissingPcd(reason)) = plan.clone().prove(
-            rng,
-            &user.pak,
-            vec![(secret.clone(), spendable.clone(), spans)],
-        ) else {
-            panic!();
-        };
-        assert_eq!(
-            reason.to_string(),
-            "spend 0 does not reach the plan's anchor"
+        assert_matches!(
+            plan.clone().prove(
+                rng,
+                &user.pak,
+                vec![(secret.clone(), spendable.clone(), spans)],
+            ),
+            Err(ProveError::MissingPcd(reason))
+                if reason.to_string() == "spend 0 does not reach the plan's anchor"
         );
     }
 
@@ -213,16 +212,11 @@ fn plan_prove_lifts_a_spend_along_spans() {
         build_lift_span(rng, &pool, cm_height..=cm_height),
         build_lift_span(rng, &pool, plan_height..=plan_height),
     ];
-    if let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) =
-        plan.prove(rng, &user.pak, vec![(secret, spendable, gapped)])
-    {
-        assert_eq!(
-            err.to_string(),
-            "ActionLift: actions anchor is neither the span's start nor a member"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        plan.prove(rng, &user.pak, vec![(secret, spendable, gapped)]),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) if err.to_string()
+            == "ActionLift: actions anchor is neither the span's start nor a member"
+    );
 }
 
 #[test]
@@ -292,17 +286,15 @@ fn overlapping_stamps_cannot_aggregate() {
             "StampMerge: merged action set must be the product of left and right action sets",
         ),
     ] {
-        if let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) =
+        assert_matches!(
             left.clone().merge(
                 rng,
                 (left_descriptors.clone(), left_fees.clone()),
                 (right.clone(), right_descriptors.clone(), right_fees.clone()),
-            )
-        {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+            ),
+            Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+                if err.to_string() == expected
+        );
 
         let forged = forge_overlapping_merge(
             rng,
@@ -503,17 +495,15 @@ fn merge_after_lift() {
     );
     let (fee_set_a, fee_set_b) = (BTreeSet::from([fee_a]), BTreeSet::from([fee_b]));
 
-    if let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) =
+    assert_matches!(
         stamp_a.clone().merge(
             rng,
             (desc_a.clone(), fee_set_a.clone()),
             (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
-        )
-    {
-        assert_eq!(err.to_string(), "StampMerge: anchors must match");
-    } else {
-        panic!();
-    }
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+            if err.to_string() == "StampMerge: anchors must match"
+    );
 
     let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a.lift(rng, &desc_a, &fee_set_a, vec![span]).unwrap();

@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
+use core::assert_matches;
 
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -155,17 +156,18 @@ fn fee_fuse_binds_its_sets() {
             "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            FeeFuse,
-            corrupt,
-            left.stamp.proof.clone().carry::<Actions>(stamp_header),
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    FeeFuse,
+                    corrupt,
+                    left.stamp.proof.clone().carry::<Actions>(stamp_header),
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
 
@@ -231,18 +233,20 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         ..once
     };
 
-    let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
-        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 
     twice.stamp.coverage = stamp_coverage(twice.descriptors(), &[twice.fee_descriptor()]);
-    let Err(VerificationError::Tachygrams(VerifyTachygramsError::WrongArity)) =
-        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[]),
+        Err(VerificationError::Tachygrams(
+            VerifyTachygramsError::WrongArity
+        ))
+    );
 
     let published_digests: Vec<ActionDigest> = twice
         .descriptors()
@@ -286,11 +290,12 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     let mut adjunct = fee_bearing.strip(mock_wtxid(&aggregate));
     adjunct.fee_max_commitment = aggregate.fee_max_commitment;
     adjunct.stamp.fee = aggregate.stamp.fee;
-    let Err(VerificationError::Coverage(VerifyCoverageError::DuplicateFees)) =
-        aggregate.verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        aggregate.verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::DuplicateFees
+        ))
+    );
 }
 
 #[test]
@@ -302,18 +307,20 @@ fn verify_rejects_a_stamp_without_its_fee() {
     let mut fee_less = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let sighash = mock_sighash(fee_less.commitment());
 
-    let Err(VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch)) =
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 
     fee_less.stamp.coverage = stamp_coverage(fee_less.descriptors(), &[fee_less.fee_descriptor()]);
-    let Err(VerificationError::Tachygrams(VerifyTachygramsError::WrongArity)) =
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        Err(VerificationError::Tachygrams(
+            VerifyTachygramsError::WrongArity
+        ))
+    );
 
     fee_less
         .stamp
@@ -326,11 +333,10 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let Err(VerificationError::Disproved) =
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[])
-    else {
-        panic!();
-    };
+    assert_matches!(
+        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        Err(VerificationError::Disproved)
+    );
 }
 
 #[test]
@@ -583,12 +589,10 @@ fn fee_seed_binds_its_singletons_and_header() {
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.seed(rng, FeeSeed, corrupt)
-        {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM.seed(rng, FeeSeed, corrupt).err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 
     let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();

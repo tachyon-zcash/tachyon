@@ -1,3 +1,5 @@
+use core::assert_matches;
+
 use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
@@ -120,20 +122,19 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         value,
         final0,
     );
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        evidence::EvidenceTreeLeafPair,
-        (),
-        bucket0.pcd.clone(),
-        bucket1.pcd.clone(),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "EvidenceTreeLeafPair: inputs cover different epochs"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeLeafPair,
+                (),
+                bucket0.pcd.clone(),
+                bucket1.pcd.clone(),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "EvidenceTreeLeafPair: inputs cover different epochs"
+    );
     let tree0 = build_evidence_tree(rng, vec![bucket0]).pcd;
     let tree1 = build_evidence_tree(rng, vec![bucket1]).pcd;
 
@@ -224,23 +225,20 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             )
             .unwrap()
             .0;
-        if let Err(ragu_core::Error::InvalidWitness(err)) =
-            PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
-        {
-            assert_eq!(
-                err.to_string(),
-                format!("EvidenceTreePairFuse: {complaint}")
-            );
-        } else {
-            panic!();
-        }
-        if let Err(ragu_core::Error::InvalidWitness(err)) =
-            PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
-        {
-            assert_eq!(err.to_string(), format!("EvidenceTreeFuse: {complaint}"));
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == format!("EvidenceTreePairFuse: {complaint}")
+        );
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == format!("EvidenceTreeFuse: {complaint}")
+        );
     }
 }
 
@@ -271,20 +269,19 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
     let (_sides, ref mut children) = path[0];
     children[EVIDENCE_TREE_ARITY - 1] =
         EvidenceTreeRoot(Fp::from(children[EVIDENCE_TREE_ARITY - 1]) + Fp::ONE);
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        evidence::EvidenceTreeDescend,
-        witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
-        tree.pcd.clone(),
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "EvidenceTreeDescend: children do not hash to the node"
-        );
-    } else {
-        panic!();
-    }
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeDescend,
+                witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
+                tree.pcd.clone(),
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "EvidenceTreeDescend: children do not hash to the node"
+    );
 
     let mut node = tree.pcd.clone();
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
@@ -323,19 +320,18 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
         ),
         (node, leaf.profile, other_contents),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            evidence::EvidenceTreeOpen,
-            witness::evidence_tree_open((*opened.data(), ()), profile, contents),
-            opened,
-            Proof::bootstrap().carry::<()>(()),
-        ) {
-            assert_eq!(
-                err.to_string(),
-                "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
-            );
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    evidence::EvidenceTreeOpen,
+                    witness::evidence_tree_open((*opened.data(), ()), profile, contents),
+                    opened,
+                    Proof::bootstrap().carry::<()>(()),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
+        );
     }
 }

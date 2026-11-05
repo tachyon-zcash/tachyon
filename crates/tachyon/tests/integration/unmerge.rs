@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::vec;
-use core::iter;
+use core::{assert_matches, iter};
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -203,17 +203,17 @@ fn unmerge_keeps_the_dividend_fee() {
         .unwrap();
     assert_eq!(hostless.stamp.fee, alice_fee);
     let hostless_wtxid = mock_wtxid(&hostless);
-    let err = hostless
-        .verify(
+    assert_matches!(
+        hostless.verify(
             rng,
             &mock_sighash(hostless.commitment()),
             &hostless_wtxid.into(),
             &[],
-        )
-        .unwrap_err();
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!();
-    };
+        ),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 
     carol.stamp = carol
         .stamp
@@ -284,7 +284,7 @@ fn unmerge_by_a_lifted_divisor() {
         )
         .unwrap();
 
-    if let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) =
+    assert_matches!(
         alice_bob.clone().unmerge(
             rng,
             (
@@ -296,12 +296,10 @@ fn unmerge_by_a_lifted_divisor() {
                 bob.descriptors().collect(),
                 [bob.fee_descriptor()].into(),
             ),
-        )
-    {
-        assert_eq!(err.to_string(), "StampUnmerge: anchors must match");
-    } else {
-        panic!();
-    }
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+            if err.to_string() == "StampUnmerge: anchors must match"
+    );
 
     alice.stamp = alice_bob
         .unmerge(
@@ -351,12 +349,12 @@ fn unmerge_by_itself_leaves_no_leaves() {
 
     alice.stamp = quotient;
     let wtxid = mock_wtxid(&alice);
-    let err = alice
-        .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
-        .unwrap_err();
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!();
-    };
+    assert_matches!(
+        alice.verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 }
 
 #[test]
@@ -420,12 +418,12 @@ fn unmerge_splitting_a_bundle() {
 
     whole.stamp = quotient;
     let wtxid = mock_wtxid(&whole);
-    let err = whole
-        .verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[])
-        .unwrap_err();
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!();
-    };
+    assert_matches!(
+        whole.verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 }
 
 #[test]
@@ -557,16 +555,17 @@ fn unmerge_binds_its_sets() {
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         ),
     ] {
-        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-            rng,
-            StampUnmerge,
-            corrupt,
-            alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-            bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-        ) {
-            assert_eq!(err.to_string(), expected);
-        } else {
-            panic!();
-        }
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    StampUnmerge,
+                    corrupt,
+                    alice_bob.proof.clone().carry::<Stamp>(dividend_header),
+                    bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }
