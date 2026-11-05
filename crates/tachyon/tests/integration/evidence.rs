@@ -4,7 +4,7 @@ use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit,
-    constants::EVIDENCE_TREE_ARITY,
+    constants::{EPOCH_SIZE, EVIDENCE_TREE_ARITY},
     pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
     witness,
@@ -15,7 +15,7 @@ use crate::{
         EvidenceLeaf, PoolSim, QrIntakeEntry, WalletSim, build_evidence_tree, build_qr_partition,
         open_evidence_tree, random_block, seal_qr_intake, shared_sk,
     },
-    qr::{EPOCH_MEMBERS, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch},
+    qr::{qr_bucket_at, qr_epoch_unspent, small_epoch},
 };
 
 fn descend_to_leaf(
@@ -151,11 +151,13 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
 
-    let bucket = qr_bucket_for(
+    let discriminant = QrDiscriminant::random(rng);
+    let bucket = qr_bucket_at(
         rng,
         &pool,
         (Anchor::default(), pool.block(epoch0.last_block()).anchor()),
-        EPOCH_MEMBERS,
+        discriminant,
+        EPOCH_SIZE as usize,
         2,
         Fp::from(
             user.pak
@@ -197,7 +199,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         &pool,
         (Anchor::default(), final0),
         discriminant,
-        EPOCH_MEMBERS,
+        EPOCH_SIZE as usize,
         0,
         value,
         Anchor::from(Fp::ZERO),
@@ -207,7 +209,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         &pool,
         (final0.next_epoch(epoch1).unwrap(), final1),
         discriminant,
-        EPOCH_MEMBERS,
+        EPOCH_SIZE as usize,
         0,
         value,
         final0,
@@ -235,7 +237,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         &pool,
         (Anchor::default(), final0),
         other_discriminant,
-        EPOCH_MEMBERS,
+        EPOCH_SIZE as usize,
         0,
         value,
         Anchor::from(Fp::ZERO),
@@ -245,7 +247,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         &pool,
         (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
         discriminant,
-        EPOCH_MEMBERS,
+        EPOCH_SIZE as usize,
         0,
         value,
         Anchor::from(Fp::ZERO),

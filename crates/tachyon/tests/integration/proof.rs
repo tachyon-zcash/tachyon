@@ -518,7 +518,7 @@ fn spend_bind_honest() {
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+    let spendable_pcd = user.spendable_init(rng, &note, &pool, height);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let (_cm, nf_current, nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
@@ -547,7 +547,7 @@ fn spend_rejects_invalid_note() {
     let wrong_value = value::Positive::try_from(999_999u64).unwrap();
     assert_ne!(u64::from(wrong_value), u64::from(note.value));
 
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+    let spendable_pcd = user.spendable_init(rng, &note, &pool, height);
 
     let forgeries = [
         ("value inflation", phantom),
@@ -630,7 +630,7 @@ fn step_accepts_zero_value_note() {
         let note = user.random_note(0);
         pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
         let height = pool.height();
-        let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+        let spendable_pcd = user.spendable_init(rng, &note, &pool, height);
         let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
         let (_rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -691,7 +691,7 @@ fn spend_stamp_assembles_tachygrams() {
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+    let spendable_pcd = user.spendable_init(rng, &note, &pool, height);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let stamp_pcd = honest_spend_stamp(rng, &user, bind_pcd);
@@ -1453,7 +1453,7 @@ fn spend_stamp_rejects_foreign_sets() {
     let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+    let spendable_pcd = user.spendable_init(rng, &note, &pool, height);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let theta = ActionEntropy::random(rng);
     let (.., action_set, tachygram_set) =
@@ -1585,7 +1585,7 @@ fn spend_action_is_bound_to_its_note() {
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
 
-    let spendable = user.fresh_spend(rng, &pool, height, &note);
+    let spendable = user.spendable_init(rng, &note, &pool, height);
     let secret_pcd = honest_secret(rng, &user, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)

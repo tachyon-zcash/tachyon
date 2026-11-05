@@ -151,7 +151,7 @@ pub fn build_autonome<RNG: CryptoRng>(
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
-    let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
+    let spendable_pcd = wallet.spendable_init(rng, &spend_note, &pool, height);
     let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
@@ -1253,16 +1253,6 @@ impl WalletSim {
         spendable
     }
 
-    pub fn fresh_spend<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        pool: &PoolSim,
-        height: BlockHeight,
-        spend_note: &Note,
-    ) -> Pcd<spendable::NoteSpendable> {
-        self.spendable_init(rng, spend_note, pool, height)
-    }
-
     pub fn unspent_bind<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -1459,7 +1449,7 @@ impl WalletSim {
         let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
         pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
         let height = pool.height();
-        let spendable_pcd = self.fresh_spend(rng, &pool, height, &spend_note);
+        let spendable_pcd = self.spendable_init(rng, &spend_note, &pool, height);
         let anchor = spendable_pcd.data().2;
 
         let (bundle_plan, signed, spend_pcds) = self.signed(

@@ -79,8 +79,8 @@ fn plan_prove_rejects_invalid_inputs() {
     ));
     let height = pool.height();
 
-    let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
-    let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
+    let sp_a = user.spendable_init(rng, &note_a, &pool, height);
+    let sp_b = user.spendable_init(rng, &note_b, &pool, height);
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2);
 
@@ -190,7 +190,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
     assert_eq!(cm_height.epoch(), plan_height.epoch());
     let middle = cm_height.next().unwrap();
 
-    let spendable = user.fresh_spend(rng, &pool, cm_height, &note);
+    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
     let spend_anchor = spendable.data().2;
     let plan_anchor = pool.block(plan_height).anchor();
     assert_ne!(spend_anchor, plan_anchor);

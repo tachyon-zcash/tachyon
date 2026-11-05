@@ -1380,7 +1380,7 @@ fn bundle_lift_preserves_coverage() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
     let cm_height = pool.height();
-    let spendable_pcd = wallet.fresh_spend(rng, &pool, cm_height, &spend_note);
+    let spendable_pcd = wallet.spendable_init(rng, &spend_note, &pool, cm_height);
     let bundle = wallet.autonome(
         rng,
         spendable_pcd.data().2,
@@ -1412,7 +1412,7 @@ fn bundle_lift_rejects_no_spans() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
     let cm_height = pool.height();
-    let spendable_pcd = wallet.fresh_spend(rng, &pool, cm_height, &spend_note);
+    let spendable_pcd = wallet.spendable_init(rng, &spend_note, &pool, cm_height);
     let bundle = wallet.autonome(
         rng,
         spendable_pcd.data().2,
