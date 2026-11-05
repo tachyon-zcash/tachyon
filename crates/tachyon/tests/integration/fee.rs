@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
-use core::iter;
 
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -9,7 +8,7 @@ use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
-        ProofStamp, StampState,
+        ProofStamp,
         proof::{
             PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
@@ -22,22 +21,6 @@ use crate::fixtures::{
     PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
     random_block_with, shared_sk, stamp_coverage,
 };
-
-fn merge_side(
-    bundle: &Bundle<ProofStamp>,
-    adjuncts: &[&Bundle<dyn StampState>],
-) -> (
-    ProofStamp,
-    BTreeSet<action::Descriptor>,
-    BTreeSet<fee::Descriptor>,
-) {
-    let members = || iter::once(bundle.as_dyn()).chain(adjuncts.iter().copied());
-    (
-        bundle.stamp.clone(),
-        members().flat_map(Bundle::descriptors).collect(),
-        members().map(Bundle::fee_descriptor).collect(),
-    )
-}
 
 fn fee_less_output_bundle(
     rng: &mut StdRng,
@@ -328,12 +311,20 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             .unwrap(),
     );
     let fee_bearing = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(500)]);
-    let (aggregate_stamp, aggregate_desc, aggregate_fees) = merge_side(&aggregate, &[]);
-    aggregate.stamp = aggregate_stamp
+    aggregate.stamp = aggregate
+        .stamp
+        .clone()
         .merge(
             rng,
-            (aggregate_desc, aggregate_fees),
-            merge_side(&fee_bearing, &[]),
+            (
+                aggregate.descriptors().collect(),
+                [aggregate.fee_descriptor()].into(),
+            ),
+            (
+                fee_bearing.stamp.clone(),
+                fee_bearing.descriptors().collect(),
+                [fee_bearing.fee_descriptor()].into(),
+            ),
         )
         .unwrap();
 
@@ -423,7 +414,11 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .merge(
             rng,
             (aggregate_descriptors, aggregate_fee_descriptors),
-            merge_side(&adjunct, &[]),
+            (
+                adjunct.stamp.clone(),
+                adjunct.descriptors().collect(),
+                [adjunct.fee_descriptor()].into(),
+            ),
         )
         .unwrap();
     let aggregate = signed.stamp(merged_stamp);
@@ -475,17 +470,40 @@ fn fee_bearing_aggregates_merge_and_lift() {
     let sighash = mock_sighash(left.commitment());
 
     for (bundle, auto) in [(&mut left, &left_auto), (&mut right, &right_auto)] {
-        let (stamp, desc, fees) = merge_side(bundle, &[]);
-        bundle.stamp = stamp
-            .merge(rng, (desc, fees), merge_side(auto, &[]))
+        bundle.stamp = bundle
+            .stamp
+            .clone()
+            .merge(
+                rng,
+                (
+                    bundle.descriptors().collect(),
+                    [bundle.fee_descriptor()].into(),
+                ),
+                (
+                    auto.stamp.clone(),
+                    auto.descriptors().collect(),
+                    [auto.fee_descriptor()].into(),
+                ),
+            )
             .unwrap();
     }
-    let (left_stamp, left_desc, left_fees) = merge_side(&left, &[left_auto.as_dyn()]);
-    left.stamp = left_stamp
+    left.stamp = left
+        .stamp
+        .clone()
         .merge(
             rng,
-            (left_desc, left_fees),
-            merge_side(&right, &[right_auto.as_dyn()]),
+            (
+                left.descriptors().chain(left_auto.descriptors()).collect(),
+                [left.fee_descriptor(), left_auto.fee_descriptor()].into(),
+            ),
+            (
+                right.stamp.clone(),
+                right
+                    .descriptors()
+                    .chain(right_auto.descriptors())
+                    .collect(),
+                [right.fee_descriptor(), right_auto.fee_descriptor()].into(),
+            ),
         )
         .unwrap();
 
@@ -543,12 +561,20 @@ fn innocent_seed_merges_and_strips() {
     let anchor = Anchor::random(rng);
     let mut innocent = wallet.autonome(rng, anchor, vec![], vec![]);
     let adjunct = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(100)]);
-    let (innocent_stamp, innocent_desc, innocent_fees) = merge_side(&innocent, &[]);
-    innocent.stamp = innocent_stamp
+    innocent.stamp = innocent
+        .stamp
+        .clone()
         .merge(
             rng,
-            (innocent_desc, innocent_fees),
-            merge_side(&adjunct, &[]),
+            (
+                innocent.descriptors().collect(),
+                [innocent.fee_descriptor()].into(),
+            ),
+            (
+                adjunct.stamp.clone(),
+                adjunct.descriptors().collect(),
+                [adjunct.fee_descriptor()].into(),
+            ),
         )
         .unwrap();
     let id = mock_wtxid(&innocent);
@@ -562,12 +588,23 @@ fn innocent_seed_merges_and_strips() {
         .unwrap();
 
     let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
-    let (parent_stamp, parent_desc, parent_fees) = merge_side(&parent, &[]);
-    parent.stamp = parent_stamp
+    parent.stamp = parent
+        .stamp
+        .clone()
         .merge(
             rng,
-            (parent_desc, parent_fees),
-            merge_side(&innocent, &[adjunct.as_dyn()]),
+            (
+                parent.descriptors().collect(),
+                [parent.fee_descriptor()].into(),
+            ),
+            (
+                innocent.stamp.clone(),
+                innocent
+                    .descriptors()
+                    .chain(adjunct.descriptors())
+                    .collect(),
+                [innocent.fee_descriptor(), adjunct.fee_descriptor()].into(),
+            ),
         )
         .unwrap();
     let parent_id = mock_wtxid(&parent);
