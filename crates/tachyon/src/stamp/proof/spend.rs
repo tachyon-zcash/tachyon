@@ -37,8 +37,11 @@ use crate::{
 pub struct SpendHeader;
 
 /// `SpendHeader` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("SpendHeaderOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     /// `cm`.
     pub cm: Element<'dr, D>,

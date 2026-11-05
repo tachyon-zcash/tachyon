@@ -40,8 +40,11 @@ use crate::{
 pub struct Summary;
 
 /// `Summary` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("SummaryOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,

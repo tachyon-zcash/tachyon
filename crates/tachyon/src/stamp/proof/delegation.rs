@@ -58,8 +58,11 @@ use crate::{
 pub struct NoteSecret;
 
 /// `NoteSecret` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("NoteSecretOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     /// `cm`.
     pub cm: Element<'dr, D>,
@@ -140,8 +143,11 @@ impl Header<Fp> for NoteSecret {
 pub struct NoteNullifiers;
 
 /// `NoteNullifiers` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("NoteNullifiersOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     /// `cm`.
     pub cm: Element<'dr, D>,

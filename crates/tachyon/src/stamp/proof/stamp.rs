@@ -64,8 +64,11 @@ use crate::{
 pub struct Actions;
 
 /// `Actions` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("ActionsOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
     /// `anchor`.
     pub anchor: Element<'dr, D>,
@@ -166,8 +169,11 @@ impl Header<Fp> for Actions {
 pub struct Stamp;
 
 /// `Stamp` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("StampOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
     /// `anchor`.
     pub anchor: Element<'dr, D>,

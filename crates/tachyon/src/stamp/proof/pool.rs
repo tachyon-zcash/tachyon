@@ -86,8 +86,11 @@ use crate::{
 pub struct ArbitraryUnspent;
 
 /// `ArbitraryUnspent` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("ArbitraryUnspentOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
@@ -166,8 +169,11 @@ impl Header<Fp> for ArbitraryUnspent {
 pub struct NoteUnspent;
 
 /// `NoteUnspent` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("NoteUnspentOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     /// `cm`.
     pub cm: Element<'dr, D>,
@@ -247,8 +253,11 @@ impl Header<Fp> for NoteUnspent {
 pub struct AnchorSpan;
 
 /// `AnchorSpan` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("AnchorSpanOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,

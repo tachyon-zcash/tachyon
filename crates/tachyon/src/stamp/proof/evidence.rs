@@ -69,8 +69,11 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
 pub struct EvidenceTree;
 
 /// `EvidenceTree` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("EvidenceTreeOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,
@@ -136,8 +139,11 @@ impl Header<Fp> for EvidenceTree {
 pub struct EvidenceTreePair;
 
 /// `EvidenceTreePair` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("EvidenceTreePairOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     /// `epoch`.
     pub epoch: Element<'dr, D>,

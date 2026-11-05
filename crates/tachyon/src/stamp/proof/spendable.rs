@@ -38,8 +38,11 @@ use crate::{
 pub struct NoteSpendable;
 
 /// `NoteSpendable` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("NoteSpendableOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
     /// `cm`.
     pub cm: Element<'dr, D>,

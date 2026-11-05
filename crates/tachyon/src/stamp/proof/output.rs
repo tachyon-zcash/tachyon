@@ -40,8 +40,11 @@ use crate::{
 pub struct OutputHeader;
 
 /// `OutputHeader` gadget.
-#[derive(Gadget, Write, derive_more::Debug)]
-#[debug("OutputHeaderOutput(..)")]
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "gadgets do not implement Debug"
+)]
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     /// `cm`.
     pub cm: Element<'dr, D>,
