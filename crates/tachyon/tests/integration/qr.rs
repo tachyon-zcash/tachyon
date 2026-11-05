@@ -14,7 +14,7 @@ use zcash_tachyon::{
     pasta::Fp,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{UnspentBind, UnspentFuse, UnspentLift},
+        pool::{ArbitraryUnspent, UnspentBind, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
     value, witness,
@@ -1446,8 +1446,7 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
     let nf = mk.derive_nullifier(epoch0);
     let nf1 = mk.derive_nullifier(epoch1);
     let bucket = epoch_bucket(rng, &pool, epoch0);
-    let (_, _, _, discriminant, profile, _) = *bucket.pcd.data();
-    assert_eq!(profile, QrProfile::ROOT);
+    let (_, _, _, discriminant, ..) = *bucket.pcd.data();
     let mut seed_witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
 
@@ -1471,6 +1470,13 @@ fn a_seeded_twin_value_fails_each_last_member_check() {
         (segment.data().2, segment.data().4),
         (twin.into(), twin.into())
     );
+
+    {
+        let mut header = *segment.data();
+        header.4 = nf;
+        let forged = segment.proof().clone().carry::<ArbitraryUnspent>(header);
+        assert!(!PROOF_SYSTEM.verify(&forged, &mut *rng).unwrap());
+    }
 
     {
         let range = user.derivation_pcd(rng, note, epoch0, epoch1);
@@ -1529,8 +1535,7 @@ fn a_lifted_twin_value_fails_unspent_bind() {
     let first = epoch_bucket(rng, &pool, epoch0);
     let segment = qr_bucket_segment(rng, &first, |_| nf0);
     let bucket = epoch_bucket(rng, &pool, epoch1);
-    let (_, _, _, discriminant, profile, _) = *bucket.pcd.data();
-    assert_eq!(profile, QrProfile::ROOT);
+    let (_, _, _, discriminant, ..) = *bucket.pcd.data();
     let mut lift = witness::unspent_lift(
         (*segment.data(), *bucket.pcd.data()),
         nf1.into(),
