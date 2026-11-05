@@ -7,8 +7,8 @@ use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
-    Note, Tachygram, TachygramSetPoly, action,
+    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
+    TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,

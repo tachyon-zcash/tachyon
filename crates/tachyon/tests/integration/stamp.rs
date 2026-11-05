@@ -606,10 +606,6 @@ fn verify_proof_action_multiset_invariants() {
     }
 }
 
-
-
-
-
 #[test]
 fn read_rejects_malformed_tachygram_lists() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -694,10 +690,6 @@ fn verify_proof_rejects_mismatched_commitment() {
     );
 }
 
-
-
-
-
 #[test]
 fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -725,7 +717,9 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
 
     let foreign = BTreeSet::from([random_action(rng).descriptor()]);
     let foreign_span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
-    let misdescribed = stamp.lift(rng, &foreign, &fees, vec![foreign_span]).unwrap();
+    let misdescribed = stamp
+        .lift(rng, &foreign, &fees, vec![foreign_span])
+        .unwrap();
     assert!(!misdescribed.verify_proof(rng, digests).unwrap());
 }
 
@@ -757,7 +751,6 @@ fn lift_rejects_a_foreign_span() {
         panic!();
     }
 }
-
 
 #[test]
 fn merge_after_lift() {

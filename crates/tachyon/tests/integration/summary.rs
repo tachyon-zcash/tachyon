@@ -113,14 +113,13 @@ fn summary_seed_rejects_empty_stamp() {
 }
 
 #[test]
-fn summary_advance_rejects_wrong_accumulator() {
+fn summary_advance_rejects_a_forged_fold() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
     let stamp_a = [Tachygram::random(rng)];
     let stamp_b = [Tachygram::random(rng)];
     let foreign = [Tachygram::random(rng)];
-
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -128,56 +127,30 @@ fn summary_advance_rejects_wrong_accumulator() {
             witness::summary_seed(((), ()), start, epoch, &stamp_a),
         )
         .unwrap();
-
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        summary::SummaryAdvance,
-        witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-        seeded,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "SummaryAdvance: accumulator does not match header"
-        );
-    } else {
-        panic!();
-    }
-}
-
-#[test]
-fn summary_advance_rejects_forged_extension() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let stamp_a = [Tachygram::random(rng)];
-    let stamp_b = [Tachygram::random(rng)];
-
-    let (seeded, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &stamp_a),
-        )
-        .unwrap();
-
     let (acc, _extended, stamp) =
         witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
-    let forged = stamp_a.iter().copied().collect::<TachygramSetPoly>();
 
-    if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
-        rng,
-        summary::SummaryAdvance,
-        (acc, forged, stamp),
-        seeded,
-        Proof::bootstrap().carry::<()>(()),
-    ) {
-        assert_eq!(
-            err.to_string(),
-            "SummaryAdvance: extended accumulator must fold the stamp"
-        );
-    } else {
-        panic!();
+    for (advance_witness, expected) in [
+        (
+            witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
+            "SummaryAdvance: accumulator does not match header",
+        ),
+        (
+            (acc, stamp_a.iter().copied().collect(), stamp),
+            "SummaryAdvance: extended accumulator must fold the stamp",
+        ),
+    ] {
+        if let Err(ragu_core::Error::InvalidWitness(err)) = PROOF_SYSTEM.fuse(
+            rng,
+            summary::SummaryAdvance,
+            advance_witness,
+            seeded.clone(),
+            Proof::bootstrap().carry::<()>(()),
+        ) {
+            assert_eq!(err.to_string(), expected);
+        } else {
+            panic!("{expected}");
+        }
     }
 }
 
