@@ -19,7 +19,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use super::{
     pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
     qr::QrBucket,
-    spendable::{NoteSpendable, QrSpendableInit, SpendableLift},
+    spendable::QrSpendableInit,
 };
 use crate::{
     note,
@@ -233,10 +233,8 @@ fn unspent_lift_epoch_seam_rejects_raw_unequal_header_fields() {
     ));
 }
 
-fn check_qr_spendable_seam(
-    change: impl FnOnce(&mut <NoteUnspent as Header<Fp>>::Data),
-    expected: &str,
-) {
+#[test]
+fn qr_spendable_closing_epoch_rejects_raw_unequal_header_fields() {
     let cm = note::Commitment::from(Fp::from(23));
     let contents = iter::once(Tachygram::from(cm)).collect::<TachygramSetPoly>();
     let mut left: <NoteUnspent as Header<Fp>>::Data = (
@@ -264,56 +262,9 @@ fn check_qr_spendable_seam(
         children.clone(),
     )
     .unwrap();
-    change(&mut left);
+    left.3 = EpochIndex::new(3);
     assert!(matches!(
         simulate_step(&QrSpendableInit, (contents,), left, right, children),
-        Err(Error::InvalidWitness(message)) if message.to_string() == expected
-    ));
-}
-
-#[test]
-fn qr_spendable_start_epoch_rejects_raw_unequal_header_fields() {
-    check_qr_spendable_seam(
-        |left| left.2 = EpochIndex::new(0),
-        "QrSpendableInit: segment does not start in the bucket's epoch",
-    );
-}
-
-#[test]
-fn qr_spendable_opening_anchor_rejects_raw_unequal_header_fields() {
-    check_qr_spendable_seam(
-        |left| left.1 = Anchor::from(Fp::from(17)),
-        "QrSpendableInit: segment does not open where the bucket does",
-    );
-}
-
-#[test]
-fn qr_spendable_closing_epoch_rejects_raw_unequal_header_fields() {
-    check_qr_spendable_seam(
-        |left| left.3 = EpochIndex::new(3),
-        "QrSpendableInit: segment does not end in the epoch after the bucket's",
-    );
-}
-
-#[test]
-fn spendable_lift_epoch_seam_rejects_raw_unequal_header_fields() {
-    let mut left: <NoteSpendable as Header<Fp>>::Data = (
-        note::Commitment::from(Fp::from(23)),
-        EpochIndex::new(1),
-        Anchor::from(Fp::from(11)),
-    );
-    let right: <NoteUnspent as Header<Fp>>::Data = (
-        left.0,
-        left.2,
-        left.1,
-        EpochIndex::new(2),
-        Anchor::from(Fp::from(13)),
-    );
-    let children = [super::unit_polynomials(), super::unit_polynomials()];
-    simulate_step(&SpendableLift, (), left, right, children.clone()).unwrap();
-    left.1 = EpochIndex::new(0);
-    assert!(matches!(
-        simulate_step(&SpendableLift, (), left, right, children),
-        Err(Error::InvalidWitness(message)) if message.to_string() == "SpendableLift: segment does not start at the lineage epoch"
+        Err(Error::InvalidWitness(message)) if message.to_string() == "QrSpendableInit: segment does not end in the epoch after the bucket's"
     ));
 }

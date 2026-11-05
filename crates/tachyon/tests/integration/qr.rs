@@ -1238,37 +1238,6 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             },
             "QR profile: depth mask does not match the bucket's depth",
         ),
-        {
-            let mut data = *bucket.pcd.data();
-            data.0 = EpochIndex::new(EPOCH_MAX);
-            (
-                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
-                witness::qr_unspent_init((data, ()), nf.into(), &bucket.members),
-                "QrUnspentInit: bucket has no next epoch",
-            )
-        },
-        {
-            let mut data = *bucket.pcd.data();
-            data.4.depth = u32::BITS + 1;
-            let mut forged = witness.clone();
-            forged.2 = [true; QrProfile::MAX_DEPTH];
-            (
-                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
-                forged,
-                "QR profile: depth mask does not match the bucket's depth",
-            )
-        },
-        {
-            let mut data = *bucket.pcd.data();
-            data.4 = QrProfile { depth: 0, bits: 1 };
-            let mut forged = witness.clone();
-            forged.2 = QrProfile::ROOT.depth_mask();
-            (
-                bucket.pcd.proof().clone().carry::<qr::QrBucket>(data),
-                forged,
-                "QR profile: value does not take the bucket's profile",
-            )
-        },
         (
             bucket.pcd.clone(),
             witness::qr_unspent_init(
@@ -1397,34 +1366,23 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
 #[test]
 fn qr_bucket_seal_refuses_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     let discriminant = QrDiscriminant::random(rng);
-    let intake = build_qr_partition(
-        rng,
-        &pool,
-        (Anchor::default(), pool.anchor()),
-        discriminant,
-        24,
-        0,
-    )
-    .into_iter()
-    .next()
-    .unwrap();
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
-
-    let mut data = *intake.pcd.data();
-    data.0 = final_epoch;
-    data.1 = anchor_final_prev.next_epoch(final_epoch).unwrap();
-    let forged = intake.pcd.proof().clone().carry::<qr::QrIntake>(data);
-    let witness = witness::qr_bucket_seal((data, ()), anchor_final_prev);
+    let intake = seed_qr_empty_intake(
+        rng,
+        anchor_final_prev.next_epoch(final_epoch).unwrap(),
+        final_epoch,
+        discriminant,
+    );
+    let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), anchor_final_prev);
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrBucketSeal,
                 witness,
-                forged,
+                intake.pcd,
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),

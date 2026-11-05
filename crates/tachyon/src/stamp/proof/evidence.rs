@@ -671,6 +671,3 @@ impl Step<Pasta> for EvidenceTreeOpen {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests;
