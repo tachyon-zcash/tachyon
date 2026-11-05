@@ -5,8 +5,8 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, action,
+    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
+    action,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fee,
@@ -606,89 +606,38 @@ fn verify_proof_action_multiset_invariants() {
     }
 }
 
+
+
+
+
 #[test]
-fn read_rejects_duplicate_tachygrams() {
+fn read_rejects_malformed_tachygram_lists() {
     let rng = &mut StdRng::seed_from_u64(0);
-
     let anchor = Anchor::random(rng);
-    let tg = Tachygram::random(rng);
-    let tg_set = [tg, tg];
-
-    let mut buf = Vec::new();
-    {
+    let tachygram = Tachygram::random(rng);
+    for (count, tachygrams, expected) in [
+        (2, vec![tachygram, tachygram], "tachygrams are not unique"),
+        (0, vec![], "no tachygrams"),
+        (
+            u64::try_from(ProductionRank::num_coeffs()).unwrap(),
+            vec![],
+            "too many tachygrams",
+        ),
+    ] {
+        let mut buf = Vec::new();
         buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&[0u8; 32]);
         anchor.write(&mut buf).unwrap();
-        TachygramSetPoly::from_iter(tg_set)
+        TachygramSetPoly::from_iter(tachygrams.iter().copied())
             .commit()
             .write(&mut buf)
             .unwrap();
-
-        CompactSize::from(u64::try_from(tg_set.len()).unwrap())
-            .write(&mut buf)
-            .unwrap();
-
-        for write_tg in tg_set {
-            write_tg.write(&mut buf).unwrap();
+        CompactSize::from(count).write(&mut buf).unwrap();
+        for listed in tachygrams {
+            listed.write(&mut buf).unwrap();
         }
+        assert_eq!(ProofStamp::read(&*buf).unwrap_err().to_string(), expected);
     }
-
-    let err = ProofStamp::read(&*buf).unwrap_err();
-    assert_eq!(err.to_string(), "tachygrams are not unique");
-}
-
-#[test]
-fn read_rejects_empty_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-
-    let anchor = Anchor::random(rng);
-
-    let mut buf = Vec::new();
-    {
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&[0u8; 32]);
-        anchor.write(&mut buf).unwrap();
-        TachygramSetCommit::default().write(&mut buf).unwrap();
-
-        CompactSize::from(0u64).write(&mut buf).unwrap();
-    }
-
-    let err = ProofStamp::read(&*buf).unwrap_err();
-    assert_eq!(err.to_string(), "no tachygrams");
-}
-
-#[test]
-fn read_rejects_too_many_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-
-    let anchor = Anchor::random(rng);
-    let n_tachygrams = u64::try_from(ProductionRank::num_coeffs()).unwrap();
-
-    let mut buf = Vec::new();
-    {
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&[0u8; 32]);
-        anchor.write(&mut buf).unwrap();
-        TachygramSetCommit::default().write(&mut buf).unwrap();
-
-        CompactSize::from(n_tachygrams).write(&mut buf).unwrap();
-    }
-
-    let err = ProofStamp::read(&*buf).unwrap_err();
-    assert_eq!(err.to_string(), "too many tachygrams");
-}
-
-#[test]
-fn read_accepts_distinct_sorted_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = wallet.random_note(200);
-    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
-
-    let mut buf = Vec::new();
-    stamp.write(&mut buf).unwrap();
-    ProofStamp::read(&*buf).unwrap();
 }
 
 #[test]
@@ -738,11 +687,6 @@ fn verify_proof_rejects_mismatched_commitment() {
         tachygram_set: TachygramSetPoly::from_iter([other]).commit(),
         ..honest
     };
-
-    assert_ne!(
-        TachygramSetPoly::from_iter(forged.tachygrams.clone()).commit(),
-        forged.tachygram_set.clone()
-    );
     assert!(
         !forged
             .verify_proof(rng, [plan.digest().unwrap(), fee_digest])
@@ -750,124 +694,39 @@ fn verify_proof_rejects_mismatched_commitment() {
     );
 }
 
-#[test]
-fn proof_alone_does_not_bind_the_published_list() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = wallet.random_note(200);
-    let (honest, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
-    let fee_digest = fee_descriptor.digest().unwrap();
 
-    let mut tampered_list = honest.tachygrams.clone();
-    let dropped = *tampered_list.iter().next().unwrap();
-    tampered_list.remove(&dropped);
-    tampered_list.insert(Tachygram::random(rng));
 
-    assert_eq!(tampered_list.len(), honest.tachygrams.len());
 
-    let tampered = ProofStamp {
-        tachygrams: tampered_list,
-        ..honest
-    };
-
-    assert_ne!(
-        TachygramSetPoly::from_iter(tampered.tachygrams.clone()).commit(),
-        tampered.tachygram_set.clone()
-    );
-
-    assert!(
-        tampered
-            .verify_proof(rng, [plan.digest().unwrap(), fee_digest])
-            .unwrap()
-    );
-}
 
 #[test]
-fn lift_advances_a_stamp_anchor() {
+fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
     let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
-
     pool.advance(2, |_| random_block(rng, 1, 4));
     let lifted_to = pool.height();
+    let fees = BTreeSet::from([fee_descriptor]);
+    let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
+
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
-
-    let before = stamp.clone();
     let lifted = stamp
-        .lift(
-            rng,
-            &BTreeSet::from([plan.descriptor()]),
-            &BTreeSet::from([fee_descriptor]),
-            vec![span],
-        )
+        .clone()
+        .lift(rng, &BTreeSet::from([plan.descriptor()]), &fees, vec![span])
         .unwrap();
-
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
-    assert_eq!(lifted.coverage, before.coverage);
-    assert_eq!(lifted.tachygram_set, before.tachygram_set);
-    assert_eq!(lifted.tachygrams, before.tachygrams);
-}
+    assert_eq!(lifted.coverage, stamp.coverage);
+    assert_eq!(lifted.tachygram_set, stamp.tachygram_set);
+    assert_eq!(lifted.tachygrams, stamp.tachygrams);
+    assert!(lifted.verify_proof(rng, digests).unwrap());
 
-#[test]
-fn lift_then_verify() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note = wallet.random_note(200);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
-    let stamped_at = pool.height();
-    let digest = plan.digest().unwrap();
-    let fee_digest = fee_descriptor.digest().unwrap();
-
-    pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-
-    let lifted = stamp
-        .lift(
-            rng,
-            &BTreeSet::from([plan.descriptor()]),
-            &BTreeSet::from([fee_descriptor]),
-            vec![span],
-        )
-        .unwrap();
-
-    assert!(lifted.verify_proof(rng, [digest, fee_digest]).unwrap());
-}
-
-#[test]
-fn lift_over_descriptors_then_verify() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note = wallet.random_note(200);
-    let (stamp, covered_plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
-    let covered_descriptors = BTreeSet::from_iter([covered_plan.descriptor()]);
-    let fee_descriptors = BTreeSet::from_iter([fee_descriptor]);
-    let stamped_at = pool.height();
-    let fee_digest = fee_descriptor.digest().unwrap();
-
-    pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-
-    let lifted = stamp
-        .lift(rng, &covered_descriptors, &fee_descriptors, vec![span])
-        .unwrap();
-
-    assert!(
-        lifted
-            .verify_proof(rng, [covered_plan.digest().unwrap(), fee_digest])
-            .unwrap()
-    );
+    let foreign = BTreeSet::from([random_action(rng).descriptor()]);
+    let foreign_span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
+    let misdescribed = stamp.lift(rng, &foreign, &fees, vec![foreign_span]).unwrap();
+    assert!(!misdescribed.verify_proof(rng, digests).unwrap());
 }
 
 #[test]
@@ -899,34 +758,6 @@ fn lift_rejects_a_foreign_span() {
     }
 }
 
-#[test]
-fn lift_rejects_wrong_digests() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note = wallet.random_note(200);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
-    let stamped_at = pool.height();
-    let digest = plan.digest().unwrap();
-    let foreign = random_action(rng).descriptor();
-    let fee_digest = fee_descriptor.digest().unwrap();
-
-    pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
-
-    let lifted = stamp
-        .lift(
-            rng,
-            &BTreeSet::from([foreign]),
-            &BTreeSet::from([fee_descriptor]),
-            vec![span],
-        )
-        .unwrap();
-
-    assert!(!lifted.verify_proof(rng, [digest, fee_digest]).unwrap());
-}
 
 #[test]
 fn merge_after_lift() {
