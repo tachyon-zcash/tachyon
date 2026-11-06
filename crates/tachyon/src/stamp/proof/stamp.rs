@@ -4,7 +4,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, Index, Slot, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
 use ragu_core::{
     Cycle as _, FixedGenerators as _,
     drivers::{Driver, DriverValue},
@@ -315,8 +318,8 @@ impl Step<Pasta> for OutputAction {
     fn staged(
         &self,
         witness: &Self::Witness<'_>,
-        left: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
         let (cm, _, cv) = *left.data;
         let alpha = witness
@@ -334,8 +337,8 @@ impl Step<Pasta> for OutputAction {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
@@ -346,7 +349,7 @@ impl Step<Pasta> for OutputAction {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -458,8 +461,8 @@ impl Step<Pasta> for SpendAction {
     fn staged(
         &self,
         witness: &Self::Witness<'_>,
-        left: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
         let (cm, _, _, _, _, cv) = *left.data;
         let alpha = witness.0.randomizer::<effect::Spend>(cm);
@@ -475,8 +478,8 @@ impl Step<Pasta> for SpendAction {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
@@ -487,7 +490,7 @@ impl Step<Pasta> for SpendAction {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -593,8 +596,8 @@ impl Step<Pasta> for StampMerge {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
@@ -605,7 +608,7 @@ impl Step<Pasta> for StampMerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -721,8 +724,8 @@ impl Step<Pasta> for ActionMerge {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
@@ -733,7 +736,7 @@ impl Step<Pasta> for ActionMerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -862,8 +865,8 @@ impl Step<Pasta> for StampLift {
     fn polynomials(
         &self,
         _: &Self::Witness<'_>,
-        left: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
@@ -874,7 +877,7 @@ impl Step<Pasta> for StampLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -949,8 +952,8 @@ impl Step<Pasta> for ActionLift {
     fn polynomials(
         &self,
         _: &Self::Witness<'_>,
-        left: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
@@ -961,7 +964,7 @@ impl Step<Pasta> for ActionLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1044,8 +1047,8 @@ impl Step<Pasta> for FeeFuse {
     fn staged(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
         fee_roots(witness.0, witness.1, "FeeFuse")
     }
@@ -1053,8 +1056,8 @@ impl Step<Pasta> for FeeFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.3.0.as_ref());
@@ -1073,7 +1076,7 @@ impl Step<Pasta> for FeeFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1239,8 +1242,8 @@ impl Step<Pasta> for FeeSeed {
     fn staged(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
         enforce_zero(
             Fp::from(u64::from(witness.0.value)),
@@ -1252,8 +1255,8 @@ impl Step<Pasta> for FeeSeed {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
@@ -1264,7 +1267,7 @@ impl Step<Pasta> for FeeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1409,8 +1412,8 @@ impl Step<Pasta> for StampUnmerge {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: ragu::HeaderInput<'_, Fp, Self::Left>,
-        _: ragu::HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
@@ -1421,7 +1424,7 @@ impl Step<Pasta> for StampUnmerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut ragu::Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

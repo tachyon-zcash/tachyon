@@ -35,7 +35,7 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use ragu::{Oracles, Slot};
+use ragu::step::{Oracles, Slot};
 use ragu_core::{Error, Result, drivers::Driver};
 use ragu_primitives::{Element, GadgetExt as _};
 use udon::field::Field as _;

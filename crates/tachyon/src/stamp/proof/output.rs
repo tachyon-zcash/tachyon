@@ -2,7 +2,10 @@
 
 extern crate alloc;
 
-use ragu::{Encoded, Header, Index, Oracles, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, Index, Oracles, Step},
+};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},

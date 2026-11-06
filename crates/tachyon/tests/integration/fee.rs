@@ -605,6 +605,9 @@ fn fee_seed_binds_its_singletons_and_header() {
         ((valid.2.commit(), valid.3.commit(), other_anchor), false),
     ] {
         let pcd = seed_pcd.proof().clone().carry::<Stamp>(header);
-        assert_eq!(PROOF_SYSTEM.verify(&pcd, &mut *rng).unwrap(), expected);
+        assert_eq!(
+            PROOF_SYSTEM.verify_uncompressed(&pcd, &mut *rng).unwrap(),
+            expected
+        );
     }
 }
