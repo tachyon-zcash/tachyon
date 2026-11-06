@@ -3,6 +3,8 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter};
 
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -19,9 +21,9 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    Pcd, PoolSim, WalletSim, build_anchor_span_pcd, build_output_stamp,
-    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
-    seal_qr_intake, seed_qr_empty_intake, shared_sk,
+    PoolSim, WalletSim, build_anchor_span_pcd, build_output_stamp, build_unspent_pcd_over_epochs,
+    qr_bucket_segment, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
+    shared_sk,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -46,7 +48,7 @@ fn detached_segment(
     rng: &mut StdRng,
     epoch: EpochIndex,
     nf: impl Fn(EpochIndex) -> Nullifier,
-) -> Pcd<pool::ArbitraryUnspent> {
+) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     let anchor_final_prev = Anchor::random(rng);
     let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = seed_qr_empty_intake(
@@ -63,8 +65,8 @@ fn honest_spend_bind(
     rng: &mut StdRng,
     user: &WalletSim,
     note: &Note,
-    spendable: Pcd<spendable::NoteSpendable>,
-) -> Pcd<spend::SpendHeader> {
+    spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+) -> ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader> {
     let secret_pcd = user.secret_pcd(rng, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM

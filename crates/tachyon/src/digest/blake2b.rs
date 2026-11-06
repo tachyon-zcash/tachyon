@@ -189,7 +189,8 @@ pub fn bundle_commitment(
 const STAMP_DATA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 
-/// Digest of a stamp's proof.
+/// Digest of a stamp's Ragu-encoded proof bytes, including its envelope.
+/// Full and compressed proofs use the same digest definition.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(
@@ -252,7 +253,6 @@ pub fn stamp_data_digest(
 /// | ----------------------------- | ---- | ---------------------------- |
 /// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 /// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonAggregateId} $ |
-/// | `0x03` | [`CompressedStamp`](crate::stamp::CompressedStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,

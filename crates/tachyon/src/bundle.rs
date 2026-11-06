@@ -4,22 +4,21 @@
 //! Actions are constant through state transitions; only the stamp changes.
 //!
 //! - `Bundle<ProofStamp>`: self-contained bundle with a proof stamp
-//! - `Bundle<CompressedStamp>`: proof stamp with its proof compressed for the
-//!   block
+//! - `Bundle<ProofStamp<CompressedProof<Pasta>>>`: the same wire state with a
+//!   compressed proof, for verification rather than folding
 //! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
 //!   covering aggregate
 //! - [`TachyonBundle`]: enum of the on-wire forms for mixed contexts
 //!
 //! # Consensus wire format
 //!
-//! The first byte `tachyonBundleState` selects one of four bundle states:
+//! The first byte `tachyonBundleState` selects one of three bundle states:
 //!
 //! | value         | state            | bundle contents                                  |
 //! | ------------- | ---------------- | ------------------------------------------------ |
 //! | `0b0000_0000` | non-tachyon      | no bundle                                        |
 //! | `0b0000_0001` | proof stamp      | bundle with anchor, tachygrams, proof            |
 //! | `0b0000_0010` | pointer stamp    | bundle with aggregate's wtxid                    |
-//! | `0b0000_0011` | compressed stamp | bundle with anchor, tachygrams, compressed proof |
 //! | `...`         | *reserved*       | *n/a*                                            |
 //!
 //! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
@@ -40,7 +39,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonBundleState`  | u8                   | `0x01`, `0x02` or `0x03`                 |
+//! | `tachyonBundleState`  | u8                   | `0x01` or `0x02`                         |
 //! | `valueBalanceTachyon` | i64                  | net value of tachyon actions and max fee |
 //! | `nActionsTachyon`     | compactsize          | number of tachyon actions                |
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
@@ -71,22 +70,19 @@
 //! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
 //! | `nTachygrams`           | compactsize          | number of tachygrams                       |
 //! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
-//! | `proofTachyon`          | PROOF_SIZE blob      | serialized proof of fixed size             |
+//! | `proofTachyon`          | Ragu proof encoding  | length determined by its envelope kind     |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
-//! The proof keeps its polynomials, so a decoded proof stamp can be lifted,
-//! merged and unmerged.
-//!
-//! ### Compressed stamp
-//!
-//! When `tachyonBundleState == 3`, the bundle carries a compressed stamp. Its
-//! layout is the proof stamp's, except that `proofTachyon` is a compressed
-//! proof of a smaller fixed size, which cannot be lifted, merged or unmerged.
-//! Blocks carry compressed stamps; transactions relayed before the block carry
-//! proof stamps.
+//! Ragu's proof envelope identifies the full or compressed form. A full proof
+//! keeps its polynomials, so a decoded stamp can be lifted, merged and
+//! unmerged. A compressed proof verifies but cannot be folded. Compression
+//! keeps the proof-stamp bundle state. Typed readers require their Ragu proof
+//! form; `TachyonBundle` accepts either form and distinguishes them only with
+//! Rust variants. The envelope kind determines the encoded proof length;
+//! there is no length prefix. The stamp digest hashes the encoded proof bytes.
 //!
 //! ## Pointer stamp
 //!
@@ -103,6 +99,7 @@
 //! pointer stamp as `LE64(vFeeTachyon) || tachyonAggregateId`.
 
 use alloc::{
+    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
@@ -124,8 +121,8 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, AggregateId, AggregateIdError, CompressedStamp, PointerStamp, ProofStamp, ProveError,
-        ProvenState, StampState, Unproven, proof::pool,
+        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProofType, ProveError,
+        StampState, Unproven, proof::pool,
     },
     value,
 };
@@ -141,8 +138,6 @@ pub enum StateByte {
     ProofStamped = 0b0000_0001u8,
     /// Pointer stamped bundle.
     PointerStamped = 0b0000_0010u8,
-    /// Compressed stamped bundle.
-    CompressedStamped = 0b0000_0011u8,
 }
 
 impl From<StateByte> for u8 {
@@ -160,7 +155,6 @@ impl StateByte {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::ProofStamped),
             0b0000_0010u8 => Ok(Self::PointerStamped),
-            0b0000_0011u8 => Ok(Self::CompressedStamped),
             _other => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid bundle state",
@@ -177,8 +171,7 @@ impl StateByte {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
-    impl Sealed for super::ProofStamp {}
-    impl Sealed for super::CompressedStamp {}
+    impl<P: super::stamp::ProofType> Sealed for super::ProofStamp<P> {}
     impl Sealed for super::PointerStamp {}
 }
 
@@ -206,8 +199,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// Opaque recipient-directed payload, empty when absent.
     pub memo: Vec<u8>,
 
-    /// Bundle state: `Unproven`, `ProofStamp`, `CompressedStamp`, or
-    /// `PointerStamp`.
+    /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
 }
 
@@ -612,9 +604,9 @@ impl Plan {
 }
 
 impl Bundle<Unproven> {
-    /// Attach a proof stamp, producing a `Bundle<ProofStamp>`.
+    /// Attach a stamp, producing a bundle in its corresponding state.
     #[must_use]
-    pub fn stamp(self, stamp: ProofStamp) -> Bundle<ProofStamp> {
+    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -673,8 +665,9 @@ impl Bundle<ProofStamp> {
         Ok(Self { stamp, ..self })
     }
 
-    /// Compress the stamp's proof for the block, producing a
-    /// `Bundle<CompressedStamp>`. The proof is checked against this bundle's
+    /// Compress the stamp's proof, changing its Rust proof type while keeping
+    /// the proof-stamp wire state.
+    /// The proof is checked against this bundle's
     /// actions and fee descriptor combined with those of `adjuncts`.
     ///
     /// # Errors
@@ -685,7 +678,7 @@ impl Bundle<ProofStamp> {
         self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-    ) -> Result<Bundle<CompressedStamp>, ProveError> {
+    ) -> Result<Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
             .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
@@ -707,7 +700,7 @@ impl Bundle<ProofStamp> {
     }
 }
 
-impl<S: ProvenState> Bundle<S> {
+impl<P: ProofType> Bundle<ProofStamp<P>> {
     /// Confirm `hStampCoverageTachyon` represents the combined actions and
     /// fee descriptors of this bundle and the given bundles.
     #[must_use]
@@ -794,22 +787,22 @@ impl<S: ProvenState> Bundle<S> {
         action_count: usize,
         fee_descriptor_count: usize,
     ) -> Result<TachygramSetCommit, VerifyTachygramsError> {
-        if self.stamp.tachygrams().len() != 2 * action_count + fee_descriptor_count {
+        if self.stamp.tachygrams.len() != 2 * action_count + fee_descriptor_count {
             return Err(VerifyTachygramsError::WrongArity);
         }
 
         let tg_set = self
             .stamp
-            .tachygrams()
+            .tachygrams
             .iter()
             .copied()
             .collect::<TachygramSetPoly>();
 
-        if self.stamp.tachygram_set() != tg_set.commit() {
+        if self.stamp.tachygram_set != tg_set.commit() {
             return Err(VerifyTachygramsError::WrongSet);
         }
 
-        Ok(self.stamp.tachygram_set())
+        Ok(self.stamp.tachygram_set)
     }
 
     /// Verify the pointers of the adjuncts against the expected wtxid,
@@ -913,6 +906,90 @@ impl<S: ProvenState> Bundle<S> {
     }
 }
 
+/// Read everything after the `tachyonBundleState` byte: value balance,
+/// action descriptors, the max fee note's value commitment, action sigs,
+/// binding sig and memo. The stamp trailer follows.
+fn read_body<R: Read>(mut reader: R) -> io::Result<Bundle<Unproven>> {
+    let value_balance = {
+        let mut bytes = [0u8; size_of::<i64>()];
+        reader.read_exact(&mut bytes)?;
+        value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
+            io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
+        })
+    }?;
+
+    // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
+    // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
+    // invalid data or EOF before significant problems occur.
+    // TODO: assert a reasonable maximum, to allow pre-allocation?
+    let n_actions =
+        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "actions vector length exceeds usize",
+            )
+        })?;
+
+    if n_actions == 0 && value_balance != value::Balance::ZERO {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bundle with no actions must have zero value balance",
+        ));
+    }
+
+    let mut descriptors: Vec<action::Descriptor> = Vec::new();
+    for _ in 0..n_actions {
+        descriptors.push(action::Descriptor::read(&mut reader)?);
+    }
+
+    let fee_max_commitment = {
+        let point = serialization::read_ep_affine(&mut reader)?;
+        if point.is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fee commitment is the identity",
+            ));
+        }
+        value::Commitment::from(point)
+    };
+
+    let mut signatures: Vec<action::Signature> = Vec::new();
+    for _ in 0..n_actions {
+        signatures.push(action::Signature::read(&mut reader)?);
+    }
+
+    let actions: Vec<Action> = descriptors
+        .into_iter()
+        .zip(signatures)
+        .map(Action::from)
+        .collect();
+
+    let binding_sig = Signature::read(&mut reader)?;
+
+    // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
+    // not pre-allocate, on the same reasoning as `n_actions` above.
+    let n_memo = usize::try_from(serialization::read_compactsize(&mut reader)?)
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize"))?;
+
+    let mut memo: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 64];
+    #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
+    while memo.len() < n_memo {
+        let take = (n_memo - memo.len()).min(chunk.len());
+        reader.read_exact(&mut chunk[..take])?;
+        memo.extend_from_slice(&chunk[..take]);
+    }
+
+    Ok(Bundle {
+        value_balance,
+        actions,
+        fee_max_commitment,
+        binding_sig,
+        memo,
+        stamp: Unproven,
+    })
+}
+
 impl<S: StampState> Bundle<S> {
     /// Borrow this bundle as a trait object.
     #[must_use]
@@ -925,111 +1002,19 @@ impl<S: StampState> Bundle<S> {
 
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
-    /// See the module-level wire format documentation.
-    ///
     /// # Errors
     ///
     /// Returns an error if reading fails, the state byte does not match `S`,
     /// or any component is not a canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let head = StateByte::read(&mut reader)?;
-
-        if head != S::state_byte() {
+        if StateByte::read(&mut reader)? != S::state_byte() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unexpected tachyonBundleState",
             ));
         }
-
-        Self::read_body(reader)
-    }
-
-    /// Read everything after the `tachyonBundleState` byte: value balance,
-    /// action descriptors, the max fee note's value commitment, action sigs,
-    /// binding sig, memo, and the stamp trailer.
-    fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
-        let value_balance = {
-            let mut bytes = [0u8; size_of::<i64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
-                io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
-            })
-        }?;
-
-        // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
-        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
-        // invalid data or EOF before significant problems occur.
-        // TODO: assert a reasonable maximum, to allow pre-allocation?
-        let n_actions =
-            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "actions vector length exceeds usize",
-                )
-            })?;
-
-        if n_actions == 0 && value_balance != value::Balance::ZERO {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bundle with no actions must have zero value balance",
-            ));
-        }
-
-        let mut descriptors: Vec<action::Descriptor> = Vec::new();
-        for _ in 0..n_actions {
-            descriptors.push(action::Descriptor::read(&mut reader)?);
-        }
-
-        let fee_max_commitment = {
-            let point = serialization::read_ep_affine(&mut reader)?;
-            if point.is_identity() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "fee commitment is the identity",
-                ));
-            }
-            value::Commitment::from(point)
-        };
-
-        let mut signatures: Vec<action::Signature> = Vec::new();
-        for _ in 0..n_actions {
-            signatures.push(action::Signature::read(&mut reader)?);
-        }
-
-        let actions: Vec<Action> = descriptors
-            .into_iter()
-            .zip(signatures)
-            .map(Action::from)
-            .collect();
-
-        let binding_sig = Signature::read(&mut reader)?;
-
-        // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
-        // not pre-allocate, on the same reasoning as `n_actions` above.
-        let n_memo =
-            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
-                io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize")
-            })?;
-
-        let mut memo: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 64];
-        #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
-        while memo.len() < n_memo {
-            let take = (n_memo - memo.len()).min(chunk.len());
-            reader.read_exact(&mut chunk[..take])?;
-            memo.extend_from_slice(&chunk[..take]);
-        }
-
-        let stamp = S::read(&mut reader)?;
-
-        Ok(Self {
-            value_balance,
-            actions,
-            fee_max_commitment,
-            binding_sig,
-            memo,
-            stamp,
-        })
+        let body = read_body(&mut reader)?;
+        Ok(body.stamp(S::read(&mut reader)?))
     }
 
     /// Write the bundle in the consensus wire format: the
@@ -1107,8 +1092,8 @@ pub enum TachyonBundle {
     Proven(Bundle<ProofStamp>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<PointerStamp>),
-    /// A bundle with its own compressed proof, as carried in a block.
-    Compressed(Bundle<CompressedStamp>),
+    /// A proof-stamped bundle whose Ragu proof is compressed. Uses `0x01`.
+    Compressed(Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>),
 }
 
 impl PartialEq for TachyonBundle {
@@ -1162,21 +1147,59 @@ impl TachyonBundle {
     /// on the `tachyonBundleState` byte.
     ///
     /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
-    /// proof-stamped bundle, `0x02` as a pointer-stamped bundle, and `0x03`
-    /// as a compressed-stamped bundle; rejects any other byte.
+    /// proof-stamped bundle (full or compressed), and `0x02` as a
+    /// pointer-stamped bundle; rejects any other byte.
     ///
     /// # Errors
     ///
     /// Returns an error if reading fails, the state byte is none of those
-    /// four, or any component is not a canonical encoding.
+    /// three, or any component is not a canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let state = StateByte::read(&mut reader)?;
 
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
-            StateByte::ProofStamped => Self::Proven(Bundle::read_body(&mut reader)?),
-            StateByte::PointerStamped => Self::Adjunct(Bundle::read_body(&mut reader)?),
-            StateByte::CompressedStamped => Self::Compressed(Bundle::read_body(&mut reader)?),
+            StateByte::ProofStamped => {
+                let body = read_body(&mut reader)?;
+                let (fee, coverage, anchor, tachygram_set, tachygrams, bytes, kind) =
+                    stamp::read_stamp(&mut reader)?;
+                if kind == stamp::FULL_PROOF_KIND {
+                    Self::Proven(body.stamp(ProofStamp {
+                        fee,
+                        coverage,
+                        anchor,
+                        tachygram_set,
+                        tachygrams,
+                        proof: Box::new(
+                            ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes).map_err(
+                                |_err| {
+                                    io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "invalid proof encoding",
+                                    )
+                                },
+                            )?,
+                        ),
+                    }))
+                } else {
+                    Self::Compressed(body.stamp(ProofStamp {
+                        fee,
+                        coverage,
+                        anchor,
+                        tachygram_set,
+                        tachygrams,
+                        proof: Box::new(
+                            ragu::CompressedProof::<Pasta>::from_bytes(&bytes).map_err(|_err| {
+                                io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
+                            })?,
+                        ),
+                    }))
+                }
+            },
+            StateByte::PointerStamped => {
+                let body = read_body(&mut reader)?;
+                Self::Adjunct(body.stamp(PointerStamp::read(&mut reader)?))
+            },
         })
     }
 

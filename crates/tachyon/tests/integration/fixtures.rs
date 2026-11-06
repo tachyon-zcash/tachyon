@@ -36,8 +36,6 @@ use zcash_tachyon::{
     value, witness,
 };
 
-pub(crate) type Pcd<H> = ragu::Pcd<Pasta, ProductionRank, H>;
-
 pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let hash = blake2b_simd::Params::new()
         .hash_length(32)
@@ -179,7 +177,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         &Vec<action::Descriptor>,
         &[fee::Descriptor],
     ),
-) -> Pcd<Stamp> {
+) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
     let left_acts = descriptors_a
         .iter()
         .map(|desc| desc.digest().unwrap())
@@ -418,14 +416,17 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (Pcd<pool::AnchorSpan>, Vec<Anchor>) {
+) -> (
+    ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+    Vec<Anchor>,
+) {
     let start = *range.start();
     let end = *range.end();
     assert_eq!(start.epoch(), end.epoch());
     assert!(start <= end);
 
     let mut state = pool.block(start).prev;
-    let mut span: Option<Pcd<pool::AnchorSpan>> = None;
+    let mut span: Option<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> = None;
     let mut members = Vec::new();
     let mut height = start;
     loop {
@@ -471,17 +472,17 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> Pcd<pool::AnchorSpan> {
+) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
     build_anchor_span_pcd(rng, pool, range).0
 }
 
 pub(crate) struct QrIntakeEntry {
-    pub pcd: Pcd<qr::QrIntake>,
+    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 pub(crate) struct QrBucketEntry {
-    pub pcd: Pcd<qr::QrBucket>,
+    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrBucket>,
     pub members: Vec<Tachygram>,
 }
 
@@ -711,7 +712,7 @@ pub(crate) struct EvidenceLeaf {
 }
 
 pub(crate) struct EvidenceTreeEntry {
-    pub pcd: Pcd<evidence::EvidenceTree>,
+    pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
 }
 
@@ -846,7 +847,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
 
 pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
-    tree: Pcd<evidence::EvidenceTree>,
+    tree: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
 ) -> QrBucketEntry {
     let mut node = tree;
@@ -979,7 +980,7 @@ pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
     user: &WalletSim,
     note: &Note,
     bucket: &QrBucketEntry,
-) -> Pcd<pool::NoteUnspent> {
+) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
     let arbitrary = qr_bucket_segment(rng, bucket, |epoch| {
         user.pak
             .nk
@@ -993,7 +994,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     rng: &mut RNG,
     bucket: &QrBucketEntry,
     nf: impl Fn(EpochIndex) -> Nullifier,
-) -> Pcd<pool::ArbitraryUnspent> {
+) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into());
     let (segment, ()) = PROOF_SYSTEM
@@ -1013,7 +1014,7 @@ pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     pool: &PoolSim,
     nf: impl Fn(EpochIndex) -> Nullifier,
     (epoch_start, epoch_next): (EpochIndex, EpochIndex),
-) -> Pcd<pool::ArbitraryUnspent> {
+) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     assert!(u32::from(epoch_start) < u32::from(epoch_next));
     let mut segments = Vec::new();
     for epoch in (u32::from(epoch_start)..u32::from(epoch_next)).map(EpochIndex::new) {
@@ -1030,8 +1031,8 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     nf: &[Nullifier],
     base: EpochIndex,
-    mut chains: Vec<Pcd<pool::ArbitraryUnspent>>,
-) -> Pcd<pool::ArbitraryUnspent> {
+    mut chains: Vec<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>>,
+) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     assert!(!chains.is_empty());
     if chains.len() == 1 {
         return chains.pop().unwrap();
@@ -1065,8 +1066,14 @@ pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
-    pub secrets: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteSecret>>>,
-    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NoteNullifiers>>>,
+    pub secrets:
+        RefCell<BTreeMap<Tachygram, ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>>>,
+    pub derivations: RefCell<
+        BTreeMap<
+            (Tachygram, u32, u32),
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
+        >,
+    >,
 }
 
 impl WalletSim {
@@ -1111,7 +1118,7 @@ impl WalletSim {
     pub fn covering_window(
         &self,
         note: &Note,
-        range: &Pcd<delegation::NoteNullifiers>,
+        range: &ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
         let (_, start, last) = *range.data();
         let mk = self.pak.nk.derive_note_private(note.psi);
@@ -1124,7 +1131,7 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         note: Note,
-    ) -> Pcd<delegation::NoteSecret> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
         let cm = Tachygram::from(note.commitment());
         if let Some(pcd) = self.secrets.borrow().get(&cm) {
             return pcd.clone();
@@ -1147,7 +1154,7 @@ impl WalletSim {
         note: Note,
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
-    ) -> Pcd<delegation::NoteNullifiers> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers> {
         let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
         let windows = (u32::from(epoch_end) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_end = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
@@ -1158,7 +1165,7 @@ impl WalletSim {
         let secret = self.secret_pcd(rng, note);
         let mk = self.pak.nk.derive_note_private(note.psi);
 
-        let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
+        let mut merged: Option<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> = None;
         for window in 0..windows {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
             let chunk_end =
@@ -1210,7 +1217,7 @@ impl WalletSim {
         note: &Note,
         pool: &PoolSim,
         init_height: BlockHeight,
-    ) -> Pcd<spendable::NoteSpendable> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
         let (anchor_prev, creation_tgs) = {
@@ -1250,9 +1257,9 @@ impl WalletSim {
     pub fn unspent_bind<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        arbitrary: Pcd<pool::ArbitraryUnspent>,
+        arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<pool::NoteUnspent> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let (_, epoch_start, epoch_next, _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
@@ -1278,10 +1285,10 @@ impl WalletSim {
     pub fn lift<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        spendable: Pcd<spendable::NoteSpendable>,
-        arbitrary: Pcd<pool::ArbitraryUnspent>,
+        spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<spendable::NoteSpendable> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
@@ -1294,9 +1301,9 @@ impl WalletSim {
         rng: &mut RNG,
         pool: &PoolSim,
         note: &Note,
-        spendable: Pcd<spendable::NoteSpendable>,
+        spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
         target: EpochIndex,
-    ) -> Pcd<spendable::NoteSpendable> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let (_, epoch, _) = *spendable.data();
         let mk = self.pak.nk.derive_note_private(note.psi);
         if epoch == target {
@@ -1317,7 +1324,7 @@ impl WalletSim {
         pool: &PoolSim,
         note: &Note,
         target: EpochIndex,
-    ) -> Pcd<spendable::NoteSpendable> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let creation_height = pool
             .history
             .iter()
@@ -1343,7 +1350,10 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
+        spends: Vec<(
+            Note,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        )>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let (bundle_plan, unproven, spend_pcds) =
@@ -1357,16 +1367,19 @@ impl WalletSim {
     pub fn signed<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
+        spends: Vec<(
+            Note,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        )>,
         output_notes: Vec<Note>,
         max_fee_note: Note,
     ) -> (
         bundle::Plan,
         Bundle<Unproven>,
         Vec<(
-            Pcd<delegation::NoteSecret>,
-            Pcd<spendable::NoteSpendable>,
-            Vec<Pcd<pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) {
         let ask = self.sk.derive_auth_private();
@@ -1409,9 +1422,9 @@ impl WalletSim {
         bundle::Plan,
         Bundle<Unproven>,
         Vec<(
-            Pcd<delegation::NoteSecret>,
-            Pcd<spendable::NoteSpendable>,
-            Vec<Pcd<pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
         Anchor,
         Note,
