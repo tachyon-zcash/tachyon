@@ -1082,8 +1082,8 @@ impl Step<Pasta> for FeeFuse {
                 "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
             ),
         ] {
-            let input = oracles.query_at_zeta(dr, Slot::left(slot))?;
-            let output = oracles.query_at_zeta(dr, Slot::output(slot))?;
+            let input = oracles.query(dr, Slot::left(slot), &z)?;
+            let output = oracles.query(dr, Slot::output(slot), &z)?;
             let factor = z.sub(dr, &root);
             input
                 .mul(dr, &factor)?

@@ -443,7 +443,7 @@ impl Step<Pasta> for NullifierDerive {
         })?;
         let mk = left_encoded.as_gadget().mk.clone();
         let z = oracles.zeta().clone();
-        let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         // The window's members at `z`, encoded in-circuit from the
         // sponge-derived nullifiers and their epochs.
         let mut window_at_z = Element::constant(dr, Fp::ONE);

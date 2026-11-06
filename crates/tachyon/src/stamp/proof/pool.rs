@@ -752,8 +752,8 @@ impl Step<Pasta> for UnspentLift {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let elapsed_at_z = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let extended_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let index_element = epoch_next.clone();
         let factor = indexed_member_factor(dr, &value_element, &index_element, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;

@@ -559,8 +559,9 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let one = Element::constant(dr, Fp::ONE);
+        let z = oracles.zeta().clone();
         oracles
-            .query_at_zeta(dr, Slot::output(0))?
+            .query(dr, Slot::output(0), &z)?
             .enforce_equal(dr, &one)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: intake is not empty".into())
@@ -988,17 +989,17 @@ impl Step<Pasta> for QrSideDescend {
         )]
         bit.element().enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let non_residue_at_z = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let residue_at_z = oracles.query_at_zeta(dr, Slot::left(1))?;
+        let non_residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let residue_at_z = oracles.query(dr, Slot::left(1), &z)?;
         let delta = non_residue_at_z.sub(dr, &residue_at_z);
         let selected_delta = bit.element().mul(dr, &delta)?;
         let sibling_at_z = residue_at_z.add(dr, &selected_delta);
         let selected_at_z = non_residue_at_z.sub(dr, &selected_delta);
         oracles
-            .query_at_zeta(dr, Slot::output(0))?
+            .query(dr, Slot::output(0), &z)?
             .enforce_equal(dr, &selected_at_z)?;
-        let interpolant_at_z = oracles.query_at_zeta(dr, Slot::output(1))?;
-        let quotient_at_z = oracles.query_at_zeta(dr, Slot::output(2))?;
+        let interpolant_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let quotient_at_z = oracles.query(dr, Slot::output(2), &z)?;
         let bit_element = bit.element();
         let shifted = z.add(dr, &discriminant_element);
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
@@ -1267,8 +1268,12 @@ impl Step<Pasta> for QrBucketSeal {
             bits: left_encoded.as_gadget().bits.clone(),
             contents_bridge_hash: oracles.bridge_hash().clone(),
         };
-        enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let z = oracles.zeta().clone();
+        let contents_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let output_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let bridge_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        contents_at_z.enforce_equal(dr, &output_at_z)?;
+        contents_at_z.enforce_equal(dr, &bridge_at_z)?;
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
@@ -1496,7 +1501,7 @@ impl Step<Pasta> for QrUnspentInit {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let sequence_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let index_element = epoch_next.clone();
         let expected_sequence = indexed_member_factor(dr, &value_element, &index_element, &z)?;
         sequence_at_z
