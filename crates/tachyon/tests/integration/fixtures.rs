@@ -649,7 +649,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
         .unwrap();
 
     let mut descend = |side: bool| {
-        let (selection, hints) = PROOF_SYSTEM
+        let (selection, (interpolant, quotient)) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
@@ -662,7 +662,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             (*sides.data(), *selection.data()),
             &intake.members,
             side,
-            hints,
+            (interpolant, quotient),
         );
         let members = intake
             .members
@@ -1170,7 +1170,7 @@ impl WalletSim {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
             let chunk_end =
                 EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
-            let (leaf, _) = PROOF_SYSTEM
+            let (leaf, (_,)) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::NullifierDerive,

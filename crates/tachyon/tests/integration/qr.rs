@@ -315,7 +315,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 select_witness.1.commit(),
                 select_witness.2.commit(),
             );
-            let (selection, hints) = PROOF_SYSTEM
+            let (selection, (interpolant, quotient)) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     qr::QrSideSelect,
@@ -333,7 +333,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                         (*split.data(), *selection.data()),
                         &members,
                         side,
-                        hints,
+                        (interpolant, quotient),
                     ),
                     split.clone(),
                     selection,
@@ -383,7 +383,7 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
         )
         .unwrap();
 
-    let (residue_selection, residue_hints) = PROOF_SYSTEM
+    let (residue_selection, (residue_interpolant, residue_quotient)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -392,7 +392,7 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    let (non_residue_selection, non_residue_hints) = PROOF_SYSTEM
+    let (non_residue_selection, (non_residue_interpolant, non_residue_quotient)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -405,14 +405,14 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
         (*split.data(), *residue_selection.data()),
         &members,
         true,
-        residue_hints,
+        (residue_interpolant, residue_quotient),
     );
     let (_, non_residue_sibling, non_residue_interpolant, non_residue_quotient) =
         witness::qr_side_descend(
             (*split.data(), *non_residue_selection.data()),
             &members,
             false,
-            non_residue_hints,
+            (non_residue_interpolant, non_residue_quotient),
         );
     for (descend_witness, expected) in [
         (
@@ -523,7 +523,7 @@ fn qr_side_select_defers_hint_validation_to_descent() {
     for side in [false, true] {
         let (non_residue, interpolant, quotient) =
             witness::qr_side_select((*sides.data(), ()), &members, !side);
-        let (selection, hints) = PROOF_SYSTEM
+        let (selection, (hint_interpolant, hint_quotient)) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
@@ -532,8 +532,12 @@ fn qr_side_select_defers_hint_validation_to_descent() {
                 Proof::bootstrap().carry::<()>(()),
             )
             .unwrap();
-        let (_, sibling, ..) =
-            witness::qr_side_descend((*sides.data(), *selection.data()), &members, side, hints);
+        let (_, sibling, ..) = witness::qr_side_descend(
+            (*sides.data(), *selection.data()),
+            &members,
+            side,
+            (hint_interpolant, hint_quotient),
+        );
         assert_matches!(
             PROOF_SYSTEM.fuse(
                 rng,
@@ -571,7 +575,7 @@ fn qr_side_descend_matches_the_entire_selection_source() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    let (selection, hints) = PROOF_SYSTEM
+    let (selection, (hint_interpolant, hint_quotient)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -581,8 +585,12 @@ fn qr_side_descend_matches_the_entire_selection_source() {
         )
         .unwrap();
     let (source, interpolant, quotient) = *selection.data();
-    let descend_witness =
-        witness::qr_side_descend((*sides.data(), *selection.data()), &members, false, hints);
+    let descend_witness = witness::qr_side_descend(
+        (*sides.data(), *selection.data()),
+        &members,
+        false,
+        (hint_interpolant, hint_quotient),
+    );
     let (contents, non_residue, residue) = witness::qr_intake_split((*root.data(), ()), &members);
     let (foreign_sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -594,7 +602,7 @@ fn qr_side_descend_matches_the_entire_selection_source() {
         )
         .unwrap();
     let (_, hints_u, hints_h) = witness::qr_side_select((*sides.data(), ()), &members, false);
-    let (foreign_selection, _) = PROOF_SYSTEM
+    let (foreign_selection, (..)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -733,7 +741,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     {
         let (_, interpolant, quotient) =
             witness::qr_side_select((*sides.data(), ()), &members, true);
-        let (selection, _) = PROOF_SYSTEM
+        let (selection, (..)) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
@@ -773,7 +781,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .collect();
     let (_, interpolant, quotient) =
         witness::qr_side_select((*sides.data(), ()), &members_without_smuggled, false);
-    let (selection, _) = PROOF_SYSTEM
+    let (selection, (..)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -878,7 +886,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
         )
         .unwrap();
 
-    let (selection, _) = PROOF_SYSTEM
+    let (selection, (..)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -949,7 +957,7 @@ fn qr_side_descend_refuses_a_full_register() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    let (selection, hints) = PROOF_SYSTEM
+    let (selection, (interpolant, quotient)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -962,7 +970,7 @@ fn qr_side_descend_refuses_a_full_register() {
         (*sides.data(), *selection.data()),
         &intake.members,
         true,
-        hints,
+        (interpolant, quotient),
     );
     assert_matches!(
         PROOF_SYSTEM
@@ -1113,7 +1121,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    let (selection, hints) = PROOF_SYSTEM
+    let (selection, (interpolant, quotient)) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
@@ -1130,7 +1138,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                 (*split.data(), *selection.data()),
                 &left_members,
                 true,
-                hints,
+                (interpolant, quotient),
             ),
             split,
             selection,

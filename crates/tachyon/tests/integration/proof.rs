@@ -469,7 +469,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         );
     }
 
-    let (pcd, _) = PROOF_SYSTEM
+    let (pcd, (_,)) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendAction,
@@ -982,7 +982,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         );
     }
 
-    let (pcd, _) = PROOF_SYSTEM
+    let (pcd, (_,)) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::OutputAction,

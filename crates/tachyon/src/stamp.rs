@@ -555,7 +555,7 @@ impl Plan {
             ));
         }
 
-        let (pcd, descriptors, mut tachygrams, fee_aux) = match entries
+        let (pcd, descriptors, mut tachygrams, fee, change) = match entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
@@ -624,14 +624,14 @@ impl Plan {
             .transpose()?
         {
             None => {
-                let (pcd, fee_aux) = PROOF_SYSTEM
+                let (pcd, (fee, change)) = PROOF_SYSTEM
                     .seed(
                         rng,
                         FeeSeed,
                         witness::fee_seed(((), ()), self.max_fee_note, self.anchor),
                     )
                     .map_err(ProveError::ProofFailed)?;
-                (pcd, BTreeSet::new(), BTreeSet::new(), fee_aux)
+                (pcd, BTreeSet::new(), BTreeSet::new(), fee, change)
             },
             Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
                 let stamp_header = (
@@ -643,7 +643,7 @@ impl Plan {
                         .commit(),
                     anchor,
                 );
-                let (pcd, fee_aux) = PROOF_SYSTEM
+                let (pcd, (fee, change)) = PROOF_SYSTEM
                     .fuse(
                         rng,
                         FeeFuse,
@@ -658,26 +658,25 @@ impl Plan {
                         ragu::Proof::bootstrap().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
-                (pcd, descriptors, tachygrams, fee_aux)
+                (pcd, descriptors, tachygrams, fee, change)
             },
         };
-        let (fee_descriptor, fee_change_commitment) = fee_aux;
 
         let (proof, (_, tachygram_set, anchor)) = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
-        tachygrams.insert(Tachygram::from(fee_change_commitment));
+        tachygrams.insert(Tachygram::from(change));
         Ok(ProofStamp {
             coverage: blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
-                &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
+                &blake2b::stamp_fees_digest(&[fee.into()]),
             ),
             anchor,
             tachygram_set,
             tachygrams,
             proof: Box::new(proof),
-            fee: fee_descriptor.value,
+            fee: fee.value,
         })
     }
 }

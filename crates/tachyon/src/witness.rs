@@ -21,7 +21,8 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        QrDiscriminant, QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -371,14 +372,14 @@ pub fn qr_side_select(
 /// interpolant, quotient)`.
 ///
 /// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
-/// is the residue side when set. Pass `hints` from the successful selection's
-/// aux for the same intended side.
+/// is the residue side when set. Pass `(interpolant, quotient)` from the
+/// successful selection's aux for the same intended side.
 #[must_use]
 pub fn qr_side_descend(
     (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
     members: &[Tachygram],
     side: bool,
-    hints: (crate::QrInterpolantPoly, crate::QrQuotientPoly),
+    (interpolant, quotient): (QrInterpolantPoly, QrQuotientPoly),
 ) -> StepWitness<'static, QrSideDescend> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
     let (residue, non_residue) = collections::qr::split(
@@ -386,7 +387,6 @@ pub fn qr_side_descend(
         discriminant.at(profile.depth),
     );
     let sibling = if side { non_residue } else { residue };
-    let (interpolant, quotient) = hints;
     (
         side,
         sibling
