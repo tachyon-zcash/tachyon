@@ -104,8 +104,9 @@ fn commitment_limbs(commitment: Eq) -> ragu_core::Result<[Fp; 2]> {
         ));
     }
     let bytes = point.to_bytes();
+    let (chunks, _) = bytes.as_chunks::<16>();
     let mut limbs = [[0u8; 16]; 2];
-    for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(16)) {
+    for (limb, chunk) in limbs.iter_mut().zip(chunks) {
         limb.copy_from_slice(chunk);
     }
     Ok(limbs.map(|limb| Fp::from_u128(u128::from_le_bytes(limb))))
