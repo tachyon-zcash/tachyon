@@ -599,7 +599,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
             "UnspentBind: sequence does not match the derivation",
         ),
         (
-            later.clone(),
+            later,
             (NfSeqPoly::new(EpochIndex::new(64), &[]),),
             "UnspentBind: sequence does not match the derivation",
         ),

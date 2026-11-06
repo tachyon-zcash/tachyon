@@ -107,8 +107,8 @@ fn fee_fuse_binds_its_sets() {
         ),
         (
             {
-                let mut corrupt = valid.clone();
-                corrupt.2.1 = other.2.1.clone();
+                let mut corrupt = valid;
+                corrupt.2.1 = other.2.1;
                 corrupt
             },
             "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",

@@ -1272,7 +1272,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
-    for (bucket_pcd, init_witness, expected) in vec![
+    for (bucket_pcd, init_witness, expected) in [
         (
             bucket.pcd.clone(),
             {
@@ -1317,7 +1317,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         (
             bucket.pcd.clone(),
             {
-                let mut forged = witness.clone();
+                let mut forged = witness;
                 forged.3 = NfSeqPoly::new(
                     epoch,
                     &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
