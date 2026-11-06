@@ -95,14 +95,6 @@ udon = { package = "zakura-udon", version = "0.1.0", default-features = false, f
 ] }
 
 [dev-dependencies]
-ragu_arithmetic = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", default-features = false, features = [
-    "alloc",
-    "multicore",
-] }
-ragu_pasta = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", default-features = false, features = [
-    "alloc",
-    "baked",
-] }
 rand = { version = "0.10", default-features = false, features = [
     "std_rng",
 ] }
