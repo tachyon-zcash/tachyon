@@ -302,10 +302,13 @@ impl Step<Pasta> for AnchorSpanSeed {
             .0
             .next_stamp(witness.1, &witness.2.commit())
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(AnchorSetPoly::from_iter([anchor_end]).as_ref());
-        polynomials[1] = super::coefficients(witness.2.as_ref());
-        Ok(polynomials)
+        Ok([
+            AnchorSetPoly::from_iter([anchor_end])
+                .as_ref()
+                .iter_coeffs()
+                .collect(),
+            witness.2.as_ref().iter_coeffs().collect(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -396,9 +399,10 @@ impl Step<Pasta> for AnchorSpanFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.0.as_ref());
-        Ok(polynomials)
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -479,9 +483,10 @@ impl Step<Pasta> for UnspentFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.0.as_ref());
-        Ok(polynomials)
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -613,9 +618,10 @@ impl Step<Pasta> for UnspentLift {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.3.as_ref());
-        Ok(polynomials)
+        Ok([
+            witness.3.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -774,9 +780,10 @@ impl Step<Pasta> for UnspentBind {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.0.as_ref());
-        Ok(polynomials)
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

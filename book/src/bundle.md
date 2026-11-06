@@ -184,7 +184,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
 | `nTachygrams` | compactsize | number of tachygrams |
 | `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
-| `proofTachyon` | Ragu proof encoding | length determined by its envelope kind |
+| `proofTachyon` | Ragu proof encoding | encoded length for the context's proof type |
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
@@ -208,7 +208,7 @@ $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
-`proofTachyon` is Ragu's proof encoding. Its envelope kind determines the encoded length and identifies the full or compressed form. Both forms use `tachyonBundleState == 0x01`. A full proof retains its polynomials for lifting, merging and unmerging; a compressed proof supports verification.
+`proofTachyon` is Ragu's proof encoding, with the encoded length for the context's proof type. Ragu's decoder validates the envelope and proof form. Both forms use `tachyonBundleState == 0x01`: mempool and folding inputs carry full proofs, and block items carry compressed proofs.
 
 The stamp digest hashes the Ragu-encoded proof bytes, including the envelope. Its definition is the same for both proof forms.
 

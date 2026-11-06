@@ -111,7 +111,11 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp, action::Plan<effect::Output>, fee::Descriptor) {
+) -> (
+    ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
+    action::Plan<effect::Output>,
+    fee::Descriptor,
+) {
     let (stamp, plan, max_fee) = build_output_stamp_with_fee(rng, anchor, note);
     (
         stamp,
@@ -127,7 +131,11 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp, action::Plan<effect::Output>, Note) {
+) -> (
+    ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
+    action::Plan<effect::Output>,
+    Note,
+) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
     let pak = WalletSim::new(shared_sk()).pak;
     let max_fee_note = WalletSim::random(rng).random_note(0);
@@ -148,7 +156,7 @@ pub fn build_autonome<RNG: CryptoRng>(
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
-) -> Bundle<ProofStamp> {
+) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
     let spend_note = wallet.random_note(spend_value);
     let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
@@ -168,12 +176,12 @@ pub fn build_autonome<RNG: CryptoRng>(
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
     (stamp_a, descriptors_a, fee_descriptors_a): (
-        &ProofStamp,
+        &ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
         &Vec<action::Descriptor>,
         &[fee::Descriptor],
     ),
     (stamp_b, descriptors_b, fee_descriptors_b): (
-        &ProofStamp,
+        &ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
         &Vec<action::Descriptor>,
         &[fee::Descriptor],
     ),
@@ -1347,7 +1355,7 @@ impl WalletSim {
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
         )>,
         output_notes: Vec<Note>,
-    ) -> Bundle<ProofStamp> {
+    ) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         let (bundle_plan, unproven, spend_pcds) =
             self.signed(rng, spends, output_notes, self.random_note(0));
         let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);

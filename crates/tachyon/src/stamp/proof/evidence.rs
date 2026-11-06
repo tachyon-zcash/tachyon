@@ -763,7 +763,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let contents = super::coefficients(witness.1.as_ref());
+        let contents = witness.1.as_ref().iter_coeffs().collect::<Vec<_>>();
         Ok([contents.clone(), contents])
     }
 

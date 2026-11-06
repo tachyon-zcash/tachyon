@@ -23,6 +23,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
@@ -127,9 +128,10 @@ impl Step<Pasta> for SpendableInit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[1] = super::coefficients(witness.1.as_ref());
-        Ok(polynomials)
+        Ok([
+            alloc::vec![Fp::ONE],
+            witness.1.as_ref().iter_coeffs().collect(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

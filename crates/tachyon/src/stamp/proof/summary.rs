@@ -114,7 +114,7 @@ impl Step<Pasta> for SummarySeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let stamp = super::coefficients(witness.2.as_ref());
+        let stamp = witness.2.as_ref().iter_coeffs().collect::<Vec<_>>();
         Ok([stamp.clone(), stamp])
     }
 
@@ -189,8 +189,8 @@ impl Step<Pasta> for SummaryAdvance {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
-            super::coefficients(witness.0.as_ref()),
-            super::coefficients(witness.1.as_ref()),
+            witness.0.as_ref().iter_coeffs().collect(),
+            witness.1.as_ref().iter_coeffs().collect(),
         ])
     }
 
