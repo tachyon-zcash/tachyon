@@ -85,16 +85,17 @@ fn enforce_slot(
 /// | Actions | 1 | 0 | 0 | 1 |
 /// | Stamp | 1 | 0 | 2 | 5 |
 /// | Summary | 3 | 0 | 0 | 3 |
-/// | QrIntake / QrIntakeSides / QrBucket | 6 | 0 | 0 | 6 |
+/// | QrIntake / QrBucket | 6 | 0 | 0 | 6 |
+/// | QrIntakeSides / QrSideSelection | 8 | 0 | 0 | 8 |
 /// | EvidenceTree | 5 | 0 | 0 | 5 |
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
 /// | AnchorSpan | 2 | 0 | 0 | 2 |
 ///
 /// Points write two coordinates; commitments write two compressed limbs.
 /// Other headers' polynomials live in their slots, not on the header.
-/// SpendHeader requires seven payload elements, so eight is minimal. Steps
-/// have one application fragment.
-pub const HEADER_SIZE: usize = 8;
+/// QR split/selection requires eight payload elements, so nine is minimal.
+/// Steps have one application fragment.
+pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
 {
@@ -137,6 +138,7 @@ fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
+        .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
 }
 

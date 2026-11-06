@@ -14,6 +14,7 @@
 //! [`QrStampIntakeSeed`] from one unsummarized stamp, and
 //! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
+//! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
@@ -55,8 +56,8 @@ use crate::{
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
-/// Tachygrams under routing. Every member of `contents` takes `profile`, and
-/// a split classifies at `discriminant.at(profile.depth)`. A builder keeps its
+/// Tachygrams under routing, complete for `profile` over the covered span.
+/// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
@@ -137,8 +138,8 @@ impl Header<Fp> for QrIntake {
     }
 }
 
-/// One intake's members partitioned at its discriminant. Extracting either
-/// side attests the other.
+/// A factorization of one intake's members. Selection checks the exceptional
+/// value; descent checks the sibling's class.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -161,14 +162,21 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
     pub depth: Element<'dr, D>,
     /// `profile.bits`.
     pub bits: Element<'dr, D>,
+    /// Bridge hash of the non-residue polynomial in O1.
+    pub non_residue_hash: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrIntakeSides {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile, non_residue,
-    /// residue)`, the fields of the intake that was split with its two sides
-    /// in place of its contents. The sides are ordered by the bit that selects
-    /// them: `0 = NQR, 1 = QR`.
-    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
+    /// non_residue_hash)`; slots O0/O1 carry the residue/non-residue sides.
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        QrProfile,
+        [Fp; 2],
+    );
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -213,7 +221,34 @@ impl Header<Fp> for QrIntakeSides {
                     .as_ref()
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
+            non_residue_hash: [
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[0]))?,
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[1]))?,
+            ],
         })
+    }
+}
+
+/// Split metadata and committed hints for a descent.
+///
+/// Slots O0/O1 carry the interpolant and quotient. The source's bridge hash
+/// binds its non-residue polynomial; see `scratch/for-alex.md` for the
+/// distinction between this binding and binding both sides.
+#[derive(Clone, Debug)]
+pub struct QrSideSelection;
+
+impl Header<Fp> for QrSideSelection {
+    type Data = <QrIntakeSides as Header<Fp>>::Data;
+    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
+
+    const SUFFIX: Suffix = Suffix::new(16);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        QrIntakeSides::encode(dr, allocator, witness)
     }
 }
 
@@ -549,11 +584,10 @@ impl Step<Pasta> for QrIntakeMerge {
 ///
 /// # Soundness
 ///
-/// The product pins the two sides to a factorization of the contents;
-/// [`QrSideDescend`] attests each child's sibling. The exceptional value $-R$
-/// has root $0$ under either class, so the non-residue side must open nonzero
-/// there.
-/// `L0` is contents; `O0/O1` are non-residue/residue, with `O0` opened twice.
+/// The product pins the two sides to a factorization of the contents.
+/// [`QrSideSelect`] checks the exceptional value; [`QrSideDescend`] checks the
+/// sibling's class. `L0` is contents; `O0/O1` are residue/non-residue.
+/// Each slot opens once at the product challenge.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -579,8 +613,8 @@ impl Step<Pasta> for QrIntakeSplit {
             "QrIntakeSplit: contents do not match the left slot",
         )?;
         Ok([
-            super::coefficients(witness.1.as_ref()),
             super::coefficients(witness.2.as_ref()),
+            super::coefficients(witness.1.as_ref()),
             alloc::vec![Fp::ONE],
         ])
     }
@@ -616,28 +650,103 @@ impl Step<Pasta> for QrIntakeSplit {
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
-        let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
-        let exceptional_element = Element::alloc(dr, &mut (), exceptional)?;
-        let non_residue_at_exceptional =
-            oracles.query(dr, Slot::output(0), &exceptional_element)?;
-        let nonzero_value = Element::promote(
-            non_residue_at_exceptional.wire().clone(),
-            non_residue_at_exceptional.value().map(|value| *value),
-        );
-        nonzero_value.enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QrIntakeSplit: exceptional value claimed the non-residue class".into(),
-            )
-        })?;
-
+        let non_residue_hash = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (epoch, anchor_prev, anchor_end, discriminant, profile) = left.take();
             let () = right.take();
-            Ok(((epoch, anchor_prev, anchor_end, discriminant, profile), ()))
+            let [first, second] = non_residue_hash;
+            Ok((
+                (
+                    epoch,
+                    anchor_prev,
+                    anchor_end,
+                    discriminant,
+                    profile,
+                    [*first.take(), *second.take()],
+                ),
+                (),
+            ))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        for (output_hash, oracle_hash) in encoded
+            .as_gadget()
+            .non_residue_hash
+            .iter()
+            .zip(oracles.bridge_hash())
+        {
+            output_hash.enforce_equal(dr, oracle_hash)?;
+        }
         Ok(((left_encoded, right_encoded, encoded), data, aux))
+    }
+}
+
+/// Fix hints in O0/O1 and check the exceptional-value assignment.
+///
+/// L1 is the non-residue side and opens once at -R. The hints are unopened;
+/// descent checks their class identity.
+#[derive(Debug)]
+pub struct QrSideSelect;
+
+impl Step<Pasta> for QrSideSelect {
+    type Aux<'source> = ();
+    type Left = QrIntakeSides;
+    type Output = QrSideSelection;
+    type Right = ();
+    /// `(non_residue_contents, interpolant, quotient)`
+    type Witness<'source> = (TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+
+    const INDEX: Index = Index::new(38);
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[1],
+            witness.0.as_ref(),
+            "QrSideSelect: non-residue contents do not match the left slot",
+        )?;
+        Ok([
+            super::coefficients(witness.1.as_ref()),
+            super::coefficients(witness.2.as_ref()),
+            alloc::vec![Fp::ONE],
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
+        let exceptional_element = Element::alloc(dr, &mut (), exceptional)?;
+        let value = oracles.query(dr, Slot::left(1), &exceptional_element)?;
+        value.enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrSideSelect: exceptional value claimed the non-residue class".into(),
+            )
+        })?;
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), left, D::unit()))
     }
 }
 
@@ -657,9 +766,8 @@ impl Step<Pasta> for QrIntakeSplit {
 ///
 /// # Soundness
 ///
-/// The sibling is the input's unselected side slot; the challenge absorbs the
-/// sibling, interpolant and quotient commitments and $R$. $R$ is prover-chosen,
-/// so without it a prover could solve the identity for $R$ after $z$. Every
+/// The sibling is the input's unselected side slot; the framework challenge
+/// fixes both inputs' slots and metadata, and the side bit is staged. Every
 /// root of the sibling then satisfies $u(x)^2 = c \cdot (x + R)$ at the
 /// sibling's class $c$, and the split's product places every member of the
 /// other class in the child. The child may hold a stray member of the
@@ -669,8 +777,11 @@ impl Step<Pasta> for QrIntakeSplit {
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 ///
-/// Polynomial inventory: `L0/L1` are the sides; `O0` is selected, `O1` the
-/// interpolant and `O2` the quotient. Five openings; the side bit is staged.
+/// Polynomial inventory: `L0/L1` are the sides; `R0/R1` are the interpolant
+/// and quotient. These four slots and the selected output O0 open once each
+/// at zeta, checking the `polynomials()` copy. Matching selection metadata and
+/// the non-residue bridge hash binds the exceptional-value check to the same
+/// q0.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -678,7 +789,7 @@ impl Step<Pasta> for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrIntake;
-    type Right = ();
+    type Right = QrSideSelection;
     /// `(bit, sibling_contents, interpolant, quotient)`
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
@@ -698,28 +809,40 @@ impl Step<Pasta> for QrSideDescend {
         &self,
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         #[expect(
             clippy::indexing_slicing,
             reason = "a boolean selects index zero or one in a three-slot header"
         )]
         let (selected, sibling) = (
-            &left.polynomials[usize::from(witness.0)],
             &left.polynomials[usize::from(!witness.0)],
+            &left.polynomials[usize::from(witness.0)],
         );
         super::enforce_slot(
             sibling,
             witness.1.as_ref(),
             "QrSideDescend: sibling does not match the sibling slot",
         )?;
-        Ok([
-            selected.clone(),
-            super::coefficients(witness.2.as_ref()),
-            super::coefficients(witness.3.as_ref()),
-        ])
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.2.as_ref(),
+            "QrSideDescend: interpolant does not match selection",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[1],
+            witness.3.as_ref(),
+            "QrSideDescend: quotient does not match selection",
+        )?;
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0].clone_from(selected);
+        Ok(polynomials)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "keep the single-use selection binding and descent identity together"
+    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -747,8 +870,51 @@ impl Step<Pasta> for QrSideDescend {
         let witness_for_native = witness.clone();
         let native = D::try_just(|| {
             let (bit, ..) = witness_for_native.take();
-            let (epoch, anchor_prev, anchor_end, discriminant, profile) = left.take();
-            let () = right.take();
+            let source = left.take();
+            let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) = source;
+            let (
+                selection_epoch,
+                selection_prev,
+                selection_end,
+                selection_discriminant,
+                selection_profile,
+                selection_hash,
+            ) = right.take();
+            for (difference, error) in [
+                (
+                    Fp::from(epoch) - Fp::from(selection_epoch),
+                    "QrSideDescend: selection epoch does not match sides",
+                ),
+                (
+                    Fp::from(anchor_prev) - Fp::from(selection_prev),
+                    "QrSideDescend: selection anchor_prev does not match sides",
+                ),
+                (
+                    Fp::from(anchor_end) - Fp::from(selection_end),
+                    "QrSideDescend: selection anchor_end does not match sides",
+                ),
+                (
+                    Fp::from(discriminant) - Fp::from(selection_discriminant),
+                    "QrSideDescend: selection discriminant does not match sides",
+                ),
+                (
+                    Fp::from(u64::from(profile.depth))
+                        - Fp::from(u64::from(selection_profile.depth)),
+                    "QrSideDescend: selection depth does not match sides",
+                ),
+                (
+                    Fp::from(u64::from(profile.bits)) - Fp::from(u64::from(selection_profile.bits)),
+                    "QrSideDescend: selection profile does not match sides",
+                ),
+            ] {
+                enforce_zero(difference, error)?;
+            }
+            for (left_hash, right_hash) in non_residue_hash.into_iter().zip(selection_hash) {
+                enforce_zero(
+                    left_hash - right_hash,
+                    "QrSideDescend: selection non-residue hash does not match sides",
+                )?;
+            }
             if profile.depth >= u32::BITS {
                 return Err(ragu_core::Error::InvalidWitness(
                     "QrSideDescend: profile has no bit left for another side".into(),
@@ -774,10 +940,10 @@ impl Step<Pasta> for QrSideDescend {
                 .map(|(_, _, discriminant_at_depth)| discriminant_at_depth),
         )?;
         let z = oracles.zeta().clone();
-        let non_residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
-        let residue_at_z = oracles.query(dr, Slot::left(1), &z)?;
-        let interpolant_at_z = oracles.query(dr, Slot::output(1), &z)?;
-        let quotient_at_z = oracles.query(dr, Slot::output(2), &z)?;
+        let residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let non_residue_at_z = oracles.query(dr, Slot::left(1), &z)?;
+        let interpolant_at_z = oracles.query(dr, Slot::right(0), &z)?;
+        let quotient_at_z = oracles.query(dr, Slot::right(1), &z)?;
         let bit_element = Element::alloc(
             dr,
             &mut (),
@@ -1100,7 +1266,7 @@ pub(super) fn enforce_value_profile(
 ///
 /// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c \cdot
 /// s_j$ is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero
-/// rule forces the residue side, where [`QrIntakeSplit`] files the exceptional
+/// rule forces the residue side, where [`QrSideSelect`] files the exceptional
 /// value. Among boolean vectors of weight `depth` only the leading positions
 /// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
