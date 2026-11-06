@@ -181,8 +181,7 @@ impl Step for NoteSeed {
 pub struct NullifierDerive;
 
 impl Step for NullifierDerive {
-    /// `(nullifiers,)`, in increasing epoch order from the output's
-    /// `epoch_start`.
+    /// `(nullifiers,)`
     type Aux<'source> = ([nullifier::Nullifier; NF_DERIVATION_WIDTH],);
     type Left = NoteSecret;
     type Output = NoteNullifiers;

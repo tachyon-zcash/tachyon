@@ -106,7 +106,7 @@ impl Header for Stamp {
 pub struct OutputAction;
 
 impl Step for OutputAction {
-    /// `(action_descriptor,)` for the action derived by this invocation.
+    /// `(action_descriptor,)`
     type Aux<'source> = (action::Descriptor,);
     type Left = OutputHeader;
     type Output = Actions;
@@ -181,7 +181,7 @@ impl Step for OutputAction {
 pub struct SpendAction;
 
 impl Step for SpendAction {
-    /// `(action_descriptor,)` for the action derived by this invocation.
+    /// `(action_descriptor,)`
     type Aux<'source> = (action::Descriptor,);
     type Left = SpendHeader;
     type Output = Actions;
@@ -526,7 +526,7 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
-    /// `(fee_descriptor, fee_change_commitment)` for this bundle's applied fee.
+    /// `(fee_descriptor, fee_change_commitment)`
     type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = Actions;
     type Output = Stamp;
@@ -661,8 +661,7 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
-    /// `(fee_descriptor, fee_change_commitment)` for this zero-action, zero-fee
-    /// bundle.
+    /// `(fee_descriptor, fee_change_commitment)`
     type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = ();
     type Output = Stamp;
