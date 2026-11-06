@@ -433,7 +433,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let plan = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let [action_commit, tachygram_commit, _] = pcd.commitments();
+    let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
         Eq::from(ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()).to_affine()

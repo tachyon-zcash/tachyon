@@ -762,9 +762,9 @@ impl Step<Pasta> for EvidenceTreeOpen {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let contents = super::coefficients(witness.1.as_ref());
-        Ok([contents.clone(), contents, alloc::vec![Fp::from(1)]])
+        Ok([contents.clone(), contents])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

@@ -276,7 +276,7 @@ impl Step<Pasta> for QrSummaryIntake {
         _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         Ok(polynomials)
@@ -366,9 +366,9 @@ impl Step<Pasta> for QrStampIntakeSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let stamp = super::coefficients(witness.3.as_ref());
-        Ok([stamp.clone(), stamp, alloc::vec![Fp::ONE]])
+        Ok([stamp.clone(), stamp])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -554,7 +554,7 @@ impl Step<Pasta> for QrIntakeMerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
@@ -678,11 +678,10 @@ impl Step<Pasta> for QrIntakeSplit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
             super::coefficients(witness.1.as_ref()),
             super::coefficients(witness.0.as_ref()),
-            alloc::vec![Fp::ONE],
         ])
     }
 
@@ -774,7 +773,7 @@ impl Step<Pasta> for QrSideSelect {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &left.polynomials[1],
             witness.0.as_ref(),
@@ -783,7 +782,6 @@ impl Step<Pasta> for QrSideSelect {
         Ok([
             super::coefficients(witness.1.as_ref()),
             super::coefficients(witness.2.as_ref()),
-            alloc::vec![Fp::ONE],
         ])
     }
 
@@ -891,7 +889,7 @@ impl Step<Pasta> for QrSideDescend {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         #[expect(
             clippy::indexing_slicing,
             reason = "a boolean selects one of the two side slots"
@@ -1214,7 +1212,7 @@ impl Step<Pasta> for QrBucketSeal {
         _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         polynomials[1].clone_from(&left.polynomials[0]);
@@ -1466,7 +1464,7 @@ impl Step<Pasta> for QrUnspentInit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.3.as_ref());
         Ok(polynomials)

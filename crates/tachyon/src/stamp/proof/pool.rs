@@ -297,7 +297,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let end = witness
             .0
             .next_stamp(witness.1, &witness.2.commit())
@@ -395,7 +395,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
@@ -478,7 +478,7 @@ impl Step<Pasta> for UnspentFuse {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)
@@ -612,7 +612,7 @@ impl Step<Pasta> for UnspentLift {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.3.as_ref());
         Ok(polynomials)
@@ -773,7 +773,7 @@ impl Step<Pasta> for UnspentBind {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.as_ref());
         Ok(polynomials)

@@ -1508,7 +1508,7 @@ impl ProofStamp {
                 .clone()
                 .carry::<Stamp>((action_commit, self.tachygram_set, self.anchor));
 
-        let [action_slot, tachygram_slot, _] = pcd.commitments();
+        let [action_slot, tachygram_slot] = pcd.commitments();
         if action_slot != Eq::from(action_commit).to_affine()
             || tachygram_slot != Eq::from(self.tachygram_set).to_affine()
         {

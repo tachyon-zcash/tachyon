@@ -1201,12 +1201,8 @@ impl Step<Pasta> for NonEmptyIntakeSeed {
         _: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        Ok([
-            vec![-Fp::from(self.0), Fp::ONE],
-            vec![Fp::ONE],
-            vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([vec![-Fp::from(self.0), Fp::ONE], vec![Fp::ONE]])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
