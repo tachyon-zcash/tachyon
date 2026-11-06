@@ -279,29 +279,15 @@ impl<P: ProofType> StampState for ProofStamp<P> {
     }
 }
 
-// Mirror Ragu's envelope: it has no public payload-kind accessor.
-const PROOF_ENVELOPE_SIZE: usize = 28;
-const PROOF_KIND_OFFSET: usize = 10;
-pub(crate) const FULL_PROOF_KIND: u16 = 1;
-const COMPRESSED_PROOF_KIND: u16 = 2;
-
-/// Read the shared stamp fields and Ragu proof bytes framed by the envelope
-/// kind.
-#[expect(
-    clippy::type_complexity,
-    reason = "the shared wire fields before choosing a proof type"
-)]
-pub(crate) fn read_stamp<R: Read>(
-    mut reader: R,
-) -> io::Result<(
-    value::Positive,
-    [u8; 32],
-    Anchor,
-    TachygramSetCommit,
-    BTreeSet<Tachygram>,
-    Vec<u8>,
-    u16,
-)> {
+impl<P: ProofType> ProofStamp<P> {
+    /// Read a stamp from the consensus wire format. The proof blob has a
+    /// known constant size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or any component is not a canonical
+    /// encoding.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
     let fee = {
         let mut bytes = [0u8; size_of::<u64>()];
         reader.read_exact(&mut bytes)?;
@@ -354,56 +340,23 @@ pub(crate) fn read_stamp<R: Read>(
         }
     }
 
-    let mut envelope = [0u8; PROOF_ENVELOPE_SIZE];
-    reader.read_exact(&mut envelope)?;
-    let kind = u16::from_le_bytes([envelope[PROOF_KIND_OFFSET], envelope[PROOF_KIND_OFFSET + 1]]);
-    let length = match kind {
-        FULL_PROOF_KIND => ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>(),
-        COMPRESSED_PROOF_KIND => {
-            ragu::CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>()
-        },
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid proof kind",
-            ));
-        },
-    };
-    let mut bytes = vec![0u8; length];
-    let (head, payload) = bytes.split_at_mut(PROOF_ENVELOPE_SIZE);
-    head.copy_from_slice(&envelope);
-    reader.read_exact(payload)?;
-    Ok((
-        fee,
-        covered_actions,
-        anchor,
-        tachygram_set,
-        tachygrams,
-        bytes,
-        kind,
-    ))
-}
-
-impl<P: ProofType> ProofStamp<P> {
-    /// Read a stamp whose Ragu envelope identifies a proof of type `P`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for invalid encodings or the other proof form.
-    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
-        let (fee, coverage, anchor, tachygram_set, tachygrams, bytes, _) = read_stamp(reader)?;
-        let proof = Box::new(P::from_bytes(&bytes)?);
+        let proof = {
+            let mut bytes = vec![0u8; P::encoded_len()];
+            reader.read_exact(&mut bytes)?;
+            P::from_bytes(&bytes)?
+        };
         Ok(Self {
-            coverage,
+            coverage: covered_actions,
             anchor,
             tachygram_set,
             tachygrams,
-            proof,
+            proof: Box::new(proof),
             fee,
         })
     }
 
-    /// Write a stamp with a full or compressed Ragu proof.
+    /// Write a stamp to the consensus wire format. The proof blob has a
+    /// known constant size.
     ///
     /// # Errors
     ///
@@ -531,7 +484,7 @@ impl Plan {
                 AnchorSetPoly,
             )>,
         )>,
-    ) -> Result<ProofStamp, ProveError> {
+    ) -> Result<ProofStamp<ragu::Proof<Pasta, ProductionRank>>, ProveError> {
         let fee_descriptor = fee::Descriptor {
             max_commitment: self
                 .max_fee_note
@@ -720,6 +673,9 @@ mod sealed {
 
 /// The two Ragu proof types a stamp can carry.
 pub trait ProofType: sealed::Sealed + Clone + 'static {
+    /// The encoded proof length for the application's parameters.
+    fn encoded_len() -> usize;
+
     /// Encode the proof using Ragu's envelope and payload.
     ///
     /// # Errors
@@ -747,6 +703,10 @@ pub trait ProofType: sealed::Sealed + Clone + 'static {
 }
 
 impl ProofType for ragu::Proof<Pasta, ProductionRank> {
+    fn encoded_len() -> usize {
+        Self::encoded_len::<HEADER_SIZE>()
+    }
+
     fn to_bytes(&self) -> io::Result<Vec<u8>> {
         Self::to_bytes(self)
             .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))
@@ -774,6 +734,10 @@ impl ProofType for ragu::Proof<Pasta, ProductionRank> {
 }
 
 impl ProofType for ragu::CompressedProof<Pasta> {
+    fn encoded_len() -> usize {
+        Self::encoded_len::<ProductionRank, HEADER_SIZE>()
+    }
+
     fn to_bytes(&self) -> io::Result<Vec<u8>> {
         Self::to_bytes(self)
             .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))
@@ -799,7 +763,7 @@ impl ProofType for ragu::CompressedProof<Pasta> {
 /// here.  The covered actions are present only as reference. A verifier must
 /// reconstruct the header from public data.
 ///
-/// Only the default, uncompressed proof type supports lifting, merging and
+/// Only the uncompressed proof type supports lifting, merging and
 /// unmerging. Compressed stamps support reading, writing and verification.
 ///
 /// ```compile_fail,E0599
@@ -811,7 +775,7 @@ impl ProofType for ragu::CompressedProof<Pasta> {
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct ProofStamp<P = ragu::Proof<Pasta, ProductionRank>> {
+pub struct ProofStamp<P> {
     /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
     /// action descriptors and fee descriptors from this stamp's bundle and
     /// all covered bundles.
@@ -838,7 +802,7 @@ pub struct ProofStamp<P = ragu::Proof<Pasta, ProductionRank>> {
     pub fee: value::Positive,
 }
 
-impl ProofStamp {
+impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof)`. The proof is not rerandomized.
     ///
@@ -1411,7 +1375,7 @@ impl<P: ProofType> ProofStamp<P> {
     }
 }
 
-impl ProofStamp {
+impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     /// Compresses the proof for the block, computing the action digests from
     /// the covered descriptors. The compressed stamp keeps this stamp's
     /// coverage, anchor, tachygrams and fee.

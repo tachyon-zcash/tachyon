@@ -3,12 +3,10 @@
 //! A bundle is parameterized by bundle state `S: BundleState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - `Bundle<ProofStamp>`: self-contained bundle with a proof stamp
-//! - `Bundle<ProofStamp<CompressedProof<Pasta>>>`: the same wire state with a
-//!   compressed proof, for verification rather than folding
+//! - `Bundle<ProofStamp<P>>`: self-contained bundle with a proof stamp
 //! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
 //!   covering aggregate
-//! - [`TachyonBundle`]: enum of the on-wire forms for mixed contexts
+//! - [`TachyonBundle`]: enum of the on-wire forms for block items
 //!
 //! # Consensus wire format
 //!
@@ -70,19 +68,14 @@
 //! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
 //! | `nTachygrams`           | compactsize          | number of tachygrams                       |
 //! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
-//! | `proofTachyon`          | Ragu proof encoding  | length determined by its envelope kind     |
+//! | `proofTachyon`          | Ragu proof encoding  | encoded length for the context's proof type |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
-//! Ragu's proof envelope identifies the full or compressed form. A full proof
-//! keeps its polynomials, so a decoded stamp can be lifted, merged and
-//! unmerged. A compressed proof verifies but cannot be folded. Compression
-//! keeps the proof-stamp bundle state. Typed readers require their Ragu proof
-//! form; `TachyonBundle` accepts either form and distinguishes them only with
-//! Rust variants. The envelope kind determines the encoded proof length;
-//! there is no length prefix. The stamp digest hashes the encoded proof bytes.
+//! Full and compressed proofs share state `0x01`; typed reads use the proof
+//! type's encoded length. `TachyonBundle` is the compressed block form.
 //!
 //! ## Pointer stamp
 //!
@@ -99,7 +92,6 @@
 //! pointer stamp as `LE64(vFeeTachyon) || tachyonAggregateId`.
 
 use alloc::{
-    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
@@ -603,7 +595,22 @@ impl Plan {
     }
 }
 
-impl Bundle<ProofStamp> {
+impl Bundle<Unproven> {
+    /// Attach a proof stamp, producing a `Bundle<ProofStamp<P>>`.
+    #[must_use]
+    pub fn stamp(self, stamp: ProofStamp<ragu::Proof<Pasta, ProductionRank>>) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
+        Bundle {
+            actions: self.actions,
+            value_balance: self.value_balance,
+            fee_max_commitment: self.fee_max_commitment,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp,
+        }
+    }
+}
+
+impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
     pub fn strip(self, wtxid: AggregateId) -> Bundle<PointerStamp> {
@@ -618,6 +625,17 @@ impl Bundle<ProofStamp> {
                 fee: self.stamp.fee,
             },
         }
+    }
+
+    fn covered_descriptors(&self, adjuncts: &[&Bundle<dyn StampState>]) -> (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>) {
+        let descriptors: BTreeSet<action::Descriptor> = self
+            .descriptors()
+            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
+            .collect();
+        let fee_descriptors: BTreeSet<fee::Descriptor> = iter::once(self.fee_descriptor())
+            .chain(adjuncts.iter().map(|&adj| adj.fee_descriptor()))
+            .collect();
+        (descriptors, fee_descriptors)
     }
 
     /// Advance the stamp's anchor along `spans`. Each entry is an anchor span
@@ -639,13 +657,7 @@ impl Bundle<ProofStamp> {
             AnchorSetPoly,
         )>,
     ) -> Result<Self, ProveError> {
-        let descriptors: BTreeSet<action::Descriptor> = self
-            .descriptors()
-            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
-            .collect();
-        let fee_descriptors: BTreeSet<fee::Descriptor> = iter::once(self.fee_descriptor())
-            .chain(adjuncts.iter().map(|&adj| adj.fee_descriptor()))
-            .collect();
+        let (descriptors, fee_descriptors) = self.covered_descriptors(adjuncts);
 
         let stamp = self
             .stamp
@@ -654,10 +666,8 @@ impl Bundle<ProofStamp> {
         Ok(Self { stamp, ..self })
     }
 
-    /// Compress the stamp's proof, changing its Rust proof type while keeping
-    /// the proof-stamp wire state.
-    /// The proof is checked against this bundle's
-    /// actions and fee descriptor combined with those of `adjuncts`.
+    /// Compress the stamp's proof for the block, using the descriptors of this
+    /// bundle and its adjuncts.
     ///
     /// # Errors
     ///
@@ -668,13 +678,7 @@ impl Bundle<ProofStamp> {
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
     ) -> Result<Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>, ProveError> {
-        let descriptors: BTreeSet<action::Descriptor> = self
-            .descriptors()
-            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
-            .collect();
-        let fee_descriptors: BTreeSet<fee::Descriptor> = iter::once(self.fee_descriptor())
-            .chain(adjuncts.iter().map(|&adj| adj.fee_descriptor()))
-            .collect();
+        let (descriptors, fee_descriptors) = self.covered_descriptors(adjuncts);
 
         let stamp = self.stamp.compress(rng, &descriptors, &fee_descriptors)?;
 
@@ -895,23 +899,40 @@ impl<P: ProofType> Bundle<ProofStamp<P>> {
     }
 }
 
-impl Bundle<Unproven> {
-    /// Attach a stamp, producing a bundle in its corresponding state.
+impl<S: StampState> Bundle<S> {
+    /// Borrow this bundle as a trait object.
     #[must_use]
-    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
-        Bundle {
-            actions: self.actions,
-            value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp,
+    pub fn as_dyn(&self) -> &Bundle<dyn StampState>
+    where
+        S: 'static,
+    {
+        self
+    }
+
+    /// Read a stamped bundle in state `S` from the consensus wire format.
+    ///
+    /// See the module-level wire format documentation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails, the state byte does not match `S`,
+    /// or any component is not a canonical encoding.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let head = StateByte::read(&mut reader)?;
+
+        if head != S::state_byte() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected tachyonBundleState",
+            ));
         }
+
+        Self::read_body(reader)
     }
 
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, the max fee note's value commitment, action sigs,
-    /// binding sig and memo. The stamp trailer follows.
+    /// binding sig, memo, and the stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
@@ -985,44 +1006,16 @@ impl Bundle<Unproven> {
             memo.extend_from_slice(&chunk[..take]);
         }
 
+        let stamp = S::read(&mut reader)?;
+
         Ok(Self {
             value_balance,
             actions,
             fee_max_commitment,
             binding_sig,
             memo,
-            stamp: Unproven,
+            stamp,
         })
-    }
-}
-
-impl<S: StampState> Bundle<S> {
-    /// Borrow this bundle as a trait object.
-    #[must_use]
-    pub fn as_dyn(&self) -> &Bundle<dyn StampState>
-    where
-        S: 'static,
-    {
-        self
-    }
-
-    /// Read a stamped bundle in state `S` from the consensus wire format.
-    ///
-    /// See the module-level wire format documentation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading fails, the state byte does not match `S`,
-    /// or any component is not a canonical encoding.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        if StateByte::read(&mut reader)? != S::state_byte() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected tachyonBundleState",
-            ));
-        }
-        let body = Bundle::<Unproven>::read_body(&mut reader)?;
-        Ok(body.stamp(S::read(&mut reader)?))
     }
 
     /// Write the bundle in the consensus wire format: the
@@ -1097,11 +1090,9 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own proof (autonome or aggregate).
-    Proven(Bundle<ProofStamp>),
+    Proven(Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<PointerStamp>),
-    /// A proof-stamped bundle whose Ragu proof is compressed. Uses `0x01`.
-    Compressed(Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>),
 }
 
 impl PartialEq for TachyonBundle {
@@ -1116,11 +1107,6 @@ impl PartialEq for TachyonBundle {
             },
             Self::Adjunct(ref bundle) => {
                 other.is_adjunct()
-                    && bundle.commitment() == other.commitment()
-                    && bundle.auth_digest() == other.auth_digest()
-            },
-            Self::Compressed(ref bundle) => {
-                other.is_compressed()
                     && bundle.commitment() == other.commitment()
                     && bundle.auth_digest() == other.auth_digest()
             },
@@ -1147,7 +1133,6 @@ impl TachyonBundle {
             Self::NoBundle => None,
             Self::Proven(ref bundle) => Some(bundle),
             Self::Adjunct(ref bundle) => Some(bundle),
-            Self::Compressed(ref bundle) => Some(bundle),
         }
     }
 
@@ -1155,8 +1140,8 @@ impl TachyonBundle {
     /// on the `tachyonBundleState` byte.
     ///
     /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
-    /// proof-stamped bundle (full or compressed), and `0x02` as a
-    /// pointer-stamped bundle; rejects any other byte.
+    /// proof-stamped bundle, and `0x02` as a pointer-stamped bundle;
+    /// rejects any other byte.
     ///
     /// # Errors
     ///
@@ -1167,47 +1152,8 @@ impl TachyonBundle {
 
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
-            StateByte::ProofStamped => {
-                let body = Bundle::<Unproven>::read_body(&mut reader)?;
-                let (fee, coverage, anchor, tachygram_set, tachygrams, bytes, kind) =
-                    stamp::read_stamp(&mut reader)?;
-                if kind == stamp::FULL_PROOF_KIND {
-                    Self::Proven(body.stamp(ProofStamp {
-                        fee,
-                        coverage,
-                        anchor,
-                        tachygram_set,
-                        tachygrams,
-                        proof: Box::new(
-                            ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes).map_err(
-                                |_err| {
-                                    io::Error::new(
-                                        io::ErrorKind::InvalidData,
-                                        "invalid proof encoding",
-                                    )
-                                },
-                            )?,
-                        ),
-                    }))
-                } else {
-                    Self::Compressed(body.stamp(ProofStamp {
-                        fee,
-                        coverage,
-                        anchor,
-                        tachygram_set,
-                        tachygrams,
-                        proof: Box::new(
-                            ragu::CompressedProof::<Pasta>::from_bytes(&bytes).map_err(|_err| {
-                                io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
-                            })?,
-                        ),
-                    }))
-                }
-            },
-            StateByte::PointerStamped => {
-                let body = Bundle::<Unproven>::read_body(&mut reader)?;
-                Self::Adjunct(body.stamp(PointerStamp::read(&mut reader)?))
-            },
+            StateByte::ProofStamped => Self::Proven(Bundle::read_body(&mut reader)?),
+            StateByte::PointerStamped => Self::Adjunct(Bundle::read_body(&mut reader)?),
         })
     }
 
@@ -1223,7 +1169,6 @@ impl TachyonBundle {
             Self::NoBundle => StateByte::NoBundle.write(writer),
             Self::Proven(ref stamped) => stamped.write(writer),
             Self::Adjunct(ref stamped) => stamped.write(writer),
-            Self::Compressed(ref stamped) => stamped.write(writer),
         }
     }
 
@@ -1236,7 +1181,6 @@ impl TachyonBundle {
             Self::NoBundle => *blake2b::AUTH_DIGEST_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.auth_digest(),
             Self::Adjunct(ref stamped) => stamped.auth_digest(),
-            Self::Compressed(ref stamped) => stamped.auth_digest(),
         }
     }
 
@@ -1249,7 +1193,6 @@ impl TachyonBundle {
             Self::NoBundle => *blake2b::COMMIT_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.commitment(),
             Self::Adjunct(ref stamped) => stamped.commitment(),
-            Self::Compressed(ref stamped) => stamped.commitment(),
         }
     }
 
@@ -1262,7 +1205,6 @@ impl TachyonBundle {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
             Self::Adjunct(ref _stamped) => false,
-            Self::Compressed(ref stamped) => stamped.is_aggregate(),
         }
     }
 
@@ -1275,7 +1217,6 @@ impl TachyonBundle {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_autonome(),
             Self::Adjunct(ref _stamped) => false,
-            Self::Compressed(ref stamped) => stamped.is_autonome(),
         }
     }
 
@@ -1295,11 +1236,6 @@ impl TachyonBundle {
                 .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
                 .is_some_and(|dyn_adjuncts| stamped.is_covering(&dyn_adjuncts)),
             Self::Adjunct(ref _stamped) => false,
-            Self::Compressed(ref stamped) => adjuncts
-                .iter()
-                .map(|adj| adj.as_dyn())
-                .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
-                .is_some_and(|dyn_adjuncts| stamped.is_covering(&dyn_adjuncts)),
         }
     }
 }

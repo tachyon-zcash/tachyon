@@ -3,6 +3,8 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::assert_matches;
 
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
@@ -27,7 +29,7 @@ fn fee_less_output_bundle(
     wallet: &WalletSim,
     anchor: Anchor,
     max_fee_note: Note,
-) -> Bundle<ProofStamp> {
+) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (output_plan.note, rcv))
@@ -448,7 +450,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
         .unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<ProofStamp>::read(&*bytes).unwrap();
+    let decoded = Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     decoded
         .verify(rng, &sighash, &mock_wtxid(&decoded).into(), &[])
