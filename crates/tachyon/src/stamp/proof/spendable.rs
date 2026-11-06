@@ -125,7 +125,7 @@ impl Step<Pasta> for SpendableInit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[1] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
@@ -218,7 +218,7 @@ impl Step<Pasta> for QrSpendableInit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &right.polynomials[0],
             witness.0.as_ref(),

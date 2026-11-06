@@ -311,7 +311,7 @@ impl Step<Pasta> for NullifierDerive {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
@@ -454,7 +454,7 @@ impl Step<Pasta> for NullifierFuse {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &left.polynomials[0],
             witness.0.as_ref(),

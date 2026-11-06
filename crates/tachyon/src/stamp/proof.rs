@@ -53,7 +53,7 @@ fn coefficients(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<pasta::Fp> 
     coefficients
 }
 
-fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
+fn unit_polynomials() -> [Vec<pasta::Fp>; 2] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
 }
 

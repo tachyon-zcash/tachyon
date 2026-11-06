@@ -279,7 +279,7 @@ impl Step<Pasta> for OutputAction {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
         polynomials[1] = super::coefficients(witness.3.as_ref());
@@ -420,7 +420,7 @@ impl Step<Pasta> for SpendAction {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
         polynomials[1] = super::coefficients(witness.3.as_ref());
@@ -538,7 +538,7 @@ impl Step<Pasta> for StampMerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
         polynomials[1] = super::coefficients(witness.1.1.as_ref());
@@ -666,7 +666,7 @@ impl Step<Pasta> for ActionMerge {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &left.polynomials[0],
             witness.0.0.as_ref(),
@@ -793,7 +793,7 @@ impl Step<Pasta> for StampLift {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &right.polynomials[0],
             witness.0.as_ref(),
@@ -879,7 +879,7 @@ impl Step<Pasta> for ActionLift {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &right.polynomials[0],
             witness.0.as_ref(),
@@ -972,7 +972,7 @@ impl Step<Pasta> for FeeFuse {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         super::enforce_slot(
             &left.polynomials[0],
             witness.2.0.as_ref(),
@@ -1171,7 +1171,7 @@ impl Step<Pasta> for FeeSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
         polynomials[1] = super::coefficients(witness.3.as_ref());
@@ -1328,7 +1328,7 @@ impl Step<Pasta> for StampUnmerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
         polynomials[1] = super::coefficients(witness.1.1.as_ref());
