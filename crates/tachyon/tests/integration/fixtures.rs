@@ -10,10 +10,7 @@ use ragu_core::{
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
     Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -27,7 +24,7 @@ use zcash_tachyon::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::{Eq, Fp},
+    pasta::Fp,
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
@@ -648,7 +645,17 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
         .unwrap();
 
     let mut descend = |side: bool| {
-        let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, side);
+        let (selection, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideSelect,
+                witness::qr_side_select((*sides.data(), ()), &intake.members, side),
+                sides.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        let descend_witness =
+            witness::qr_side_descend((*sides.data(), *selection.data()), &intake.members, side);
         let members = intake
             .members
             .iter()
@@ -663,7 +670,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 qr::QrSideDescend,
                 descend_witness,
                 sides.clone(),
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                selection,
             )
             .unwrap();
         QrIntakeEntry { pcd, members }
@@ -1427,17 +1434,4 @@ impl WalletSim {
         );
         (bundle_plan, signed, spend_pcds, anchor, max_fee_note)
     }
-}
-
-pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(b"MkRagu_Challng_\0")
-        .to_state();
-    for com in commitments {
-        state.update(com.to_affine().to_bytes().as_ref());
-    }
-    let mut wide = [0u8; 64];
-    wide.copy_from_slice(state.finalize().as_bytes());
-    Fp::from_uniform_bytes(&wide)
 }

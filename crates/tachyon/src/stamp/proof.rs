@@ -58,6 +58,19 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
 }
 
+/// Prover-side check of a retained polynomial copy against a child slot.
+fn enforce_slot(
+    slot: &[pasta::Fp],
+    poly: &Polynomial<pasta::Fp, ProductionRank>,
+    err: &'static str,
+) -> ragu_core::Result<()> {
+    if coefficients(poly) == slot {
+        Ok(())
+    } else {
+        Err(ragu_core::Error::InvalidWitness(err.into()))
+    }
+}
+
 /// Step admission checks, separate from the unrestricted protocol anchor hash.
 fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
     dr: &mut D,
@@ -101,8 +114,9 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
 /// | Actions | 1 | 0 | 0 | 1 |
 /// | Stamp | 1 | 0 | 2 | 5 |
 /// | Summary | 3 | 0 | 0 | 3 |
-/// | QrIntake / QrIntakeSides | 6 | 0 | 0 | 6 |
+/// | QrIntake | 6 | 0 | 0 | 6 |
 /// | QrBucket | 6 | 0 | 1 | 8 |
+/// | QrIntakeSides / QrSideSelection | 8 | 0 | 0 | 8 |
 /// | EvidenceTree | 5 | 0 | 0 | 5 |
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
 /// | AnchorSpan | 2 | 0 | 0 | 2 |
@@ -111,8 +125,8 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
 /// Other headers' polynomials live in their slots, not on the header.
 /// Stamp certifies its O1 double commitment; QrBucket certifies its contents
 /// double commitment. Stamp's O0 double commitment has no oracle binding.
-/// QrBucket requires eight payload elements, so nine is minimal. Steps
-/// have one application fragment.
+/// QR split/selection and QrBucket require eight payload elements, so nine is
+/// minimal. Steps have one application fragment.
 pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
@@ -156,6 +170,7 @@ fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
+        .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
 }
 
