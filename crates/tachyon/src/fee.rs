@@ -7,7 +7,6 @@ use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
-    note,
     pasta::EpAffine,
     primitives::{ActionDigest, ActionDigestError},
     value,
@@ -21,16 +20,6 @@ pub struct Descriptor {
 
     /// The fee.
     pub value: value::Positive,
-}
-
-/// Fee data returned by fee application.
-#[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct AppliedFee {
-    /// The applied fee descriptor.
-    pub descriptor: Descriptor,
-    /// The fee change note commitment.
-    pub change_commitment: note::Commitment,
 }
 
 impl Descriptor {

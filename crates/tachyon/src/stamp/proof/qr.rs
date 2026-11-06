@@ -433,7 +433,7 @@ impl Step for QrIntakeSplit {
 pub struct QrSideSelect;
 
 impl Step for QrSideSelect {
-    type Aux<'source> = crate::QrDecomposition;
+    type Aux<'source> = (QrInterpolantPoly, QrQuotientPoly);
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
@@ -468,10 +468,7 @@ impl Step for QrSideSelect {
         )?;
         Ok((
             (left, interpolant.commit(), quotient.commit()),
-            crate::QrDecomposition {
-                interpolant,
-                quotient,
-            },
+            (interpolant, quotient),
         ))
     }
 }

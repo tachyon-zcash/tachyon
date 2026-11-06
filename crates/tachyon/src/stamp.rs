@@ -553,7 +553,7 @@ impl Plan {
             ));
         }
 
-        let (pcd, descriptors, mut tachygrams, applied_fee) = match entries
+        let (pcd, descriptors, mut tachygrams, (fee_descriptor, change_commitment)) = match entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
@@ -664,11 +664,11 @@ impl Plan {
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
-        tachygrams.insert(Tachygram::from(applied_fee.change_commitment));
+        tachygrams.insert(Tachygram::from(change_commitment));
         Ok(ProofStamp {
             coverage: blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
-                &blake2b::stamp_fees_digest(&[applied_fee.descriptor.into()]),
+                &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
             ),
             anchor,
             tachygram_set,

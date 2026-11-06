@@ -21,7 +21,8 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        QrDiscriminant, QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -378,7 +379,7 @@ pub fn qr_side_descend(
     (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
     members: &[Tachygram],
     side: bool,
-    decomposition: crate::QrDecomposition,
+    (interpolant, quotient): (QrInterpolantPoly, QrQuotientPoly),
 ) -> StepWitness<'static, QrSideDescend> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
     let (residue, non_residue) = collections::qr::split(
@@ -392,8 +393,8 @@ pub fn qr_side_descend(
             .iter()
             .map(|&(member, _root)| Tachygram::from(member))
             .collect(),
-        decomposition.interpolant,
-        decomposition.quotient,
+        interpolant,
+        quotient,
     )
 }
 

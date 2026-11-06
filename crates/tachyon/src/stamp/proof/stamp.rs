@@ -528,7 +528,7 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
-    type Aux<'source> = fee::AppliedFee;
+    type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
@@ -646,13 +646,13 @@ impl Step for FeeFuse {
                 output_tachygram_set.commit(),
                 left_anchor,
             ),
-            fee::AppliedFee {
-                descriptor: fee::Descriptor {
+            (
+                fee::Descriptor {
                     max_commitment: cv_max_fee,
                     value: fee,
                 },
-                change_commitment: note::Commitment::from(fee_change_commitment),
-            },
+                note::Commitment::from(fee_change_commitment),
+            ),
         ))
     }
 }
@@ -662,7 +662,7 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
-    type Aux<'source> = fee::AppliedFee;
+    type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = ();
     type Output = Stamp;
     type Right = ();
@@ -727,13 +727,13 @@ impl Step for FeeSeed {
 
         Ok((
             (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
-            fee::AppliedFee {
-                descriptor: fee::Descriptor {
+            (
+                fee::Descriptor {
                     max_commitment: cv_max_fee,
                     value: value::Positive::ZERO,
                 },
-                change_commitment: note::Commitment::from(fee_change_commitment),
-            },
+                note::Commitment::from(fee_change_commitment),
+            ),
         ))
     }
 }
