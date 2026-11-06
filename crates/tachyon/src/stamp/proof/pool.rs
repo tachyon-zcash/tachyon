@@ -45,7 +45,6 @@ use super::{
     qr::{QrBucket, enforce_value_profile},
 };
 use crate::{
-    digest::poseidon,
     note::{self},
     pasta::{Eq, Fp},
     primitives::{
@@ -125,7 +124,7 @@ impl Header<Fp> for ArbitraryUnspent {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(ArbitraryUnspentOutput {
             anchor_start: Element::alloc(
@@ -279,7 +278,7 @@ impl Header<Fp> for AnchorSpan {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(AnchorSpanOutput {
             anchor_start: Element::alloc(
@@ -767,8 +766,8 @@ impl Step<Pasta> for UnspentLift {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let elapsed_at_z = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let extended_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let index_element = Element::alloc(
             dr,
             &mut (),

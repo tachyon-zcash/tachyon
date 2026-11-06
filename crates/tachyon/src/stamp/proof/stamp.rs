@@ -98,7 +98,7 @@ impl Header<Fp> for Actions {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
+                *output = super::bridge_hash(point)?;
             }
             Ok(coordinates)
         })?;
@@ -194,7 +194,7 @@ impl Header<Fp> for Stamp {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
+                *output = super::bridge_hash(point)?;
             }
             Ok(coordinates)
         })?;
@@ -1189,8 +1189,8 @@ impl Step<Pasta> for FeeFuse {
                 "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
             ),
         ] {
-            let left_value = oracles.query_at_zeta(dr, Slot::left(column))?;
-            let output_value = oracles.query_at_zeta(dr, Slot::output(column))?;
+            let left_value = oracles.query(dr, Slot::left(column), &z)?;
+            let output_value = oracles.query(dr, Slot::output(column), &z)?;
             let factor = z.sub(dr, &root);
             let expected = left_value.mul(dr, &factor)?;
             output_value

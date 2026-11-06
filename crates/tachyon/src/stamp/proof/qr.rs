@@ -116,7 +116,7 @@ impl Header<Fp> for QrIntake {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(QrIntakeOutput {
             epoch: Element::alloc(
@@ -227,7 +227,7 @@ impl Header<Fp> for QrIntakeSides {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
+                *output = super::bridge_hash(point)?;
             }
             Ok(coordinates)
         })?;
@@ -898,10 +898,10 @@ impl Step<Pasta> for QrSideDescend {
                 .map(|(_, _, discriminant_at_depth, _)| discriminant_at_depth),
         )?;
         let z = oracles.zeta().clone();
-        let non_residue_at_z = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let residue_at_z = oracles.query_at_zeta(dr, Slot::left(1))?;
-        let interpolant_at_z = oracles.query_at_zeta(dr, Slot::output(1))?;
-        let quotient_at_z = oracles.query_at_zeta(dr, Slot::output(2))?;
+        let non_residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let residue_at_z = oracles.query(dr, Slot::left(1), &z)?;
+        let interpolant_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let quotient_at_z = oracles.query(dr, Slot::output(2), &z)?;
         let bit_element = Element::alloc(
             dr,
             &mut (),
@@ -916,7 +916,7 @@ impl Step<Pasta> for QrSideDescend {
         let sibling_delta = non_residue_at_z.sub(dr, &residue_at_z);
         let selected_delta = bit_element.mul(dr, &sibling_delta)?;
         let sibling_at_z = residue_at_z.add(dr, &selected_delta);
-        let selected_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let selected_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let selected_expected = non_residue_at_z.sub(dr, &selected_delta);
         selected_at_z.enforce_equal(dr, &selected_expected)?;
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
@@ -1000,7 +1000,7 @@ impl Header<Fp> for QrBucket {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(QrBucketOutput {
             epoch: Element::alloc(
@@ -1372,7 +1372,7 @@ impl Step<Pasta> for QrUnspentInit {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let sequence_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let index_element = Element::alloc(
             dr,
             &mut (),

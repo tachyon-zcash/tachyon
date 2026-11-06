@@ -8,9 +8,6 @@
 
 use core::array;
 
-use group::GroupEncoding as _;
-use lazy_static::lazy_static;
-use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
 use ragu_core::{
     Cycle as _, PoseidonPermutation as _,
     drivers::emulator::{Emulator, Wireless},
@@ -22,15 +19,13 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
-    pasta::{Ep, EpAffine, EqAffine, Fp},
+    pasta::{EqAffine, Fp},
+    stamp::proof::bridge_hash,
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -195,40 +190,6 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     array::from_fn(|_| squeeze(&mut emulator, &mut sponge))
 }
 
-lazy_static! {
-    // R<13> bridge-stage a- and d-wire generator indices: 2n - 121, 4n - 121.
-    static ref BRIDGE_GENERATORS: [Ep; 2] = [3975u32, 8071u32].map(|index| {
-        let [first, second, third, fourth] = index.to_le_bytes();
-        #[expect(clippy::expect_used, reason = "hash-to-curve produces a canonical Pallas point")]
-        EpAffine::from_bytes(
-            Point::hash_to_curve("Ragu-Parameters")(&[0x00, first, second, third, fourth])
-                .to_bytes(),
-        )
-        .expect("valid bridge generator")
-        .to_projective()
-    });
-}
-
-/// Native bridge hash using the two fixed R<13> nested generators.
-///
-/// # Panics
-///
-/// Panics if `point` is the identity.
-#[expect(
-    clippy::expect_used,
-    reason = "nonidentity commitment has a bridge hash"
-)]
-pub(crate) fn bridge_hash(point: EqAffine) -> (Fp, Fp) {
-    let (x, y) = point
-        .coordinates()
-        .expect("commitment must not be the identity point");
-    let [first, second] = *BRIDGE_GENERATORS;
-    (first * x + second * y)
-        .to_affine()
-        .coordinates()
-        .expect("bridge hash must not be the identity point")
-}
-
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
 /// Advances the anchor by absorbing one stamp's epoch and tachygram-set
@@ -239,7 +200,12 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = bridge_hash(tgs);
+    #[expect(
+        clippy::expect_used,
+        reason = "nonidentity commitment has a bridge hash"
+    )]
+    let [bridge_hash_x, bridge_hash_y] =
+        bridge_hash(tgs).expect("commitment must not be the identity point");
     hash::<4>(
         ANCHOR_STAMP_DOMAIN,
         [anchor_prev, epoch, bridge_hash_x, bridge_hash_y],
@@ -264,7 +230,12 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = bridge_hash(contents);
+    #[expect(
+        clippy::expect_used,
+        reason = "nonidentity commitment has a bridge hash"
+    )]
+    let [bridge_hash_x, bridge_hash_y] =
+        bridge_hash(contents).expect("commitment must not be the identity point");
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [

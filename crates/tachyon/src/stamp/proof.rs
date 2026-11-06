@@ -34,7 +34,7 @@ use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
-use udon::field::Field as _;
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::pasta;
 
@@ -77,8 +77,8 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
 /// | AnchorSpan | 2 | 0 | 1 | 4 |
 ///
-/// Points write two coordinates. A Vesta commitment $(x, y)$ writes the two
-/// coordinates of the Pallas point $x \cdot G_{3975} + y \cdot G_{8071}$.
+/// Points write two coordinates. A commitment writes the two coordinates of
+/// its [`bridge_hash`].
 /// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
 /// have one application fragment.
 pub const HEADER_SIZE: usize = 11;
@@ -136,4 +136,17 @@ lazy_static! {
         )]
         make_app().expect("registration of fixed step list must succeed")
     };
+}
+
+/// The coordinates of [`PROOF_SYSTEM`]'s bridge hash of `commitment`.
+///
+/// # Errors
+///
+/// Returns an error if `commitment` is the identity.
+pub(crate) fn bridge_hash(commitment: pasta::EqAffine) -> Result<[pasta::Fp; 2], ragu_core::Error> {
+    PROOF_SYSTEM
+        .bridge_hash(commitment)?
+        .coordinates()
+        .map(<[pasta::Fp; 2]>::from)
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))
 }

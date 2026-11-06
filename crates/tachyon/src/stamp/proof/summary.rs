@@ -25,7 +25,6 @@ use ragu_primitives::{Element, allocator::Allocator, io::Write};
 use udon::curve::{Affine as _, Projective as _};
 
 use crate::{
-    digest::poseidon,
     pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     ragu_constraint::enforce_equal_point,
@@ -78,7 +77,7 @@ impl Header<Fp> for Summary {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(SummaryOutput {
             epoch: Element::alloc(

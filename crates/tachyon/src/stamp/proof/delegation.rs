@@ -31,7 +31,6 @@ use udon::{
 use crate::{
     collections::indexed_multiset,
     constants::EPOCH_MAX,
-    digest::poseidon,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
@@ -173,7 +172,7 @@ impl Header<Fp> for NoteNullifiers {
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
+            super::bridge_hash(point)
         })?;
         Ok(NoteNullifiersOutput {
             cm: Element::alloc(
@@ -406,7 +405,7 @@ impl Step<Pasta> for NullifierDerive {
         )]
         epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let seq_at_z = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let output = native.as_ref().map(|result| result.1);
         let z_value = z.value().map(|challenge| *challenge);
         // The window's members at `z`, encoded natively from the

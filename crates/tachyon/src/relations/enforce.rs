@@ -1,6 +1,6 @@
 //! Each relation here is a convenience tool over the framework's
-//! [`Oracles::query_at_zeta`] hook. They share one shape: the result is
-//! prover-supplied (built off-circuit) rather than computed by the relation,
+//! [`Oracles::query`] hook at the challenge. They share one shape: the result
+//! is prover-supplied (built off-circuit) rather than computed by the relation,
 //! the framework fixes each operand's slot before deriving a
 //! Fiat-Shamir challenge `z`, and the relation checks the defining
 //! algebraic identity at `z`, emitting one opening claim per operand at
@@ -31,7 +31,7 @@
 //! operands it covers and any relation-specific nuance.
 //!
 //! Implementation invariant: the eval fed to each identity check is the same
-//! eval emitted in that operand's opening claim (one `query_at_zeta` call per
+//! eval emitted in that operand's opening claim (one `query` call per
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
@@ -49,8 +49,9 @@ pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
     left: Slot,
     right: Slot,
 ) -> Result<()> {
-    let left_value = oracles.query_at_zeta(dr, left)?;
-    let right_value = oracles.query_at_zeta(dr, right)?;
+    let z = oracles.zeta().clone();
+    let left_value = oracles.query(dr, left, &z)?;
+    let right_value = oracles.query(dr, right, &z)?;
     left_value.enforce_equal(dr, &right_value)
 }
 
@@ -78,9 +79,10 @@ pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
     product: &Slot,
     err: &'static str,
 ) -> Result<()> {
-    let multiplicand_value = oracles.query_at_zeta(dr, *multiplicand)?;
-    let multiplier_value = oracles.query_at_zeta(dr, *multiplier)?;
-    let product_value = oracles.query_at_zeta(dr, *product)?;
+    let z = oracles.zeta().clone();
+    let multiplicand_value = oracles.query(dr, *multiplicand, &z)?;
+    let multiplier_value = oracles.query(dr, *multiplier, &z)?;
+    let product_value = oracles.query(dr, *product, &z)?;
     let expected = multiplicand_value.mul(dr, &multiplier_value)?;
     product_value
         .enforce_equal(dr, &expected)
@@ -116,7 +118,7 @@ pub(crate) fn enforce_poly_roots<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     err: &'static str,
 ) -> Result<()> {
     let z = oracles.zeta().clone();
-    let accumulator_value = oracles.query_at_zeta(dr, *accumulator)?;
+    let accumulator_value = oracles.query(dr, *accumulator, &z)?;
     let mut expected = Element::constant(dr, Fp::ONE);
     for root in roots {
         let factor = z.sub(dr, root);
