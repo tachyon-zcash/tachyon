@@ -235,8 +235,11 @@ impl StampState for ProofStamp {
             reason = "a proved or decoded stamp proof is encodable"
         )]
         let proof = self.proof.to_bytes().expect("stamp proof is encodable");
-        let tachygram_bytes: Vec<[u8; 32]> = self.tachygrams.iter()
-            .map(|&tg| Fp::from(tg).to_bytes()).collect();
+        let tachygram_bytes: Vec<[u8; 32]> = self
+            .tachygrams
+            .iter()
+            .map(|&tg| Fp::from(tg).to_bytes())
+            .collect();
         let stamp_data_digest = blake2b::stamp_data_digest(
             blake2b::stamp_proof_digest(&proof),
             self.anchor.0.to_bytes(),
@@ -275,57 +278,57 @@ impl ProofStamp {
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-    let fee = {
-        let mut bytes = [0u8; size_of::<u64>()];
-        reader.read_exact(&mut bytes)?;
-        value::Positive::try_from(u64::from_le_bytes(bytes))
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-    }?;
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
 
-    let mut coverage = [0u8; 32];
-    reader.read_exact(&mut coverage)?;
+        let mut coverage = [0u8; 32];
+        reader.read_exact(&mut coverage)?;
 
-    let anchor = Anchor::read(&mut reader)?;
+        let anchor = Anchor::read(&mut reader)?;
 
-    // Parsing does not confirm this against the tachygrams below.
-    let tachygram_set =
-        TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+        // Parsing does not confirm this against the tachygrams below.
+        let tachygram_set =
+            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
 
-    // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-    let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-    // proof stamp should never have an empty set
-    if n_tachygrams == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-    }
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
 
-    // the polynomial multiset includes a constant term
-    if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "too many tachygrams",
-        ));
-    }
-
-    let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-    for _ in 0..n_tachygrams {
-        let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-        if !tachygrams.insert(tg) {
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "tachygrams are not unique",
+                "too many tachygrams",
             ));
         }
 
-        if tachygrams.last() != Some(&tg) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "tachygrams are not canonically sorted",
-            ));
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
         }
-    }
 
         let proof = {
             let length = usize::try_from(serialization::read_compactsize(&mut reader)?)
@@ -364,17 +367,19 @@ impl ProofStamp {
         self.anchor.write(&mut writer)?;
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
         serialization::write_compactsize(
-            &mut writer, u64::try_from(self.tachygrams.len()).map_err(|err| {
-                io::Error::new(io::ErrorKind::InvalidData, err)
-            })?,
+            &mut writer,
+            u64::try_from(self.tachygrams.len())
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
         )?;
         for &tg in &self.tachygrams {
             serialization::write_fp(&mut writer, &Fp::from(tg))?;
         }
         let proof = self.proof.to_bytes()?;
-        serialization::write_compactsize(&mut writer, u64::try_from(proof.len()).map_err(|err| {
-            io::Error::new(io::ErrorKind::InvalidData, err)
-        })?)?;
+        serialization::write_compactsize(
+            &mut writer,
+            u64::try_from(proof.len())
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+        )?;
         writer.write_all(&proof)
     }
 }
@@ -694,16 +699,19 @@ pub enum Proof {
 }
 
 impl Proof {
-    /// Encode the proof using Ragu's public wire format, without a length prefix.
+    /// Encode the proof using Ragu's public wire format, without a length
+    /// prefix.
     ///
     /// # Errors
     ///
     /// Returns an error if the proof has no encoding.
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        match self {
-            Self::Full(proof) => proof.to_bytes(),
-            Self::Compressed(proof) => proof.to_bytes(),
-        }.map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::Full(ref proof) => proof.to_bytes(),
+            Self::Compressed(ref proof) => proof.to_bytes(),
+        }
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))
     }
 
     /// Extract a full proof for folding.
@@ -992,7 +1000,7 @@ impl ProofStamp {
             AnchorSetPoly,
         )>,
     ) -> Result<Self, ProveError> {
-        let proof = self.proof.into_full()?;
+        let input_proof = self.proof.into_full()?;
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
                 "no anchor span proof for no anchor advance".into(),
@@ -1000,7 +1008,8 @@ impl ProofStamp {
         }
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let mut stamp_pcd = proof.carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+        let mut stamp_pcd =
+            input_proof.carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
         for (span, members) in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(rng, StampLift, (members,), stamp_pcd, span)
@@ -1288,13 +1297,16 @@ impl ProofStamp {
     ) -> bool {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
-        let mut fee_bytes = fee_descriptors.into_iter().map(<[u8; 40]>::from)
+        let mut fee_bytes = fee_descriptors
+            .into_iter()
+            .map(<[u8; 40]>::from)
             .collect::<Vec<_>>();
         fee_bytes.sort_unstable();
-        self.coverage == blake2b::stamp_coverage_digest(
-            &blake2b::action_descriptor_digest(&desc_bytes),
-            &blake2b::stamp_fees_digest(&fee_bytes),
-        )
+        self.coverage
+            == blake2b::stamp_coverage_digest(
+                &blake2b::action_descriptor_digest(&desc_bytes),
+                &blake2b::stamp_fees_digest(&fee_bytes),
+            )
     }
 
     /// Reconstruct the PCD header and verify the proof. Call
@@ -1319,8 +1331,9 @@ impl ProofStamp {
         let action_commit = ActionSetPoly::from_iter(action_digests).commit();
 
         let header = (action_commit, self.tachygram_set, self.anchor);
-        match &self.proof {
-            Proof::Full(proof) => {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match self.proof {
+            Proof::Full(ref proof) => {
                 let pcd = proof.clone().carry::<Stamp>(header);
                 let [action_slot, tachygram_slot] = pcd.commitments();
                 if action_slot != Eq::from(action_commit).to_affine()
@@ -1330,7 +1343,9 @@ impl ProofStamp {
                 }
                 PROOF_SYSTEM.verify_uncompressed(&pcd, rng)
             },
-            Proof::Compressed(proof) => PROOF_SYSTEM.verify_compressed(&proof.clone().carry::<Stamp>(header)),
+            Proof::Compressed(ref proof) => {
+                PROOF_SYSTEM.verify_compressed(&proof.clone().carry::<Stamp>(header))
+            },
         }
     }
 
@@ -1356,20 +1371,31 @@ impl ProofStamp {
             .map_err(ProveError::ActionDigest)?;
 
         let header = (action_set.commit(), self.tachygram_set, self.anchor);
-        let proof = match self.proof {
-            Proof::Full(proof) => {
-                let (proof, _) = PROOF_SYSTEM.compress(&proof.carry::<Stamp>(header), rng)
-                    .map_err(ProveError::ProofFailed)?.into_parts();
-                Box::new(proof)
+        let compressed_proof = match self.proof {
+            Proof::Full(full) => {
+                let (compressed, _) = PROOF_SYSTEM
+                    .compress(&full.carry::<Stamp>(header), rng)
+                    .map_err(ProveError::ProofFailed)?
+                    .into_parts();
+                Box::new(compressed)
             },
-            Proof::Compressed(proof) => {
-                if !PROOF_SYSTEM.verify_compressed(&proof.clone().carry::<Stamp>(header))
-                    .map_err(ProveError::ProofFailed)? {
-                    return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness("compressed stamp proof does not verify".into())));
+            Proof::Compressed(compressed) => {
+                let pcd = compressed.carry::<Stamp>(header);
+                if !PROOF_SYSTEM
+                    .verify_compressed(&pcd)
+                    .map_err(ProveError::ProofFailed)?
+                {
+                    return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                        "compressed stamp proof does not verify".into(),
+                    )));
                 }
-                proof
+                let (verified, _) = pcd.into_parts();
+                Box::new(verified)
             },
         };
-        Ok(Self { proof: Proof::Compressed(proof), ..self })
+        Ok(Self {
+            proof: Proof::Compressed(compressed_proof),
+            ..self
+        })
     }
 }

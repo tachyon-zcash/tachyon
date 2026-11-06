@@ -42,6 +42,5 @@ pub use note::Note;
 pub use primitives::*;
 pub use serialization::compactsize::{CompactSize, CompactSizeError};
 pub use stamp::{
-    AggregateId, AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp,
-    Unproven,
+    AggregateId, AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp, Unproven,
 };

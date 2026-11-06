@@ -76,10 +76,10 @@
 //! instead of rebuilding it.
 //!
 //! Ragu's proof envelope identifies the full or compressed form. A full proof
-//! keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged.
-//! A compressed proof verifies but cannot be folded. Compression keeps the
-//! proof-stamp bundle state. The stamp digest hashes the encoded proof bytes,
-//! excluding `sizeProofTachyon`.
+//! keeps its polynomials, so a decoded stamp can be lifted, merged and
+//! unmerged. A compressed proof verifies but cannot be folded. Compression
+//! keeps the proof-stamp bundle state. The stamp digest hashes the encoded
+//! proof bytes, excluding `sizeProofTachyon`.
 //!
 //! ## Pointer stamp
 //!
@@ -117,8 +117,8 @@ use crate::{
     primitives::{Anchor, AnchorSetPoly, effect},
     reddsa, serialization,
     stamp::{
-        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError,
-        StampState, Unproven, proof::pool,
+        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
+        Unproven, proof::pool,
     },
     value,
 };
@@ -690,9 +690,7 @@ impl Bundle<ProofStamp> {
 
         Ok(Self { stamp, ..self })
     }
-}
 
-impl Bundle<ProofStamp> {
     /// Confirm `hStampCoverageTachyon` represents the combined actions and
     /// fee descriptors of this bundle and the given bundles.
     #[must_use]
