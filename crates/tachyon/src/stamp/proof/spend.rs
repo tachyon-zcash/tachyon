@@ -36,6 +36,7 @@ use crate::{
 /// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
+/// `anchor` threads the spendable lineage's pool position.
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -61,10 +62,7 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
 }
 
 impl Header<Fp> for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
-    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
-    /// one epoch on; `anchor` threads the spendable lineage's pool position;
-    /// `pk` and `cv` come from the certified note.
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`
     type Data = (
         note::Commitment,
         Nullifier,

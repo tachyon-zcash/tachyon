@@ -132,6 +132,7 @@ impl Header<Fp> for NoteSecret {
 /// [`UnspentBind`](super::pool::UnspentBind).
 ///
 /// Masking is the consuming step's responsibility.
+/// Slot `O0` holds the nullifier sequence; `epoch_end` is inclusive.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
@@ -151,8 +152,7 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteNullifiers {
-    /// `(cm, epoch_start, epoch_end)`. `epoch_end` is inclusive. Slot `O0`
-    /// holds the nullifier sequence.
+    /// `(cm, epoch_start, epoch_end)`
     type Data = (note::Commitment, EpochIndex, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
@@ -492,7 +492,7 @@ impl Step<Pasta> for NullifierFuse {
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `(merged_seq)`
+    /// `(merged_seq,)`
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(12);

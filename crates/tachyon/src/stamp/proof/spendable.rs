@@ -38,6 +38,9 @@ use crate::{
 /// coordinate.
 ///
 /// `cm` keeps the spent value from drifting to a different same-`mk` note.
+/// It threads unchanged while the epoch and anchor advance per lift. A lift
+/// checks continuity by meeting this point with a [`NoteUnspent`] segment's
+/// near end.
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
@@ -57,9 +60,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteSpendable {
-    /// `(cm, epoch_current, anchor)`. `cm` threads unchanged; the rest
-    /// advances per lift. A lift checks continuity by meeting this point with
-    /// a [`NoteUnspent`] segment's near end.
+    /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 

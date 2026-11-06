@@ -629,7 +629,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
-    /// `(path)`
+    /// `(path,)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
     const INDEX: Index = Index::new(28);

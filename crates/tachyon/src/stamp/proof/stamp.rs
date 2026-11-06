@@ -845,7 +845,7 @@ impl Step<Pasta> for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, fee, (action_set, tachygram_set))`
+    /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`
     type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
 
     const INDEX: Index = Index::new(33);
