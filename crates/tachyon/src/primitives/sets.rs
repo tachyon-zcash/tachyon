@@ -4,7 +4,10 @@ use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
-use udon::curve::Projective as _;
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use super::{ActionDigest, Anchor, Tachygram};
 use crate::{
@@ -19,6 +22,15 @@ use crate::{
 pub struct TachygramSetCommit(Eq);
 
 impl TachygramSetCommit {
+    /// The compressed point encoding as two 128-bit $\mathbb{F}_p$ limbs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the commitment is the identity.
+    pub(crate) fn to_limbs(self) -> ragu_core::Result<[Fp; 2]> {
+        commitment_limbs(self.0)
+    }
+
     /// Read as an affine point from the consensus wire format.
     ///
     /// # Errors
@@ -53,6 +65,15 @@ impl Default for TachygramSetCommit {
 pub struct ActionSetCommit(Eq);
 
 impl ActionSetCommit {
+    /// The compressed point encoding as two 128-bit $\mathbb{F}_p$ limbs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the commitment is the identity.
+    pub(crate) fn to_limbs(self) -> ragu_core::Result<[Fp; 2]> {
+        commitment_limbs(self.0)
+    }
+
     /// Read as an affine point from the consensus wire format.
     ///
     /// # Errors
@@ -73,6 +94,25 @@ impl ActionSetCommit {
         serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
         Ok(())
     }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "compressed point limbs contain exactly 16 bytes"
+)]
+fn commitment_limbs(commitment: Eq) -> ragu_core::Result<[Fp; 2]> {
+    let point = commitment.to_affine();
+    if point.is_identity() {
+        return Err(ragu_core::Error::InvalidWitness(
+            "cannot encode the identity commitment".into(),
+        ));
+    }
+    let bytes = point.to_bytes();
+    let (low, high) = bytes.split_at(16);
+    Ok([
+        Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+        Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+    ])
 }
 
 impl Default for ActionSetCommit {

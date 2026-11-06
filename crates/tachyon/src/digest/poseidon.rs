@@ -199,7 +199,7 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 ///
 /// Panics if `point` is the identity.
 #[expect(clippy::expect_used, reason = "constant-size decomposition")]
-pub(crate) fn point_limbs(point: EqAffine) -> (Fp, Fp) {
+fn point_limbs(point: EqAffine) -> (Fp, Fp) {
     assert!(
         !point.is_identity(),
         "commitment must not be the identity point"

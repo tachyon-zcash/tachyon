@@ -15,10 +15,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::{curve::Affine as _, field::Field as _};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -127,21 +124,8 @@ impl Header<Fp> for Stamp {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         let commitments = D::try_just(|| {
-            let fields = witness.clone().take();
-            let mut limbs = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in limbs
-                .iter_mut()
-                .zip([Eq::from(fields.0), Eq::from(fields.1)])
-            {
-                let point = commitment.to_affine();
-                if point.is_identity() {
-                    return Err(ragu_core::Error::InvalidWitness(
-                        "cannot encode the identity commitment".into(),
-                    ));
-                }
-                *output = poseidon::point_limbs(point).into();
-            }
-            Ok(limbs)
+            let (action_commit, stamp_tg_commit, _) = witness.clone().take();
+            Ok([action_commit.to_limbs()?, stamp_tg_commit.to_limbs()?])
         })?;
         Ok(StampOutput {
             anchor: Element::alloc(
