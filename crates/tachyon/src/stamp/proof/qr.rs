@@ -109,23 +109,14 @@ impl Header<Fp> for QrIntake {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().5).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(QrIntakeOutput {
             epoch: Element::alloc(
@@ -163,8 +154,8 @@ impl Header<Fp> for QrIntake {
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
             contents: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -223,14 +214,10 @@ impl Header<Fp> for QrIntakeSides {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
         let commitments = D::try_just(|| {
             let fields = witness.clone().take();
-            let mut limbs = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in limbs
+            let mut coordinates = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in coordinates
                 .iter_mut()
                 .zip([Eq::from(fields.5), Eq::from(fields.6)])
             {
@@ -240,14 +227,9 @@ impl Header<Fp> for QrIntakeSides {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                let bytes = point.to_bytes();
-                let (low, high) = bytes.split_at(16);
-                *output = [
-                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-                ];
+                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
             }
-            Ok(limbs)
+            Ok(coordinates)
         })?;
         Ok(QrIntakeSidesOutput {
             epoch: Element::alloc(
@@ -413,14 +395,15 @@ impl Step<Pasta> for QrStampIntakeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        let stamp = super::coefficients(witness.3.as_ref());
-        Ok([stamp.clone(), stamp, alloc::vec![Fp::ONE]])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.3.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -461,7 +444,6 @@ impl Step<Pasta> for QrStampIntakeSeed {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -988,8 +970,8 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub depth: Element<'dr, D>,
     /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// Contents bridge hash.
-    pub contents_bridge_hash: [Element<'dr, D>; 2],
+    /// `contents`.
+    pub contents: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrBucket {
@@ -1011,11 +993,11 @@ impl Header<Fp> for QrBucket {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let bridge_hash = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().5).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
-                    "cannot hash the identity commitment".into(),
+                    "cannot encode the identity commitment".into(),
                 ));
             }
             Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
@@ -1055,9 +1037,9 @@ impl Header<Fp> for QrBucket {
                     .as_ref()
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
-            contents_bridge_hash: [
-                Element::alloc(dr, allocator, bridge_hash.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, bridge_hash.as_ref().map(|values| values[1]))?,
+            contents: [
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -1096,7 +1078,7 @@ impl Header<Fp> for QrBucket {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
-/// `L0` is copied to `O0/O1`; the header certifies `O1`'s bridge hash.
+/// `L0` is copied to `O0`.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -1116,8 +1098,9 @@ impl Step<Pasta> for QrBucketSeal {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        let contents = left.polynomials[0].clone();
-        Ok([contents.clone(), contents, alloc::vec![Fp::ONE]])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0].clone_from(&left.polynomials[0]);
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1174,19 +1157,7 @@ impl Step<Pasta> for QrBucketSeal {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let input_contents = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let carried_contents = oracles.query_at_zeta(dr, Slot::output(0))?;
-        let bridge_contents = oracles.query_at_zeta(dr, Slot::output(1))?;
-        input_contents.enforce_equal(dr, &carried_contents)?;
-        carried_contents.enforce_equal(dr, &bridge_contents)?;
-        for (actual, expected) in encoded
-            .as_gadget()
-            .contents_bridge_hash
-            .iter()
-            .zip(oracles.bridge_hash())
-        {
-            actual.enforce_equal(dr, expected)?;
-        }
+        enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

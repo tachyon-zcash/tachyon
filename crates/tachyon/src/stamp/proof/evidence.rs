@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 use ragu::{
     header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
 use ragu_core::{
     drivers::{Driver, DriverValue},
@@ -26,7 +26,7 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
 use udon::curve::Projective as _;
 
 use super::qr::QrBucket;
@@ -38,7 +38,6 @@ use crate::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetPoly,
     },
     ragu_constraint::enforce_zero,
-    relations::enforce::enforce_poly_equal,
 };
 
 /// A Poseidon Merkle root over one network's sealed buckets.
@@ -729,14 +728,15 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        let contents = super::coefficients(witness.1.as_ref());
-        Ok([contents.clone(), contents, alloc::vec![Fp::from(1)]])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.1.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -788,15 +788,6 @@ impl Step<Pasta> for EvidenceTreeOpen {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let header = encoded.as_gadget();
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        for (actual, expected) in header
-            .contents_bridge_hash
-            .iter()
-            .zip(oracles.bridge_hash())
-        {
-            actual.enforce_equal(dr, expected)?;
-        }
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

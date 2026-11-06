@@ -161,7 +161,7 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_set)`.
+/// stamp_commit)`.
 #[must_use]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
@@ -172,7 +172,7 @@ pub fn anchor_span_seed(
     (
         anchor_start,
         epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>(),
+        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
 }
 

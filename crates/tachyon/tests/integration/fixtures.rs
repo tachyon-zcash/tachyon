@@ -444,7 +444,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
             .collect::<Vec<_>>()
         {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
+            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .unwrap();

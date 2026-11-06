@@ -45,11 +45,12 @@ use super::{
     qr::{QrBucket, enforce_value_profile},
 };
 use crate::{
+    digest::poseidon,
     note::{self},
     pasta::{Eq, Fp},
     primitives::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
-        QrProfile, Tachygram, TachygramSetPoly,
+        QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -117,23 +118,14 @@ impl Header<Fp> for ArbitraryUnspent {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().2).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(ArbitraryUnspentOutput {
             anchor_start: Element::alloc(
@@ -157,8 +149,8 @@ impl Header<Fp> for ArbitraryUnspent {
                 witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?,
             elapsed: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -280,23 +272,14 @@ impl Header<Fp> for AnchorSpan {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().1).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(AnchorSpanOutput {
             anchor_start: Element::alloc(
@@ -310,8 +293,8 @@ impl Header<Fp> for AnchorSpan {
                 witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
             members: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -322,7 +305,7 @@ impl Header<Fp> for AnchorSpan {
 /// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
 /// The span's only member is the resulting anchor, committed with
 /// [`AnchorSetCommit::singleton`].
-/// `O0` carries that singleton; `O1` carries the stamp for its bridge hash.
+/// `O0` carries that singleton.
 ///
 /// # Soundness
 ///
@@ -337,8 +320,8 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Left = ();
     type Output = AnchorSpan;
     type Right = ();
-    /// `(anchor_start, epoch, stamp)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
+    /// `(anchor_start, epoch, stamp_commit)`
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
     const INDEX: Index = Index::new(31);
 
@@ -350,11 +333,10 @@ impl Step<Pasta> for AnchorSpanSeed {
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
         let end = witness
             .0
-            .next_stamp(witness.1, &witness.2.commit())
+            .next_stamp(witness.1, &witness.2)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = alloc::vec![-Fp::from(end), Fp::ONE];
-        polynomials[1] = super::coefficients(witness.2.as_ref());
         Ok(polynomials)
     }
 
@@ -381,8 +363,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let (anchor_start, epoch, stamp) = witness.take();
-            let stamp_commit = stamp.commit();
+            let (anchor_start, epoch, stamp_commit) = witness.take();
             let anchor_end = anchor_start
                 .next_stamp(epoch, &stamp_commit)
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;

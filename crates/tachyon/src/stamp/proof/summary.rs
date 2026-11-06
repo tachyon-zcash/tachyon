@@ -22,16 +22,14 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::curve::{Affine as _, Projective as _};
 
 use crate::{
+    digest::poseidon,
     pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     ragu_constraint::enforce_equal_point,
-    relations::enforce::{enforce_poly_equal, enforce_poly_product},
+    relations::enforce::enforce_poly_product,
 };
 
 /// One summarized run of an epoch's stamps.
@@ -73,23 +71,14 @@ impl Header<Fp> for Summary {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().3).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(SummaryOutput {
             epoch: Element::alloc(
@@ -108,8 +97,8 @@ impl Header<Fp> for Summary {
                 witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
             acc_commit: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
@@ -131,7 +120,7 @@ impl Step<Pasta> for SummarySeed {
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp)`; `O0/O1` carry the same stamp polynomial.
+    /// `(anchor_prev, epoch, stamp)`; `O0` carries the stamp polynomial.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
@@ -142,14 +131,15 @@ impl Step<Pasta> for SummarySeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
-        let stamp = super::coefficients(witness.2.as_ref());
-        Ok([stamp.clone(), stamp, alloc::vec![Fp::from(1)]])
+        let mut polynomials = super::unit_polynomials();
+        polynomials[0] = super::coefficients(witness.2.as_ref());
+        Ok(polynomials)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -178,7 +168,6 @@ impl Step<Pasta> for SummarySeed {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

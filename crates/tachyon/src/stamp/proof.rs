@@ -77,9 +77,8 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
 /// | AnchorSpan | 2 | 0 | 1 | 4 |
 ///
-/// Points write two coordinates; commitments write two compressed limbs.
-/// `QrBucket` writes its certified bridge hash's two coordinates instead
-/// of its native contents commitment's compressed limbs.
+/// Points write two coordinates. A Vesta commitment $(x, y)$ writes the two
+/// coordinates of the Pallas point $x \cdot G_{3975} + y \cdot G_{8071}$.
 /// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
 /// have one application fragment.
 pub const HEADER_SIZE: usize = 11;

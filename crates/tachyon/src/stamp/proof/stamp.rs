@@ -85,14 +85,10 @@ impl Header<Fp> for Actions {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
         let commitments = D::try_just(|| {
             let fields = witness.clone().take();
-            let mut limbs = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in limbs
+            let mut coordinates = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in coordinates
                 .iter_mut()
                 .zip([Eq::from(fields.0), Eq::from(fields.1)])
             {
@@ -102,14 +98,9 @@ impl Header<Fp> for Actions {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                let bytes = point.to_bytes();
-                let (low, high) = bytes.split_at(16);
-                *output = [
-                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-                ];
+                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
             }
-            Ok(limbs)
+            Ok(coordinates)
         })?;
         Ok(ActionsOutput {
             anchor: Element::alloc(
@@ -190,14 +181,10 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
         let commitments = D::try_just(|| {
             let fields = witness.clone().take();
-            let mut limbs = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in limbs
+            let mut coordinates = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in coordinates
                 .iter_mut()
                 .zip([Eq::from(fields.0), Eq::from(fields.1)])
             {
@@ -207,14 +194,9 @@ impl Header<Fp> for Stamp {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                let bytes = point.to_bytes();
-                let (low, high) = bytes.split_at(16);
-                *output = [
-                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-                ];
+                *output = <[Fp; 2]>::from(poseidon::bridge_hash(point));
             }
-            Ok(limbs)
+            Ok(coordinates)
         })?;
         Ok(StampOutput {
             anchor: Element::alloc(

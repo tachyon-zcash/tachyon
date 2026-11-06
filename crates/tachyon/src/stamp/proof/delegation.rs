@@ -31,6 +31,7 @@ use udon::{
 use crate::{
     collections::indexed_multiset,
     constants::EPOCH_MAX,
+    digest::poseidon,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
@@ -165,23 +166,14 @@ impl Header<Fp> for NoteNullifiers {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
+        let coordinates = D::try_just(|| {
             let point = Eq::from(witness.clone().take().2).to_affine();
             if point.is_identity() {
                 return Err(ragu_core::Error::InvalidWitness(
                     "cannot encode the identity commitment".into(),
                 ));
             }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
+            Ok(<[Fp; 2]>::from(poseidon::bridge_hash(point)))
         })?;
         Ok(NoteNullifiersOutput {
             cm: Element::alloc(
@@ -200,8 +192,8 @@ impl Header<Fp> for NoteNullifiers {
                 witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?,
             nf_commit: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
+                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
             ],
         })
     }
