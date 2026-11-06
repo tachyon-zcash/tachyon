@@ -72,19 +72,19 @@ pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = 
     "deferred",
 ] }
 # rev is the head of ragu#929; bump it when that PR merges.
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "78b97e7dba863fe75351bc6d030a35b5a57b352f", default-features = false, features = [
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "d877948e88477ef502adf2c8972b8f841c18386f", default-features = false, features = [
     "mock",
 ] }
-ragu_circuits = { git = "https://github.com/tachyon-zcash/ragu", rev = "78b97e7dba863fe75351bc6d030a35b5a57b352f", package = "ragu_circuits", default-features = false, features = [
+ragu_circuits = { git = "https://github.com/tachyon-zcash/ragu", rev = "d877948e88477ef502adf2c8972b8f841c18386f", package = "ragu_circuits", default-features = false, features = [
     "alloc",
 ] }
-ragu_core = { git = "https://github.com/tachyon-zcash/ragu", rev = "78b97e7dba863fe75351bc6d030a35b5a57b352f", package = "ragu_core", default-features = false, features = [
+ragu_core = { git = "https://github.com/tachyon-zcash/ragu", rev = "d877948e88477ef502adf2c8972b8f841c18386f", package = "ragu_core", default-features = false, features = [
     "alloc",
 ] }
-ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "78b97e7dba863fe75351bc6d030a35b5a57b352f", package = "ragu_pcd", default-features = false, features = [
+ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "d877948e88477ef502adf2c8972b8f841c18386f", package = "ragu_pcd", default-features = false, features = [
     "baked",
 ] }
-ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "78b97e7dba863fe75351bc6d030a35b5a57b352f", package = "ragu_primitives", default-features = false, features = [
+ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "d877948e88477ef502adf2c8972b8f841c18386f", package = "ragu_primitives", default-features = false, features = [
     "alloc",
 ] }
 rand_core = { version = "0.10", default-features = false }
