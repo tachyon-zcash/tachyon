@@ -1121,6 +1121,10 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
 }
 
 #[test]
+#[expect(
+    clippy::useless_vec,
+    reason = "an array of these cases exceeds the stack array limit"
+)]
 fn qr_unspent_init_rejects_corrupted_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
@@ -1139,7 +1143,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
-    for (bucket_pcd, init_witness, expected) in [
+    for (bucket_pcd, init_witness, expected) in vec![
         (
             bucket.pcd.clone(),
             {
