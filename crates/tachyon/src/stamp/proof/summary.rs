@@ -35,6 +35,8 @@ use crate::{
 /// `acc_commit` commits the root polynomial of every tachygram in the run,
 /// which is exactly the set of stamps folded over the coverage extent
 /// `(anchor_prev, anchor_end]`.
+/// `anchor_prev` is a free witness of the seed step, as `anchor_start` is for
+/// [`AnchorSpan`](super::pool::AnchorSpan).
 #[derive(Clone, Debug)]
 pub struct Summary;
 
@@ -54,9 +56,7 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for Summary {
-    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is a free
-    /// witness of the seed step, as `anchor_start` is for
-    /// [`AnchorSpan`](super::pool::AnchorSpan).
+    /// `(epoch, anchor_prev, anchor_end)`
     type Data = (EpochIndex, Anchor, Anchor);
     type Output = Kind![Fp; SummaryOutput<'_, _>];
 
@@ -103,7 +103,7 @@ impl Step<Pasta> for SummarySeed {
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp)`; `O0` carries the stamp polynomial.
+    /// `(anchor_prev, epoch, stamp)`
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);

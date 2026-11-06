@@ -140,6 +140,8 @@ impl Header<Fp> for ArbitraryUnspent {
 
 /// A note proven unspent across a span: an [`ArbitraryUnspent`] whose values
 /// [`UnspentBind`] has attributed to the note's genuine derivation.
+///
+/// The header carries `cm` followed by the [`ArbitraryUnspent`] segment fields.
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
@@ -163,8 +165,7 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteUnspent {
-    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. `cm` leads;
-    /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed`.
+    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
     type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
 
@@ -374,7 +375,7 @@ impl Step<Pasta> for AnchorSpanFuse {
     type Left = AnchorSpan;
     type Output = AnchorSpan;
     type Right = AnchorSpan;
-    /// `(combined)`
+    /// `(combined,)`
     type Witness<'source> = (AnchorSetPoly,);
 
     const INDEX: Index = Index::new(32);
@@ -450,7 +451,7 @@ impl Step<Pasta> for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(combined_elapsed_seq)`
+    /// `(combined_elapsed_seq,)`
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(2);
@@ -725,7 +726,7 @@ impl Step<Pasta> for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(complement_seq)`
+    /// `(complement_seq,)`
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(3);

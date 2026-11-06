@@ -464,6 +464,8 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
+/// Each witness entry is an `(action_set, tachygram_set)` pair.
+///
 /// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
 /// $\zeta$.
 #[derive(Debug)]
@@ -474,7 +476,7 @@ impl Step<Pasta> for StampMerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
+    /// `(left, merged, right)`
     type Witness<'source> = (
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
@@ -844,6 +846,7 @@ impl Step<Pasta> for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
+    /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`
     type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
 
     const INDEX: Index = Index::new(33);
@@ -1136,6 +1139,8 @@ impl Step<Pasta> for FeeSeed {
 
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
 ///
+/// Each witness entry is an `(action_set, tachygram_set)` pair.
+///
 /// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
 /// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its
 /// tachygram polynomial is the product over exactly those leaves'
@@ -1180,8 +1185,7 @@ impl Step<Pasta> for StampUnmerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(dividend, quotient, divisor)`, each an `(action_set, tachygram_set)`
-    /// pair.
+    /// `(dividend, quotient, divisor)`
     type Witness<'source> = (
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),

@@ -55,6 +55,8 @@ use crate::{
 ///
 /// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
+/// Slot O0 carries contents drawn from the folds over `(anchor_prev,
+/// anchor_end]`; `discriminant` is the network's $R_0$.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -80,11 +82,7 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrIntake {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`; slot O0
-    /// carries contents.
-    /// The contents were drawn from the folds the coverage extent
-    /// `(anchor_prev, anchor_end]` certifies; `discriminant` is the network's
-    /// $R_0$.
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
     type Output = Kind![Fp; QrIntakeOutput<'_, _>];
 
@@ -136,6 +134,8 @@ impl Header<Fp> for QrIntake {
 
 /// A factorization of one intake's members. Selection checks the exceptional
 /// value; descent checks the sibling's class.
+///
+/// Slots O0/O1 carry the residue/non-residue sides.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -164,7 +164,7 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
 
 impl Header<Fp> for QrIntakeSides {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
-    /// non_residue_hash)`; slots O0/O1 carry the residue/non-residue sides.
+    /// non_residue_hash)`
     type Data = (
         EpochIndex,
         Anchor,
@@ -233,6 +233,8 @@ impl Header<Fp> for QrIntakeSides {
 pub struct QrSideSelection;
 
 impl Header<Fp> for QrSideSelection {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
+    /// non_residue_hash)`
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
@@ -260,7 +262,7 @@ impl Step<Pasta> for QrSummaryIntake {
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant)`
+    /// `(discriminant,)`
     type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(15);
@@ -471,7 +473,7 @@ impl Step<Pasta> for QrIntakeMerge {
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    /// `(merged)`
+    /// `(merged,)`
     type Witness<'source> = (TachygramSetPoly,);
 
     const INDEX: Index = Index::new(16);
@@ -763,7 +765,7 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit)`
+    /// `(bit,)`
     type Witness<'source> = (bool,);
 
     const INDEX: Index = Index::new(18);
@@ -943,6 +945,7 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
+/// Slot O0 carries contents.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -968,8 +971,7 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrBucket {
-    /// `(epoch, anchor_start, anchor_next, discriminant, profile)`; slot O0
-    /// carries contents.
+    /// `(epoch, anchor_start, anchor_next, discriminant, profile)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
     type Output = Kind![Fp; QrBucketOutput<'_, _>];
 
@@ -1061,7 +1063,7 @@ impl Step<Pasta> for QrBucketSeal {
     type Left = QrIntake;
     type Output = QrBucket;
     type Right = ();
-    /// `(anchor_final_prev)`
+    /// `(anchor_final_prev,)`
     type Witness<'source> = (Anchor,);
 
     const INDEX: Index = Index::new(20);
