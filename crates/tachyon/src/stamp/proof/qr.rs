@@ -433,8 +433,7 @@ impl Step for QrIntakeSplit {
 pub struct QrSideSelect;
 
 impl Step for QrSideSelect {
-    /// `(interpolant, quotient)`
-    type Aux<'source> = (QrInterpolantPoly, QrQuotientPoly);
+    type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
@@ -467,10 +466,7 @@ impl Step for QrSideSelect {
             non_residue_at_exceptional,
             "QrSideSelect: exceptional value claimed the non-residue class",
         )?;
-        Ok((
-            (left, interpolant.commit(), quotient.commit()),
-            (interpolant, quotient),
-        ))
+        Ok(((left, interpolant.commit(), quotient.commit()), ()))
     }
 }
 

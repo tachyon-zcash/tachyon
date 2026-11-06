@@ -21,8 +21,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram,
-        TachygramSetCommit, TachygramSetPoly, effect,
+        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -374,12 +373,17 @@ pub fn qr_side_select(
 /// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
 /// is the residue side when set. The decomposition is the sibling's, at the
 /// sibling's class multiplier.
+///
+/// # Panics
+///
+/// Panics if the sibling's decomposition does not exist, which needs a
+/// repeated member. A split partitions distinct tachygrams, so this is
+/// unreachable.
 #[must_use]
 pub fn qr_side_descend(
     (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
     members: &[Tachygram],
     side: bool,
-    (interpolant, quotient): (QrInterpolantPoly, QrQuotientPoly),
 ) -> StepWitness<'static, QrSideDescend> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
     let (residue, non_residue) = collections::qr::split(
@@ -387,14 +391,21 @@ pub fn qr_side_descend(
         discriminant.at(profile.depth),
     );
     let sibling = if side { non_residue } else { residue };
+    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
+    let (interpolant, quotient) = collections::qr::decomposition(
+        &sibling,
+        collections::qr::class_multiplier(!side),
+        discriminant.at(profile.depth),
+    )
+    .expect("members of a split are distinct");
     (
         side,
         sibling
             .iter()
             .map(|&(member, _root)| Tachygram::from(member))
             .collect(),
-        interpolant,
-        quotient,
+        interpolant.into(),
+        quotient.into(),
     )
 }
 
@@ -490,28 +501,35 @@ pub fn unspent_lift(
 /// Reads the tachygram pair and `cv` off the bind header, derives `alpha`
 /// from `theta` and `cm`, and derives the action from `cv` and `alpha`.
 ///
-/// # Errors
+/// # Panics
 ///
-/// Returns an error when `cv` or `rk` is the identity.
+/// Panics when `cv` or `alpha` yields an identity point, leaving the action
+/// undigestible.
+#[must_use]
 pub fn output_action(
     (left, _right): (StepLeft<OutputAction>, StepRight<OutputAction>),
     theta: ActionEntropy,
     anchor: Anchor,
-) -> Result<<OutputAction as Step>::Witness<'static>, crate::ActionDigestError> {
+) -> StepWitness<'static, OutputAction> {
     let (cm, pad, cv) = left;
     let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
+    #[expect(
+        clippy::expect_used,
+        reason = "identity cv or rk is a degenerate input"
+    )]
     let digest = ActionDigest::new(
         cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
-    )?;
+    )
+    .expect("action digest");
 
-    Ok((
+    (
         theta,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([cm, pad]),
-    ))
+    )
 }
 
 /// Prepare the witness for [`SpendAction`]: `(theta, pak, action_set,
@@ -521,25 +539,30 @@ pub fn output_action(
 /// `alpha` from `theta` and `cm`, and derives the action from `cv` and `pak`
 /// randomized by `alpha`.
 ///
-/// # Errors
+/// # Panics
 ///
-/// Returns an error when `cv` or `rk` is the identity.
+/// Panics when `cv` or `rk` is the identity, leaving the action undigestible.
+#[must_use]
 pub fn spend_action(
     (left, _right): (StepLeft<SpendAction>, StepRight<SpendAction>),
     theta: ActionEntropy,
     pak: ProofAuthorizingKey,
-) -> Result<<SpendAction as Step>::Witness<'static>, crate::ActionDigestError> {
+) -> StepWitness<'static, SpendAction> {
     let (cm, nf_current, nf_next, _anchor, _pk, cv) = left;
     let alpha = theta.randomizer::<effect::Spend>(cm);
 
-    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))?;
+    #[expect(
+        clippy::expect_used,
+        reason = "identity cv or rk is a degenerate input"
+    )]
+    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
-    Ok((
+    (
         theta,
         pak,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
-    ))
+    )
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,

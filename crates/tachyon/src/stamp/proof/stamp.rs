@@ -13,7 +13,6 @@ use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
-    fee,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{Ep, EpAffine, Eq, Fp, Fq},
@@ -155,10 +154,8 @@ impl Step for OutputAction {
             "OutputAction: tachygram set does not commit to the bound pair",
         )?;
 
-        Ok((
-            (action_set.commit(), tachygram_set.commit(), anchor),
-            (action_digest,),
-        ))
+        let data = (action_set.commit(), tachygram_set.commit(), anchor);
+        Ok((data, (action_digest,)))
     }
 }
 
@@ -241,10 +238,8 @@ impl Step for SpendAction {
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
 
-        Ok((
-            (action_set.commit(), tachygram_set.commit(), anchor),
-            (action_digest,),
-        ))
+        let data = (action_set.commit(), tachygram_set.commit(), anchor);
+        Ok((data, (action_digest,)))
     }
 }
 
@@ -530,8 +525,7 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
-    /// `(fee, fee_change_commitment)`
-    type Aux<'source> = (fee::Descriptor, note::Commitment);
+    type Aux<'source> = ();
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
@@ -649,13 +643,7 @@ impl Step for FeeFuse {
                 output_tachygram_set.commit(),
                 left_anchor,
             ),
-            (
-                fee::Descriptor {
-                    max_commitment: cv_max_fee,
-                    value: fee,
-                },
-                note::Commitment::from(fee_change_commitment),
-            ),
+            (),
         ))
     }
 }
@@ -665,8 +653,7 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
-    /// `(fee, fee_change_commitment)`
-    type Aux<'source> = (fee::Descriptor, note::Commitment);
+    type Aux<'source> = ();
     type Left = ();
     type Output = Stamp;
     type Right = ();
@@ -731,13 +718,7 @@ impl Step for FeeSeed {
 
         Ok((
             (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
-            (
-                fee::Descriptor {
-                    max_commitment: cv_max_fee,
-                    value: value::Positive::ZERO,
-                },
-                note::Commitment::from(fee_change_commitment),
-            ),
+            (),
         ))
     }
 }

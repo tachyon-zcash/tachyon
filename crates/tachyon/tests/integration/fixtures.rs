@@ -649,7 +649,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
         .unwrap();
 
     let mut descend = |side: bool| {
-        let (selection, decomposition) = PROOF_SYSTEM
+        let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
@@ -658,12 +658,8 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 Proof::bootstrap().carry::<()>(()),
             )
             .unwrap();
-        let descend_witness = witness::qr_side_descend(
-            (*sides.data(), *selection.data()),
-            &intake.members,
-            side,
-            decomposition,
-        );
+        let descend_witness =
+            witness::qr_side_descend((*sides.data(), *selection.data()), &intake.members, side);
         let members = intake
             .members
             .iter()
@@ -1165,9 +1161,9 @@ impl WalletSim {
         let secret = self.secret_pcd(rng, note);
         let mut members = Vec::new();
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
-        for index in 0..windows {
-            let chunk_start = EpochIndex::new(base + index * NF_DERIVATION_WIDTH as u32);
-            let (leaf, (window,)) = PROOF_SYSTEM
+        for window in 0..windows {
+            let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
+            let (leaf, (nullifiers,)) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::NullifierDerive,
@@ -1186,7 +1182,7 @@ impl WalletSim {
                             witness::nullifier_fuse(
                                 (*left.data(), *leaf.data()),
                                 &members,
-                                &window,
+                                &nullifiers,
                             ),
                             left,
                             leaf,
@@ -1195,7 +1191,7 @@ impl WalletSim {
                     fused
                 },
             });
-            members.extend(window);
+            members.extend(nullifiers);
         }
         let pcd = merged.unwrap();
 
