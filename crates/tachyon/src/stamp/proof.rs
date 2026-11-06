@@ -102,9 +102,10 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
 /// | AnchorSpan | 2 | 0 | 0 | 2 |
 ///
-/// Points write two coordinates; commitments write two compressed limbs.
+/// Points and double commitments each write two coordinates.
 /// Other headers' polynomials live in their slots, not on the header.
-/// QrBucket writes its certified double commitment's two coordinates.
+/// Stamp certifies its O1 double commitment; QrBucket certifies its contents
+/// double commitment. Stamp's O0 double commitment has no oracle binding.
 /// QrBucket requires eight payload elements, so nine is minimal. Steps
 /// have one application fragment.
 pub const HEADER_SIZE: usize = 9;
