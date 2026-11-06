@@ -111,7 +111,11 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp<ragu::Proof<Pasta, ProductionRank>>, action::Plan<effect::Output>, fee::Descriptor) {
+) -> (
+    ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
+    action::Plan<effect::Output>,
+    fee::Descriptor,
+) {
     let (stamp, plan, max_fee) = build_output_stamp_with_fee(rng, anchor, note);
     (
         stamp,
@@ -127,7 +131,11 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp<ragu::Proof<Pasta, ProductionRank>>, action::Plan<effect::Output>, Note) {
+) -> (
+    ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
+    action::Plan<effect::Output>,
+    Note,
+) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
     let pak = WalletSim::new(shared_sk()).pak;
     let max_fee_note = WalletSim::random(rng).random_note(0);

@@ -288,57 +288,57 @@ impl<P: ProofType> ProofStamp<P> {
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-    let fee = {
-        let mut bytes = [0u8; size_of::<u64>()];
-        reader.read_exact(&mut bytes)?;
-        value::Positive::try_from(u64::from_le_bytes(bytes))
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-    }?;
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
 
-    let mut covered_actions = [0u8; 32];
-    reader.read_exact(&mut covered_actions)?;
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
 
-    let anchor = Anchor::read(&mut reader)?;
+        let anchor = Anchor::read(&mut reader)?;
 
-    // Parsing does not confirm this against the tachygrams below.
-    let tachygram_set =
-        TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+        // Parsing does not confirm this against the tachygrams below.
+        let tachygram_set =
+            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
 
-    // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-    let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-    // proof stamp should never have an empty set
-    if n_tachygrams == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-    }
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
 
-    // the polynomial multiset includes a constant term
-    if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "too many tachygrams",
-        ));
-    }
-
-    let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-    for _ in 0..n_tachygrams {
-        let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-        if !tachygrams.insert(tg) {
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "tachygrams are not unique",
+                "too many tachygrams",
             ));
         }
 
-        if tachygrams.last() != Some(&tg) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "tachygrams are not canonically sorted",
-            ));
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
         }
-    }
 
         let proof = {
             let mut bytes = vec![0u8; P::encoded_len()];

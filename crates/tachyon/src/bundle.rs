@@ -598,7 +598,10 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a proof stamp, producing a `Bundle<ProofStamp<P>>`.
     #[must_use]
-    pub fn stamp(self, stamp: ProofStamp<ragu::Proof<Pasta, ProductionRank>>) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
+    pub fn stamp(
+        self,
+        stamp: ProofStamp<ragu::Proof<Pasta, ProductionRank>>,
+    ) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -627,7 +630,10 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         }
     }
 
-    fn covered_descriptors(&self, adjuncts: &[&Bundle<dyn StampState>]) -> (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>) {
+    fn covered_descriptors(
+        &self,
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>) {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
             .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))

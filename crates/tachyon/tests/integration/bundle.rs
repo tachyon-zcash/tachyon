@@ -461,31 +461,36 @@ fn stamped_bundle_round_trips() {
     let mut buf = Vec::new();
     stamped.write(&mut buf).unwrap();
     let decoded = Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*buf).unwrap();
-    assert_eq!(TachyonBundle::read(&*buf).unwrap_err().to_string(), "invalid proof encoding");
-        assert_eq!(decoded.actions, stamped.actions);
-        assert_eq!(decoded.value_balance, stamped.value_balance);
-        assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
-        assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
-        decoded
-            .verify_signatures(&mock_sighash(decoded.commitment()))
-            .unwrap();
+    assert_eq!(
+        TachyonBundle::read(&*buf).unwrap_err().to_string(),
+        "invalid proof encoding"
+    );
+    assert_eq!(decoded.actions, stamped.actions);
+    assert_eq!(decoded.value_balance, stamped.value_balance);
+    assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
+    assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
+    decoded
+        .verify_signatures(&mock_sighash(decoded.commitment()))
+        .unwrap();
     let compressed = stamped.compress(rng, &[]).unwrap();
     let mut bytes = Vec::new();
     compressed.write(&mut bytes).unwrap();
     let mut erased_buf = Vec::new();
-    TachyonBundle::from(compressed.clone()).write(&mut erased_buf).unwrap();
+    TachyonBundle::from(compressed.clone())
+        .write(&mut erased_buf)
+        .unwrap();
     assert_eq!(erased_buf, bytes);
-    let mut decoded = Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::read(&*bytes).unwrap();
+    let mut block = Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::read(&*bytes).unwrap();
     assert_eq!(
         TachyonBundle::read(&*bytes).unwrap(),
         TachyonBundle::from(compressed)
     );
-    let sighash = mock_sighash(decoded.commitment());
-    let wtxid = mock_wtxid(&decoded).into();
-    decoded.verify(rng, &sighash, &wtxid, &[]).unwrap();
-    decoded.stamp.anchor = Anchor::random(rng);
+    let sighash = mock_sighash(block.commitment());
+    let wtxid = mock_wtxid(&block).into();
+    block.verify(rng, &sighash, &wtxid, &[]).unwrap();
+    block.stamp.anchor = Anchor::random(rng);
     assert_matches!(
-        decoded.verify(rng, &sighash, &wtxid, &[]),
+        block.verify(rng, &sighash, &wtxid, &[]),
         Err(VerificationError::Disproved)
     );
 }
@@ -628,8 +633,10 @@ fn bundle_state_mismatches_are_rejected() {
             .to_string(),
         "unexpected tachyonBundleState"
     );
-    Bundle::<PointerStamp>::try_from(TachyonBundle::from(stamped.compress(rng, &[]).unwrap())).unwrap_err();
-    Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
+    Bundle::<PointerStamp>::try_from(TachyonBundle::from(stamped.compress(rng, &[]).unwrap()))
+        .unwrap_err();
+    Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::try_from(TachyonBundle::from(adjunct))
+        .unwrap_err();
 }
 
 #[test]
@@ -850,7 +857,12 @@ fn memo_round_trips_and_rejects_truncation() {
         bundle.memo = memo.clone();
         let mut buf = Vec::new();
         bundle.write(&mut buf).unwrap();
-        assert_eq!(Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*buf).unwrap().memo, memo);
+        assert_eq!(
+            Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*buf)
+                .unwrap()
+                .memo,
+            memo
+        );
     }
 
     bundle.memo = vec![0x33u8; 8192];
