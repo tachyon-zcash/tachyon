@@ -96,10 +96,6 @@ impl ActionSetCommit {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "compressed point limbs contain exactly 16 bytes"
-)]
 fn commitment_limbs(commitment: Eq) -> ragu_core::Result<[Fp; 2]> {
     let point = commitment.to_affine();
     if point.is_identity() {
@@ -108,11 +104,11 @@ fn commitment_limbs(commitment: Eq) -> ragu_core::Result<[Fp; 2]> {
         ));
     }
     let bytes = point.to_bytes();
-    let (low, high) = bytes.split_at(16);
-    Ok([
-        Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-        Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-    ])
+    let mut limbs = [[0u8; 16]; 2];
+    for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(16)) {
+        limb.copy_from_slice(chunk);
+    }
+    Ok(limbs.map(|limb| Fp::from_u128(u128::from_le_bytes(limb))))
 }
 
 impl Default for ActionSetCommit {
