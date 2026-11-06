@@ -401,19 +401,21 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
-    let (_, residue_sibling, residue_interpolant, residue_quotient) = witness::qr_side_descend(
+    let (_, residue_sibling, ..) = witness::qr_side_descend(
         (*split.data(), *residue_selection.data()),
         &members,
         true,
-        (residue_interpolant, residue_quotient),
+        (residue_interpolant.clone(), residue_quotient.clone()),
     );
-    let (_, non_residue_sibling, non_residue_interpolant, non_residue_quotient) =
-        witness::qr_side_descend(
-            (*split.data(), *non_residue_selection.data()),
-            &members,
-            false,
-            (non_residue_interpolant, non_residue_quotient),
-        );
+    let (_, non_residue_sibling, ..) = witness::qr_side_descend(
+        (*split.data(), *non_residue_selection.data()),
+        &members,
+        false,
+        (
+            non_residue_interpolant.clone(),
+            non_residue_quotient.clone(),
+        ),
+    );
     for (descend_witness, expected) in [
         (
             (
