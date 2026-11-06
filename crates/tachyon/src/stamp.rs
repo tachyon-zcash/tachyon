@@ -17,13 +17,13 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use proof::{
-    PROOF_SYSTEM, output,
+    HEADER_SIZE, PROOF_SYSTEM, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::PROOF_SIZE_COMPRESSED;
+use ragu::CompressedProof;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
@@ -115,12 +115,12 @@ impl TryFrom<[u8; 64]> for AggregateId {
     }
 }
 
-/// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
-/// The intermediate [`Unproven`] state has no stamp.
+/// Bundle states that carry a stamp: [`ProofStamp`], [`CompressedStamp`] or
+/// [`PointerStamp`]. The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
     /// A stamp's 72-byte `tachyonStampState`.
     ///
-    /// For a [`ProofStamp`], this is
+    /// For a [`ProofStamp`] or a [`CompressedStamp`], this is
     /// `LE64(vFeeTachyon) || hStampCoverageTachyon || hStampDataTachyon`.
     /// For a [`PointerStamp`], this is `LE64(vFeeTachyon) ||
     /// tachyonAggregateId`.
@@ -152,6 +152,43 @@ pub trait StampState: BundleState {
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     where
         Self: Sized;
+}
+
+/// Bundle states that carry their own proof: [`ProofStamp`] or
+/// [`CompressedStamp`].
+pub trait ProvenState: StampState {
+    /// Confirm `hStampCoverageTachyon` represents the given descriptors.
+    ///
+    /// # Soundness
+    ///
+    /// The parameters are multisets: order does not matter, multiplicity does.
+    fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+    ) -> bool;
+
+    /// The stamp's published tachygrams.
+    fn tachygrams(&self) -> &BTreeSet<Tachygram>;
+
+    /// The stamp's commitment to its tachygram set.
+    fn tachygram_set(&self) -> TachygramSetCommit;
+
+    /// Reconstruct the PCD header and verify the proof.
+    ///
+    /// # Soundness
+    ///
+    /// The parameter is a multiset: order does not matter, multiplicity does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
+    fn verify_proof<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        action_digests: impl IntoIterator<Item = ActionDigest>,
+    ) -> Result<bool, ragu_core::Error>;
 }
 
 impl StampState for PointerStamp {
@@ -227,33 +264,75 @@ impl PointerStamp {
     }
 }
 
+/// The `tachyonStampState` of a stamp that carries its own proof, given the
+/// proof's encoding.
+fn proven_stamp_digest(
+    fee: value::Positive,
+    coverage: &[u8; 32],
+    anchor: Anchor,
+    tachygram_set: TachygramSetCommit,
+    tachygrams: &BTreeSet<Tachygram>,
+    proof: &[u8],
+) -> [u8; 72] {
+    let stamp_data_digest: [u8; 32] = {
+        let anchor_bytes: [u8; 32] = anchor.0.to_bytes();
+
+        // Do NOT sort here: a constructed stamp should already be canonical.
+        let tachygram_bytes: Vec<[u8; 32]> = tachygrams
+            .iter()
+            .map(|&tg| Fp::from(tg).to_bytes())
+            .collect();
+
+        blake2b::stamp_data_digest(
+            blake2b::stamp_proof_digest(proof),
+            anchor_bytes,
+            tachygram_set.as_ref().to_affine().to_bytes(),
+            &tachygram_bytes,
+        )
+    };
+
+    let mut stamp_digest = [0u8; 72];
+    stamp_digest[..8].copy_from_slice(&u64::from(fee).to_le_bytes());
+    stamp_digest[8..40].copy_from_slice(coverage);
+    stamp_digest[40..].copy_from_slice(&stamp_data_digest);
+
+    stamp_digest
+}
+
+/// The digest $\mathsf{hStampCoverageTachyon}$ of the given descriptors.
+fn coverage_digest(
+    action_descs: impl IntoIterator<Item = action::Descriptor>,
+    fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+) -> [u8; 32] {
+    let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
+    desc_bytes.sort_unstable();
+
+    let mut fee_descriptor_bytes = fee_descriptors
+        .into_iter()
+        .map(<[u8; 40]>::from)
+        .collect::<Vec<[u8; 40]>>();
+    fee_descriptor_bytes.sort_unstable();
+    blake2b::stamp_coverage_digest(
+        &blake2b::action_descriptor_digest(&desc_bytes),
+        &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
+    )
+}
+
 impl StampState for ProofStamp {
     fn stamp_digest(&self) -> [u8; 72] {
-        let stamp_data_digest: [u8; 32] = {
-            let proof = self.proof.serialize();
-            let anchor: [u8; 32] = self.anchor.0.to_bytes();
-
-            // Do NOT sort here: a constructed stamp should already be canonical.
-            let tachygrams: Vec<[u8; 32]> = self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg).to_bytes())
-                .collect();
-
-            blake2b::stamp_data_digest(
-                blake2b::stamp_proof_digest(proof.as_ref()),
-                anchor,
-                self.tachygram_set.as_ref().to_affine().to_bytes(),
-                &tachygrams,
-            )
-        };
-
-        let mut stamp_digest = [0u8; 72];
-        stamp_digest[..8].copy_from_slice(&u64::from(self.fee).to_le_bytes());
-        stamp_digest[8..40].copy_from_slice(&self.coverage);
-        stamp_digest[40..].copy_from_slice(&stamp_data_digest);
-
-        stamp_digest
+        #[expect(
+            clippy::expect_used,
+            reason = "a proved or decoded stamp proof is encodable"
+        )]
+        let proof = self.proof.to_bytes().expect("stamp proof is encodable");
+        proven_stamp_digest(
+            self.fee,
+            &self.coverage,
+            self.anchor,
+            self.tachygram_set,
+            &self.tachygrams,
+            &proof,
+        )
     }
 
     fn fee(&self) -> value::Positive {
@@ -273,6 +352,128 @@ impl StampState for ProofStamp {
     }
 }
 
+impl ProvenState for ProofStamp {
+    fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+    ) -> bool {
+        Self::is_covering(self, action_descs, fee_descriptors)
+    }
+
+    fn tachygrams(&self) -> &BTreeSet<Tachygram> {
+        &self.tachygrams
+    }
+
+    fn tachygram_set(&self) -> TachygramSetCommit {
+        self.tachygram_set
+    }
+
+    fn verify_proof<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        action_digests: impl IntoIterator<Item = ActionDigest>,
+    ) -> Result<bool, ragu_core::Error> {
+        Self::verify_proof(self, rng, action_digests)
+    }
+}
+
+/// Read the fields that lead a stamp carrying its own proof: fee, coverage,
+/// anchor, tachygram set commitment and tachygrams.
+#[expect(clippy::type_complexity, reason = "the fields that lead the proof")]
+fn read_proven_head<R: Read>(
+    mut reader: R,
+) -> io::Result<(
+    value::Positive,
+    [u8; 32],
+    Anchor,
+    TachygramSetCommit,
+    BTreeSet<Tachygram>,
+)> {
+    let fee = {
+        let mut bytes = [0u8; size_of::<u64>()];
+        reader.read_exact(&mut bytes)?;
+        value::Positive::try_from(u64::from_le_bytes(bytes))
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+    }?;
+
+    let mut covered_actions = [0u8; 32];
+    reader.read_exact(&mut covered_actions)?;
+
+    let anchor = Anchor::read(&mut reader)?;
+
+    // Parsing does not confirm this against the tachygrams below.
+    let tachygram_set =
+        TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+
+    // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+    let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+    // proof stamp should never have an empty set
+    if n_tachygrams == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+    }
+
+    // the polynomial multiset includes a constant term
+    if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many tachygrams",
+        ));
+    }
+
+    let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+    for _ in 0..n_tachygrams {
+        let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+        if !tachygrams.insert(tg) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygrams are not unique",
+            ));
+        }
+
+        if tachygrams.last() != Some(&tg) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygrams are not canonically sorted",
+            ));
+        }
+    }
+
+    Ok((fee, covered_actions, anchor, tachygram_set, tachygrams))
+}
+
+/// Write the fields that lead a stamp carrying its own proof, as read by
+/// [`read_proven_head`].
+fn write_proven_head<W: Write>(
+    mut writer: W,
+    fee: value::Positive,
+    coverage: &[u8; 32],
+    anchor: Anchor,
+    tachygram_set: TachygramSetCommit,
+    tachygrams: &BTreeSet<Tachygram>,
+) -> io::Result<()> {
+    writer.write_all(&u64::from(fee).to_le_bytes())?;
+    writer.write_all(coverage)?;
+    anchor.write(&mut writer)?;
+    serialization::write_eq_affine(&mut writer, &tachygram_set.as_ref().to_affine())?;
+    serialization::write_compactsize(
+        &mut writer,
+        u64::try_from(tachygrams.len()).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygram vector length exceeds u64",
+            )
+        })?,
+    )?;
+    for &tg in tachygrams {
+        serialization::write_fp(&mut writer, &Fp::from(tg))?;
+    }
+    Ok(())
+}
+
 impl ProofStamp {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
@@ -282,74 +483,19 @@ impl ProofStamp {
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let fee = {
-            let mut bytes = [0u8; size_of::<u64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-        }?;
-
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
-
-        let anchor = Anchor::read(&mut reader)?;
-
-        // Parsing does not confirm this against the tachygrams below.
-        let tachygram_set =
-            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
-
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-
-        // proof stamp should never have an empty set
-        if n_tachygrams == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-        }
-
-        // the polynomial multiset includes a constant term
-        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "too many tachygrams",
-            ));
-        }
-
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-        for _ in 0..n_tachygrams {
-            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-            if !tachygrams.insert(tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not unique",
-                ));
-            }
-
-            if tachygrams.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
-                ));
-            }
-        }
+        let (fee, coverage, anchor, tachygram_set, tachygrams) = read_proven_head(&mut reader)?;
 
         let proof = {
-            let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
+            let mut bytes = vec![0u8; proof::Proof::encoded_len::<HEADER_SIZE>()];
             reader.read_exact(&mut bytes)?;
 
-            let proof_bytes: &[u8; PROOF_SIZE_COMPRESSED] =
-                bytes.as_slice().try_into().map_err(|_err| {
-                    io::Error::new(io::ErrorKind::InvalidData, "failed to read proof")
-                })?;
-
-            proof::Proof::try_from(proof_bytes).map_err(|_err| {
+            proof::Proof::from_bytes(&bytes).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
             })?
         };
 
         Ok(Self {
-            coverage: covered_actions,
+            coverage,
             anchor,
             tachygram_set,
             tachygrams,
@@ -363,25 +509,144 @@ impl ProofStamp {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails.
+    /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
-        writer.write_all(&self.coverage)?;
-        self.anchor.write(&mut writer)?;
-        serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
-        serialization::write_compactsize(
+        write_proven_head(
             &mut writer,
-            u64::try_from(self.tachygrams.len()).map_err(|_err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygram vector length exceeds u64",
-                )
-            })?,
+            self.fee,
+            &self.coverage,
+            self.anchor,
+            self.tachygram_set,
+            &self.tachygrams,
         )?;
-        for &tg in &self.tachygrams {
-            serialization::write_fp(&mut writer, &Fp::from(tg))?;
-        }
-        writer.write_all(self.proof.serialize().as_ref())
+        let proof = self
+            .proof
+            .to_bytes()
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))?;
+        writer.write_all(&proof)
+    }
+}
+
+/// A [`ProofStamp`] whose proof is compressed for the block.
+///
+/// A compressed proof cannot be lifted, merged or unmerged. Produced by
+/// [`Bundle::compress`](crate::Bundle::compress).
+#[derive(Clone, Debug)]
+pub struct CompressedStamp {
+    /// See [`ProofStamp::coverage`].
+    pub coverage: [u8; 32],
+
+    /// See [`ProofStamp::anchor`].
+    pub anchor: Anchor,
+
+    /// See [`ProofStamp::tachygram_set`].
+    pub tachygram_set: TachygramSetCommit,
+
+    /// See [`ProofStamp::tachygrams`].
+    pub tachygrams: BTreeSet<Tachygram>,
+
+    /// The compressed Ragu proof.
+    #[debug(skip)]
+    pub proof: Box<CompressedProof<Pasta>>,
+
+    /// The fee of the bundle that carries this stamp.
+    pub fee: value::Positive,
+}
+
+impl StampState for CompressedStamp {
+    fn stamp_digest(&self) -> [u8; 72] {
+        #[expect(
+            clippy::expect_used,
+            reason = "a compressed or decoded stamp proof is encodable"
+        )]
+        let proof = self.proof.to_bytes().expect("stamp proof is encodable");
+        proven_stamp_digest(
+            self.fee,
+            &self.coverage,
+            self.anchor,
+            self.tachygram_set,
+            &self.tachygrams,
+            &proof,
+        )
+    }
+
+    fn fee(&self) -> value::Positive {
+        self.fee
+    }
+
+    fn state_byte() -> StateByte {
+        StateByte::CompressedStamped
+    }
+
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let (fee, coverage, anchor, tachygram_set, tachygrams) = read_proven_head(&mut *reader)?;
+
+        let proof = {
+            let mut bytes =
+                vec![0u8; CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>()];
+            reader.read_exact(&mut bytes)?;
+
+            CompressedProof::<Pasta>::from_bytes(&bytes).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
+            })?
+        };
+
+        Ok(Self {
+            coverage,
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee,
+        })
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        write_proven_head(
+            &mut *writer,
+            self.fee,
+            &self.coverage,
+            self.anchor,
+            self.tachygram_set,
+            &self.tachygrams,
+        )?;
+        let proof = self
+            .proof
+            .to_bytes()
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof has no encoding"))?;
+        writer.write_all(&proof)
+    }
+}
+
+impl ProvenState for CompressedStamp {
+    fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+    ) -> bool {
+        self.coverage == coverage_digest(action_descs, fee_descriptors)
+    }
+
+    fn tachygrams(&self) -> &BTreeSet<Tachygram> {
+        &self.tachygrams
+    }
+
+    fn tachygram_set(&self) -> TachygramSetCommit {
+        self.tachygram_set
+    }
+
+    fn verify_proof<RNG: CryptoRng>(
+        &self,
+        _rng: &mut RNG,
+        action_digests: impl IntoIterator<Item = ActionDigest>,
+    ) -> Result<bool, ragu_core::Error> {
+        let pcd = self.proof.clone().carry::<Stamp>((
+            ActionSetPoly::from_iter(action_digests).commit(),
+            self.tachygram_set,
+            self.anchor,
+        ));
+
+        PROOF_SYSTEM.verify_compressed(&pcd)
     }
 }
 
@@ -1254,19 +1519,7 @@ impl ProofStamp {
         action_descs: impl IntoIterator<Item = action::Descriptor>,
         fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
     ) -> bool {
-        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
-        desc_bytes.sort_unstable();
-
-        let mut fee_descriptor_bytes = fee_descriptors
-            .into_iter()
-            .map(<[u8; 40]>::from)
-            .collect::<Vec<[u8; 40]>>();
-        fee_descriptor_bytes.sort_unstable();
-        self.coverage
-            == blake2b::stamp_coverage_digest(
-                &blake2b::action_descriptor_digest(&desc_bytes),
-                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
-            )
+        self.coverage == coverage_digest(action_descs, fee_descriptors)
     }
 
     /// Reconstruct the PCD header and verify the proof. Call
@@ -1295,6 +1548,45 @@ impl ProofStamp {
             self.anchor,
         ));
 
-        PROOF_SYSTEM.verify(&pcd, rng)
+        PROOF_SYSTEM.verify_uncompressed(&pcd, rng)
+    }
+
+    /// Compresses the proof for the block, computing the action digests from
+    /// the covered descriptors. The compressed stamp keeps this stamp's
+    /// coverage, anchor, tachygrams and fee.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if an action digest cannot be computed or the
+    /// proof does not verify against the covered descriptors.
+    pub fn compress<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        descriptors: &BTreeSet<action::Descriptor>,
+        fee_descriptors: &BTreeSet<fee::Descriptor>,
+    ) -> Result<CompressedStamp, ProveError> {
+        let action_set = descriptors
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+
+        let pcd = self
+            .proof
+            .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+        let (proof, _) = PROOF_SYSTEM
+            .compress(&pcd, rng)
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
+
+        Ok(CompressedStamp {
+            coverage: self.coverage,
+            anchor: self.anchor,
+            tachygram_set: self.tachygram_set,
+            tachygrams: self.tachygrams,
+            proof: Box::new(proof),
+            fee: self.fee,
+        })
     }
 }

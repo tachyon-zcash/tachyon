@@ -23,7 +23,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ragu::{Encoded, Header, HeaderInput, Index, Oracles, Slot, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
 use ragu_core::{
     Cycle as _, FixedGenerators as _,
     drivers::{Coeff, Driver, DriverValue},

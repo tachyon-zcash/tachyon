@@ -143,17 +143,18 @@ See [Aggregation](./aggregation.md) for transaction categories, block layout, an
 
 ## Wire Format
 
-The first byte `tachyonBundleState` selects one of three bundle states:
+The first byte `tachyonBundleState` selects one of four bundle states:
 
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
 | `0b0000_0001` | stamped | bundle with `hStampCoverageTachyon`, anchor, tachygrams, proof |
 | `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
+| `0b0000_0011` | compressed | bundle with `hStampCoverageTachyon`, anchor, tachygrams, compressed proof |
 
 ### Bundle body
 
-When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundle body, which is the same in both remaining states:
+When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundle body, which is the same in all remaining states:
 
 | Name | Format | Description |
 | --- | --- | --- |
@@ -207,6 +208,12 @@ $$
 $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+
+The proof keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged.
+
+### Compressed trailer
+
+When `tachyonBundleState == 0x03`, the bundle body is followed by the stamp trailer with `proofTachyon` replaced by a compressed proof of a smaller fixed size. A compressed proof verifies like the full one but cannot be lifted, merged or unmerged. Blocks carry compressed trailers; transactions relayed before the block carry stamp trailers.
 
 ### Stripped trailer
 

@@ -9,7 +9,6 @@ use alloc::{
 use core::{assert_matches, cmp::Reverse};
 
 use corez::io;
-use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
@@ -20,7 +19,10 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     keys::private,
     pasta::Fp,
-    stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
+    stamp::{
+        AggregateId, PointerStamp, ProofStamp, ProveError,
+        proof::{HEADER_SIZE, Proof},
+    },
     value, *,
 };
 
@@ -585,7 +587,7 @@ fn bundle_state_mismatches_are_rejected() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
-    let buf: &[u8] = &[0x03];
+    let buf: &[u8] = &[0x04];
     for err in [
         Bundle::<ProofStamp>::read(buf).unwrap_err(),
         Bundle::<PointerStamp>::read(buf).unwrap_err(),
@@ -668,7 +670,7 @@ fn read_rejects_noncanonical_tachygrams() {
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
 
-    let end = buf.len() - PROOF_SIZE_COMPRESSED;
+    let end = buf.len() - Proof::encoded_len::<HEADER_SIZE>();
     let first = end - n * 32;
     let last = end - 32;
     let (head, tail) = buf.split_at_mut(last);
@@ -677,6 +679,106 @@ fn read_rejects_noncanonical_tachygrams() {
     let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
+}
+
+#[test]
+fn decoded_stamps_fold_and_compress_for_the_block() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let alice = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+    let stamped_at = pool.height();
+    pool.advance(2, |_| random_block(rng, 1, 4));
+    let bob = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+
+    let decoded_alice = {
+        let mut buf = Vec::new();
+        alice.write(&mut buf).unwrap();
+        Bundle::<ProofStamp>::read(&*buf).unwrap()
+    };
+    let decoded_bob = {
+        let mut buf = Vec::new();
+        bob.stamp.write(&mut buf).unwrap();
+        ProofStamp::read(&*buf).unwrap()
+    };
+
+    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let lifted = decoded_alice.lift(rng, &[], vec![span]).unwrap();
+    let mut aggregate = lifted.clone();
+    aggregate.stamp = lifted
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                lifted.descriptors().collect(),
+                [lifted.fee_descriptor()].into(),
+            ),
+            (
+                decoded_bob.clone(),
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
+        .unwrap();
+    let mut unmerged = lifted.clone();
+    unmerged.stamp = aggregate
+        .stamp
+        .clone()
+        .unmerge(
+            rng,
+            (
+                lifted.descriptors().chain(bob.descriptors()).collect(),
+                [lifted.fee_descriptor(), bob.fee_descriptor()].into(),
+            ),
+            (
+                decoded_bob,
+                bob.descriptors().collect(),
+                [bob.fee_descriptor()].into(),
+            ),
+        )
+        .unwrap();
+    unmerged
+        .verify(
+            rng,
+            &mock_sighash(unmerged.commitment()),
+            &mock_wtxid(&unmerged).into(),
+            &[],
+        )
+        .unwrap();
+
+    assert_matches!(
+        aggregate.clone().compress(rng, &[]),
+        Err(ProveError::ProofFailed(_))
+    );
+    let block = aggregate.compress(rng, &[bob.as_dyn()]).unwrap();
+    let wtxid = mock_wtxid(&block);
+    let adjunct = bob.strip(wtxid);
+
+    let mut buf = Vec::new();
+    block.write(&mut buf).unwrap();
+    let decoded = Bundle::<CompressedStamp>::read(&*buf).unwrap();
+    assert_eq!(decoded, block);
+    assert_eq!(
+        TachyonBundle::read(&*buf).unwrap(),
+        TachyonBundle::from(block)
+    );
+    decoded
+        .verify(
+            rng,
+            &mock_sighash(decoded.commitment()),
+            &wtxid.into(),
+            &[&adjunct],
+        )
+        .unwrap();
+
+    let own_digests: Vec<ActionDigest> = decoded
+        .descriptors()
+        .map(|desc| desc.digest().unwrap())
+        .chain([decoded.fee_descriptor().digest().unwrap()])
+        .collect();
+    assert!(!decoded.verify_proof(rng, &own_digests).unwrap());
 }
 
 fn spend_plan_at(

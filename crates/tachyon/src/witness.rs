@@ -8,7 +8,7 @@
 
 use alloc::collections::BTreeSet;
 
-use ragu::{Header, Step};
+use ragu::{header::Header, step::Step};
 use ragu_core::pasta::Pasta;
 
 use crate::{

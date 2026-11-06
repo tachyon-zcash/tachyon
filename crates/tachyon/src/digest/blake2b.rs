@@ -252,6 +252,7 @@ pub fn stamp_data_digest(
 /// | ----------------------------- | ---- | ---------------------------- |
 /// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 /// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonAggregateId} $ |
+/// | `0x03` | [`CompressedStamp`](crate::stamp::CompressedStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
