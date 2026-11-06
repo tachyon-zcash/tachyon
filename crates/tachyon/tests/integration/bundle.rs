@@ -916,23 +916,35 @@ fn proof_stamps_read_typed_envelope_framed_proofs() {
     stream.extend_from_slice(&compressed_bytes);
     stream.push(0x99);
     let mut reader = stream.as_slice();
-    assert_eq!(TachyonBundle::read(&mut reader).unwrap(), TachyonBundle::from(full));
-    assert_eq!(TachyonBundle::read(&mut reader).unwrap(), TachyonBundle::from(compressed.clone()));
+    assert_eq!(
+        TachyonBundle::read(&mut reader).unwrap(),
+        TachyonBundle::from(full)
+    );
+    assert_eq!(
+        TachyonBundle::read(&mut reader).unwrap(),
+        TachyonBundle::from(compressed.clone())
+    );
     assert_eq!(reader, [0x99]);
 
     let proof = compressed.stamp.proof.to_bytes().unwrap();
     let proof_start = compressed_bytes.len() - proof.len();
     for (invalid, expected) in [
-        ({
-            let mut bytes = compressed_bytes.clone();
-            bytes[proof_start + 10..proof_start + 12].copy_from_slice(&3u16.to_le_bytes());
-            bytes
-        }, "invalid proof kind"),
-        ({
-            let mut bytes = compressed_bytes.clone();
-            bytes[proof_start] ^= 1;
-            bytes
-        }, "invalid proof encoding"),
+        (
+            {
+                let mut bytes = compressed_bytes.clone();
+                bytes[proof_start + 10..proof_start + 12].copy_from_slice(&3u16.to_le_bytes());
+                bytes
+            },
+            "invalid proof kind",
+        ),
+        (
+            {
+                let mut bytes = compressed_bytes.clone();
+                bytes[proof_start] ^= 1;
+                bytes
+            },
+            "invalid proof encoding",
+        ),
     ] {
         let err = TachyonBundle::read(&*invalid).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -942,7 +954,10 @@ fn proof_stamps_read_typed_envelope_framed_proofs() {
         &compressed_bytes[..proof_start + 27],
         &compressed_bytes[..compressed_bytes.len() - 1],
     ] {
-        assert_eq!(TachyonBundle::read(truncated).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            TachyonBundle::read(truncated).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
     }
 }
 

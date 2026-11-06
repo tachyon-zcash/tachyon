@@ -204,10 +204,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 rng,
                 FeeFuse,
                 repeated_witness.clone(),
-                once.stamp
-                    .proof
-                    .clone()
-                    .carry::<Actions>(anchor),
+                once.stamp.proof.clone().carry::<Actions>(anchor),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),

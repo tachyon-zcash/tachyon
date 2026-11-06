@@ -41,7 +41,8 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{Eq, Fp},
     primitives::{
-        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
+        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, AnchorSetPoly, Tachygram,
+        TachygramSetCommit,
     },
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -276,76 +277,103 @@ const PROOF_KIND_OFFSET: usize = 10;
 pub(crate) const FULL_PROOF_KIND: u16 = 1;
 const COMPRESSED_PROOF_KIND: u16 = 2;
 
-/// Read the shared stamp fields and Ragu proof bytes framed by the envelope kind.
-#[expect(clippy::type_complexity, reason = "the shared wire fields before choosing a proof type")]
-pub(crate) fn read_stamp<R: Read>(mut reader: R) -> io::Result<(
-    value::Positive, [u8; 32], Anchor, TachygramSetCommit, BTreeSet<Tachygram>, Vec<u8>, u16,
+/// Read the shared stamp fields and Ragu proof bytes framed by the envelope
+/// kind.
+#[expect(
+    clippy::type_complexity,
+    reason = "the shared wire fields before choosing a proof type"
+)]
+pub(crate) fn read_stamp<R: Read>(
+    mut reader: R,
+) -> io::Result<(
+    value::Positive,
+    [u8; 32],
+    Anchor,
+    TachygramSetCommit,
+    BTreeSet<Tachygram>,
+    Vec<u8>,
+    u16,
 )> {
-        let fee = {
-            let mut bytes = [0u8; size_of::<u64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-        }?;
+    let fee = {
+        let mut bytes = [0u8; size_of::<u64>()];
+        reader.read_exact(&mut bytes)?;
+        value::Positive::try_from(u64::from_le_bytes(bytes))
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+    }?;
 
-        let mut coverage = [0u8; 32];
-        reader.read_exact(&mut coverage)?;
+    let mut coverage = [0u8; 32];
+    reader.read_exact(&mut coverage)?;
 
-        let anchor = Anchor::read(&mut reader)?;
+    let anchor = Anchor::read(&mut reader)?;
 
-        // Parsing does not confirm this against the tachygrams below.
-        let tachygram_set =
-            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+    // Parsing does not confirm this against the tachygrams below.
+    let tachygram_set =
+        TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
 
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+    let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-        // proof stamp should never have an empty set
-        if n_tachygrams == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-        }
+    // proof stamp should never have an empty set
+    if n_tachygrams == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+    }
 
-        // the polynomial multiset includes a constant term
-        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+    // the polynomial multiset includes a constant term
+    if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many tachygrams",
+        ));
+    }
+
+    let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+    for _ in 0..n_tachygrams {
+        let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+        if !tachygrams.insert(tg) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "too many tachygrams",
+                "tachygrams are not unique",
             ));
         }
 
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-        for _ in 0..n_tachygrams {
-            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-            if !tachygrams.insert(tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not unique",
-                ));
-            }
-
-            if tachygrams.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
-                ));
-            }
+        if tachygrams.last() != Some(&tg) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygrams are not canonically sorted",
+            ));
         }
+    }
 
-        let mut envelope = [0u8; PROOF_ENVELOPE_SIZE];
-        reader.read_exact(&mut envelope)?;
-        let kind = u16::from_le_bytes([envelope[PROOF_KIND_OFFSET], envelope[PROOF_KIND_OFFSET + 1]]);
-        let length = match kind {
-            FULL_PROOF_KIND => ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>(),
-            COMPRESSED_PROOF_KIND => ragu::CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>(),
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid proof kind")),
-        };
-        let mut bytes = vec![0u8; length];
-        let (head, payload) = bytes.split_at_mut(PROOF_ENVELOPE_SIZE);
-        head.copy_from_slice(&envelope);
-        reader.read_exact(payload)?;
-        Ok((fee, coverage, anchor, tachygram_set, tachygrams, bytes, kind))
+    let mut envelope = [0u8; PROOF_ENVELOPE_SIZE];
+    reader.read_exact(&mut envelope)?;
+    let kind = u16::from_le_bytes([envelope[PROOF_KIND_OFFSET], envelope[PROOF_KIND_OFFSET + 1]]);
+    let length = match kind {
+        FULL_PROOF_KIND => ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>(),
+        COMPRESSED_PROOF_KIND => {
+            ragu::CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>()
+        },
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid proof kind",
+            ));
+        },
+    };
+    let mut bytes = vec![0u8; length];
+    let (head, payload) = bytes.split_at_mut(PROOF_ENVELOPE_SIZE);
+    head.copy_from_slice(&envelope);
+    reader.read_exact(payload)?;
+    Ok((
+        fee,
+        coverage,
+        anchor,
+        tachygram_set,
+        tachygrams,
+        bytes,
+        kind,
+    ))
 }
 
 impl<P: ProofType> ProofStamp<P> {
@@ -1065,7 +1093,8 @@ impl ProofStamp {
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let mut stamp_pcd =
-            self.proof.carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+            self.proof
+                .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
         for (span, members) in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(rng, StampLift, (members,), stamp_pcd, span)
@@ -1335,7 +1364,6 @@ impl ProofStamp {
             fee: self.fee,
         })
     }
-
 }
 
 impl<P: ProofType> ProofStamp<P> {
@@ -1385,7 +1413,8 @@ impl<P: ProofType> ProofStamp<P> {
     ) -> Result<bool, ragu_core::Error> {
         let action_commit = ActionSetPoly::from_iter(action_digests).commit();
 
-        self.proof.verify(rng, (action_commit, self.tachygram_set, self.anchor))
+        self.proof
+            .verify(rng, (action_commit, self.tachygram_set, self.anchor))
     }
 }
 
@@ -1411,9 +1440,13 @@ impl ProofStamp {
             .collect::<Result<ActionSetPoly, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let pcd = self.proof.carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
-        let (compressed, _) = PROOF_SYSTEM.compress(&pcd, rng)
-            .map_err(ProveError::ProofFailed)?.into_parts();
+        let pcd = self
+            .proof
+            .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+        let (compressed, _) = PROOF_SYSTEM
+            .compress(&pcd, rng)
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
         Ok(ProofStamp {
             coverage: self.coverage,
             anchor: self.anchor,

@@ -38,9 +38,6 @@ use udon::field::Field as _;
 
 use crate::pasta;
 
-/// Application proof with the production polynomial rank.
-pub type Proof = ragu::Proof<Pasta, ProductionRank>;
-
 /// Prover-side conversion to ascending-degree coefficients.
 fn coefficients(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<pasta::Fp> {
     let mut coefficients = poly.iter_coeffs().collect::<Vec<_>>();
