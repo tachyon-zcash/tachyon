@@ -4,13 +4,13 @@ use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter};
 
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     nullifier::Nullifier,
-    pasta::Fp,
+    pasta::{Eq, Fp},
     stamp::proof::{
         PROOF_SYSTEM,
         pool::{UnspentFuse, UnspentLift},
@@ -41,7 +41,8 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
             witness::summary_seed(((), ()), start, epoch, &members),
         )
         .unwrap();
-    let (_, _, anchor_end, acc_commit) = *summary.data();
+    let (_, _, anchor_end) = *summary.data();
+    let acc_commit = summary.commitments()[0];
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -54,15 +55,9 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
 
     assert_eq!(
         *root.data(),
-        (
-            epoch,
-            start,
-            anchor_end,
-            discriminant,
-            QrProfile::ROOT,
-            acc_commit
-        )
+        (epoch, start, anchor_end, discriminant, QrProfile::ROOT)
     );
+    assert_eq!(root.commitments()[0], acc_commit);
 }
 
 #[test]
@@ -137,17 +132,28 @@ fn qr_intake_split_partitions_the_contents_by_class() {
                 .unwrap(),
             discriminant,
             QrProfile::ROOT,
-            non_residue
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
-                .commit(),
-            residue
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
-                .commit()
         )
+    );
+    assert_eq!(
+        split.commitments()[..2],
+        [
+            Eq::from(
+                non_residue
+                    .iter()
+                    .copied()
+                    .collect::<TachygramSetPoly>()
+                    .commit()
+            )
+            .to_affine(),
+            Eq::from(
+                residue
+                    .iter()
+                    .copied()
+                    .collect::<TachygramSetPoly>()
+                    .commit()
+            )
+            .to_affine(),
+        ]
     );
 }
 
@@ -295,12 +301,18 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 anchor_end,
                 discriminant,
                 QrProfile::ROOT.descend(side),
+            )
+        );
+        assert_eq!(
+            child.commitments()[0],
+            Eq::from(
                 side_members
                     .iter()
                     .copied()
                     .collect::<TachygramSetPoly>()
                     .commit()
             )
+            .to_affine()
         );
     }
 }
@@ -342,7 +354,7 @@ fn qr_side_descend_rejects_foreign_witness_parts() {
                 residue_interpolant.clone(),
                 residue_quotient.clone(),
             ),
-            "QrSideDescend: sibling does not match the header",
+            "QrSideDescend: sibling does not match the sibling slot",
         ),
         (
             (
@@ -468,15 +480,18 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let (.., child_profile, child_contents) = *child.data();
+    let (.., child_profile) = *child.data();
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
     assert_eq!(
-        child_contents,
-        padded_non_residue
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit()
+        child.commitments()[0],
+        Eq::from(
+            padded_non_residue
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit()
+        )
+        .to_affine()
     );
 }
 
@@ -584,7 +599,7 @@ fn qr_side_descend_refuses_a_full_register() {
         let (_non_residue, residue) = split_qr_intake(rng, intake);
         intake = residue;
     }
-    let (.., profile, _contents) = *intake.pcd.data();
+    let (.., profile) = *intake.pcd.data();
     assert_eq!(
         profile,
         QrProfile {
@@ -658,14 +673,11 @@ fn qr_intake_merge_joins_two_spans() {
         .collect::<TachygramSetPoly>();
     assert_eq!(
         *merged.data(),
-        (
-            epoch,
-            start,
-            end,
-            discriminant,
-            QrProfile::ROOT,
-            union.commit()
-        )
+        (epoch, start, end, discriminant, QrProfile::ROOT)
+    );
+    assert_eq!(
+        merged.commitments()[0],
+        Eq::from(union.commit()).to_affine()
     );
 }
 
@@ -801,7 +813,8 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
         2,
     );
     let intake = routed.into_iter().next().unwrap();
-    let (epoch, anchor_prev, _, _, profile, contents) = *intake.pcd.data();
+    let (epoch, anchor_prev, _, _, profile) = *intake.pcd.data();
+    let contents = intake.pcd.commitments()[0];
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     assert_eq!(
@@ -812,9 +825,9 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
             discriminant,
             profile,
-            contents
         )
     );
+    assert_eq!(bucket.pcd.commitments()[0], contents);
 }
 
 #[test]
@@ -863,14 +876,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let discriminant = QrDiscriminant::random(rng);
     let intake = seed_qr_empty_intake(rng, entry1, epoch1, discriminant);
     let bucket = seal_qr_intake(rng, intake, final0);
-    let (epoch, anchor_start, anchor_next, _, profile, contents) = *bucket.pcd.data();
+    let (epoch, anchor_start, anchor_next, _, profile) = *bucket.pcd.data();
     assert_eq!((epoch, anchor_start, anchor_next), (epoch1, entry1, entry2));
+    assert_eq!(profile, QrProfile::ROOT);
     assert_eq!(
-        (profile, contents),
-        (
-            QrProfile::ROOT,
-            iter::empty().collect::<TachygramSetPoly>().commit()
-        )
+        bucket.pcd.commitments()[0],
+        Eq::from(iter::empty().collect::<TachygramSetPoly>().commit()).to_affine()
     );
 
     let bucket0 = qr_bucket_at(
@@ -895,11 +906,14 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .unwrap();
-    let (fused_anchor_start, _, elapsed, fused_epoch_next, fused_anchor_next) = *fused.data();
+    let (fused_anchor_start, _, fused_epoch_next, fused_anchor_next) = *fused.data();
     assert_eq!(fused_anchor_start, Anchor::default());
     assert_eq!(fused_epoch_next, epoch2);
     assert_eq!(fused_anchor_next, entry2);
-    assert_eq!(elapsed, NfSeqPoly::new(epoch0, &[nf0, nf1]).commit());
+    assert_eq!(
+        fused.commitments()[0],
+        Eq::from(NfSeqPoly::new(epoch0, &[nf0, nf1]).commit()).to_affine()
+    );
 }
 
 #[test]
@@ -1463,10 +1477,13 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
             (
                 Anchor::default(),
                 epoch,
-                NfSeqPoly::new(epoch, &[nf]).commit(),
                 epoch_next,
                 final_anchor.next_epoch(epoch_next).unwrap()
             )
+        );
+        assert_eq!(
+            segment.commitments()[0],
+            Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
         );
     }
 }
@@ -1537,7 +1554,12 @@ fn unspent_lift_rejects_invalid_extensions() {
     for (lift_bucket, lift, expected) in [
         (
             &past,
-            honest.clone(),
+            witness::unspent_lift(
+                (*segment.data(), *past.pcd.data()),
+                nf1.into(),
+                &[nf0],
+                &past.members,
+            ),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
@@ -1558,7 +1580,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 &[nf1],
                 &bucket.members,
             ),
-            "UnspentLift: elapsed does not match header",
+            "UnspentLift: elapsed does not match the left slot",
         ),
         (
             &bucket,

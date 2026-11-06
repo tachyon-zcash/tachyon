@@ -126,7 +126,10 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             .fuse(
                 rng,
                 evidence::EvidenceTreeLeafPair,
-                (),
+                (
+                    bucket0.members.iter().copied().collect(),
+                    bucket1.members.iter().copied().collect(),
+                ),
                 bucket0.pcd.clone(),
                 bucket1.pcd.clone(),
             )

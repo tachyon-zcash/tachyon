@@ -4,8 +4,10 @@ use alloc::string::ToString as _;
 use core::{array, assert_matches};
 
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::curve::Projective as _;
 use zcash_tachyon::{
     Anchor, EpochIndex, Tachygram, TachygramSetPoly,
+    pasta::Eq,
     stamp::proof::{PROOF_SYSTEM, summary},
     witness,
 };
@@ -32,13 +34,9 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .commit();
     assert_eq!(
         *seeded.data(),
-        (
-            epoch,
-            start,
-            start.next_stamp(epoch, &commit_a).unwrap(),
-            commit_a
-        )
+        (epoch, start, start.next_stamp(epoch, &commit_a).unwrap())
     );
+    assert_eq!(seeded.commitments()[0], Eq::from(commit_a).to_affine());
 
     let foreign: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
     let (acc, _extended, stamp) =
@@ -46,7 +44,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            "SummaryAdvance: accumulator does not match header",
+            "SummaryAdvance: accumulator does not match the left slot",
         ),
         (
             (acc, stamp_a.iter().copied().collect(), stamp),
@@ -93,7 +91,8 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap()
         .next_stamp(epoch, &commit_b)
         .unwrap();
-    assert_eq!(*advanced.data(), (epoch, start, expected_end, union));
+    assert_eq!(*advanced.data(), (epoch, start, expected_end));
+    assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());
 }
 
 #[test]

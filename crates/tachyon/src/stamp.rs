@@ -784,7 +784,7 @@ impl Plan {
         {
             let reached = spans
                 .last()
-                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().2);
+                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().1);
             if reached != self.anchor {
                 return Err(ProveError::MissingPcd(
                     format!("spend {index} does not reach the plan's anchor").into(),
@@ -799,15 +799,7 @@ impl Plan {
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
-            let mut stamp_pcd = spend_proof.carry::<Actions>((
-                digests.iter().copied().collect::<ActionSetPoly>().commit(),
-                tachygrams
-                    .iter()
-                    .copied()
-                    .collect::<TachygramSetPoly>()
-                    .commit(),
-                spend_anchor,
-            ));
+            let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for (span, members) in spans {
                 stamp_pcd = PROOF_SYSTEM
                     .fuse(rng, ActionLift, (members,), stamp_pcd, span)
@@ -815,7 +807,7 @@ impl Plan {
                     .0;
             }
 
-            let (proof, (_, _, anchor)) = stamp_pcd.into_parts();
+            let (proof, anchor) = stamp_pcd.into_parts();
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -860,16 +852,8 @@ impl Plan {
                         .collect::<TachygramSetPoly>(),
                 );
 
-                let left_pcd = left_proof.carry::<Actions>((
-                    left_acts_poly.commit(),
-                    left_tg_poly.commit(),
-                    left_anchor,
-                ));
-                let right_pcd = right_proof.carry::<Actions>((
-                    right_acts_poly.commit(),
-                    right_tg_poly.commit(),
-                    right_anchor,
-                ));
+                let left_pcd = left_proof.carry::<Actions>(left_anchor);
+                let right_pcd = right_proof.carry::<Actions>(right_anchor);
 
                 let merged_digests: BTreeSet<ActionDigest> =
                     left_digests.union(&right_digests).copied().collect();
@@ -899,7 +883,7 @@ impl Plan {
                     merged_descs,
                     merged_digests,
                     merged_tachygrams,
-                    pcd.data().2,
+                    *pcd.data(),
                     Box::new(pcd.proof().clone()),
                 ))
             })
@@ -916,27 +900,18 @@ impl Plan {
                 (pcd, BTreeSet::new(), BTreeSet::new())
             },
             Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
-                let stamp_header = (
-                    digests.iter().copied().collect::<ActionSetPoly>().commit(),
-                    tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>()
-                        .commit(),
-                    anchor,
-                );
                 let (pcd, ()) = PROOF_SYSTEM
                     .fuse(
                         rng,
                         FeeFuse,
                         witness::fee_fuse(
-                            (stamp_header, ()),
+                            (anchor, ()),
                             self.max_fee_note,
                             self.fee,
                             &digests,
                             &tachygrams,
                         ),
-                        merged_proof.carry::<Actions>(stamp_header),
+                        merged_proof.carry::<Actions>(anchor),
                         PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
@@ -1552,7 +1527,8 @@ impl ProofStamp {
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
     /// The header is built from [`Self::tachygram_set`], so the published
-    /// [`Self::tachygrams`] are not read here.
+    /// [`Self::tachygrams`] are not read here. The proof's `O0` and `O1` slot
+    /// commitments must also be the action set and the tachygram set.
     ///
     /// # Errors
     ///
@@ -1563,13 +1539,19 @@ impl ProofStamp {
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
     ) -> Result<bool, ragu_core::Error> {
-        let action_set = ActionSetPoly::from_iter(action_digests);
+        let action_commit = ActionSetPoly::from_iter(action_digests).commit();
 
-        let pcd = self.proof.clone().carry::<Stamp>((
-            action_set.commit(),
-            self.tachygram_set,
-            self.anchor,
-        ));
+        let pcd =
+            self.proof
+                .clone()
+                .carry::<Stamp>((action_commit, self.tachygram_set, self.anchor));
+
+        let [action_slot, tachygram_slot, _] = pcd.commitments();
+        if action_slot != Eq::from(action_commit).to_affine()
+            || tachygram_slot != Eq::from(self.tachygram_set).to_affine()
+        {
+            return Ok(false);
+        }
 
         PROOF_SYSTEM.verify_uncompressed(&pcd, rng)
     }

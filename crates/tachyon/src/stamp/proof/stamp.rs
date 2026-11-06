@@ -41,14 +41,12 @@ use crate::{
 
 /// Non-empty proven action content with no fee in its lineage.
 ///
-/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets. Each leaf step
-/// ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
-/// and enforces them against their roots at a Fiat-Shamir challenge.
-/// The action set is enforced against the action the step derives,
+/// Slot `O0` carries the action-digest set and `O1` the tachygram set. Each
+/// leaf step ([`OutputAction`], [`SpendAction`]) witnesses both set
+/// polynomials and enforces them against their roots at a Fiat-Shamir
+/// challenge. The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
-/// [`ActionMerge`] binds its witnessed input sets to the child headers
-/// and enforces each output commitment as the product of its inputs.
+/// [`ActionMerge`] enforces each output set as the product of its inputs.
 ///
 /// `anchor` is a free witness at [`OutputAction`]. At [`SpendAction`] it comes
 /// from the left [`SpendHeader`]. At [`ActionMerge`] the step requires
@@ -67,15 +65,11 @@ pub struct Actions;
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
     /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// `action_commit`.
-    pub action_commit: [Element<'dr, D>; 2],
-    /// `stamp_tg_commit`.
-    pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Actions {
-    /// `(action_commit, stamp_tg_commit, anchor)`
-    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    /// `anchor`
+    type Data = Anchor;
     type Output = Kind![Fp; ActionsOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(15);
@@ -85,53 +79,8 @@ impl Header<Fp> for Actions {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let commitments = D::try_just(|| {
-            let fields = witness.clone().take();
-            let mut coordinates = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in coordinates
-                .iter_mut()
-                .zip([Eq::from(fields.0), Eq::from(fields.1)])
-            {
-                let point = commitment.to_affine();
-                if point.is_identity() {
-                    return Err(ragu_core::Error::InvalidWitness(
-                        "cannot encode the identity commitment".into(),
-                    ));
-                }
-                *output = super::bridge_hash(point)?;
-            }
-            Ok(coordinates)
-        })?;
         Ok(ActionsOutput {
-            anchor: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
-            )?,
-            action_commit: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[0][0]),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[0][1]),
-                )?,
-            ],
-            stamp_tg_commit: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[1][0]),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[1][1]),
-                )?,
-            ],
+            anchor: Element::alloc(dr, allocator, witness.map(Fp::from))?,
         })
     }
 }
@@ -139,7 +88,7 @@ impl Header<Fp> for Actions {
 /// Header for one or more fee-bearing lineages.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets.
+/// the action-digest and tachygram sets, which slots `O0` and `O1` carry.
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
@@ -181,10 +130,14 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "compressed point limbs contain exactly 16 bytes"
+        )]
         let commitments = D::try_just(|| {
             let fields = witness.clone().take();
-            let mut coordinates = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in coordinates
+            let mut limbs = [[Fp::ZERO; 2]; 2];
+            for (output, commitment) in limbs
                 .iter_mut()
                 .zip([Eq::from(fields.0), Eq::from(fields.1)])
             {
@@ -194,9 +147,14 @@ impl Header<Fp> for Stamp {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                *output = super::bridge_hash(point)?;
+                let bytes = point.to_bytes();
+                let (low, high) = bytes.split_at(16);
+                *output = [
+                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                ];
             }
-            Ok(coordinates)
+            Ok(limbs)
         })?;
         Ok(StampOutput {
             anchor: Element::alloc(
@@ -353,7 +311,7 @@ impl Step<Pasta> for OutputAction {
         let action_handle = Slot::output(0);
         let tachygram_handle = Slot::output(1);
         let native = D::try_just(|| {
-            let (theta, anchor, action_set, tachygram_set) = witness.take();
+            let (theta, anchor, ..) = witness.take();
             let (cm, pad, cv) = left.take();
             let () = right.take();
             // TODO: a real circuit squeezes alpha in Fp and needs its bit
@@ -366,7 +324,7 @@ impl Step<Pasta> for OutputAction {
                     "OutputAction: action digest construction failed".into(),
                 )
             })?;
-            let output = (action_set.commit(), tachygram_set.commit(), anchor);
+            let output = anchor;
             Ok((output, Fp::from(action_digest), Fp::from(cm), Fp::from(pad)))
         })?;
         let action_root = Element::alloc(dr, &mut (), native.clone().map(|(_, root, ..)| root))?;
@@ -494,7 +452,7 @@ impl Step<Pasta> for SpendAction {
         let action_handle = Slot::output(0);
         let tachygram_handle = Slot::output(1);
         let native = D::try_just(|| {
-            let (theta, pak, action_set, tachygram_set) = witness.take();
+            let (theta, pak, ..) = witness.take();
             let (cm, nf_current, nf_next, anchor, pk, cv) = left.take();
             let () = right.take();
             enforce_zero(
@@ -511,7 +469,7 @@ impl Step<Pasta> for SpendAction {
                     "SpendAction: action digest construction failed".into(),
                 )
             })?;
-            let output = (action_set.commit(), tachygram_set.commit(), anchor);
+            let output = anchor;
             Ok((
                 output,
                 Fp::from(action_digest),
@@ -706,9 +664,29 @@ impl Step<Pasta> for ActionMerge {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.0.as_ref(),
+            "ActionMerge: left action set does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.2.0.as_ref(),
+            "ActionMerge: right action set does not match the right slot",
+        )?;
+        super::enforce_slot(
+            &left.polynomials[1],
+            witness.0.1.as_ref(),
+            "ActionMerge: left tachygram set does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[1],
+            witness.2.1.as_ref(),
+            "ActionMerge: right tachygram set does not match the right slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.0.as_ref());
         polynomials[1] = super::coefficients(witness.1.1.as_ref());
@@ -719,7 +697,7 @@ impl Step<Pasta> for ActionMerge {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -761,48 +739,14 @@ impl Step<Pasta> for ActionMerge {
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let output = D::try_just(|| {
-            let (
-                (left_action_set, left_tachygram_set),
-                (merged_action_set, merged_tachygram_set),
-                (right_action_set, right_tachygram_set),
-            ) = witness.take();
-            let (left_action_commit, left_tachygram_commit, left_anchor) = left.take();
-            let (right_action_commit, right_tachygram_commit, right_anchor) = right.take();
+            let left_anchor = left.take();
+            let right_anchor = right.take();
             // Same-anchor constraint.
             enforce_zero(
                 Fp::from(left_anchor) - Fp::from(right_anchor),
                 "ActionMerge: anchors must match",
             )?;
-            // Bind the witnessed left/right input sets to the public commitments on
-            // the headers.
-            enforce_equal_point(
-                Eq::from(left_action_set.commit()),
-                Eq::from(left_action_commit),
-                "ActionMerge: left action accumulator must commit to header commit",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_action_set.commit()),
-                Eq::from(right_action_commit),
-                "ActionMerge: right action accumulator must commit to header commit",
-            )?;
-            enforce_equal_point(
-                Eq::from(left_tachygram_set.commit()),
-                Eq::from(left_tachygram_commit),
-                "ActionMerge: left tachygram accumulator must commit to header commit",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_tachygram_set.commit()),
-                Eq::from(right_tachygram_commit),
-                "ActionMerge: right tachygram accumulator must commit to header commit",
-            )?;
-            Ok((
-                (
-                    merged_action_set.commit(),
-                    merged_tachygram_set.commit(),
-                    left_anchor,
-                ),
-                (),
-            ))
+            Ok((left_anchor, ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
@@ -846,10 +790,15 @@ impl Step<Pasta> for StampLift {
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        _: &Self::Witness<'_>,
+        witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.0.as_ref(),
+            "StampLift: members do not match the span slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         polynomials[1].clone_from(&left.polynomials[1]);
@@ -860,7 +809,7 @@ impl Step<Pasta> for StampLift {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -892,14 +841,8 @@ impl Step<Pasta> for StampLift {
             )
         })?;
         let output = D::try_just(|| {
-            let (members,) = witness.take();
             let (stamp_action_commit, stamp_tachygram_commit, _stamp_anchor) = left.take();
-            let (_span_anchor_start, span_members, span_anchor_end) = right.take();
-            enforce_equal_point(
-                Eq::from(members.commit()),
-                Eq::from(span_members),
-                "StampLift: members do not match header",
-            )?;
+            let (_span_anchor_start, span_anchor_end) = right.take();
             Ok((
                 (stamp_action_commit, stamp_tachygram_commit, span_anchor_end),
                 (),
@@ -933,10 +876,15 @@ impl Step<Pasta> for ActionLift {
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        _: &Self::Witness<'_>,
+        witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.0.as_ref(),
+            "ActionLift: members do not match the span slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         polynomials[1].clone_from(&left.polynomials[1]);
@@ -947,7 +895,7 @@ impl Step<Pasta> for ActionLift {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -967,7 +915,7 @@ impl Step<Pasta> for ActionLift {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = Element::alloc(dr, &mut (), left.as_ref().map(|data| Fp::from(data.2)))?;
+        let anchor = Element::alloc(dr, &mut (), left.as_ref().map(|&data| Fp::from(data)))?;
         let anchor_start =
             Element::alloc(dr, &mut (), right.as_ref().map(|data| Fp::from(data.0)))?;
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
@@ -978,25 +926,9 @@ impl Step<Pasta> for ActionLift {
                 "ActionLift: actions anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let output = D::try_just(|| {
-            let (members,) = witness.take();
-            let (actions_action_commit, actions_tachygram_commit, _actions_anchor) = left.take();
-            let (_span_anchor_start, span_members, span_anchor_end) = right.take();
-            enforce_equal_point(
-                Eq::from(members.commit()),
-                Eq::from(span_members),
-                "ActionLift: members do not match header",
-            )?;
-            Ok((
-                (
-                    actions_action_commit,
-                    actions_tachygram_commit,
-                    span_anchor_end,
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
+        let (data, aux) = right
+            .map(|(_, span_anchor_end)| (span_anchor_end, ()))
+            .cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
@@ -1038,9 +970,19 @@ impl Step<Pasta> for FeeFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
+        left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.2.0.as_ref(),
+            "FeeFuse: left action set does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &left.polynomials[1],
+            witness.2.1.as_ref(),
+            "FeeFuse: left tachygram set does not match the left slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.3.0.as_ref());
         polynomials[1] = super::coefficients(witness.3.1.as_ref());
@@ -1081,22 +1023,12 @@ impl Step<Pasta> for FeeFuse {
             let (
                 max_fee_note,
                 fee,
-                (left_action_set, left_tachygram_set),
+                _,
                 (output_action_set, output_tachygram_set),
                 (fee_action_set, fee_tachygram_set),
             ) = witness.take();
-            let (left_action_commit, left_tachygram_commit, left_anchor) = left.take();
+            let left_anchor = left.take();
             let () = right.take();
-            enforce_equal_point(
-                Eq::from(left_action_set.commit()),
-                Eq::from(left_action_commit),
-                "FeeFuse: left action accumulator must commit to header commit",
-            )?;
-            enforce_equal_point(
-                Eq::from(left_tachygram_set.commit()),
-                Eq::from(left_tachygram_commit),
-                "FeeFuse: left tachygram accumulator must commit to header commit",
-            )?;
 
             let max_fee = u64::from(max_fee_note.value);
             if max_fee > MAX_MONEY {

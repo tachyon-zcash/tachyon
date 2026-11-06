@@ -34,7 +34,7 @@ use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
-use udon::{curve::Affine as _, field::Field as _};
+use udon::field::Field as _;
 
 use crate::pasta;
 
@@ -57,31 +57,44 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 3] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
 }
 
+/// Prover-side check that `poly` is the polynomial a child slot carries.
+fn enforce_slot(
+    slot: &[pasta::Fp],
+    poly: &Polynomial<pasta::Fp, ProductionRank>,
+    err: &'static str,
+) -> ragu_core::Result<()> {
+    if coefficients(poly) == slot {
+        Ok(())
+    } else {
+        Err(ragu_core::Error::InvalidWitness(err.into()))
+    }
+}
+
 /// Application-wide encoded header width, including one suffix element.
 ///
 /// | Header | Scalars | Pallas points | Host commitments | Payload |
 /// | --- | ---: | ---: | ---: | ---: |
 /// | unit | 0 | 0 | 0 | 0 |
 /// | NoteSecret | 6 | 0 | 0 | 6 |
-/// | NoteNullifiers | 3 | 0 | 1 | 5 |
-/// | ArbitraryUnspent | 4 | 0 | 1 | 6 |
+/// | NoteNullifiers | 3 | 0 | 0 | 3 |
+/// | ArbitraryUnspent | 4 | 0 | 0 | 4 |
 /// | NoteUnspent | 5 | 0 | 0 | 5 |
 /// | NoteSpendable | 3 | 0 | 0 | 3 |
 /// | SpendHeader | 5 | 1 | 0 | 7 |
 /// | OutputHeader | 2 | 1 | 0 | 4 |
-/// | Actions / Stamp | 1 | 0 | 2 | 5 |
-/// | Summary | 3 | 0 | 1 | 5 |
-/// | QrIntake / QrBucket | 6 | 0 | 1 | 8 |
-/// | QrIntakeSides | 6 | 0 | 2 | 10 |
+/// | Actions | 1 | 0 | 0 | 1 |
+/// | Stamp | 1 | 0 | 2 | 5 |
+/// | Summary | 3 | 0 | 0 | 3 |
+/// | QrIntake / QrIntakeSides / QrBucket | 6 | 0 | 0 | 6 |
 /// | EvidenceTree | 5 | 0 | 0 | 5 |
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
-/// | AnchorSpan | 2 | 0 | 1 | 4 |
+/// | AnchorSpan | 2 | 0 | 0 | 2 |
 ///
-/// Points write two coordinates. A commitment writes the two coordinates of
-/// its [`bridge_hash`].
-/// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
+/// Points write two coordinates; commitments write two compressed limbs.
+/// Other headers' polynomials live in their slots, not on the header.
+/// SpendHeader requires seven payload elements, so eight is minimal. Steps
 /// have one application fragment.
-pub const HEADER_SIZE: usize = 11;
+pub const HEADER_SIZE: usize = 8;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
 {
@@ -136,17 +149,4 @@ lazy_static! {
         )]
         make_app().expect("registration of fixed step list must succeed")
     };
-}
-
-/// The coordinates of [`PROOF_SYSTEM`]'s bridge hash of `commitment`.
-///
-/// # Errors
-///
-/// Returns an error if `commitment` is the identity.
-pub(crate) fn bridge_hash(commitment: pasta::EqAffine) -> Result<[pasta::Fp; 2], ragu_core::Error> {
-    PROOF_SYSTEM
-        .bridge_hash(commitment)?
-        .coordinates()
-        .map(<[pasta::Fp; 2]>::from)
-        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))
 }

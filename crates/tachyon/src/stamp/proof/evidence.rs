@@ -219,9 +219,29 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
     type Left = QrBucket;
     type Output = EvidenceTreePair;
     type Right = QrBucket;
-    type Witness<'source> = ();
+    /// `(left_contents, right_contents)`
+    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(30);
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "EvidenceTreeLeafPair: left contents do not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.1.as_ref(),
+            "EvidenceTreeLeafPair: right contents do not match the right slot",
+        )?;
+        Ok(super::unit_polynomials())
+    }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
@@ -246,22 +266,15 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let () = witness.take();
-            let (
-                left_epoch,
-                left_anchor_start,
-                left_anchor_next,
-                left_discriminant,
-                left_profile,
-                left_contents,
-            ) = left.take();
+            let (left_contents, right_contents) = witness.take();
+            let (left_epoch, left_anchor_start, left_anchor_next, left_discriminant, left_profile) =
+                left.take();
             let (
                 right_epoch,
                 right_anchor_start,
                 right_anchor_next,
                 right_discriminant,
                 right_profile,
-                right_contents,
             ) = right.take();
             enforce_zero(
                 Fp::from(left_epoch) - Fp::from(right_epoch),
@@ -287,7 +300,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(left_discriminant),
                 Fp::from(u64::from(left_profile.depth)),
                 Fp::from(u64::from(left_profile.bits)),
-                Eq::from(left_contents).to_affine(),
+                Eq::from(left_contents.commit()).to_affine(),
             ));
             let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
                 Fp::from(right_epoch),
@@ -296,7 +309,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(right_discriminant),
                 Fp::from(u64::from(right_profile.depth)),
                 Fp::from(u64::from(right_profile.bits)),
-                Eq::from(right_contents).to_affine(),
+                Eq::from(right_contents.commit()).to_affine(),
             ));
 
             Ok((
@@ -775,14 +788,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             )?;
 
             Ok((
-                (
-                    epoch,
-                    anchor_start,
-                    anchor_next,
-                    discriminant,
-                    profile,
-                    contents,
-                ),
+                (epoch, anchor_start, anchor_next, discriminant, profile),
                 (),
             ))
         })?;

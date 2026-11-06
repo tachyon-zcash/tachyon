@@ -19,13 +19,12 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::field::Field as _;
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
-    stamp::proof::bridge_hash,
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -190,6 +189,30 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     array::from_fn(|_| squeeze(&mut emulator, &mut sponge))
 }
 
+/// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.
+///
+/// The 32-byte encoding carries $x$ with the sign of $y$ in its high bit, so
+/// the limb pair determines the point. Each limb reads 16 bytes little-endian,
+/// far below the $\mathbb{F}_p$ modulus.
+///
+/// # Panics
+///
+/// Panics if `point` is the identity.
+#[expect(clippy::expect_used, reason = "constant-size decomposition")]
+fn point_limbs(point: EqAffine) -> (Fp, Fp) {
+    assert!(
+        !point.is_identity(),
+        "commitment must not be the identity point"
+    );
+
+    let encoding = point.to_bytes();
+    let (lo, hi) = encoding.split_at(16);
+    (
+        Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(hi.try_into().expect("16 bytes"))),
+    )
+}
+
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
 /// Advances the anchor by absorbing one stamp's epoch and tachygram-set
@@ -200,16 +223,8 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Panics if `tgs` is the identity point.
 #[must_use]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    #[expect(
-        clippy::expect_used,
-        reason = "nonidentity commitment has a bridge hash"
-    )]
-    let [bridge_hash_x, bridge_hash_y] =
-        bridge_hash(tgs).expect("commitment must not be the identity point");
-    hash::<4>(
-        ANCHOR_STAMP_DOMAIN,
-        [anchor_prev, epoch, bridge_hash_x, bridge_hash_y],
-    )
+    let (tgs_lo, tgs_hi) = point_limbs(tgs);
+    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
@@ -230,12 +245,7 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    #[expect(
-        clippy::expect_used,
-        reason = "nonidentity commitment has a bridge hash"
-    )]
-    let [bridge_hash_x, bridge_hash_y] =
-        bridge_hash(contents).expect("commitment must not be the identity point");
+    let (contents_lo, contents_hi) = point_limbs(contents);
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -245,8 +255,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            bridge_hash_x,
-            bridge_hash_y,
+            contents_lo,
+            contents_hi,
         ],
     )
 }

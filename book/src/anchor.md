@@ -15,24 +15,12 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ u,\ v)
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
 $$
 
-where $e$ is the containing block's epoch and $(u, v)$ is the bridge hash of the stamp's tachygram-set commitment[^tachygrams].
+where $e$ is the containing block's epoch and $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
-
-### Bridge hash
-
-For a Vesta commitment $C = (x, y)$, with $x, y \in \mathbb{F}_q$, the bridge hash is the Pallas point
-
-$$
-H^\mathsf{bridge}(C) = [x]G_i + [y]G_j = (u, v).
-$$
-
-Pallas's scalar field is $\mathbb{F}_q$, so the coordinates need no reduction. Evidence-leaf hashes and proof headers use the same bridge representation of every polynomial commitment.
-
-$G_i$ and $G_j$ are nested Pallas generators of Tachyon's ragu application. For rank $r$, with $n = 2^{r-2}$, the indices are $i = 2n - 121$ and $j = 4n - 121$. Tachyon uses `R<13>`, so $n = 2048$, $i = 3975$ and $j = 8071$. Tachyon computes the bridge hash natively with its application's `bridge_hash`.
 
 ## Epoch boundary
 

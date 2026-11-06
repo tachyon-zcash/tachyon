@@ -4,7 +4,7 @@ use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter};
 
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
     TachygramSetPoly, action,
@@ -13,7 +13,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::Fp,
+    pasta::{Eq, Fp},
     stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
     value, witness,
 };
@@ -141,7 +141,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
                 NfSeqPoly::new(EpochIndex::new(0), &nf),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
             ),
-            "UnspentFuse: left polynomial does not match header",
+            "UnspentFuse: left polynomial does not match the left slot",
         ),
         (
             (
@@ -149,7 +149,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
                 NfSeqPoly::new(EpochIndex::new(0), &nf),
                 NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
             ),
-            "UnspentFuse: right polynomial does not match header",
+            "UnspentFuse: right polynomial does not match the right slot",
         ),
         (
             (
@@ -174,7 +174,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         );
     }
 
-    let (start, end) = (left.data().0, right.data().4);
+    let (start, end) = (left.data().0, right.data().3);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -186,13 +186,11 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         .unwrap();
     assert_eq!(
         *fused.data(),
-        (
-            start,
-            EpochIndex::new(0),
-            NfSeqPoly::new(EpochIndex::new(0), &nf).commit(),
-            EpochIndex::new(4),
-            end,
-        )
+        (start, EpochIndex::new(0), EpochIndex::new(4), end)
+    );
+    assert_eq!(
+        fused.commitments()[0],
+        Eq::from(NfSeqPoly::new(EpochIndex::new(0), &nf).commit()).to_affine()
     );
 }
 
@@ -203,11 +201,14 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     pool.advance(2, |_| random_block(rng, 1, 2));
 
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(2));
-    let (anchor_start, members_commit, anchor_end) = *span.data();
+    let (anchor_start, anchor_end) = *span.data();
 
     assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
     assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
-    assert_eq!(members_commit, AnchorSetPoly::from_iter(members).commit());
+    assert_eq!(
+        span.commitments()[0],
+        Eq::from(AnchorSetPoly::from_iter(members).commit()).to_affine()
+    );
 }
 
 #[test]
@@ -218,7 +219,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     pool.advance(1, |_| random_block(rng, 1, 3));
 
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
-    let (anchor_start, _, anchor_end) = *span.data();
+    let (anchor_start, anchor_end) = *span.data();
     let fork = anchor_start
         .next_stamp(
             BlockHeight(1).epoch(),
@@ -238,7 +239,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         (
             members[0],
             members.iter().copied().chain([fork]).collect(),
-            Some("StampLift: members do not match header"),
+            Some("StampLift: members do not match the span slot"),
         ),
     ] {
         let (stamp, plan, fee_descriptor) =
@@ -280,7 +281,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
     let fork = left
         .data()
-        .2
+        .1
         .next_stamp(
             BlockHeight(2).epoch(),
             &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
@@ -480,18 +481,21 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let plan = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let (action_commit, tachygram_commit, _) = *pcd.data();
+    let [action_commit, tachygram_commit, _] = pcd.commitments();
     assert_eq!(
         action_commit,
-        ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()
+        Eq::from(ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()).to_affine()
     );
     assert_eq!(
         tachygram_commit,
-        TachygramSetPoly::from_iter([
-            Tachygram::from(mk.derive_nullifier(spend_epoch)),
-            Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap())),
-        ])
-        .commit()
+        Eq::from(
+            TachygramSetPoly::from_iter([
+                Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap())),
+            ])
+            .commit()
+        )
+        .to_affine()
     );
 }
 
@@ -545,7 +549,7 @@ fn unspent_bind_rejects_a_forged_member() {
     };
     let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch1));
 
-    let (_, _, _, unspent_end, _) = *unspent.data();
+    let (_, _, unspent_end, _) = *unspent.data();
     let range = user.derivation_pcd(rng, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
@@ -579,7 +583,6 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
         epoch_start,
-        NfSeqPoly::new(epoch_start, &elapsed).commit(),
         epoch_end,
         Anchor::from(Fp::ZERO),
     );
@@ -637,7 +640,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 nf_seq.clone(),
                 complement_seq,
             ),
-            "UnspentBind: elapsed polynomial does not match header",
+            "UnspentBind: elapsed polynomial does not match the left slot",
         ),
         (
             range.clone(),
@@ -646,7 +649,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 &user.covering_window(&other, &range),
                 &elapsed,
             ),
-            "UnspentBind: covering sequence does not match header",
+            "UnspentBind: covering sequence does not match the right slot",
         ),
         (
             range,
@@ -990,14 +993,22 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
+    assert_eq!(*pcd.data(), anchor);
     assert_eq!(
-        *pcd.data(),
-        (
-            ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv).digest().unwrap()])
-                .commit(),
-            TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit(),
-            anchor,
-        )
+        pcd.commitments()[..2],
+        [
+            Eq::from(
+                ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv)
+                    .digest()
+                    .unwrap()])
+                .commit()
+            )
+            .to_affine(),
+            Eq::from(
+                TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
+            )
+            .to_affine(),
+        ]
     );
     assert_ne!(
         action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv)
@@ -1058,12 +1069,11 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
         .unwrap();
     assert_eq!(
         *merged.data(),
-        (
-            note.commitment(),
-            EpochIndex::new(0),
-            NfSeqPoly::new(EpochIndex::new(0), &members).commit(),
-            EpochIndex::new(31),
-        )
+        (note.commitment(), EpochIndex::new(0), EpochIndex::new(31))
+    );
+    assert_eq!(
+        merged.commitments()[0],
+        Eq::from(NfSeqPoly::new(EpochIndex::new(0), &members).commit()).to_affine()
     );
 }
 

@@ -35,10 +35,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 
 use super::{
     delegation::NoteNullifiers,
@@ -46,12 +43,12 @@ use super::{
 };
 use crate::{
     note::{self},
-    pasta::{Eq, Fp},
+    pasta::Fp,
     primitives::{
-        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
-        QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
+        TachygramSetCommit, TachygramSetPoly,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
 
@@ -71,10 +68,10 @@ use crate::{
 /// epoch from the same bucket or the same half, and
 /// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
 ///
-/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
-/// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
-/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
-/// on `anchor_next`.
+/// Slot `O0` holds the `elapsed` [`NfSeqPoly`], one tested nullifier per epoch
+/// in `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next
+/// segment's to test, or [`SpendBind`](super::spend::SpendBind)'s once a
+/// spendable rests on `anchor_next`.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
@@ -101,13 +98,11 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub epoch_next: Element<'dr, D>,
     /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// `elapsed`.
-    pub elapsed: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`
-    type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
+    /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
+    type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(1);
@@ -117,15 +112,6 @@ impl Header<Fp> for ArbitraryUnspent {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let coordinates = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().2).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            super::bridge_hash(point)
-        })?;
         Ok(ArbitraryUnspentOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -140,17 +126,13 @@ impl Header<Fp> for ArbitraryUnspent {
             epoch_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.4)),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?,
-            elapsed: [
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -222,11 +204,11 @@ impl Header<Fp> for NoteUnspent {
     }
 }
 
-/// An anchor path with a commitment to the anchors inside it.
+/// An anchor path whose slot `O0` holds the anchors inside it.
 ///
-/// `members` commits to a polynomial with one root for each stamp folded into
-/// the span. The root is the anchor that fold produces. `anchor_end` is a
-/// member and `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// The members polynomial has one root for each stamp folded into the span. The
+/// root is the anchor that fold produces. `anchor_end` is a member and
+/// `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
 /// advance a stamp's anchor. A spendable's anchor advances through
 /// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
 ///
@@ -255,13 +237,11 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// `members`.
-    pub members: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for AnchorSpan {
-    /// `(anchor_start, members, anchor_end)`
-    type Data = (Anchor, AnchorSetCommit, Anchor);
+    /// `(anchor_start, anchor_end)`
+    type Data = (Anchor, Anchor);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(14);
@@ -271,15 +251,6 @@ impl Header<Fp> for AnchorSpan {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let coordinates = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().1).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            super::bridge_hash(point)
-        })?;
         Ok(AnchorSpanOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -289,12 +260,8 @@ impl Header<Fp> for AnchorSpan {
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            members: [
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -302,9 +269,8 @@ impl Header<Fp> for AnchorSpan {
 /// Start an [`AnchorSpan`] from one stamp.
 ///
 /// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
-/// The span's only member is the resulting anchor, committed with
-/// [`AnchorSetCommit::singleton`].
-/// `O0` carries that singleton.
+/// The span's only member is the resulting anchor; `O0` carries that
+/// singleton.
 ///
 /// # Soundness
 ///
@@ -367,14 +333,7 @@ impl Step<Pasta> for AnchorSpanSeed {
                 .next_stamp(epoch, &stamp_commit)
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
-            Ok((
-                (
-                    anchor_start,
-                    AnchorSetCommit::singleton(anchor_end),
-                    anchor_end,
-                ),
-                (),
-            ))
+            Ok(((anchor_start, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
@@ -399,9 +358,9 @@ impl Step<Pasta> for AnchorSpanSeed {
 ///
 /// # Soundness
 ///
-/// The step checks each half's witnessed polynomial against its header's
-/// `members`. The product check's challenge absorbs all three commitments.
-/// `combined` therefore holds exactly the members of both halves.
+/// The product check opens both halves' `R0`/`L0` member slots and the
+/// combined `O0` at a challenge that absorbs all three commitments. `combined`
+/// therefore holds exactly the members of both halves.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -418,9 +377,19 @@ impl Step<Pasta> for AnchorSpanFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "AnchorSpanFuse: left members do not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.2.as_ref(),
+            "AnchorSpanFuse: right members do not match the right slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
@@ -430,7 +399,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -449,24 +418,12 @@ impl Step<Pasta> for AnchorSpanFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let _precheck = D::try_just(|| {
-            let (left_members, _, right_members) = witness.clone().take();
-            let (_left_anchor_start, left_members_commit, left_anchor_end) = left.clone().take();
-            let (right_anchor_start, right_members_commit, _) = right.clone().take();
+            let (_left_anchor_start, left_anchor_end) = left.clone().take();
+            let (right_anchor_start, _) = right.clone().take();
             enforce_zero(
                 Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
                 "AnchorSpanFuse: spans do not share a vertex",
-            )?;
-            enforce_equal_point(
-                Eq::from(left_members.commit()),
-                Eq::from(left_members_commit),
-                "AnchorSpanFuse: left members do not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_members.commit()),
-                Eq::from(right_members_commit),
-                "AnchorSpanFuse: right members do not match header",
-            )?;
-            Ok(())
+            )
         })?;
         enforce_poly_product(
             dr,
@@ -477,24 +434,13 @@ impl Step<Pasta> for AnchorSpanFuse {
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
         let output = D::try_just(|| {
-            let (left_members, combined, right_members) = witness.take();
-            let (left_anchor_start, left_members_commit, left_anchor_end) = left.take();
-            let (right_anchor_start, right_members_commit, right_anchor_end) = right.take();
+            let (left_anchor_start, left_anchor_end) = left.take();
+            let (right_anchor_start, right_anchor_end) = right.take();
             enforce_zero(
                 Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
                 "AnchorSpanFuse: spans do not share a vertex",
             )?;
-            enforce_equal_point(
-                Eq::from(left_members.commit()),
-                Eq::from(left_members_commit),
-                "AnchorSpanFuse: left members do not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_members.commit()),
-                Eq::from(right_members_commit),
-                "AnchorSpanFuse: right members do not match header",
-            )?;
-            Ok(((left_anchor_start, combined.commit(), right_anchor_end), ()))
+            Ok(((left_anchor_start, right_anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
@@ -524,9 +470,19 @@ impl Step<Pasta> for UnspentFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "UnspentFuse: left polynomial does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.2.as_ref(),
+            "UnspentFuse: right polynomial does not match the right slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
@@ -536,7 +492,7 @@ impl Step<Pasta> for UnspentFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -555,19 +511,8 @@ impl Step<Pasta> for UnspentFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let _precheck = D::try_just(|| {
-            let (left_elapsed_seq, _, right_elapsed_seq) = witness.clone().take();
-            let (_, _, left_elapsed, left_epoch_next, left_anchor_next) = left.clone().take();
-            let (right_anchor_start, right_epoch_start, right_elapsed, ..) = right.clone().take();
-            enforce_equal_point(
-                Eq::from(left_elapsed_seq.commit()),
-                Eq::from(left_elapsed),
-                "UnspentFuse: left polynomial does not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_elapsed_seq.commit()),
-                Eq::from(right_elapsed),
-                "UnspentFuse: right polynomial does not match header",
-            )?;
+            let (_, _, left_epoch_next, left_anchor_next) = left.clone().take();
+            let (right_anchor_start, right_epoch_start, ..) = right.clone().take();
             enforce_zero(
                 Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
                 "UnspentFuse: left.anchor_next must equal right.anchor_start",
@@ -587,14 +532,12 @@ impl Step<Pasta> for UnspentFuse {
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
         let output = D::try_just(|| {
-            let (_left_elapsed_seq, combined_elapsed_seq, _right_elapsed_seq) = witness.take();
             let (left_anchor_start, left_epoch_start, ..) = left.take();
-            let (_, _, _, right_epoch_next, right_anchor_next) = right.take();
+            let (_, _, right_epoch_next, right_anchor_next) = right.take();
             Ok((
                 (
                     left_anchor_start,
                     left_epoch_start,
-                    combined_elapsed_seq.commit(),
                     right_epoch_next,
                     right_anchor_next,
                 ),
@@ -619,8 +562,8 @@ impl Step<Pasta> for UnspentFuse {
 ///
 /// # Soundness
 ///
-/// `elapsed_seq` is bound to the header by commit-equality and `contents` to
-/// the bucket. The framework fixes both sequences and stages `value`, so the
+/// `elapsed` is the left segment's `L0` slot and `contents` the bucket's `R0`
+/// slot. The framework fixes both sequences and stages `value`, so the
 /// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
 /// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
 /// plus exactly that member. The member's epoch is `epoch_next`, which
@@ -663,18 +606,24 @@ impl Step<Pasta> for UnspentLift {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.5.as_ref(),
+            "UnspentLift: contents do not match the bucket",
+        )?;
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.3.as_ref(),
+            "UnspentLift: elapsed does not match the left slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.4.as_ref());
         Ok(polynomials)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "exclusion and the three-polynomial extension identity share one witness"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -698,22 +647,15 @@ impl Step<Pasta> for UnspentLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
-            let (value, classes, mask, elapsed_seq, extended_seq, contents) = witness.take();
+            let (value, classes, mask, ..) = witness.take();
             let (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                unspent_elapsed,
                 unspent_epoch_next,
                 unspent_anchor_next,
             ) = left.take();
-            let (
-                bucket_epoch,
-                bucket_anchor_start,
-                bucket_anchor_next,
-                discriminant,
-                profile,
-                contents_commit,
-            ) = right.take();
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile) =
+                right.take();
             enforce_zero(
                 Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),
                 "UnspentLift: the bucket does not start where the segment ends",
@@ -721,16 +663,6 @@ impl Step<Pasta> for UnspentLift {
             enforce_zero(
                 Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch),
                 "UnspentLift: the bucket is not the segment's next epoch",
-            )?;
-            enforce_equal_point(
-                Eq::from(contents.commit()),
-                Eq::from(contents_commit),
-                "UnspentLift: contents do not match the bucket",
-            )?;
-            enforce_equal_point(
-                Eq::from(elapsed_seq.commit()),
-                Eq::from(unspent_elapsed),
-                "UnspentLift: elapsed does not match header",
             )?;
             enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
             enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
@@ -741,24 +673,16 @@ impl Step<Pasta> for UnspentLift {
             let output = (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                extended_seq.commit(),
                 epoch_next,
                 bucket_anchor_next,
             );
-            Ok((
-                elapsed_seq,
-                extended_seq,
-                contents,
-                value,
-                bucket_epoch,
-                output,
-            ))
+            Ok((value, bucket_epoch, output))
         })?;
 
         let value_element = Element::alloc(
             dr,
             &mut (),
-            native.clone().map(|witnessed| Fp::from(witnessed.3)),
+            native.clone().map(|witnessed| Fp::from(witnessed.0)),
         )?;
         #[expect(
             clippy::indexing_slicing,
@@ -773,7 +697,7 @@ impl Step<Pasta> for UnspentLift {
             &mut (),
             native
                 .as_ref()
-                .map(|witnessed| Fp::from(u64::from(witnessed.4)) + Fp::ONE),
+                .map(|witnessed| Fp::from(u64::from(witnessed.1)) + Fp::ONE),
         )?;
         let index_times_z = index_element.mul(dr, &z)?;
         let shifted = value_element.add(dr, &index_times_z);
@@ -798,7 +722,7 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
         })?;
 
-        let output = native.map(|witnessed| witnessed.5);
+        let output = native.map(|witnessed| witnessed.2);
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
@@ -848,9 +772,19 @@ impl Step<Pasta> for UnspentBind {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "UnspentBind: elapsed polynomial does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.1.as_ref(),
+            "UnspentBind: covering sequence does not match the right slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.2.as_ref());
         Ok(polynomials)
@@ -860,7 +794,7 @@ impl Step<Pasta> for UnspentBind {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -878,22 +812,6 @@ impl Step<Pasta> for UnspentBind {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (elapsed_seq, nf_seq, _) = witness.clone().take();
-            let (_, _, elapsed_commit, ..) = left.clone().take();
-            let (_, _, nf_commit, _) = right.clone().take();
-            enforce_equal_point(
-                elapsed_seq.commit().into(),
-                Eq::from(elapsed_commit),
-                "UnspentBind: elapsed polynomial does not match header",
-            )?;
-            enforce_equal_point(
-                nf_seq.commit().into(),
-                Eq::from(nf_commit),
-                "UnspentBind: covering sequence does not match header",
-            )?;
-            Ok(())
-        })?;
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
         enforce_poly_product(
@@ -905,15 +823,13 @@ impl Step<Pasta> for UnspentBind {
             "UnspentBind: sequence does not match the derivation",
         )?;
         let output = D::try_just(|| {
-            let (elapsed_seq, nf_seq, _complement_seq) = witness.take();
             let (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                unspent_elapsed,
                 unspent_epoch_next,
                 unspent_anchor_next,
             ) = left.take();
-            let (nullifiers_cm, _, nf_commit, _) = right.take();
+            let (nullifiers_cm, ..) = right.take();
             // Defensive. `QrUnspentInit` emits `epoch_next = epoch_start + 1`, and
             // every other producer only raises `epoch_next`, so every
             // `ArbitraryUnspent` covers at least one epoch.
@@ -925,16 +841,6 @@ impl Step<Pasta> for UnspentBind {
                 ));
             }
 
-            enforce_equal_point(
-                elapsed_seq.commit().into(),
-                Eq::from(unspent_elapsed),
-                "UnspentBind: elapsed polynomial does not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(nf_seq.commit()),
-                Eq::from(nf_commit),
-                "UnspentBind: covering sequence does not match header",
-            )?;
             Ok((
                 (
                     nullifiers_cm,

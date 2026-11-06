@@ -22,12 +22,10 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::curve::{Affine as _, Projective as _};
 
 use crate::{
-    pasta::{Eq, Fp},
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    ragu_constraint::enforce_equal_point,
+    pasta::Fp,
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
     relations::enforce::enforce_poly_product,
 };
 
@@ -52,15 +50,13 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
     pub anchor_prev: Element<'dr, D>,
     /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// `acc_commit`.
-    pub acc_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Summary {
     /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is a free
     /// witness of the seed step, as `anchor_start` is for
     /// [`AnchorSpan`](super::pool::AnchorSpan).
-    type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
+    type Data = (EpochIndex, Anchor, Anchor);
     type Output = Kind![Fp; SummaryOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(9);
@@ -70,15 +66,6 @@ impl Header<Fp> for Summary {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let coordinates = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().3).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            super::bridge_hash(point)
-        })?;
         Ok(SummaryOutput {
             epoch: Element::alloc(
                 dr,
@@ -95,17 +82,13 @@ impl Header<Fp> for Summary {
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
-            acc_commit: [
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
 
 /// Start a summary from one stamp. The step performs the same fold as
-/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and puts the stamp's
-/// commitment on the header.
+/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and carries the stamp in
+/// `O0`.
 ///
 /// # Soundness
 ///
@@ -163,7 +146,7 @@ impl Step<Pasta> for SummarySeed {
             let anchor_end = anchor_prev
                 .next_stamp(epoch, &stamp_commit)
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
+            Ok(((epoch, anchor_prev, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
@@ -189,9 +172,14 @@ impl Step<Pasta> for SummaryAdvance {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
+        left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "SummaryAdvance: accumulator does not match the left slot",
+        )?;
         Ok([
             super::coefficients(witness.1.as_ref()),
             super::coefficients(witness.2.as_ref()),
@@ -221,15 +209,6 @@ impl Step<Pasta> for SummaryAdvance {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (acc, ..) = witness.clone().take();
-            let (_, _, _, acc_commit) = left.clone().take();
-            enforce_equal_point(
-                Eq::from(acc.commit()),
-                Eq::from(acc_commit),
-                "SummaryAdvance: accumulator does not match header",
-            )
-        })?;
         enforce_poly_product(
             dr,
             oracles,
@@ -239,27 +218,13 @@ impl Step<Pasta> for SummaryAdvance {
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
         let output = D::try_just(|| {
-            let (acc, extended, stamp) = witness.take();
-            let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
-                left.take();
+            let (_, _, stamp) = witness.take();
+            let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
-            enforce_equal_point(
-                Eq::from(acc.commit()),
-                Eq::from(summary_acc_commit),
-                "SummaryAdvance: accumulator does not match header",
-            )?;
             let anchor_end = summary_anchor_end
                 .next_stamp(summary_epoch, &stamp.commit())
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok((
-                (
-                    summary_epoch,
-                    summary_anchor_prev,
-                    anchor_end,
-                    extended.commit(),
-                ),
-                (),
-            ))
+            Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;

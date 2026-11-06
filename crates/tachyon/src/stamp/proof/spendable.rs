@@ -27,9 +27,9 @@ use ragu_primitives::{Element, allocator::Allocator, io::Write};
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     note,
-    pasta::{Eq, Fp},
+    pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    ragu_constraint::enforce_zero,
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -213,6 +213,20 @@ impl Step<Pasta> for QrSpendableInit {
 
     const INDEX: Index = Index::new(22);
 
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.0.as_ref(),
+            "QrSpendableInit: contents do not match the bucket",
+        )?;
+        Ok(super::unit_polynomials())
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -244,13 +258,7 @@ impl Step<Pasta> for QrSpendableInit {
                 unspent_epoch_next,
                 unspent_anchor_next,
             ) = left.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, _, _, bucket_commit) =
-                right.take();
-            enforce_equal_point(
-                Eq::from(contents.commit()),
-                Eq::from(bucket_commit),
-                "QrSpendableInit: contents do not match the bucket",
-            )?;
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = right.take();
             enforce_zero(
                 Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
                 "QrSpendableInit: segment does not start in the bucket's epoch",

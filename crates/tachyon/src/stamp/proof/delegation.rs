@@ -23,10 +23,7 @@ use ragu_core::{
     pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 
 use crate::{
     collections::indexed_multiset,
@@ -34,9 +31,9 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::{Eq, Fp},
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    pasta::Fp,
+    primitives::{EpochIndex, NfSeqPoly},
+    ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_product,
     value,
 };
@@ -149,13 +146,12 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub epoch_start: Element<'dr, D>,
     /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
-    /// `nf_commit`.
-    pub nf_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for NoteNullifiers {
-    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
-    type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
+    /// `(cm, epoch_start, epoch_end)`. `epoch_end` is inclusive. Slot `O0`
+    /// holds the nullifier sequence.
+    type Data = (note::Commitment, EpochIndex, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
@@ -165,15 +161,6 @@ impl Header<Fp> for NoteNullifiers {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let coordinates = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().2).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            super::bridge_hash(point)
-        })?;
         Ok(NoteNullifiersOutput {
             cm: Element::alloc(
                 dr,
@@ -188,12 +175,8 @@ impl Header<Fp> for NoteNullifiers {
             epoch_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
-            nf_commit: [
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, coordinates.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -391,7 +374,7 @@ impl Step<Pasta> for NullifierDerive {
 
             // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
             let nullifiers = mk.derive_window(epoch_start);
-            let output = (cm, epoch_start, seq.commit(), epoch_end);
+            let output = (cm, epoch_start, epoch_end);
             Ok((seq, output, nullifiers))
         })?;
         let epoch_start = Element::alloc(
@@ -435,8 +418,7 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
 /// left.epoch_end + 1`). Witnesses the two range polynomials and their
-/// concatenation, binds each by commit-equality, and proves the concat as the
-/// product
+/// concatenation, and proves the concat over the child slots as the product
 ///
 /// $$
 ///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
@@ -470,9 +452,19 @@ impl Step<Pasta> for NullifierFuse {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        right: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 3]> {
+        super::enforce_slot(
+            &left.polynomials[0],
+            witness.0.as_ref(),
+            "NullifierFuse: left polynomial does not match the left slot",
+        )?;
+        super::enforce_slot(
+            &right.polynomials[0],
+            witness.2.as_ref(),
+            "NullifierFuse: right polynomial does not match the right slot",
+        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
@@ -482,7 +474,7 @@ impl Step<Pasta> for NullifierFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -501,9 +493,8 @@ impl Step<Pasta> for NullifierFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let _precheck = D::try_just(|| {
-            let (left_seq, _, right_seq) = witness.clone().take();
-            let (left_cm, _, left_nf_commit, left_epoch_end) = left.clone().take();
-            let (right_cm, right_epoch_start, right_nf_commit, _) = right.clone().take();
+            let (left_cm, _, left_epoch_end) = left.clone().take();
+            let (right_cm, right_epoch_start, _) = right.clone().take();
             enforce_zero(
                 Fp::from(left_cm) - Fp::from(right_cm),
                 "NullifierFuse: note commitments differ",
@@ -511,18 +502,7 @@ impl Step<Pasta> for NullifierFuse {
             enforce_zero(
                 Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
                 "NullifierFuse: ranges not contiguous",
-            )?;
-            enforce_equal_point(
-                Eq::from(left_seq.commit()),
-                Eq::from(left_nf_commit),
-                "NullifierFuse: left polynomial does not match header",
-            )?;
-            enforce_equal_point(
-                Eq::from(right_seq.commit()),
-                Eq::from(right_nf_commit),
-                "NullifierFuse: right polynomial does not match header",
-            )?;
-            Ok(())
+            )
         })?;
         enforce_poly_product(
             dr,
@@ -533,14 +513,9 @@ impl Step<Pasta> for NullifierFuse {
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         let output = D::try_just(|| {
-            let (_, merged_seq, _) = witness.take();
-            let (left_cm, left_epoch_start, ..) = left.take();
-            let (_, _, _, right_epoch_end) = right.take();
-            let merged_nf_commit = merged_seq.commit();
-            Ok((
-                (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
-                (),
-            ))
+            let (left_cm, left_epoch_start, _) = left.take();
+            let (_, _, right_epoch_end) = right.take();
+            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
