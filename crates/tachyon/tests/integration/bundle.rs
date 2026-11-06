@@ -6,7 +6,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::{assert_matches, cmp::Reverse};
+use core::{assert_matches, cmp::Reverse, iter};
 
 use corez::io;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -28,8 +28,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block, random_block_with,
-    shared_sk, stamp_coverage,
+    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_action, random_block,
+    random_block_with, shared_sk, stamp_coverage,
 };
 
 #[test]
@@ -705,8 +705,8 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
 
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
     let lifted = decoded_alice.lift(rng, &[], vec![span]).unwrap();
-    let mut aggregate = lifted.clone();
-    aggregate.stamp = lifted
+    let mut merged = lifted.clone();
+    merged.stamp = lifted
         .stamp
         .clone()
         .merge(
@@ -722,6 +722,9 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
             ),
         )
         .unwrap();
+    let mut aggregate_buf = Vec::new();
+    merged.write(&mut aggregate_buf).unwrap();
+    let aggregate = Bundle::<ProofStamp>::read(&*aggregate_buf).unwrap();
     let mut unmerged = lifted.clone();
     unmerged.stamp = aggregate
         .stamp
@@ -752,8 +755,12 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
         aggregate.clone().compress(rng, &[]),
         Err(ProveError::ProofFailed(_))
     );
-    let block = aggregate.compress(rng, &[bob.as_dyn()]).unwrap();
+    let block = aggregate.clone().compress(rng, &[bob.as_dyn()]).unwrap();
+    assert_eq!(block.commitment(), aggregate.commitment());
+    assert_ne!(block.auth_digest(), aggregate.auth_digest());
     let wtxid = mock_wtxid(&block);
+    assert_ne!(wtxid, mock_wtxid(&aggregate));
+    let stale = bob.clone().strip(mock_wtxid(&aggregate));
     let adjunct = bob.strip(wtxid);
 
     let mut buf = Vec::new();
@@ -762,16 +769,153 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
     assert_eq!(decoded, block);
     assert_eq!(
         TachyonBundle::read(&*buf).unwrap(),
-        TachyonBundle::from(block)
+        TachyonBundle::from(block.clone())
     );
+    let sighash = mock_sighash(decoded.commitment());
+    let wtxid_bytes: [u8; 64] = wtxid.into();
     decoded
-        .verify(
-            rng,
-            &mock_sighash(decoded.commitment()),
-            &wtxid.into(),
-            &[&adjunct],
-        )
+        .verify(rng, &sighash, &wtxid_bytes, &[&adjunct])
         .unwrap();
+
+    assert_eq!(
+        Bundle::<ProofStamp>::read(&*buf).unwrap_err().to_string(),
+        "unexpected tachyonBundleState"
+    );
+    assert_eq!(
+        Bundle::<CompressedStamp>::read(&*aggregate_buf)
+            .unwrap_err()
+            .to_string(),
+        "unexpected tachyonBundleState"
+    );
+    Bundle::<ProofStamp>::try_from(TachyonBundle::from(block.clone())).unwrap_err();
+    Bundle::<CompressedStamp>::try_from(TachyonBundle::from(aggregate)).unwrap_err();
+
+    let mut as_proof = buf.clone();
+    as_proof[0] = 0x01;
+    as_proof.resize(
+        buf.len() - block.stamp.proof.to_bytes().unwrap().len()
+            + Proof::encoded_len::<HEADER_SIZE>(),
+        0,
+    );
+    let mut as_compressed = aggregate_buf;
+    as_compressed[0] = 0x03;
+    for err in [
+        Bundle::<ProofStamp>::read(&*as_proof).unwrap_err(),
+        TachyonBundle::read(&*as_proof).unwrap_err(),
+        Bundle::<CompressedStamp>::read(&*as_compressed).unwrap_err(),
+        TachyonBundle::read(&*as_compressed).unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "invalid proof encoding");
+    }
+
+    assert_matches!(
+        decoded.verify(rng, &sighash, &wtxid_bytes, &[&stale]),
+        Err(VerificationError::Pointers(
+            VerifyPointersError::AdjunctPointerMismatch
+        ))
+    );
+    assert_matches!(
+        decoded.verify(rng, &sighash, &wtxid_bytes, &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
+    assert_matches!(
+        decoded.verify(rng, &sighash, &wtxid_bytes, &[&adjunct, &adjunct]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::DuplicateActions
+        ))
+    );
+    {
+        let mut foreign = adjunct.clone();
+        foreign.actions[0] = random_action(rng);
+        assert_matches!(
+            decoded.verify(rng, &sighash, &wtxid_bytes, &[&foreign]),
+            Err(VerificationError::Coverage(
+                VerifyCoverageError::StampActionsMismatch
+            ))
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.coverage[0] ^= 0x01;
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Coverage(
+                VerifyCoverageError::StampActionsMismatch
+            ))
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.fee = value::Positive::try_from(u64::from(decoded.stamp.fee) + 1).unwrap();
+        edited.stamp.coverage = stamp_coverage(
+            edited.descriptors().chain(adjunct.descriptors()),
+            &[edited.fee_descriptor(), adjunct.fee_descriptor()],
+        );
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Disproved)
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        let first = *edited.stamp.tachygrams.first().unwrap();
+        edited.stamp.tachygrams.remove(&first);
+        edited.stamp.tachygrams.insert(Tachygram::random(rng));
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Tachygrams(
+                VerifyTachygramsError::WrongSet
+            ))
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.tachygrams.insert(Tachygram::random(rng));
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Tachygrams(
+                VerifyTachygramsError::WrongArity
+            ))
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.tachygram_set = TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Tachygrams(
+                VerifyTachygramsError::WrongSet
+            ))
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.tachygrams = iter::repeat_with(|| Tachygram::random(rng))
+            .take(decoded.stamp.tachygrams.len())
+            .collect();
+        edited.stamp.tachygram_set = edited
+            .stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit();
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Disproved)
+        );
+    }
+    {
+        let mut edited = decoded.clone();
+        edited.stamp.anchor = Anchor::random(rng);
+        assert_matches!(
+            edited.verify(rng, &sighash, &wtxid_bytes, &[&adjunct]),
+            Err(VerificationError::Disproved)
+        );
+    }
 
     let own_digests: Vec<ActionDigest> = decoded
         .descriptors()
