@@ -405,7 +405,9 @@ fn read_rejects_malformed_tachygram_lists() {
             listed.write(&mut buf).unwrap();
         }
         assert_eq!(
-            ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf).unwrap_err().to_string(),
+            ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf)
+                .unwrap_err()
+                .to_string(),
             expected
         );
     }

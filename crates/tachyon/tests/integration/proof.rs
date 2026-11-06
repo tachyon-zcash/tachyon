@@ -21,9 +21,9 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_anchor_span_pcd, build_output_stamp,
-    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
-    seal_qr_intake, seed_qr_empty_intake, shared_sk,
+    PoolSim, WalletSim, build_anchor_span_pcd, build_output_stamp, build_unspent_pcd_over_epochs,
+    qr_bucket_segment, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
+    shared_sk,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {

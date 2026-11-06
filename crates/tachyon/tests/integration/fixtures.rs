@@ -420,7 +420,10 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>, Vec<Anchor>) {
+) -> (
+    ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+    Vec<Anchor>,
+) {
     let start = *range.start();
     let end = *range.end();
     assert_eq!(start.epoch(), end.epoch());
@@ -473,7 +476,10 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>, AnchorSetPoly) {
+) -> (
+    ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+    AnchorSetPoly,
+) {
     let (span, members) = build_anchor_span_pcd(rng, pool, range);
     (span, AnchorSetPoly::from_iter(members))
 }
@@ -1078,8 +1084,14 @@ pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
-    pub secrets: RefCell<BTreeMap<Tachygram, ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>>>,
-    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>>>,
+    pub secrets:
+        RefCell<BTreeMap<Tachygram, ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>>>,
+    pub derivations: RefCell<
+        BTreeMap<
+            (Tachygram, u32, u32),
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
+        >,
+    >,
 }
 
 impl WalletSim {
@@ -1364,7 +1376,10 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>)>,
+        spends: Vec<(
+            Note,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        )>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let (bundle_plan, unproven, spend_pcds) =
@@ -1378,7 +1393,10 @@ impl WalletSim {
     pub fn signed<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        spends: Vec<(Note, ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>)>,
+        spends: Vec<(
+            Note,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        )>,
         output_notes: Vec<Note>,
         max_fee_note: Note,
     ) -> (
@@ -1387,7 +1405,10 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>, AnchorSetPoly)>,
+            Vec<(
+                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+                AnchorSetPoly,
+            )>,
         )>,
     ) {
         let ask = self.sk.derive_auth_private();
@@ -1432,7 +1453,10 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>, AnchorSetPoly)>,
+            Vec<(
+                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+                AnchorSetPoly,
+            )>,
         )>,
         Anchor,
         Note,
