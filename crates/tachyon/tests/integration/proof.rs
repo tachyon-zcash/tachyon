@@ -244,7 +244,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     ] {
         let (stamp, plan, fee_descriptor) =
             build_output_stamp(rng, stamp_anchor, user.random_note(200));
-        let stamp_pcd = stamp.proof.into_full().unwrap().carry((
+        let stamp_pcd = stamp.proof.carry((
             ActionSetPoly::from_iter([plan.digest().unwrap(), fee_descriptor.digest().unwrap()])
                 .commit(),
             TachygramSetPoly::from_iter(stamp.tachygrams).commit(),

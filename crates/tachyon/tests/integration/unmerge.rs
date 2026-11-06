@@ -561,8 +561,8 @@ fn unmerge_binds_its_sets() {
                     rng,
                     StampUnmerge,
                     corrupt,
-                    alice_bob.proof.clone().into_full().unwrap().carry::<Stamp>(dividend_header),
-                    bob.stamp.proof.clone().into_full().unwrap().carry::<Stamp>(divisor_header),
+                    alice_bob.proof.clone().carry::<Stamp>(dividend_header),
+                    bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected

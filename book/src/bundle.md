@@ -184,8 +184,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
 | `nTachygrams` | compactsize | number of tachygrams |
 | `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
-| `sizeProofTachyon` | compactsize | encoded proof length in bytes |
-| `proofTachyon` | sizeProofTachyon bytes | full or compressed Ragu proof |
+| `proofTachyon` | Ragu proof encoding | length determined by its envelope kind |
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
@@ -209,9 +208,9 @@ $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
-Ragu's proof envelope identifies whether `proofTachyon` is full or compressed; both forms use `tachyonBundleState == 0x01`. The reader takes exactly `sizeProofTachyon` bytes and decodes them through Ragu's public proof API. A full proof keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged. A compressed proof verifies but cannot be lifted, merged or unmerged. Compression changes the proof field without changing the bundle state.
+Ragu's 28-byte proof envelope identifies whether `proofTachyon` is full or compressed. Its payload kind determines the encoded length; there is no separate length prefix. Both forms use `tachyonBundleState == 0x01`. The reader reads the remaining proof bytes at that length and decodes the whole buffer through Ragu's public API, which checks the envelope again. `ProofStamp<P>` carries Ragu's own proof type, defaulting to the uncompressed proof. Typed readers reject the other form; `TachyonBundle` accepts either form and returns the corresponding Rust variant. A full proof keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged. Compressed stamps have no folding methods. Compression changes the Rust proof type without changing the wire state.
 
-The stamp digest hashes the encoded proof bytes, excluding `sizeProofTachyon`. The length prefix is determined by those bytes and does not change the digest definition.
+The stamp digest hashes the Ragu-encoded proof bytes, including the envelope. Its definition is the same for both proof forms.
 
 ### Stripped trailer
 

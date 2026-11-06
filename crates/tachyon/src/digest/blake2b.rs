@@ -189,8 +189,8 @@ pub fn bundle_commitment(
 const STAMP_DATA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 
-/// Digest of a stamp's encoded proof bytes, excluding the compactsize length
-/// prefix. Full and compressed proofs use the same digest definition.
+/// Digest of a stamp's Ragu-encoded proof bytes, including its envelope.
+/// Full and compressed proofs use the same digest definition.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(

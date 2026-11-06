@@ -9,6 +9,8 @@ use alloc::{
 use core::{assert_matches, cmp::Reverse, iter};
 
 use corez::io;
+use ragu::CompressedProof;
+use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
@@ -19,7 +21,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     keys::private,
     pasta::Fp,
-    stamp::{AggregateId, PointerStamp, Proof, ProofStamp, ProveError},
+    stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
     value, *,
 };
 
@@ -668,12 +670,7 @@ fn read_rejects_noncanonical_tachygrams() {
     bundle.write(&mut buf).unwrap();
 
     let proof_len = bundle.stamp.proof.to_bytes().unwrap().len();
-    let mut prefix = Vec::new();
-    CompactSize::try_from(proof_len)
-        .unwrap()
-        .write(&mut prefix)
-        .unwrap();
-    let end = buf.len() - proof_len - prefix.len();
+    let end = buf.len() - proof_len;
     let first = end - n * 32;
     let last = end - 32;
     let (head, tail) = buf.split_at_mut(last);
@@ -700,7 +697,7 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
         alice.write(&mut buf).unwrap();
         Bundle::<ProofStamp>::read(&*buf).unwrap()
     };
-    let decoded_bob = {
+    let decoded_bob: ProofStamp = {
         let mut buf = Vec::new();
         bob.stamp.write(&mut buf).unwrap();
         ProofStamp::read(&*buf).unwrap()
@@ -769,8 +766,7 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
     let mut buf = Vec::new();
     block.write(&mut buf).unwrap();
     assert_eq!(buf[0], 0x01);
-    let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
-    assert_matches!(&decoded.stamp.proof, Proof::Compressed(_));
+    let decoded = Bundle::<ProofStamp<CompressedProof<Pasta>>>::read(&*buf).unwrap();
     assert_eq!(decoded, block);
     assert_eq!(
         TachyonBundle::read(&*buf).unwrap(),
@@ -781,96 +777,6 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
     decoded
         .verify(rng, &sighash, &wtxid_bytes, &[&adjunct])
         .unwrap();
-    assert_eq!(
-        decoded.clone().compress(rng, &[adjunct.as_dyn()]).unwrap(),
-        decoded
-    );
-    assert_matches!(
-        decoded.clone().compress(rng, &[]),
-        Err(ProveError::ProofFailed(_))
-    );
-
-    let mut stream = aggregate_buf;
-    stream.extend_from_slice(&buf);
-    let mut reader = stream.as_slice();
-    assert_eq!(Bundle::<ProofStamp>::read(&mut reader).unwrap(), aggregate);
-    assert_eq!(Bundle::<ProofStamp>::read(&mut reader).unwrap(), block);
-    assert!(reader.is_empty());
-
-    assert_matches!(
-        decoded
-            .stamp
-            .clone()
-            .lift(rng, &BTreeSet::new(), &BTreeSet::new(), vec![]),
-        Err(ProveError::CompressedProof)
-    );
-    for (left, right) in [
-        (decoded.stamp.clone(), aggregate.stamp.clone()),
-        (aggregate.stamp.clone(), decoded.stamp.clone()),
-    ] {
-        assert_matches!(
-            left.clone().merge(
-                rng,
-                (BTreeSet::new(), BTreeSet::new()),
-                (right.clone(), BTreeSet::new(), BTreeSet::new())
-            ),
-            Err(ProveError::CompressedProof)
-        );
-        assert_matches!(
-            left.unmerge(
-                rng,
-                (BTreeSet::new(), BTreeSet::new()),
-                (right, BTreeSet::new(), BTreeSet::new())
-            ),
-            Err(ProveError::CompressedProof)
-        );
-    }
-
-    let proof = block.stamp.proof.to_bytes().unwrap();
-    let mut prefix = Vec::new();
-    CompactSize::try_from(proof.len())
-        .unwrap()
-        .write(&mut prefix)
-        .unwrap();
-    let head = &buf[..buf.len() - proof.len() - prefix.len()];
-    for payload in [vec![], proof[..proof.len() - 1].to_vec(), {
-        let mut payload = proof.clone();
-        payload.push(0);
-        payload
-    }] {
-        let mut invalid = head.to_vec();
-        CompactSize::try_from(payload.len())
-            .unwrap()
-            .write(&mut invalid)
-            .unwrap();
-        invalid.extend_from_slice(&payload);
-        let err = Bundle::<ProofStamp>::read(&*invalid).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(err.to_string(), "invalid proof encoding");
-    }
-    {
-        let mut truncated = head.to_vec();
-        CompactSize::try_from(proof.len() + 1)
-            .unwrap()
-            .write(&mut truncated)
-            .unwrap();
-        truncated.extend_from_slice(&proof);
-        assert_eq!(
-            Bundle::<ProofStamp>::read(&*truncated).unwrap_err().kind(),
-            io::ErrorKind::UnexpectedEof
-        );
-    }
-    {
-        let mut noncanonical = head.to_vec();
-        noncanonical.extend_from_slice(&[0xfd, 0, 0]);
-        assert_eq!(
-            Bundle::<ProofStamp>::read(&*noncanonical)
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::InvalidData
-        );
-    }
-
     assert_matches!(
         decoded.verify(rng, &sighash, &wtxid_bytes, &[&stale]),
         Err(VerificationError::Pointers(
@@ -985,6 +891,59 @@ fn decoded_stamps_fold_and_compress_for_the_block() {
         .chain([decoded.fee_descriptor().digest().unwrap()])
         .collect();
     assert!(!decoded.verify_proof(rng, &own_digests).unwrap());
+}
+
+#[test]
+fn proof_stamps_read_typed_envelope_framed_proofs() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let full = build_autonome(rng, &wallet, 1000, 700);
+    let compressed = full.clone().compress(rng, &[]).unwrap();
+    let mut full_bytes = Vec::new();
+    full.write(&mut full_bytes).unwrap();
+    let mut compressed_bytes = Vec::new();
+    compressed.write(&mut compressed_bytes).unwrap();
+    assert_eq!(full_bytes[0], 0x01);
+    assert_eq!(compressed_bytes[0], 0x01);
+    for err in [
+        Bundle::<ProofStamp>::read(&*compressed_bytes).unwrap_err(),
+        Bundle::<ProofStamp<CompressedProof<Pasta>>>::read(&*full_bytes).unwrap_err(),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "invalid proof encoding");
+    }
+    let mut stream = full_bytes;
+    stream.extend_from_slice(&compressed_bytes);
+    stream.push(0x99);
+    let mut reader = stream.as_slice();
+    assert_eq!(TachyonBundle::read(&mut reader).unwrap(), TachyonBundle::from(full));
+    assert_eq!(TachyonBundle::read(&mut reader).unwrap(), TachyonBundle::from(compressed.clone()));
+    assert_eq!(reader, [0x99]);
+
+    let proof = compressed.stamp.proof.to_bytes().unwrap();
+    let proof_start = compressed_bytes.len() - proof.len();
+    for (invalid, expected) in [
+        ({
+            let mut bytes = compressed_bytes.clone();
+            bytes[proof_start + 10..proof_start + 12].copy_from_slice(&3u16.to_le_bytes());
+            bytes
+        }, "invalid proof kind"),
+        ({
+            let mut bytes = compressed_bytes.clone();
+            bytes[proof_start] ^= 1;
+            bytes
+        }, "invalid proof encoding"),
+    ] {
+        let err = TachyonBundle::read(&*invalid).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), expected);
+    }
+    for truncated in [
+        &compressed_bytes[..proof_start + 27],
+        &compressed_bytes[..compressed_bytes.len() - 1],
+    ] {
+        assert_eq!(TachyonBundle::read(truncated).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
 }
 
 fn spend_plan_at(

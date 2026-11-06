@@ -9,7 +9,7 @@ use zcash_tachyon::{
     ActionDigest, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly, action,
     entropy::ActionEntropy,
     fee,
-    stamp::{self, ProveError},
+    stamp::{self, ProveError, proof::Proof},
     value,
 };
 
@@ -326,7 +326,7 @@ fn overlapping_stamps_cannot_aggregate() {
                 .collect::<TachygramSetPoly>()
                 .commit(),
             tachygrams,
-            proof: stamp::Proof::Full(Box::new(forged.proof().clone())),
+            proof: Box::new(forged.proof().clone()),
             fee: left.fee,
         };
         let digests: Vec<ActionDigest> = descriptors
@@ -403,7 +403,7 @@ fn read_rejects_malformed_tachygram_lists() {
         for listed in tachygrams {
             listed.write(&mut buf).unwrap();
         }
-        assert_eq!(ProofStamp::read(&*buf).unwrap_err().to_string(), expected);
+        assert_eq!(ProofStamp::<Proof>::read(&*buf).unwrap_err().to_string(), expected);
     }
 }
 
@@ -416,7 +416,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded = ProofStamp::read(&*buf).unwrap();
+    let decoded: ProofStamp = ProofStamp::read(&*buf).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);

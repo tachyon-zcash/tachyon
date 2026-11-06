@@ -211,12 +211,12 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd = stamp_a.proof.clone().into_full().unwrap().carry::<Stamp>((
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         left_acts.commit(),
         left_tg.commit(),
         stamp_a.anchor,
     ));
-    let right_pcd = stamp_b.proof.clone().into_full().unwrap().carry::<Stamp>((
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
         right_acts.commit(),
         right_tg.commit(),
         stamp_b.anchor,
