@@ -34,10 +34,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 
 use super::{
     delegation::NoteNullifiers,
@@ -46,10 +43,10 @@ use super::{
 use crate::{
     digest::poseidon,
     note::{self},
-    pasta::{Eq, Fp},
+    pasta::Fp,
     primitives::{
-        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
-        QrProfile, Tachygram, TachygramSetPoly,
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
+        TachygramSetPoly,
     },
     relations::{
         arithmetic as circuit,
@@ -73,10 +70,10 @@ use crate::{
 /// epoch from the same bucket or the same half, and
 /// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
 ///
-/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
-/// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
-/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
-/// on `anchor_next`.
+/// Slot `O0` holds the `elapsed` [`NfSeqPoly`], one tested nullifier per epoch
+/// in `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next
+/// segment's to test, or [`SpendBind`](super::spend::SpendBind)'s once a
+/// spendable rests on `anchor_next`.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
@@ -103,13 +100,11 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub epoch_next: Element<'dr, D>,
     /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// `elapsed`.
-    pub elapsed: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`
-    type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
+    /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
+    type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(1);
@@ -119,24 +114,6 @@ impl Header<Fp> for ArbitraryUnspent {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().2).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
-        })?;
         Ok(ArbitraryUnspentOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -151,17 +128,13 @@ impl Header<Fp> for ArbitraryUnspent {
             epoch_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.4)),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?,
-            elapsed: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -233,11 +206,11 @@ impl Header<Fp> for NoteUnspent {
     }
 }
 
-/// An anchor path with a commitment to the anchors inside it.
+/// An anchor path whose slot `O0` holds the anchors inside it.
 ///
-/// `members` commits to a polynomial with one root for each stamp folded into
-/// the span. The root is the anchor that fold produces. `anchor_end` is a
-/// member and `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// The members polynomial has one root for each stamp folded into the span. The
+/// root is the anchor that fold produces. `anchor_end` is a member and
+/// `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
 /// advance a stamp's anchor. A spendable's anchor advances through
 /// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
 ///
@@ -266,13 +239,11 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// `members`.
-    pub members: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for AnchorSpan {
-    /// `(anchor_start, members, anchor_end)`
-    type Data = (Anchor, AnchorSetCommit, Anchor);
+    /// `(anchor_start, anchor_end)`
+    type Data = (Anchor, Anchor);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(14);
@@ -282,24 +253,6 @@ impl Header<Fp> for AnchorSpan {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().1).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
-        })?;
         Ok(AnchorSpanOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -309,12 +262,8 @@ impl Header<Fp> for AnchorSpan {
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            members: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -322,9 +271,8 @@ impl Header<Fp> for AnchorSpan {
 /// Start an [`AnchorSpan`] from one stamp.
 ///
 /// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
-/// The span's only member is the resulting anchor, committed with
-/// [`AnchorSetCommit::singleton`].
-/// `O0` carries that singleton; `O1` carries the stamp for its bridge hash.
+/// The span's only member is the resulting anchor; `O0` carries that
+/// singleton.
 ///
 /// # Soundness
 ///
@@ -402,21 +350,12 @@ impl Step<Pasta> for AnchorSpanSeed {
             let (anchor_start, ..) = witness.take();
             let anchor_end = Anchor::from(*anchor_element.value().take());
 
-            Ok((
-                (
-                    anchor_start,
-                    AnchorSetCommit::singleton(anchor_end),
-                    anchor_end,
-                ),
-                (),
-            ))
+            Ok(((anchor_start, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let fields = AnchorSpanOutput {
             anchor_start: previous,
             anchor_end: anchor_element,
-            members: encoded.as_gadget().members.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -435,9 +374,9 @@ impl Step<Pasta> for AnchorSpanSeed {
 ///
 /// # Soundness
 ///
-/// The product check reads each half from its header's `members`, and its
-/// challenge absorbs all three commitments. `combined` therefore holds
-/// exactly the members of both halves.
+/// The product check opens both halves' `R0`/`L0` member slots and the
+/// combined `O0` at a challenge that absorbs all three commitments. `combined`
+/// therefore holds exactly the members of both halves.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -466,7 +405,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -499,18 +438,13 @@ impl Step<Pasta> for AnchorSpanFuse {
         )?;
         let output = D::try_just(|| {
             let (left_anchor_start, ..) = left.take();
-            let (_, _, right_anchor_end) = right.take();
-            Ok((
-                (left_anchor_start, witness.take().commit(), right_anchor_end),
-                (),
-            ))
+            let (_, right_anchor_end) = right.take();
+            Ok(((left_anchor_start, right_anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let fields = AnchorSpanOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
             anchor_end: right_encoded.as_gadget().anchor_end.clone(),
-            members: encoded.as_gadget().members.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -554,7 +488,7 @@ impl Step<Pasta> for UnspentFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -596,12 +530,11 @@ impl Step<Pasta> for UnspentFuse {
         )?;
         let output = D::try_just(|| {
             let (left_anchor_start, left_epoch_start, ..) = left.take();
-            let (_, _, _, right_epoch_next, right_anchor_next) = right.take();
+            let (_, _, right_epoch_next, right_anchor_next) = right.take();
             Ok((
                 (
                     left_anchor_start,
                     left_epoch_start,
-                    witness.take().commit(),
                     right_epoch_next,
                     right_anchor_next,
                 ),
@@ -609,13 +542,11 @@ impl Step<Pasta> for UnspentFuse {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
             epoch_start: left_encoded.as_gadget().epoch_start.clone(),
             epoch_next: right_encoded.as_gadget().epoch_next.clone(),
             anchor_next: right_encoded.as_gadget().anchor_next.clone(),
-            elapsed: encoded.as_gadget().elapsed.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -637,9 +568,8 @@ impl Step<Pasta> for UnspentFuse {
 ///
 /// # Soundness
 ///
-/// `elapsed` is the segment's sequence and `contents` the bucket's, both read
-/// from the child slots. The framework fixes both sequences and stages `value`,
-/// so the
+/// `elapsed` is the left segment's `L0` slot and `contents` the bucket's `R0`
+/// slot. The framework fixes both sequences and stages `value`, so the
 /// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
 /// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
 /// plus exactly that member. The member's epoch is `epoch_next`, which
@@ -779,18 +709,15 @@ impl Step<Pasta> for UnspentLift {
             (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                witness.take().3.commit(),
                 circuit::epoch_value(&epoch_next).take(),
                 bucket_anchor_next,
             )
         });
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
             epoch_start: left_encoded.as_gadget().epoch_start.clone(),
             epoch_next,
             anchor_next: right_encoded.as_gadget().anchor_next.clone(),
-            elapsed: encoded.as_gadget().elapsed.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -898,7 +825,6 @@ impl Step<Pasta> for UnspentBind {
             let (
                 unspent_anchor_start,
                 unspent_epoch_start,
-                _,
                 unspent_epoch_next,
                 unspent_anchor_next,
             ) = left.take();

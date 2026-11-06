@@ -115,7 +115,7 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, _, epoch_next, _) = unspent;
+    let (_, epoch_start, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
@@ -251,7 +251,7 @@ pub fn qr_intake_split(
     (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = intake;
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = intake;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
         discriminant.at(profile.depth),
@@ -286,7 +286,7 @@ pub fn qr_side_descend(
     members: &[Tachygram],
     side: bool,
 ) -> StepWitness<'static, QrSideDescend> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = sides;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
         discriminant.at(profile.depth),

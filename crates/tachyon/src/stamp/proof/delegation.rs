@@ -23,10 +23,7 @@ use ragu_core::{
     pasta::{Pasta, PoseidonFp},
 };
 use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     constants::{EPOCH_MAX, MAX_MONEY},
@@ -34,8 +31,8 @@ use crate::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::{EpAffine, Eq, Fp},
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    pasta::{EpAffine, Fp},
+    primitives::{EpochIndex, NfSeqPoly},
     relations::{
         arithmetic as circuit, curve,
         enforce::{enforce_poly_product, indexed_member_factor},
@@ -151,13 +148,12 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub epoch_start: Element<'dr, D>,
     /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
-    /// `nf_commit`.
-    pub nf_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for NoteNullifiers {
-    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
-    type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
+    /// `(cm, epoch_start, epoch_end)`. `epoch_end` is inclusive. Slot `O0`
+    /// holds the nullifier sequence.
+    type Data = (note::Commitment, EpochIndex, EpochIndex);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
@@ -167,24 +163,6 @@ impl Header<Fp> for NoteNullifiers {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
-        let limbs = D::try_just(|| {
-            let point = Eq::from(witness.clone().take().2).to_affine();
-            if point.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "cannot encode the identity commitment".into(),
-                ));
-            }
-            let bytes = point.to_bytes();
-            let (low, high) = bytes.split_at(16);
-            Ok([
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-            ])
-        })?;
         Ok(NoteNullifiersOutput {
             cm: Element::alloc(
                 dr,
@@ -199,12 +177,8 @@ impl Header<Fp> for NoteNullifiers {
             epoch_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?,
-            nf_commit: [
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[0]))?,
-                Element::alloc(dr, allocator, limbs.as_ref().map(|values| values[1]))?,
-            ],
         })
     }
 }
@@ -467,20 +441,17 @@ impl Step<Pasta> for NullifierDerive {
             )
         })?;
         let output = D::just(|| {
-            let (start, seq) = witness.take();
+            let (start, _) = witness.take();
             (
                 left.take().0,
                 start,
-                seq.commit(),
                 circuit::epoch_value(&epoch_end).take(),
             )
         });
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         let fields = NoteNullifiersOutput {
             cm: left_encoded.as_gadget().cm.clone(),
             epoch_start,
             epoch_end,
-            nf_commit: encoded.as_gadget().nf_commit.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -494,8 +465,7 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
 /// left.epoch_end + 1`). Witnesses the two range polynomials and their
-/// concatenation, binds each by commit-equality, and proves the concat as the
-/// product
+/// concatenation, and proves the concat over the child slots as the product
 ///
 /// $$
 ///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
@@ -541,7 +511,7 @@ impl Step<Pasta> for NullifierFuse {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -583,21 +553,15 @@ impl Step<Pasta> for NullifierFuse {
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         let output = D::try_just(|| {
-            let (left_cm, left_epoch_start, ..) = left.take();
-            let (_, _, _, right_epoch_end) = right.take();
-            let merged_nf_commit = witness.take().commit();
-            Ok((
-                (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
-                (),
-            ))
+            let (left_cm, left_epoch_start, _) = left.take();
+            let (_, _, right_epoch_end) = right.take();
+            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let fields = NoteNullifiersOutput {
             cm: left_encoded.as_gadget().cm.clone(),
             epoch_start: left_encoded.as_gadget().epoch_start.clone(),
             epoch_end: right_encoded.as_gadget().epoch_end.clone(),
-            nf_commit: encoded.as_gadget().nf_commit.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

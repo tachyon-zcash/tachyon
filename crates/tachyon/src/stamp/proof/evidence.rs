@@ -807,7 +807,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
         let contents_bridge_hash = oracles.bridge_hash().clone();
         let output = D::just(|| {
-            let (carrier_profile, carrier_contents) = witness.take();
+            let (carrier_profile, _) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.clone().take();
             (
                 epoch,
@@ -815,7 +815,9 @@ impl Step<Pasta> for EvidenceTreeOpen {
                 anchor_next,
                 discriminant,
                 carrier_profile,
-                carrier_contents.commit(),
+                contents_bridge_hash
+                    .clone()
+                    .map(|value| *value.value().take()),
             )
         });
         let expected = left_encoded.as_gadget().root.clone();

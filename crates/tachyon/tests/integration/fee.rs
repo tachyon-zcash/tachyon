@@ -5,8 +5,8 @@ use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
+    ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
+    VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
         ProofStamp,
         proof::{
@@ -45,7 +45,7 @@ fn fee_less_output_bundle(
     let stamp = ProofStamp {
         coverage: stamp_coverage([output_plan.descriptor()], &[]),
         anchor,
-        tachygram_set: pcd.data().1,
+        tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
         tachygrams: BTreeSet::from([cm, pad]),
         proof: Box::new(pcd.proof().clone()),
         fee: value::Positive::ZERO,
@@ -73,24 +73,15 @@ fn fee_fuse_binds_its_sets() {
         .descriptors()
         .map(|desc| desc.digest().unwrap())
         .collect();
-    let stamp_header = (
-        action_digests
-            .iter()
-            .copied()
-            .collect::<ActionSetPoly>()
-            .commit(),
-        left.stamp.tachygram_set,
-        anchor,
-    );
     let valid = witness::fee_fuse(
-        (stamp_header, ()),
+        (anchor, ()),
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
         &left.stamp.tachygrams,
     );
     let other = witness::fee_fuse(
-        (stamp_header, ()),
+        (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
@@ -129,7 +120,7 @@ fn fee_fuse_binds_its_sets() {
                     rng,
                     FeeFuse,
                     corrupt,
-                    left.stamp.proof.clone().carry::<Actions>(stamp_header),
+                    left.stamp.proof.clone().carry::<Actions>(anchor),
                     PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
@@ -168,13 +159,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         .map(|desc| desc.digest().unwrap())
         .chain([once.fee_descriptor().digest().unwrap()])
         .collect();
-    let header = (
-        ActionSetPoly::from_iter(digests.iter().copied()).commit(),
-        once.stamp.tachygram_set,
-        anchor,
-    );
     let repeated_witness = witness::fee_fuse(
-        (header, ()),
+        (anchor, ()),
         max_fee_note,
         value::Positive::try_from(0).unwrap(),
         &digests,
@@ -186,7 +172,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 rng,
                 FeeFuse,
                 repeated_witness.clone(),
-                once.stamp.proof.clone().carry::<Actions>(header),
+                once.stamp.proof.clone().carry::<Actions>(anchor),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),

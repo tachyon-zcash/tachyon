@@ -87,26 +87,27 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
 /// | --- | ---: | ---: | ---: | ---: |
 /// | unit | 0 | 0 | 0 | 0 |
 /// | NoteSecret | 6 | 0 | 0 | 6 |
-/// | NoteNullifiers | 3 | 0 | 1 | 5 |
-/// | ArbitraryUnspent | 4 | 0 | 1 | 6 |
+/// | NoteNullifiers | 3 | 0 | 0 | 3 |
+/// | ArbitraryUnspent | 4 | 0 | 0 | 4 |
 /// | NoteUnspent | 5 | 0 | 0 | 5 |
 /// | NoteSpendable | 3 | 0 | 0 | 3 |
 /// | SpendHeader | 5 | 1 | 0 | 7 |
 /// | OutputHeader | 2 | 1 | 0 | 4 |
-/// | Actions / Stamp | 1 | 0 | 2 | 5 |
-/// | Summary | 3 | 0 | 1 | 5 |
-/// | QrIntake / QrBucket | 6 | 0 | 1 | 8 |
-/// | QrIntakeSides | 6 | 0 | 2 | 10 |
+/// | Actions | 1 | 0 | 0 | 1 |
+/// | Stamp | 1 | 0 | 2 | 5 |
+/// | Summary | 3 | 0 | 0 | 3 |
+/// | QrIntake / QrIntakeSides | 6 | 0 | 0 | 6 |
+/// | QrBucket | 6 | 0 | 1 | 8 |
 /// | EvidenceTree | 5 | 0 | 0 | 5 |
 /// | EvidenceTreePair | 6 | 0 | 0 | 6 |
-/// | AnchorSpan | 2 | 0 | 1 | 4 |
+/// | AnchorSpan | 2 | 0 | 0 | 2 |
 ///
 /// Points write two coordinates; commitments write two compressed limbs.
-/// `QrBucket` writes its certified bridge hash's two coordinates instead
-/// of its native contents commitment's compressed limbs.
-/// QrIntakeSides requires ten payload elements, so eleven is minimal. Steps
+/// Other headers' polynomials live in their slots, not on the header.
+/// QrBucket writes its certified double commitment's two coordinates.
+/// QrBucket requires eight payload elements, so nine is minimal. Steps
 /// have one application fragment.
-pub const HEADER_SIZE: usize = 11;
+pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
 {

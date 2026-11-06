@@ -594,8 +594,8 @@ fn merge_qr_run<RNG: CryptoRng>(
     capacity: usize,
 ) -> Vec<QrIntakeEntry> {
     let joins = |left: &QrIntakeEntry, right: &QrIntakeEntry| {
-        let (_, _, _, _, left_profile, _) = *left.pcd.data();
-        let (_, _, _, _, right_profile, _) = *right.pcd.data();
+        let (_, _, _, _, left_profile) = *left.pcd.data();
+        let (_, _, _, _, right_profile) = *right.pcd.data();
         left_profile == right_profile && (left.members.len() + right.members.len()) <= capacity
     };
 
@@ -635,7 +635,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
     intake: QrIntakeEntry,
 ) -> (QrIntakeEntry, QrIntakeEntry) {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = *intake.pcd.data();
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *intake.pcd.data();
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -1038,8 +1038,8 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
         let to = usize::try_from(u64::from(hi - base)).unwrap();
         &nf[from..to]
     };
-    let (_, left_epoch_start, _, left_epoch_next, _) = *left.data();
-    let (_, right_epoch_start, _, right_epoch_next, _) = *right.data();
+    let (_, left_epoch_start, left_epoch_next, _) = *left.data();
+    let (_, right_epoch_start, right_epoch_next, _) = *right.data();
     let left_el = elapsed_slice(left_epoch_start, left_epoch_next);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
     assert_eq!(u32::from(right_epoch_start), u32::from(left_epoch_next));
@@ -1106,7 +1106,7 @@ impl WalletSim {
         note: &Note,
         range: &Pcd<delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
-        let (_, start, _, last) = *range.data();
+        let (_, start, last) = *range.data();
         let mk = self.pak.nk.derive_note_private(note.psi);
         (u32::from(start)..=u32::from(last))
             .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
@@ -1246,7 +1246,7 @@ impl WalletSim {
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
     ) -> Pcd<pool::NoteUnspent> {
-        let (_, epoch_start, _, epoch_next, _) = *arbitrary.data();
+        let (_, epoch_start, epoch_next, _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
