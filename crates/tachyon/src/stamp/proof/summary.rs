@@ -89,7 +89,7 @@ impl Header<Fp> for Summary {
 
 /// Start a summary from one stamp. The step performs the same fold as
 /// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and carries the stamp in
-/// `O0`.
+/// `O0/O1`.
 ///
 /// # Soundness
 ///
@@ -103,7 +103,7 @@ impl Step<Pasta> for SummarySeed {
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp)`; `O0/O1` carry the stamp polynomial.
+    /// `(anchor_prev, epoch, stamp)`
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);

@@ -1047,7 +1047,7 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
-/// Slot O0 carries contents.
+/// Slots O0/O1 carry contents.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -1076,7 +1076,7 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
 
 impl Header<Fp> for QrBucket {
     /// `(epoch, anchor_start, anchor_next, discriminant, profile,
-    /// contents_double)`; slots O0/O1 carry contents.
+    /// contents_double)`
     type Data = (
         EpochIndex,
         Anchor,
