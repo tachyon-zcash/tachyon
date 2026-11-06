@@ -9,10 +9,11 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
-    ActionSetPoly, TachygramSetPoly,
+    ActionSetPoly, TachygramSetPoly, action,
     constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
+    fee,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{Ep, EpAffine, Eq, Fp, Fq},
@@ -105,8 +106,8 @@ impl Header for Stamp {
 pub struct OutputAction;
 
 impl Step for OutputAction {
-    /// `(action_digest)`
-    type Aux<'source> = (ActionDigest,);
+    /// `(action_descriptor,)` for the action derived by this invocation.
+    type Aux<'source> = (action::Descriptor,);
     type Left = OutputHeader;
     type Output = Actions;
     type Right = ();
@@ -155,7 +156,7 @@ impl Step for OutputAction {
         )?;
 
         let data = (action_set.commit(), tachygram_set.commit(), anchor);
-        Ok((data, (action_digest,)))
+        Ok((data, (action::Descriptor { cv, rk },)))
     }
 }
 
@@ -180,8 +181,8 @@ impl Step for OutputAction {
 pub struct SpendAction;
 
 impl Step for SpendAction {
-    /// `(action_digest)`
-    type Aux<'source> = (ActionDigest,);
+    /// `(action_descriptor,)` for the action derived by this invocation.
+    type Aux<'source> = (action::Descriptor,);
     type Left = SpendHeader;
     type Output = Actions;
     type Right = ();
@@ -239,7 +240,7 @@ impl Step for SpendAction {
         )?;
 
         let data = (action_set.commit(), tachygram_set.commit(), anchor);
-        Ok((data, (action_digest,)))
+        Ok((data, (action::Descriptor { cv, rk },)))
     }
 }
 
@@ -525,7 +526,8 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
-    type Aux<'source> = ();
+    /// `(fee_descriptor, fee_change_commitment)` for this bundle's applied fee.
+    type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
@@ -643,7 +645,13 @@ impl Step for FeeFuse {
                 output_tachygram_set.commit(),
                 left_anchor,
             ),
-            (),
+            (
+                fee::Descriptor {
+                    max_commitment: cv_max_fee,
+                    value: fee,
+                },
+                note::Commitment::from(fee_change_commitment),
+            ),
         ))
     }
 }
@@ -653,7 +661,9 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
-    type Aux<'source> = ();
+    /// `(fee_descriptor, fee_change_commitment)` for this zero-action, zero-fee
+    /// bundle.
+    type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = ();
     type Output = Stamp;
     type Right = ();
@@ -718,7 +728,13 @@ impl Step for FeeSeed {
 
         Ok((
             (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
-            (),
+            (
+                fee::Descriptor {
+                    max_commitment: cv_max_fee,
+                    value: value::Positive::ZERO,
+                },
+                note::Commitment::from(fee_change_commitment),
+            ),
         ))
     }
 }

@@ -371,19 +371,14 @@ pub fn qr_side_select(
 /// interpolant, quotient)`.
 ///
 /// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
-/// is the residue side when set. The decomposition is the sibling's, at the
-/// sibling's class multiplier.
-///
-/// # Panics
-///
-/// Panics if the sibling's decomposition does not exist, which needs a
-/// repeated member. A split partitions distinct tachygrams, so this is
-/// unreachable.
+/// is the residue side when set. Pass `hints` from the successful selection's
+/// aux for the same intended side.
 #[must_use]
 pub fn qr_side_descend(
     (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
     members: &[Tachygram],
     side: bool,
+    hints: (crate::QrInterpolantPoly, crate::QrQuotientPoly),
 ) -> StepWitness<'static, QrSideDescend> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
     let (residue, non_residue) = collections::qr::split(
@@ -391,21 +386,15 @@ pub fn qr_side_descend(
         discriminant.at(profile.depth),
     );
     let sibling = if side { non_residue } else { residue };
-    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
-    let (interpolant, quotient) = collections::qr::decomposition(
-        &sibling,
-        collections::qr::class_multiplier(!side),
-        discriminant.at(profile.depth),
-    )
-    .expect("members of a split are distinct");
+    let (interpolant, quotient) = hints;
     (
         side,
         sibling
             .iter()
             .map(|&(member, _root)| Tachygram::from(member))
             .collect(),
-        interpolant.into(),
-        quotient.into(),
+        interpolant,
+        quotient,
     )
 }
 

@@ -206,7 +206,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         once.stamp.tachygram_set,
         anchor,
     );
-    let (twice_pcd, ()) = PROOF_SYSTEM
+    let (twice_pcd, _) = PROOF_SYSTEM
         .fuse(
             rng,
             FeeFuse,
@@ -595,7 +595,7 @@ fn fee_seed_binds_its_singletons_and_header() {
         );
     }
 
-    let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
+    let (seed_pcd, _) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),
         ((other.2.commit(), valid.3.commit(), anchor), false),

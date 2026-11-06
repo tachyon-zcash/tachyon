@@ -2,7 +2,8 @@
 
 The Tachyon proof tree is a graph of proof steps.
 Each step accepts arbitrary witness inputs and up to two PCD inputs, performs computations and checks constraints, and emits a new PCD.
-`NullifierDerive` returns its nullifier window, and `OutputAction` and `SpendAction` return their action digests through `Step::Aux`.
+`NullifierDerive` returns its nullifier window; `OutputAction` and `SpendAction` return action descriptors; `FeeFuse` and `FeeSeed` return fee descriptors and fee-change commitments through `Step::Aux`.
+`QrSideSelect` returns its owned interpolant and quotient for the following `witness::qr_side_descend` call; clients retain the matching split PCD, source members and intended side.
 Aux is prover-side working data, separate from the proof and header.
 
 Multiple parties execute the proof tree.

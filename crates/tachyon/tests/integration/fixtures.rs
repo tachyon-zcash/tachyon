@@ -649,7 +649,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
         .unwrap();
 
     let mut descend = |side: bool| {
-        let (selection, ()) = PROOF_SYSTEM
+        let (selection, hints) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
@@ -658,8 +658,12 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 Proof::bootstrap().carry::<()>(()),
             )
             .unwrap();
-        let descend_witness =
-            witness::qr_side_descend((*sides.data(), *selection.data()), &intake.members, side);
+        let descend_witness = witness::qr_side_descend(
+            (*sides.data(), *selection.data()),
+            &intake.members,
+            side,
+            hints,
+        );
         let members = intake
             .members
             .iter()
@@ -1159,11 +1163,14 @@ impl WalletSim {
             return pcd.clone();
         }
         let secret = self.secret_pcd(rng, note);
-        let mut members = Vec::new();
+        let mk = self.pak.nk.derive_note_private(note.psi);
+
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
-            let (leaf, (nullifiers,)) = PROOF_SYSTEM
+            let chunk_end =
+                EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
+            let (leaf, _) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::NullifierDerive,
@@ -1175,14 +1182,20 @@ impl WalletSim {
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {
+                    let left_nfs: Vec<Nullifier> = (base..u32::from(chunk_start))
+                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                        .collect();
+                    let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)..=u32::from(chunk_end))
+                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                        .collect();
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(
                             rng,
                             delegation::NullifierFuse,
                             witness::nullifier_fuse(
                                 (*left.data(), *leaf.data()),
-                                &members,
-                                &nullifiers,
+                                &left_nfs,
+                                &right_nfs,
                             ),
                             left,
                             leaf,
@@ -1191,7 +1204,6 @@ impl WalletSim {
                     fused
                 },
             });
-            members.extend(nullifiers);
         }
         let pcd = merged.unwrap();
 
