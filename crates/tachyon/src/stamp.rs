@@ -232,7 +232,10 @@ impl PointerStamp {
 impl<P: ProofType> StampState for ProofStamp<P> {
     fn stamp_digest(&self) -> [u8; 72] {
         let stamp_data_digest: [u8; 32] = {
-            #[expect(clippy::expect_used, reason = "a proved or decoded stamp proof is encodable")]
+            #[expect(
+                clippy::expect_used,
+                reason = "a proved or decoded stamp proof is encodable"
+            )]
             let proof = self.proof.to_bytes().expect("stamp proof is encodable");
             let anchor: [u8; 32] = self.anchor.0.to_bytes();
 
@@ -412,8 +415,12 @@ impl<P: ProofType> ProofStamp<P> {
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
         serialization::write_compactsize(
             &mut writer,
-            u64::try_from(self.tachygrams.len())
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "tachygram vector length exceeds u64"))?,
+            u64::try_from(self.tachygrams.len()).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygram vector length exceeds u64",
+                )
+            })?,
         )?;
         for &tg in &self.tachygrams {
             serialization::write_fp(&mut writer, &Fp::from(tg))?;
@@ -1374,7 +1381,7 @@ impl<P: ProofType> ProofStamp<P> {
         self.coverage
             == blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&desc_bytes),
-                    &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
+                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
             )
     }
 

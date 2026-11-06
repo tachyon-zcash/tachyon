@@ -29,8 +29,8 @@ use crate::{
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit,
-            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideSelect,
+            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::SpendableInit,
         stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction},
@@ -255,13 +255,11 @@ pub fn qr_intake_merge(
     left_tgs: &[Tachygram],
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeMerge> {
-    (
-        left_tgs
-            .iter()
-            .chain(right_tgs)
-            .copied()
-            .collect::<TachygramSetPoly>(),
-    )
+    (left_tgs
+        .iter()
+        .chain(right_tgs)
+        .copied()
+        .collect::<TachygramSetPoly>(),)
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
@@ -312,10 +310,7 @@ pub fn qr_side_select(
         discriminant.at(profile.depth),
     )
     .expect("members of a split are distinct");
-    (
-        interpolant.into(),
-        quotient.into(),
-    )
+    (interpolant.into(), quotient.into())
 }
 
 /// Prepare the witness for [`QrBucketSeal`]: `(anchor_final_prev)`.

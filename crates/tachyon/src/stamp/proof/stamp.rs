@@ -29,9 +29,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Eq, Fp, Fq},
-    primitives::{
-        ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect,
-    },
+    primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
@@ -141,8 +139,7 @@ impl Header<Fp> for Stamp {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                let (low, high) = poseidon::point_limbs(point);
-                *output = [low, high];
+                *output = poseidon::point_limbs(point).into();
             }
             Ok(limbs)
         })?;
@@ -205,7 +202,8 @@ impl Step<Pasta> for OutputAction {
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(7);
-    // O0/O1 carry action/tachygram sets; the derived action root is fixed before zeta.
+    // O0/O1 carry action/tachygram sets; the derived action root is fixed before
+    // zeta.
     const NUM_STAGED: usize = 1;
 
     fn staged(
@@ -345,7 +343,8 @@ impl Step<Pasta> for SpendAction {
     );
 
     const INDEX: Index = Index::new(9);
-    // O0/O1 carry action/tachygram sets; the derived action root is fixed before zeta.
+    // O0/O1 carry action/tachygram sets; the derived action root is fixed before
+    // zeta.
     const NUM_STAGED: usize = 1;
 
     fn staged(
@@ -461,7 +460,8 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared $\zeta$.
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
+/// $\zeta$.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -583,7 +583,8 @@ impl Step<Pasta> for StampMerge {
 
 /// Merges action content.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared $\zeta$.
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
+/// $\zeta$.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -700,7 +701,7 @@ impl Step<Pasta> for StampLift {
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        _: &Self::Witness<'_>,
+        &(): &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
@@ -780,7 +781,7 @@ impl Step<Pasta> for ActionLift {
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        _: &Self::Witness<'_>,
+        &(): &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
@@ -845,11 +846,7 @@ impl Step<Pasta> for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
-    type Witness<'source> = (
-        Note,
-        value::Positive,
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
 
     const INDEX: Index = Index::new(33);
     const NUM_STAGED: usize = 5;
@@ -862,8 +859,11 @@ impl Step<Pasta> for FeeFuse {
     ) -> ragu_core::Result<Vec<Fp>> {
         let (max_fee_note, fee, _) = *witness;
         Ok(alloc::vec![
-            Fp::from(u64::from(max_fee_note.value)), Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi), Fp::from(max_fee_note.rcm), Fp::from(u64::from(fee)),
+            Fp::from(u64::from(max_fee_note.value)),
+            Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi),
+            Fp::from(max_fee_note.rcm),
+            Fp::from(u64::from(fee)),
         ])
     }
 
@@ -879,10 +879,6 @@ impl Step<Pasta> for FeeFuse {
         Ok(polynomials)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "fee derivation and product relations stay together"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -906,11 +902,7 @@ impl Step<Pasta> for FeeFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
-            let (
-                max_fee_note,
-                fee,
-                (output_action_set, output_tachygram_set),
-            ) = witness.take();
+            let (max_fee_note, fee, (output_action_set, output_tachygram_set)) = witness.take();
             let left_anchor = left.take();
             let () = right.take();
 
@@ -959,9 +951,18 @@ impl Step<Pasta> for FeeFuse {
                 output_tachygram_set.commit(),
                 left_anchor,
             );
-            Ok((output, fee_digest, fee_change_commitment, [
-                Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm, Fp::from(u64::from(fee)),
-            ]))
+            Ok((
+                output,
+                fee_digest,
+                fee_change_commitment,
+                [
+                    Fp::from(u64::from(max_fee_note.value)),
+                    pk,
+                    psi,
+                    rcm,
+                    Fp::from(u64::from(fee)),
+                ],
+            ))
         })?;
 
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
@@ -969,8 +970,9 @@ impl Step<Pasta> for FeeFuse {
             let value = native.clone().map(|(_, _, _, fields)| fields[index]);
             Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _, _)| digest))?;
-        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, ..)| digest))?;
+        let fee_change =
+            Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
         let z = oracles.zeta().clone();
         for (column, root, err) in [
             (
@@ -1000,7 +1002,8 @@ impl Step<Pasta> for FeeFuse {
 
 /// Proves a zero-action bundle's zero fee.
 ///
-/// Opens O0/O1 singleton sets at $\zeta$, with fee-note fields staged before $\zeta$.
+/// Opens O0/O1 singleton sets at $\zeta$, with fee-note fields staged before
+/// $\zeta$.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1023,8 +1026,10 @@ impl Step<Pasta> for FeeSeed {
     ) -> ragu_core::Result<Vec<Fp>> {
         let &(max_fee_note, ..) = witness;
         Ok(alloc::vec![
-            Fp::from(u64::from(max_fee_note.value)), Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi), Fp::from(max_fee_note.rcm),
+            Fp::from(u64::from(max_fee_note.value)),
+            Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi),
+            Fp::from(max_fee_note.rcm),
         ])
     }
 
@@ -1096,14 +1101,19 @@ impl Step<Pasta> for FeeSeed {
                 "FeeSeed: fee change note commitment is zero",
             )?;
             let output = (fee_action_set.commit(), fee_tachygram_set.commit(), anchor);
-            Ok((output, fee_digest, fee_change_commitment, [Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm]))
+            Ok((
+                output,
+                fee_digest,
+                fee_change_commitment,
+                [Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm],
+            ))
         })?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 4")]
         for index in 0..Self::NUM_STAGED {
             let value = native.clone().map(|(_, _, _, fields)| fields[index]);
             Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _, _)| digest))?;
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, ..)| digest))?;
         enforce_poly_roots(
             dr,
             oracles,
@@ -1111,7 +1121,8 @@ impl Step<Pasta> for FeeSeed {
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
-        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
+        let fee_change =
+            Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
         enforce_poly_roots(
             dr,
             oracles,

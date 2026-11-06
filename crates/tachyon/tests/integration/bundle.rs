@@ -27,8 +27,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block,
-    random_block_with, shared_sk, stamp_coverage,
+    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block, random_block_with,
+    shared_sk, stamp_coverage,
 };
 
 #[test]
@@ -482,12 +482,18 @@ fn stamped_bundle_round_trips() {
     let mut bytes = Vec::new();
     compressed.write(&mut bytes).unwrap();
     let mut decoded = Bundle::<ProofStamp<CompressedProof<Pasta>>>::read(&*bytes).unwrap();
-    assert_eq!(TachyonBundle::read(&*bytes).unwrap(), TachyonBundle::from(compressed));
+    assert_eq!(
+        TachyonBundle::read(&*bytes).unwrap(),
+        TachyonBundle::from(compressed)
+    );
     let sighash = mock_sighash(decoded.commitment());
     let wtxid = mock_wtxid(&decoded).into();
     decoded.verify(rng, &sighash, &wtxid, &[]).unwrap();
     decoded.stamp.anchor = Anchor::random(rng);
-    assert_matches!(decoded.verify(rng, &sighash, &wtxid, &[]), Err(VerificationError::Disproved));
+    assert_matches!(
+        decoded.verify(rng, &sighash, &wtxid, &[]),
+        Err(VerificationError::Disproved)
+    );
 }
 
 #[test]

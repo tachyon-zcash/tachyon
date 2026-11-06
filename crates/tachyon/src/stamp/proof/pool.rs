@@ -35,7 +35,6 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
 
 use super::{
     delegation::NoteNullifiers,
@@ -418,7 +417,11 @@ impl Step<Pasta> for AnchorSpanFuse {
             Ok(((left_anchor_start, right_anchor_end), ()))
         })?;
         enforce_poly_product(
-            dr, oracles, &Slot::left(0), &Slot::right(0), &Slot::output(0),
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
         let (data, aux) = output.cast();
@@ -480,8 +483,10 @@ impl Step<Pasta> for UnspentFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let (left_anchor_start, left_epoch_start, left_epoch_next, left_anchor_next) = left.take();
-            let (right_anchor_start, right_epoch_start, right_epoch_next, right_anchor_next) = right.take();
+            let (left_anchor_start, left_epoch_start, left_epoch_next, left_anchor_next) =
+                left.take();
+            let (right_anchor_start, right_epoch_start, right_epoch_next, right_anchor_next) =
+                right.take();
             enforce_zero(
                 Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
                 "UnspentFuse: left.anchor_next must equal right.anchor_start",
@@ -490,7 +495,15 @@ impl Step<Pasta> for UnspentFuse {
                 Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
                 "UnspentFuse: halves do not meet at one epoch",
             )?;
-            Ok(((left_anchor_start, left_epoch_start, right_epoch_next, right_anchor_next), ()))
+            Ok((
+                (
+                    left_anchor_start,
+                    left_epoch_start,
+                    right_epoch_next,
+                    right_anchor_next,
+                ),
+                (),
+            ))
         })?;
         enforce_poly_product(
             dr,

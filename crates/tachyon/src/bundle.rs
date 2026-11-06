@@ -913,85 +913,87 @@ impl Bundle<Unproven> {
     /// action descriptors, the max fee note's value commitment, action sigs,
     /// binding sig and memo. The stamp trailer follows.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
-    let value_balance = {
-        let mut bytes = [0u8; size_of::<i64>()];
-        reader.read_exact(&mut bytes)?;
-        value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
-            io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
-        })
-    }?;
+        let value_balance = {
+            let mut bytes = [0u8; size_of::<i64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
+            })
+        }?;
 
-    // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
-    // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
-    // invalid data or EOF before significant problems occur.
-    // TODO: assert a reasonable maximum, to allow pre-allocation?
-    let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "actions vector length exceeds usize",
-            )
-        })?;
+        // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
+        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
+        // invalid data or EOF before significant problems occur.
+        // TODO: assert a reasonable maximum, to allow pre-allocation?
+        let n_actions =
+            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "actions vector length exceeds usize",
+                )
+            })?;
 
-    if n_actions == 0 && value_balance != value::Balance::ZERO {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "bundle with no actions must have zero value balance",
-        ));
-    }
-
-    let mut descriptors: Vec<action::Descriptor> = Vec::new();
-    for _ in 0..n_actions {
-        descriptors.push(action::Descriptor::read(&mut reader)?);
-    }
-
-    let fee_max_commitment = {
-        let point = serialization::read_ep_affine(&mut reader)?;
-        if point.is_identity() {
+        if n_actions == 0 && value_balance != value::Balance::ZERO {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "fee commitment is the identity",
+                "bundle with no actions must have zero value balance",
             ));
         }
-        value::Commitment::from(point)
-    };
 
-    let mut signatures: Vec<action::Signature> = Vec::new();
-    for _ in 0..n_actions {
-        signatures.push(action::Signature::read(&mut reader)?);
+        let mut descriptors: Vec<action::Descriptor> = Vec::new();
+        for _ in 0..n_actions {
+            descriptors.push(action::Descriptor::read(&mut reader)?);
+        }
+
+        let fee_max_commitment = {
+            let point = serialization::read_ep_affine(&mut reader)?;
+            if point.is_identity() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "fee commitment is the identity",
+                ));
+            }
+            value::Commitment::from(point)
+        };
+
+        let mut signatures: Vec<action::Signature> = Vec::new();
+        for _ in 0..n_actions {
+            signatures.push(action::Signature::read(&mut reader)?);
+        }
+
+        let actions: Vec<Action> = descriptors
+            .into_iter()
+            .zip(signatures)
+            .map(Action::from)
+            .collect();
+
+        let binding_sig = Signature::read(&mut reader)?;
+
+        // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
+        // not pre-allocate, on the same reasoning as `n_actions` above.
+        let n_memo =
+            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize")
+            })?;
+
+        let mut memo: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 64];
+        #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
+        while memo.len() < n_memo {
+            let take = (n_memo - memo.len()).min(chunk.len());
+            reader.read_exact(&mut chunk[..take])?;
+            memo.extend_from_slice(&chunk[..take]);
+        }
+
+        Ok(Self {
+            value_balance,
+            actions,
+            fee_max_commitment,
+            binding_sig,
+            memo,
+            stamp: Unproven,
+        })
     }
-
-    let actions: Vec<Action> = descriptors
-        .into_iter()
-        .zip(signatures)
-        .map(Action::from)
-        .collect();
-
-    let binding_sig = Signature::read(&mut reader)?;
-
-    // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
-    // not pre-allocate, on the same reasoning as `n_actions` above.
-    let n_memo = usize::try_from(serialization::read_compactsize(&mut reader)?)
-        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize"))?;
-
-    let mut memo: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; 64];
-    #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
-    while memo.len() < n_memo {
-        let take = (n_memo - memo.len()).min(chunk.len());
-        reader.read_exact(&mut chunk[..take])?;
-        memo.extend_from_slice(&chunk[..take]);
-    }
-
-    Ok(Self {
-        value_balance,
-        actions,
-        fee_max_commitment,
-        binding_sig,
-        memo,
-        stamp: Unproven,
-    })
-}
 }
 
 impl<S: StampState> Bundle<S> {

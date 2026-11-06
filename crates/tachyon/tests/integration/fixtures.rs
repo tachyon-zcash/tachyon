@@ -672,13 +672,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             })
             .collect::<Vec<_>>();
         let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSideDescend,
-                (side,),
-                sides.clone(),
-                selection,
-            )
+            .fuse(rng, qr::QrSideDescend, (side,), sides.clone(), selection)
             .unwrap();
         QrIntakeEntry { pcd, members }
     };
@@ -1011,8 +1005,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
-    let witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into());
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into());
     let (segment, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1357,13 +1350,7 @@ impl WalletSim {
         let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| mk.derive_nullifier(epoch));
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (spendable, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                spendable::QrSpendableInit,
-                (),
-                unspent,
-                bucket.pcd,
-            )
+            .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
             .unwrap();
         self.lift_to_epoch(rng, pool, note, spendable, target)
     }
