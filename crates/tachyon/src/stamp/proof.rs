@@ -72,24 +72,25 @@ fn enforce_slot(
 
 /// Application-wide encoded header width, including one suffix element.
 ///
-/// | Header | Scalars | Pallas points | Host commitments | Payload |
-/// | --- | ---: | ---: | ---: | ---: |
-/// | unit | 0 | 0 | 0 | 0 |
-/// | NoteSecret | 6 | 0 | 0 | 6 |
-/// | NoteNullifiers | 3 | 0 | 0 | 3 |
-/// | ArbitraryUnspent | 4 | 0 | 0 | 4 |
-/// | NoteUnspent | 5 | 0 | 0 | 5 |
-/// | NoteSpendable | 3 | 0 | 0 | 3 |
-/// | SpendHeader | 5 | 1 | 0 | 7 |
-/// | OutputHeader | 2 | 1 | 0 | 4 |
-/// | Actions | 1 | 0 | 0 | 1 |
-/// | Stamp | 1 | 0 | 2 | 5 |
-/// | Summary | 3 | 0 | 0 | 3 |
-/// | QrIntake / QrBucket | 6 | 0 | 0 | 6 |
-/// | QrIntakeSides / QrSideSelection | 8 | 0 | 0 | 8 |
-/// | EvidenceTree | 5 | 0 | 0 | 5 |
-/// | EvidenceTreePair | 6 | 0 | 0 | 6 |
-/// | AnchorSpan | 2 | 0 | 0 | 2 |
+/// | Header           | Scalars | Points | Commitments  | Payload |
+/// | ---------------- | ------: | -----: | -----------: | ------: |
+/// | NoteSecret       | 6       | 0      | 0            | 6       |
+/// | NoteNullifiers   | 3       | 0      | 0            | 3       |
+/// | ArbitraryUnspent | 4       | 0      | 0            | 4       |
+/// | NoteUnspent      | 5       | 0      | 0            | 5       |
+/// | NoteSpendable    | 3       | 0      | 0            | 3       |
+/// | SpendHeader      | 5       | 1      | 0            | 7       |
+/// | OutputHeader     | 2       | 1      | 0            | 4       |
+/// | Actions          | 1       | 0      | 0            | 1       |
+/// | Stamp            | 1       | 0      | 2            | 5       |
+/// | Summary          | 3       | 0      | 0            | 3       |
+/// | QrIntake         | 6       | 0      | 0            | 6       |
+/// | QrBucket         | 6       | 0      | 0            | 6       |
+/// | QrIntakeSides    | 8       | 0      | 0            | 8       |
+/// | QrSideSelection  | 8       | 0      | 0            | 8       |
+/// | EvidenceTree     | 5       | 0      | 0            | 5       |
+/// | EvidenceTreePair | 6       | 0      | 0            | 6       |
+/// | AnchorSpan       | 2       | 0      | 0            | 2       |
 ///
 /// Points write two coordinates; commitments write two compressed limbs.
 /// Other headers' polynomials live in their slots, not on the header.
