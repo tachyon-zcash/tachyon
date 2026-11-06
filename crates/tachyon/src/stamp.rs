@@ -766,7 +766,7 @@ impl ProofStamp {
         let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
-        let (pcd, digest) = PROOF_SYSTEM
+        let (pcd, (digest,)) = PROOF_SYSTEM
             .fuse(
                 rng,
                 OutputAction,
@@ -825,7 +825,7 @@ impl ProofStamp {
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
-        let (pcd, digest) = PROOF_SYSTEM
+        let (pcd, (digest,)) = PROOF_SYSTEM
             .fuse(
                 rng,
                 SpendAction,

@@ -1167,7 +1167,7 @@ impl WalletSim {
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for index in 0..windows {
             let chunk_start = EpochIndex::new(base + index * NF_DERIVATION_WIDTH as u32);
-            let (leaf, window) = PROOF_SYSTEM
+            let (leaf, (window,)) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::NullifierDerive,

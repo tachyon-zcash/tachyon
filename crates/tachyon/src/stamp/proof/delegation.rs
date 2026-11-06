@@ -181,7 +181,8 @@ impl Step for NoteSeed {
 pub struct NullifierDerive;
 
 impl Step for NullifierDerive {
-    type Aux<'source> = [nullifier::Nullifier; NF_DERIVATION_WIDTH];
+    /// `(nullifiers)`
+    type Aux<'source> = ([nullifier::Nullifier; NF_DERIVATION_WIDTH],);
     type Left = NoteSecret;
     type Output = NoteNullifiers;
     type Right = ();
@@ -246,7 +247,7 @@ impl Step for NullifierDerive {
             "NullifierDerive: sequence does not match the derived window",
         )?;
 
-        Ok(((cm, epoch_start, seq.commit(), epoch_end), nullifiers))
+        Ok(((cm, epoch_start, seq.commit(), epoch_end), (nullifiers,)))
     }
 }
 

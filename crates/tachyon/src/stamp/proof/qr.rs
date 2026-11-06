@@ -433,6 +433,7 @@ impl Step for QrIntakeSplit {
 pub struct QrSideSelect;
 
 impl Step for QrSideSelect {
+    /// `(interpolant, quotient)`
     type Aux<'source> = (QrInterpolantPoly, QrQuotientPoly);
     type Left = QrIntakeSides;
     type Output = QrSideSelection;

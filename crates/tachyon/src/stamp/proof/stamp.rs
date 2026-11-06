@@ -106,7 +106,8 @@ impl Header for Stamp {
 pub struct OutputAction;
 
 impl Step for OutputAction {
-    type Aux<'source> = ActionDigest;
+    /// `(action_digest)`
+    type Aux<'source> = (ActionDigest,);
     type Left = OutputHeader;
     type Output = Actions;
     type Right = ();
@@ -156,7 +157,7 @@ impl Step for OutputAction {
 
         Ok((
             (action_set.commit(), tachygram_set.commit(), anchor),
-            action_digest,
+            (action_digest,),
         ))
     }
 }
@@ -182,7 +183,8 @@ impl Step for OutputAction {
 pub struct SpendAction;
 
 impl Step for SpendAction {
-    type Aux<'source> = ActionDigest;
+    /// `(action_digest)`
+    type Aux<'source> = (ActionDigest,);
     type Left = SpendHeader;
     type Output = Actions;
     type Right = ();
@@ -241,7 +243,7 @@ impl Step for SpendAction {
 
         Ok((
             (action_set.commit(), tachygram_set.commit(), anchor),
-            action_digest,
+            (action_digest,),
         ))
     }
 }
@@ -528,6 +530,7 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
+    /// `(fee, fee_change_commitment)`
     type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = Actions;
     type Output = Stamp;
@@ -662,6 +665,7 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
+    /// `(fee, fee_change_commitment)`
     type Aux<'source> = (fee::Descriptor, note::Commitment);
     type Left = ();
     type Output = Stamp;
