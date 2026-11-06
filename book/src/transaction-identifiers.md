@@ -43,7 +43,7 @@ $$
 \bigr)
 $$
 
-with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. Hashing the proof separately keeps the tachygram vector as the only variable-length input.
+with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$, over the encoded proof bytes without their compactsize length prefix. Hashing the proof separately keeps the tachygram vector as the only variable-length input to the stamp-data digest.
 
 A stripped bundle's summary is the fee and the 64-byte `wtxid` of the covering aggregate. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 

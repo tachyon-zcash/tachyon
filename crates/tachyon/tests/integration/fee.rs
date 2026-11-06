@@ -8,7 +8,7 @@ use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
-        ProofStamp,
+        ProofStamp, Proof,
         proof::{
             PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
@@ -47,7 +47,7 @@ fn fee_less_output_bundle(
         anchor,
         tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
         tachygrams: BTreeSet::from([cm, pad]),
-        proof: Box::new(pcd.proof().clone()),
+        proof: Proof::Full(Box::new(pcd.proof().clone())),
         fee: value::Positive::ZERO,
     };
 
@@ -152,7 +152,7 @@ fn fee_fuse_binds_its_sets() {
                     rng,
                     FeeFuse,
                     corrupt,
-                    left.stamp.proof.clone().carry::<Actions>(anchor),
+                    left.stamp.proof.clone().into_full().unwrap().carry::<Actions>(anchor),
                     PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
@@ -204,7 +204,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
                 rng,
                 FeeFuse,
                 repeated_witness.clone(),
-                once.stamp.proof.clone().carry::<Actions>(anchor),
+                once.stamp.proof.clone().into_full().unwrap().carry::<Actions>(anchor),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),

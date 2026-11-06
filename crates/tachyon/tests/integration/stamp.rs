@@ -326,7 +326,7 @@ fn overlapping_stamps_cannot_aggregate() {
                 .collect::<TachygramSetPoly>()
                 .commit(),
             tachygrams,
-            proof: Box::new(forged.proof().clone()),
+            proof: stamp::Proof::Full(Box::new(forged.proof().clone())),
             fee: left.fee,
         };
         let digests: Vec<ActionDigest> = descriptors

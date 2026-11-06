@@ -143,14 +143,13 @@ See [Aggregation](./aggregation.md) for transaction categories, block layout, an
 
 ## Wire Format
 
-The first byte `tachyonBundleState` selects one of four bundle states:
+The first byte `tachyonBundleState` selects one of three bundle states:
 
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
 | `0b0000_0001` | stamped | bundle with `hStampCoverageTachyon`, anchor, tachygrams, proof |
 | `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
-| `0b0000_0011` | compressed | bundle with `hStampCoverageTachyon`, anchor, tachygrams, compressed proof |
 
 ### Bundle body
 
@@ -185,7 +184,8 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
 | `nTachygrams` | compactsize | number of tachygrams |
 | `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
-| `proofTachyon` | PROOF_SIZE blob | serialized proof of fixed size |
+| `sizeProofTachyon` | compactsize | encoded proof length in bytes |
+| `proofTachyon` | sizeProofTachyon bytes | full or compressed Ragu proof |
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
@@ -209,11 +209,9 @@ $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
-The proof keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged.
+Ragu's proof envelope identifies whether `proofTachyon` is full or compressed; both forms use `tachyonBundleState == 0x01`. The reader takes exactly `sizeProofTachyon` bytes and decodes them through Ragu's public proof API. A full proof keeps its polynomials, so a decoded stamp can be lifted, merged and unmerged. A compressed proof verifies but cannot be lifted, merged or unmerged. Compression changes the proof field without changing the bundle state.
 
-### Compressed trailer
-
-When `tachyonBundleState == 0x03`, the bundle body is followed by the stamp trailer with `proofTachyon` replaced by a compressed proof of a smaller fixed size. A compressed proof verifies like the full one but cannot be lifted, merged or unmerged. Blocks carry compressed trailers; transactions relayed before the block carry stamp trailers.
+The stamp digest hashes the encoded proof bytes, excluding `sizeProofTachyon`. The length prefix is determined by those bytes and does not change the digest definition.
 
 ### Stripped trailer
 
