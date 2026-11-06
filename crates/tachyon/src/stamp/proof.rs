@@ -35,9 +35,9 @@ use ragu::{Application, ApplicationBuilder};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, FixedGenerators as _, drivers::Driver, pasta::Pasta};
 use ragu_primitives::Element;
-use udon::field::Field as _;
+use udon::{curve::Affine as _, field::Field as _};
 
-use crate::{constants::EPOCH_MAX, digest::poseidon, pasta, relations::arithmetic::bounded};
+use crate::{constants::EPOCH_MAX, pasta, relations::arithmetic::bounded};
 
 /// Application proof with the production polynomial rank.
 pub type Proof = ragu::Proof<Pasta, ProductionRank>;
@@ -68,7 +68,12 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
         .g()
         .first()
         .ok_or_else(|| ragu_core::Error::InvalidWitness("fixed generator table is empty".into()))?;
-    let (low, high) = poseidon::bridge_hash(generator);
+    let (low, high) = PROOF_SYSTEM
+        .bridge_hash(generator)?
+        .coordinates()
+        .ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("bridge hash must not be the identity point".into())
+        })?;
     let low_element = Element::constant(dr, low);
     let high_element = Element::constant(dr, high);
     let equal_low = bridge_hash[0].is_equal(dr, &mut (), &low_element)?;

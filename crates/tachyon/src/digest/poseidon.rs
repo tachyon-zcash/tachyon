@@ -253,23 +253,6 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     .map(|element| *element.value().take())
 }
 
-/// Native double commitment using the application's bridge-hash construction.
-///
-/// # Panics
-///
-/// Panics if `point` is the identity.
-#[expect(
-    clippy::expect_used,
-    reason = "nonidentity commitment has a bridge hash"
-)]
-pub(crate) fn bridge_hash(point: EqAffine) -> (Fp, Fp) {
-    PROOF_SYSTEM
-        .bridge_hash(point)
-        .expect("nonidentity commitment has a bridge hash")
-        .coordinates()
-        .expect("bridge hash must not be the identity point")
-}
-
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
 /// Advances the anchor by absorbing one stamp's epoch and tachygram-set
@@ -279,8 +262,16 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 ///
 /// Panics if `tgs` is the identity point.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "nonidentity commitment has a bridge hash"
+)]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = bridge_hash(tgs);
+    let (bridge_hash_x, bridge_hash_y) = PROOF_SYSTEM
+        .bridge_hash(tgs)
+        .expect("nonidentity commitment has a bridge hash")
+        .coordinates()
+        .expect("bridge hash must not be the identity point");
     *emulate(|driver| {
         let anchor_element = Element::constant(driver, anchor_prev);
         let epoch_element = Element::constant(driver, epoch);
@@ -303,6 +294,10 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 ///
 /// Panics if `contents` is the identity point.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "nonidentity commitment has a bridge hash"
+)]
 pub fn evidence_tree_leaf(
     epoch: Fp,
     anchor_start: Fp,
@@ -312,7 +307,11 @@ pub fn evidence_tree_leaf(
     bits: Fp,
     contents: EqAffine,
 ) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = bridge_hash(contents);
+    let (bridge_hash_x, bridge_hash_y) = PROOF_SYSTEM
+        .bridge_hash(contents)
+        .expect("nonidentity commitment has a bridge hash")
+        .coordinates()
+        .expect("bridge hash must not be the identity point");
     *emulate(|driver| {
         let epoch_element = Element::constant(driver, epoch);
         let start_element = Element::constant(driver, anchor_start);
