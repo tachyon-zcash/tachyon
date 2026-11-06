@@ -22,6 +22,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use udon::field::Field as _;
 
 use crate::{
     pasta::Fp,
@@ -113,9 +114,10 @@ impl Step<Pasta> for SummarySeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.2.as_ref());
-        Ok(polynomials)
+        Ok([
+            witness.2.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -176,8 +178,8 @@ impl Step<Pasta> for SummaryAdvance {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
-            super::coefficients(witness.0.as_ref()),
-            super::coefficients(witness.1.as_ref()),
+            witness.0.as_ref().iter_coeffs().collect(),
+            witness.1.as_ref().iter_coeffs().collect(),
         ])
     }
 

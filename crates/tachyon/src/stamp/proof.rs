@@ -15,9 +15,6 @@
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
 
-extern crate alloc;
-use core::array;
-
 pub mod delegation;
 pub mod evidence;
 pub mod output;
@@ -28,31 +25,12 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-use alloc::vec::Vec;
-
 use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder};
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
-use udon::field::Field as _;
 
 use crate::pasta;
-
-/// Prover-side conversion to ascending-degree coefficients.
-fn coefficients(poly: &Polynomial<pasta::Fp, ProductionRank>) -> Vec<pasta::Fp> {
-    let mut coefficients = poly.iter_coeffs().collect::<Vec<_>>();
-    coefficients.truncate(
-        coefficients
-            .iter()
-            .rposition(|coefficient| *coefficient != pasta::Fp::ZERO)
-            .map_or(1, |index| index + 1),
-    );
-    coefficients
-}
-
-fn unit_polynomials() -> [Vec<pasta::Fp>; 2] {
-    array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
-}
 
 /// Application-wide encoded header width, including one suffix element.
 ///
