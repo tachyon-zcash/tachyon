@@ -495,20 +495,24 @@ fn qr_side_select_defers_hint_validation_to_descent() {
         )
         .unwrap();
 
-    for side in [false, true] {
-        let (non_residue, interpolant, quotient) =
-            witness::qr_side_select((*sides.data(), ()), &members, !side);
+    {
+        let (_, interpolant, quotient) =
+            witness::qr_side_select((*sides.data(), ()), &members, true);
         assert_matches!(
             PROOF_SYSTEM.fuse(
                 rng,
                 qr::QrSideSelect,
-                (members.iter().copied().collect(), interpolant.clone(), quotient.clone()),
+                (members.iter().copied().collect(), interpolant, quotient),
                 sides.clone(),
                 Proof::bootstrap().carry::<()>(()),
             ).err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == "QrSideSelect: non-residue contents do not match header"
         );
+    }
+    for side in [false, true] {
+        let (non_residue, interpolant, quotient) =
+            witness::qr_side_select((*sides.data(), ()), &members, !side);
         let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
