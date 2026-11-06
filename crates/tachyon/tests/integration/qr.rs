@@ -140,7 +140,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
                 .unwrap(),
             discriminant,
             QrProfile::ROOT,
-            [hash_x, hash_y],
+            (hash_x, hash_y).into(),
         )
     );
     assert_eq!(
