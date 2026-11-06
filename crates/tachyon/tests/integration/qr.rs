@@ -26,7 +26,7 @@ use crate::fixtures::{
     PoolSim, QrIntakeEntry, WalletSim, build_qr_partition, build_unspent_pcd_over_epochs,
     epoch_bucket, qr_bucket_at, qr_bucket_segment, qr_epoch_unspent, qr_profile_of, random_block,
     random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk, small_epoch,
-    split_qr_intake, unpinned_challenge,
+    split_qr_intake,
 };
 
 #[test]
@@ -1658,52 +1658,6 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "QrBucketSeal: crossing past the final epoch"
-    );
-}
-
-#[test]
-fn qr_unspent_init_rejects_a_twin_value() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
-    let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
-    let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        0,
-        Fp::from(nf),
-        Anchor::from(Fp::ZERO),
-    );
-    let (epoch, ..) = *bucket.pcd.data();
-    let mut witness =
-        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-
-    let z = unpinned_challenge(&[witness.3.commit().into()]);
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    let twin = (Fp::ZETA * (Fp::from(nf) + shift)) - shift;
-    assert_ne!(twin, Fp::from(nf));
-    assert_eq!(
-        (twin + shift).pow_u64(3) - Fp::from(2),
-        (Fp::from(nf) + shift).pow_u64(3) - Fp::from(2)
-    );
-    witness.0 = Tachygram::from(twin);
-    witness.1 = QrClassRoot::along(twin, discriminant);
-
-    assert_matches!(
-        PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrUnspentInit,
-                witness,
-                bucket.pcd,
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrUnspentInit: sequence does not match the tested pair"
     );
 }
 

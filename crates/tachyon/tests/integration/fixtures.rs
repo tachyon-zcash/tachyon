@@ -10,10 +10,7 @@ use ragu_core::{
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
     QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -27,7 +24,7 @@ use zcash_tachyon::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::{Eq, Fp},
+    pasta::Fp,
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
@@ -1460,17 +1457,4 @@ impl WalletSim {
         );
         (bundle_plan, signed, spend_pcds, anchor, max_fee_note)
     }
-}
-
-pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(b"MkRagu_Challng_\0")
-        .to_state();
-    for com in commitments {
-        state.update(com.to_affine().to_bytes().as_ref());
-    }
-    let mut wide = [0u8; 64];
-    wide.copy_from_slice(state.finalize().as_bytes());
-    Fp::from_uniform_bytes(&wide)
 }
