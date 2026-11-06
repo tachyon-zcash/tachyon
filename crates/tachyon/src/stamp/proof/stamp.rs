@@ -15,7 +15,10 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -125,7 +128,24 @@ impl Header<Fp> for Stamp {
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         let commitments = D::try_just(|| {
             let (action_commit, stamp_tg_commit, _) = witness.clone().take();
-            Ok([action_commit.to_limbs()?, stamp_tg_commit.to_limbs()?])
+            let mut encoded = [[Fp::ZERO; 2]; 2];
+            for (limbs, commitment) in encoded
+                .iter_mut()
+                .zip([Eq::from(action_commit), Eq::from(stamp_tg_commit)])
+            {
+                let point = commitment.to_affine();
+                if point.is_identity() {
+                    return Err(ragu_core::Error::InvalidWitness(
+                        "cannot encode the identity commitment".into(),
+                    ));
+                }
+                let bytes = point.to_bytes();
+                let (chunks, _) = bytes.as_chunks::<16>();
+                for (limb, chunk) in limbs.iter_mut().zip(chunks) {
+                    *limb = Fp::from_u128(u128::from_le_bytes(*chunk));
+                }
+            }
+            Ok(encoded)
         })?;
         Ok(StampOutput {
             anchor: Element::alloc(
