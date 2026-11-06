@@ -68,6 +68,15 @@ pub struct QrInterpolantCommit(Eq);
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
+/// Owned hints for a QR class decomposition.
+#[derive(Debug)]
+pub struct QrDecomposition {
+    /// The class interpolant.
+    pub interpolant: QrInterpolantPoly,
+    /// The class quotient.
+    pub quotient: QrQuotientPoly,
+}
+
 impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]

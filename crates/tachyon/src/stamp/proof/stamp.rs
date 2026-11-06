@@ -13,6 +13,7 @@ use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
+    fee,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{Ep, EpAffine, Eq, Fp, Fq},
@@ -105,7 +106,7 @@ impl Header for Stamp {
 pub struct OutputAction;
 
 impl Step for OutputAction {
-    type Aux<'source> = ();
+    type Aux<'source> = ActionDigest;
     type Left = OutputHeader;
     type Output = Actions;
     type Right = ();
@@ -153,7 +154,10 @@ impl Step for OutputAction {
             "OutputAction: tachygram set does not commit to the bound pair",
         )?;
 
-        Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
+        Ok((
+            (action_set.commit(), tachygram_set.commit(), anchor),
+            action_digest,
+        ))
     }
 }
 
@@ -178,7 +182,7 @@ impl Step for OutputAction {
 pub struct SpendAction;
 
 impl Step for SpendAction {
-    type Aux<'source> = ();
+    type Aux<'source> = ActionDigest;
     type Left = SpendHeader;
     type Output = Actions;
     type Right = ();
@@ -235,7 +239,10 @@ impl Step for SpendAction {
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
 
-        Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
+        Ok((
+            (action_set.commit(), tachygram_set.commit(), anchor),
+            action_digest,
+        ))
     }
 }
 
@@ -521,7 +528,7 @@ impl Step for ActionLift {
 pub struct FeeFuse;
 
 impl Step for FeeFuse {
-    type Aux<'source> = ();
+    type Aux<'source> = fee::AppliedFee;
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
@@ -639,7 +646,13 @@ impl Step for FeeFuse {
                 output_tachygram_set.commit(),
                 left_anchor,
             ),
-            (),
+            fee::AppliedFee {
+                descriptor: fee::Descriptor {
+                    max_commitment: cv_max_fee,
+                    value: fee,
+                },
+                change_commitment: note::Commitment::from(fee_change_commitment),
+            },
         ))
     }
 }
@@ -649,7 +662,7 @@ impl Step for FeeFuse {
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
-    type Aux<'source> = ();
+    type Aux<'source> = fee::AppliedFee;
     type Left = ();
     type Output = Stamp;
     type Right = ();
@@ -714,7 +727,13 @@ impl Step for FeeSeed {
 
         Ok((
             (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
-            (),
+            fee::AppliedFee {
+                descriptor: fee::Descriptor {
+                    max_commitment: cv_max_fee,
+                    value: value::Positive::ZERO,
+                },
+                change_commitment: note::Commitment::from(fee_change_commitment),
+            },
         ))
     }
 }

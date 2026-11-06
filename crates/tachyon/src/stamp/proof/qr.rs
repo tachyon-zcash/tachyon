@@ -433,7 +433,7 @@ impl Step for QrIntakeSplit {
 pub struct QrSideSelect;
 
 impl Step for QrSideSelect {
-    type Aux<'source> = ();
+    type Aux<'source> = crate::QrDecomposition;
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
@@ -466,7 +466,13 @@ impl Step for QrSideSelect {
             non_residue_at_exceptional,
             "QrSideSelect: exceptional value claimed the non-residue class",
         )?;
-        Ok(((left, interpolant.commit(), quotient.commit()), ()))
+        Ok((
+            (left, interpolant.commit(), quotient.commit()),
+            crate::QrDecomposition {
+                interpolant,
+                quotient,
+            },
+        ))
     }
 }
 

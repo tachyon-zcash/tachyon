@@ -7,15 +7,18 @@ use ragu::{Pcd, Proof};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetPoly, action,
+    ActionDigestError, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
+    Note, Tachygram, TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
-    stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
+    stamp::{
+        Plan, ProveError,
+        proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
+    },
     value, witness,
 };
 
@@ -365,7 +368,7 @@ fn spend_rejects_invalid_note() {
             .fuse(
                 rng,
                 stamp::SpendAction,
-                witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
+                witness::spend_action((*bind_pcd.data(), ()), theta, other.pak).unwrap(),
                 bind_pcd,
                 Proof::bootstrap().carry::<()>(()),
             )
@@ -396,7 +399,7 @@ fn step_accepts_zero_value_note() {
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor).unwrap(),
             bind_pcd,
             Proof::bootstrap().carry::<()>(()),
         )
@@ -411,11 +414,62 @@ fn step_accepts_zero_value_note() {
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
+            witness::spend_action((*spend_bind.data(), ()), theta, user.pak).unwrap(),
             spend_bind,
             Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
+}
+
+#[test]
+fn action_witness_builders_return_identity_errors() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(0);
+    let theta = ActionEntropy::random(rng);
+    let anchor = Anchor::random(rng);
+    let cv = value::Trapdoor::ZERO.commit(note.value);
+    let cm = note.commitment();
+    assert_matches!(
+        witness::output_action(((cm.into(), Tachygram::random(rng), cv), ()), theta, anchor),
+        Err(ActionDigestError::IdentityCv)
+    );
+    let mk = user.pak.nk.derive_note_private(note.psi);
+    assert_matches!(
+        witness::spend_action(
+            (
+                (
+                    cm,
+                    mk.derive_nullifier(EpochIndex::new(0)),
+                    mk.derive_nullifier(EpochIndex::new(1)),
+                    anchor,
+                    note.pk,
+                    cv
+                ),
+                ()
+            ),
+            theta,
+            user.pak,
+        ),
+        Err(ActionDigestError::IdentityCv)
+    );
+    let plan = Plan::new(
+        vec![],
+        vec![(
+            action::Plan::output(note, theta, value::Trapdoor::ZERO).descriptor(),
+            theta,
+            note,
+            value::Trapdoor::ZERO,
+        )],
+        anchor,
+        user.random_note(0),
+        value::Positive::ZERO,
+    );
+    assert_matches!(
+        plan.prove(rng, &user.pak, vec![]),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+            if err.to_string() == "point at infinity cannot be witnessed"
+    );
 }
 
 #[test]
@@ -436,9 +490,10 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
         .unwrap();
     let (.., action_set, tachygram_set) =
-        witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
+        witness::spend_action((*bind_pcd.data(), ()), theta, user.pak).unwrap();
     let (.., foreign_action_set, _) =
-        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
+        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak)
+            .unwrap();
 
     for (action_witness, expected) in [
         (
@@ -469,11 +524,11 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         );
     }
 
-    let (pcd, ()) = PROOF_SYSTEM
+    let (pcd, _) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
+            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak).unwrap(),
             bind_pcd,
             Proof::bootstrap().carry::<()>(()),
         )
@@ -949,9 +1004,9 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         )
     );
     let (.., action_set, tachygram_set) =
-        witness::output_action((*bind_pcd.data(), ()), theta, anchor);
+        witness::output_action((*bind_pcd.data(), ()), theta, anchor).unwrap();
     let (.., foreign_action_set, _) =
-        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
+        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor).unwrap();
 
     for (action_witness, expected) in [
         (
@@ -982,11 +1037,11 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         );
     }
 
-    let (pcd, ()) = PROOF_SYSTEM
+    let (pcd, _) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor).unwrap(),
             bind_pcd,
             Proof::bootstrap().carry::<()>(()),
         )
