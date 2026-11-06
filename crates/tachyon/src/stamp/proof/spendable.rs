@@ -208,30 +208,15 @@ impl Step<Pasta> for QrSpendableInit {
     type Left = NoteUnspent;
     type Output = NoteSpendable;
     type Right = QrBucket;
-    /// `(contents)`
-    type Witness<'source> = (TachygramSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(22);
-
-    fn polynomials(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.0.as_ref(),
-            "QrSpendableInit: contents do not match the bucket",
-        )?;
-        Ok(super::unit_polynomials())
-    }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -250,7 +235,6 @@ impl Step<Pasta> for QrSpendableInit {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
-            let (contents,) = witness.take();
             let (
                 cm,
                 unspent_anchor_start,
@@ -279,19 +263,16 @@ impl Step<Pasta> for QrSpendableInit {
                 Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
                 "QrSpendableInit: segment does not end in the epoch after the bucket's",
             )?;
-            Ok((contents, cm, bucket_epoch_next, unspent_anchor_next))
+            Ok((cm, bucket_epoch_next, unspent_anchor_next))
         })?;
-        let x = Element::alloc(dr, &mut (), native.clone().map(|(_, cm, ..)| Fp::from(cm)))?;
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, ..)| Fp::from(cm)))?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let evaluation = oracles.query(dr, Slot::right(0), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
         })?;
-        let output = native.map(|(_, cm, bucket_epoch_next, unspent_anchor_next)| {
-            (cm, bucket_epoch_next, unspent_anchor_next)
-        });
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), native.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), native, D::unit()))
     }
 }
 

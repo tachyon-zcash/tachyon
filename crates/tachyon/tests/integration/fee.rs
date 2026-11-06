@@ -100,23 +100,7 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.2.0 = valid.3.0.clone();
-                corrupt
-            },
-            "FeeFuse: left action set does not match the left slot",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2.1 = valid.3.1.clone();
-                corrupt
-            },
-            "FeeFuse: left tachygram set does not match the left slot",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.3.0 = other.3.0.clone();
+                corrupt.2.0 = other.2.0.clone();
                 corrupt
             },
             "FeeFuse: output action set must be the product of left and fee action sets",
@@ -124,26 +108,10 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.3.1 = other.3.1.clone();
+                corrupt.2.1 = other.2.1.clone();
                 corrupt
             },
             "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.4.0 = other.4.0.clone();
-                corrupt
-            },
-            "FeeFuse: fee action set does not commit to the fee digest",
-        ),
-        (
-            {
-                let mut corrupt = valid;
-                corrupt.4.1 = other.4.1;
-                corrupt
-            },
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
         assert_matches!(
@@ -211,7 +179,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         Some(ragu_core::Error::InvalidWitness(_))
     );
     let mut twice_stamp = once.stamp.clone();
-    twice_stamp.tachygram_set = repeated_witness.3.1.commit();
+    twice_stamp.tachygram_set = repeated_witness.2.1.commit();
     twice_stamp
         .tachygrams
         .insert(max_fee_note.commitment().into());

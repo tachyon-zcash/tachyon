@@ -164,25 +164,20 @@ impl Step<Pasta> for SummaryAdvance {
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    /// `(acc, extended, stamp)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
+    /// `(extended, stamp)`
+    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(14);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "SummaryAdvance: accumulator does not match the left slot",
-        )?;
         Ok([
+            super::coefficients(witness.0.as_ref()),
             super::coefficients(witness.1.as_ref()),
-            super::coefficients(witness.2.as_ref()),
         ])
     }
 
@@ -217,7 +212,7 @@ impl Step<Pasta> for SummaryAdvance {
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
         let output = D::try_just(|| {
-            let (_, _, stamp) = witness.take();
+            let (_, stamp) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
             let anchor_end = summary_anchor_end

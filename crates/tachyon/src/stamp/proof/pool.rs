@@ -42,11 +42,12 @@ use super::{
     qr::{QrBucket, enforce_value_profile},
 };
 use crate::{
+    collections::indexed_multiset,
     note::{self},
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetCommit, TachygramSetPoly,
+        TachygramSetCommit,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -296,12 +297,12 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let end = witness
+        let anchor_end = witness
             .0
             .next_stamp(witness.1, &witness.2)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = alloc::vec![-Fp::from(end), Fp::ONE];
+        polynomials[0] = super::coefficients(AnchorSetPoly::from_iter([anchor_end]).as_ref());
         Ok(polynomials)
     }
 
@@ -369,29 +370,19 @@ impl Step<Pasta> for AnchorSpanFuse {
     type Left = AnchorSpan;
     type Output = AnchorSpan;
     type Right = AnchorSpan;
-    /// `(left_members, combined, right_members)`
-    type Witness<'source> = (AnchorSetPoly, AnchorSetPoly, AnchorSetPoly);
+    /// `(combined)`
+    type Witness<'source> = (AnchorSetPoly,);
 
     const INDEX: Index = Index::new(32);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "AnchorSpanFuse: left members do not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.as_ref(),
-            "AnchorSpanFuse: right members do not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -417,22 +408,6 @@ impl Step<Pasta> for AnchorSpanFuse {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (_left_anchor_start, left_anchor_end) = left.clone().take();
-            let (right_anchor_start, _) = right.clone().take();
-            enforce_zero(
-                Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
-                "AnchorSpanFuse: spans do not share a vertex",
-            )
-        })?;
-        enforce_poly_product(
-            dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::right(0),
-            &Slot::output(0),
-            "AnchorSpanFuse: combined is not the union of the halves",
-        )?;
         let output = D::try_just(|| {
             let (left_anchor_start, left_anchor_end) = left.take();
             let (right_anchor_start, right_anchor_end) = right.take();
@@ -442,6 +417,10 @@ impl Step<Pasta> for AnchorSpanFuse {
             )?;
             Ok(((left_anchor_start, right_anchor_end), ()))
         })?;
+        enforce_poly_product(
+            dr, oracles, &Slot::left(0), &Slot::right(0), &Slot::output(0),
+            "AnchorSpanFuse: combined is not the union of the halves",
+        )?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
@@ -462,29 +441,19 @@ impl Step<Pasta> for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(combined_elapsed_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(2);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "UnspentFuse: left polynomial does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.as_ref(),
-            "UnspentFuse: right polynomial does not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -510,9 +479,9 @@ impl Step<Pasta> for UnspentFuse {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (_, _, left_epoch_next, left_anchor_next) = left.clone().take();
-            let (right_anchor_start, right_epoch_start, ..) = right.clone().take();
+        let output = D::try_just(|| {
+            let (left_anchor_start, left_epoch_start, left_epoch_next, left_anchor_next) = left.take();
+            let (right_anchor_start, right_epoch_start, right_epoch_next, right_anchor_next) = right.take();
             enforce_zero(
                 Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
                 "UnspentFuse: left.anchor_next must equal right.anchor_start",
@@ -521,7 +490,7 @@ impl Step<Pasta> for UnspentFuse {
                 Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
                 "UnspentFuse: halves do not meet at one epoch",
             )?;
-            Ok(())
+            Ok(((left_anchor_start, left_epoch_start, right_epoch_next, right_anchor_next), ()))
         })?;
         enforce_poly_product(
             dr,
@@ -531,19 +500,6 @@ impl Step<Pasta> for UnspentFuse {
             &Slot::output(0),
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
-        let output = D::try_just(|| {
-            let (left_anchor_start, left_epoch_start, ..) = left.take();
-            let (_, _, right_epoch_next, right_anchor_next) = right.take();
-            Ok((
-                (
-                    left_anchor_start,
-                    left_epoch_start,
-                    right_epoch_next,
-                    right_anchor_next,
-                ),
-                (),
-            ))
-        })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
@@ -581,14 +537,12 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, elapsed_seq, extended_seq, contents)`
+    /// `(value, classes, mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
-        NfSeqPoly,
-        TachygramSetPoly,
     );
 
     const INDEX: Index = Index::new(24);
@@ -606,21 +560,11 @@ impl Step<Pasta> for UnspentLift {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.5.as_ref(),
-            "UnspentLift: contents do not match the bucket",
-        )?;
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.3.as_ref(),
-            "UnspentLift: elapsed does not match the left slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.4.as_ref());
+        polynomials[0] = super::coefficients(witness.3.as_ref());
         Ok(polynomials)
     }
 
@@ -692,19 +636,15 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let index_element = Element::alloc(
-            dr,
-            &mut (),
-            native
-                .as_ref()
-                .map(|witnessed| Fp::from(u64::from(witnessed.1)) + Fp::ONE),
-        )?;
-        let index_times_z = index_element.mul(dr, &z)?;
-        let shifted = value_element.add(dr, &index_times_z);
-        let square = shifted.square(dr)?;
-        let cube = square.mul(dr, &shifted)?;
-        let two = Element::constant(dr, Fp::from(2));
-        let factor = cube.sub(dr, &two);
+        let challenge = z.value().map(|value| *value);
+        let expected = D::try_just(|| {
+            let (value, bucket_epoch, _) = native.clone().take();
+            Ok(indexed_multiset::direct_eval(
+                [(u64::from(bucket_epoch), Fp::from(value))],
+                challenge.take(),
+            ))
+        })?;
+        let factor = Element::alloc(dr, &mut (), expected)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z
             .enforce_equal(dr, &expected_extended)
@@ -764,29 +704,19 @@ impl Step<Pasta> for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(elapsed_seq, nf_seq, complement_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(complement_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(3);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "UnspentBind: elapsed polynomial does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.1.as_ref(),
-            "UnspentBind: covering sequence does not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 

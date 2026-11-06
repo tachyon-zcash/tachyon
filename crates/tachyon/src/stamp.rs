@@ -231,26 +231,31 @@ impl PointerStamp {
 
 impl<P: ProofType> StampState for ProofStamp<P> {
     fn stamp_digest(&self) -> [u8; 72] {
-        #[expect(
-            clippy::expect_used,
-            reason = "a proved or decoded stamp proof is encodable"
-        )]
-        let proof = self.proof.to_bytes().expect("stamp proof is encodable");
-        let tachygram_bytes: Vec<[u8; 32]> = self
-            .tachygrams
-            .iter()
-            .map(|&tg| Fp::from(tg).to_bytes())
-            .collect();
-        let stamp_data_digest = blake2b::stamp_data_digest(
-            blake2b::stamp_proof_digest(&proof),
-            self.anchor.0.to_bytes(),
-            self.tachygram_set.as_ref().to_affine().to_bytes(),
-            &tachygram_bytes,
-        );
+        let stamp_data_digest: [u8; 32] = {
+            #[expect(clippy::expect_used, reason = "a proved or decoded stamp proof is encodable")]
+            let proof = self.proof.to_bytes().expect("stamp proof is encodable");
+            let anchor: [u8; 32] = self.anchor.0.to_bytes();
+
+            // Do NOT sort here: a constructed stamp should already be canonical.
+            let tachygrams: Vec<[u8; 32]> = self
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg).to_bytes())
+                .collect();
+
+            blake2b::stamp_data_digest(
+                blake2b::stamp_proof_digest(proof.as_ref()),
+                anchor,
+                self.tachygram_set.as_ref().to_affine().to_bytes(),
+                &tachygrams,
+            )
+        };
+
         let mut stamp_digest = [0u8; 72];
         stamp_digest[..8].copy_from_slice(&u64::from(self.fee).to_le_bytes());
         stamp_digest[8..40].copy_from_slice(&self.coverage);
         stamp_digest[40..].copy_from_slice(&stamp_data_digest);
+
         stamp_digest
     }
 
@@ -301,8 +306,8 @@ pub(crate) fn read_stamp<R: Read>(
             .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
     }?;
 
-    let mut coverage = [0u8; 32];
-    reader.read_exact(&mut coverage)?;
+    let mut covered_actions = [0u8; 32];
+    reader.read_exact(&mut covered_actions)?;
 
     let anchor = Anchor::read(&mut reader)?;
 
@@ -367,7 +372,7 @@ pub(crate) fn read_stamp<R: Read>(
     reader.read_exact(payload)?;
     Ok((
         fee,
-        coverage,
+        covered_actions,
         anchor,
         tachygram_set,
         tachygrams,
@@ -408,7 +413,7 @@ impl<P: ProofType> ProofStamp<P> {
         serialization::write_compactsize(
             &mut writer,
             u64::try_from(self.tachygrams.len())
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "tachygram vector length exceeds u64"))?,
         )?;
         for &tg in &self.tachygrams {
             serialization::write_fp(&mut writer, &Fp::from(tg))?;
@@ -566,9 +571,9 @@ impl Plan {
             let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
-            for (span, members) in spans {
+            for (span, _members) in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(rng, ActionLift, (members,), stamp_pcd, span)
+                    .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
@@ -603,21 +608,6 @@ impl Plan {
                 let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
                     next?;
 
-                let (left_acts_poly, left_tg_poly) = (
-                    left_digests.iter().copied().collect::<ActionSetPoly>(),
-                    left_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
-                let (right_acts_poly, right_tg_poly) = (
-                    right_digests.iter().copied().collect::<ActionSetPoly>(),
-                    right_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
-
                 let left_pcd = left_proof.carry::<Actions>(left_anchor);
                 let right_pcd = right_proof.carry::<Actions>(right_anchor);
 
@@ -631,12 +621,8 @@ impl Plan {
                         rng,
                         ActionMerge,
                         (
-                            (left_acts_poly, left_tg_poly),
-                            (
-                                ActionSetPoly::from_iter(merged_digests.clone()),
-                                TachygramSetPoly::from_iter(merged_tachygrams.clone()),
-                            ),
-                            (right_acts_poly, right_tg_poly),
+                            ActionSetPoly::from_iter(merged_digests.clone()),
+                            TachygramSetPoly::from_iter(merged_tachygrams.clone()),
                         ),
                         left_pcd,
                         right_pcd,
@@ -1095,9 +1081,9 @@ impl ProofStamp {
         let mut stamp_pcd =
             self.proof
                 .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
-        for (span, members) in spans {
+        for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(rng, StampLift, (members,), stamp_pcd, span)
+                .fuse(rng, StampLift, (), stamp_pcd, span)
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
@@ -1380,15 +1366,15 @@ impl<P: ProofType> ProofStamp<P> {
     ) -> bool {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
-        let mut fee_bytes = fee_descriptors
+        let mut fee_descriptor_bytes = fee_descriptors
             .into_iter()
             .map(<[u8; 40]>::from)
-            .collect::<Vec<_>>();
-        fee_bytes.sort_unstable();
+            .collect::<Vec<[u8; 40]>>();
+        fee_descriptor_bytes.sort_unstable();
         self.coverage
             == blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&desc_bytes),
-                &blake2b::stamp_fees_digest(&fee_bytes),
+                    &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
             )
     }
 

@@ -14,12 +14,12 @@
 //!
 //! The first byte `tachyonBundleState` selects one of three bundle states:
 //!
-//! | value         | state            | bundle contents                                  |
-//! | ------------- | ---------------- | ------------------------------------------------ |
-//! | `0b0000_0000` | non-tachyon      | no bundle                                        |
-//! | `0b0000_0001` | proof stamp      | bundle with anchor, tachygrams, proof            |
-//! | `0b0000_0010` | pointer stamp    | bundle with aggregate's wtxid                    |
-//! | `...`         | *reserved*       | *n/a*                                            |
+//! | value         | state         | bundle contents                       |
+//! | ------------- | ------------- | ------------------------------------- |
+//! | `0b0000_0000` | non-tachyon   | no bundle                             |
+//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
+//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid         |
+//! | `...`         | *reserved*    | *n/a*                                 |
 //!
 //! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
 //! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
@@ -603,21 +603,6 @@ impl Plan {
     }
 }
 
-impl Bundle<Unproven> {
-    /// Attach a stamp, producing a bundle in its corresponding state.
-    #[must_use]
-    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
-        Bundle {
-            actions: self.actions,
-            value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp,
-        }
-    }
-}
-
 impl Bundle<ProofStamp> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
@@ -910,10 +895,24 @@ impl<P: ProofType> Bundle<ProofStamp<P>> {
     }
 }
 
-/// Read everything after the `tachyonBundleState` byte: value balance,
-/// action descriptors, the max fee note's value commitment, action sigs,
-/// binding sig and memo. The stamp trailer follows.
-fn read_body<R: Read>(mut reader: R) -> io::Result<Bundle<Unproven>> {
+impl Bundle<Unproven> {
+    /// Attach a stamp, producing a bundle in its corresponding state.
+    #[must_use]
+    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
+        Bundle {
+            actions: self.actions,
+            value_balance: self.value_balance,
+            fee_max_commitment: self.fee_max_commitment,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp,
+        }
+    }
+
+    /// Read everything after the `tachyonBundleState` byte: value balance,
+    /// action descriptors, the max fee note's value commitment, action sigs,
+    /// binding sig and memo. The stamp trailer follows.
+    fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
     let value_balance = {
         let mut bytes = [0u8; size_of::<i64>()];
         reader.read_exact(&mut bytes)?;
@@ -984,7 +983,7 @@ fn read_body<R: Read>(mut reader: R) -> io::Result<Bundle<Unproven>> {
         memo.extend_from_slice(&chunk[..take]);
     }
 
-    Ok(Bundle {
+    Ok(Self {
         value_balance,
         actions,
         fee_max_commitment,
@@ -992,6 +991,7 @@ fn read_body<R: Read>(mut reader: R) -> io::Result<Bundle<Unproven>> {
         memo,
         stamp: Unproven,
     })
+}
 }
 
 impl<S: StampState> Bundle<S> {
@@ -1006,6 +1006,8 @@ impl<S: StampState> Bundle<S> {
 
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
+    /// See the module-level wire format documentation.
+    ///
     /// # Errors
     ///
     /// Returns an error if reading fails, the state byte does not match `S`,
@@ -1017,7 +1019,7 @@ impl<S: StampState> Bundle<S> {
                 "unexpected tachyonBundleState",
             ));
         }
-        let body = read_body(&mut reader)?;
+        let body = Bundle::<Unproven>::read_body(&mut reader)?;
         Ok(body.stamp(S::read(&mut reader)?))
     }
 
@@ -1164,7 +1166,7 @@ impl TachyonBundle {
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
             StateByte::ProofStamped => {
-                let body = read_body(&mut reader)?;
+                let body = Bundle::<Unproven>::read_body(&mut reader)?;
                 let (fee, coverage, anchor, tachygram_set, tachygrams, bytes, kind) =
                     stamp::read_stamp(&mut reader)?;
                 if kind == stamp::FULL_PROOF_KIND {
@@ -1201,7 +1203,7 @@ impl TachyonBundle {
                 }
             },
             StateByte::PointerStamped => {
-                let body = read_body(&mut reader)?;
+                let body = Bundle::<Unproven>::read_body(&mut reader)?;
                 Self::Adjunct(body.stamp(PointerStamp::read(&mut reader)?))
             },
         })
@@ -1249,7 +1251,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has its own proof, but its `hStampCoverageTachyon`
+    /// Confirm this bundle has a proof stamp, but its `hStampCoverageTachyon`
     /// does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
@@ -1262,7 +1264,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has its own proof, and its `hStampCoverageTachyon`
+    /// Confirm this bundle has a proof stamp, and its `hStampCoverageTachyon`
     /// represents this bundle's actions.
     #[must_use]
     pub fn is_autonome(&self) -> bool {

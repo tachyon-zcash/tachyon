@@ -444,29 +444,19 @@ impl Step<Pasta> for NullifierFuse {
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `(left_seq, merged_seq, right_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(merged_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(12);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "NullifierFuse: left polynomial does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.as_ref(),
-            "NullifierFuse: right polynomial does not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -492,9 +482,9 @@ impl Step<Pasta> for NullifierFuse {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let _precheck = D::try_just(|| {
-            let (left_cm, _, left_epoch_end) = left.clone().take();
-            let (right_cm, right_epoch_start, _) = right.clone().take();
+        let output = D::try_just(|| {
+            let (left_cm, left_epoch_start, left_epoch_end) = left.take();
+            let (right_cm, right_epoch_start, right_epoch_end) = right.take();
             enforce_zero(
                 Fp::from(left_cm) - Fp::from(right_cm),
                 "NullifierFuse: note commitments differ",
@@ -502,7 +492,8 @@ impl Step<Pasta> for NullifierFuse {
             enforce_zero(
                 Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
                 "NullifierFuse: ranges not contiguous",
-            )
+            )?;
+            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
         })?;
         enforce_poly_product(
             dr,
@@ -512,11 +503,6 @@ impl Step<Pasta> for NullifierFuse {
             &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        let output = D::try_just(|| {
-            let (left_cm, left_epoch_start, _) = left.take();
-            let (_, _, right_epoch_end) = right.take();
-            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
-        })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))

@@ -9,13 +9,11 @@ use ragu::{
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_core::{
-    Cycle as _, FixedGenerators as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_pcd::pasta::baked;
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -32,7 +30,7 @@ use crate::{
     note::{self, Note},
     pasta::{EpAffine, Eq, Fp, Fq},
     primitives::{
-        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+        ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
@@ -130,10 +128,6 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "compressed point limbs contain exactly 16 bytes"
-        )]
         let commitments = D::try_just(|| {
             let fields = witness.clone().take();
             let mut limbs = [[Fp::ZERO; 2]; 2];
@@ -147,12 +141,8 @@ impl Header<Fp> for Stamp {
                         "cannot encode the identity commitment".into(),
                     ));
                 }
-                let bytes = point.to_bytes();
-                let (low, high) = bytes.split_at(16);
-                *output = [
-                    Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                    Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
-                ];
+                let (low, high) = poseidon::point_limbs(point);
+                *output = [low, high];
             }
             Ok(limbs)
         })?;
@@ -190,43 +180,6 @@ impl Header<Fp> for Stamp {
     }
 }
 
-/// Fix the fee roots before ζ; the witness phase independently derives them.
-fn fee_roots(
-    max_fee_note: Note,
-    fee: value::Positive,
-    step: &'static str,
-) -> ragu_core::Result<Vec<Fp>> {
-    let invalid =
-        |message| ragu_core::Error::InvalidWitness(alloc::format!("{step}: {message}").into());
-    let max_fee = u64::from(max_fee_note.value);
-    if max_fee > MAX_MONEY {
-        return Err(invalid("maximum fee exceeds MAX_MONEY"));
-    }
-    let change = max_fee
-        .checked_sub(u64::from(fee))
-        .filter(|&change| change <= MAX_MONEY)
-        .ok_or_else(|| invalid("change is out of range"))?;
-    let commitment = max_fee_note.fee_blind().commit(-max_fee_note.value);
-    let coordinates = EpAffine::from(commitment)
-        .coordinates()
-        .ok_or_else(|| invalid("fee commitment is the identity"))?;
-    let digest = poseidon::fee_digest(coordinates, u64::from(fee));
-    let change_commitment = enforce_nonzero(
-        poseidon::note_commitment(
-            Fp::from(max_fee_note.rcm),
-            Fp::from(max_fee_note.pk),
-            change,
-            Fp::from(max_fee_note.psi),
-        ),
-        if step == "FeeSeed" {
-            "FeeSeed: fee change note commitment is zero"
-        } else {
-            "FeeFuse: fee change note commitment is zero"
-        },
-    )?;
-    Ok(alloc::vec![digest, change_commitment])
-}
-
 /// Proves an output's action as [`Actions`].
 ///
 /// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
@@ -252,7 +205,7 @@ impl Step<Pasta> for OutputAction {
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(7);
-    // O0/O1 carry action/tachygram sets; the derived action root is fixed before ζ.
+    // O0/O1 carry action/tachygram sets; the derived action root is fixed before zeta.
     const NUM_STAGED: usize = 1;
 
     fn staged(
@@ -308,8 +261,6 @@ impl Step<Pasta> for OutputAction {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let native = D::try_just(|| {
             let (theta, anchor, ..) = witness.take();
             let (cm, pad, cv) = left.take();
@@ -324,8 +275,7 @@ impl Step<Pasta> for OutputAction {
                     "OutputAction: action digest construction failed".into(),
                 )
             })?;
-            let output = anchor;
-            Ok((output, Fp::from(action_digest), Fp::from(cm), Fp::from(pad)))
+            Ok((anchor, Fp::from(action_digest), Fp::from(cm), Fp::from(pad)))
         })?;
         let action_root = Element::alloc(dr, &mut (), native.clone().map(|(_, root, ..)| root))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
@@ -338,7 +288,7 @@ impl Step<Pasta> for OutputAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &action_roots,
             "OutputAction: action set does not commit to the action",
         )?;
@@ -351,7 +301,7 @@ impl Step<Pasta> for OutputAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &tachygram_roots,
             "OutputAction: tachygram set does not commit to the bound pair",
         )?;
@@ -395,7 +345,7 @@ impl Step<Pasta> for SpendAction {
     );
 
     const INDEX: Index = Index::new(9);
-    // O0/O1 carry action/tachygram sets; the derived action root is fixed before ζ.
+    // O0/O1 carry action/tachygram sets; the derived action root is fixed before zeta.
     const NUM_STAGED: usize = 1;
 
     fn staged(
@@ -449,8 +399,6 @@ impl Step<Pasta> for SpendAction {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let native = D::try_just(|| {
             let (theta, pak, ..) = witness.take();
             let (cm, nf_current, nf_next, anchor, pk, cv) = left.take();
@@ -469,9 +417,8 @@ impl Step<Pasta> for SpendAction {
                     "SpendAction: action digest construction failed".into(),
                 )
             })?;
-            let output = anchor;
             Ok((
-                output,
+                anchor,
                 Fp::from(action_digest),
                 Fp::from(nf_current),
                 Fp::from(nf_next),
@@ -486,7 +433,7 @@ impl Step<Pasta> for SpendAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &[action_root],
             "SpendAction: action set does not commit to the action",
         )?;
@@ -502,7 +449,7 @@ impl Step<Pasta> for SpendAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &[current_root, next_root],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
@@ -514,7 +461,7 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared $\zeta$.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -567,27 +514,21 @@ impl Step<Pasta> for StampMerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_action_handle = Slot::left(0);
-        let left_tachygram_handle = Slot::left(1);
-        let merged_action_handle = Slot::output(0);
-        let merged_tachygram_handle = Slot::output(1);
-        let right_action_handle = Slot::right(0);
-        let right_tachygram_handle = Slot::right(1);
         // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
-            &left_action_handle,
-            &right_action_handle,
-            &merged_action_handle,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "StampMerge: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &left_tachygram_handle,
-            &right_tachygram_handle,
-            &merged_tachygram_handle,
+            &Slot::left(1),
+            &Slot::right(1),
+            &Slot::output(1),
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let output = D::try_just(|| {
@@ -642,7 +583,7 @@ impl Step<Pasta> for StampMerge {
 
 /// Merges action content.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
+/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared $\zeta$.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -651,12 +592,8 @@ impl Step<Pasta> for ActionMerge {
     type Left = Actions;
     type Output = Actions;
     type Right = Actions;
-    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
-    type Witness<'source> = (
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-    );
+    /// `(action_set, tachygram_set)`
+    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(34);
 
@@ -664,32 +601,12 @@ impl Step<Pasta> for ActionMerge {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.0.as_ref(),
-            "ActionMerge: left action set does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.0.as_ref(),
-            "ActionMerge: right action set does not match the right slot",
-        )?;
-        super::enforce_slot(
-            &left.polynomials[1],
-            witness.0.1.as_ref(),
-            "ActionMerge: left tachygram set does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[1],
-            witness.2.1.as_ref(),
-            "ActionMerge: right tachygram set does not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.1.0.as_ref());
-        polynomials[1] = super::coefficients(witness.1.1.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
+        polynomials[1] = super::coefficients(witness.1.as_ref());
         Ok(polynomials)
     }
 
@@ -715,27 +632,21 @@ impl Step<Pasta> for ActionMerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_action_handle = Slot::left(0);
-        let left_tachygram_handle = Slot::left(1);
-        let merged_action_handle = Slot::output(0);
-        let merged_tachygram_handle = Slot::output(1);
-        let right_action_handle = Slot::right(0);
-        let right_tachygram_handle = Slot::right(1);
         // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
-            &left_action_handle,
-            &right_action_handle,
-            &merged_action_handle,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "ActionMerge: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &left_tachygram_handle,
-            &right_tachygram_handle,
-            &merged_tachygram_handle,
+            &Slot::left(1),
+            &Slot::right(1),
+            &Slot::output(1),
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let output = D::try_just(|| {
@@ -782,23 +693,17 @@ impl Step<Pasta> for StampLift {
     type Left = Stamp;
     type Output = Stamp;
     type Right = AnchorSpan;
-    /// `(members)`
-    type Witness<'source> = (AnchorSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(11);
 
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        witness: &Self::Witness<'_>,
+        _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.0.as_ref(),
-            "StampLift: members do not match the span slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         polynomials[1].clone_from(&left.polynomials[1]);
@@ -868,23 +773,17 @@ impl Step<Pasta> for ActionLift {
     type Left = Actions;
     type Output = Actions;
     type Right = AnchorSpan;
-    /// `(members)`
-    type Witness<'source> = (AnchorSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(35);
 
     // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        witness: &Self::Witness<'_>,
+        _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.0.as_ref(),
-            "ActionLift: members do not match the span slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(&left.polynomials[0]);
         polynomials[1].clone_from(&left.polynomials[1]);
@@ -937,7 +836,7 @@ impl Step<Pasta> for ActionLift {
 /// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
 /// note's commitment to the action and tachygram sets.
 ///
-/// Opens L0/L1 and O0/O1; staged singleton factors need no separate oracle.
+/// Opens L0/L1 and O0/O1, with singleton factors fixed by the staged fee note.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -950,13 +849,10 @@ impl Step<Pasta> for FeeFuse {
         Note,
         value::Positive,
         (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
-        (ActionSetPoly, TachygramSetPoly),
     );
 
     const INDEX: Index = Index::new(33);
-    // Four openings (L0/L1/O0/O1); staged singleton factors replace fee oracles.
-    const NUM_STAGED: usize = 2;
+    const NUM_STAGED: usize = 5;
 
     fn staged(
         &self,
@@ -964,38 +860,28 @@ impl Step<Pasta> for FeeFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        fee_roots(witness.0, witness.1, "FeeFuse")
+        let (max_fee_note, fee, _) = *witness;
+        Ok(alloc::vec![
+            Fp::from(u64::from(max_fee_note.value)), Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi), Fp::from(max_fee_note.rcm), Fp::from(u64::from(fee)),
+        ])
     }
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.2.0.as_ref(),
-            "FeeFuse: left action set does not match the left slot",
-        )?;
-        super::enforce_slot(
-            &left.polynomials[1],
-            witness.2.1.as_ref(),
-            "FeeFuse: left tachygram set does not match the left slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.3.0.as_ref());
-        polynomials[1] = super::coefficients(witness.3.1.as_ref());
+        polynomials[0] = super::coefficients(witness.2.0.as_ref());
+        polynomials[1] = super::coefficients(witness.2.1.as_ref());
         Ok(polynomials)
     }
 
     #[expect(
         clippy::too_many_lines,
-        reason = "fee derivation, singleton commitments, and product relations stay together"
-    )]
-    #[expect(
-        clippy::missing_asserts_for_indexing,
-        reason = "production parameters contain both fixed generators"
+        reason = "fee derivation and product relations stay together"
     )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
@@ -1023,9 +909,7 @@ impl Step<Pasta> for FeeFuse {
             let (
                 max_fee_note,
                 fee,
-                _,
                 (output_action_set, output_tachygram_set),
-                (fee_action_set, fee_tachygram_set),
             ) = witness.take();
             let left_anchor = left.take();
             let () = right.take();
@@ -1070,44 +954,23 @@ impl Step<Pasta> for FeeFuse {
                 poseidon::note_commitment(rcm, pk, change, psi),
                 "FeeFuse: fee change note commitment is zero",
             )?;
-            // Fixed-generator references bind supplied fee polynomials to X - root.
-            let generators = Pasta::host_generators(baked()).g();
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "production parameters contain both fixed generators"
-            )]
-            let generator_constant = &generators[0];
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "production parameters contain both fixed generators"
-            )]
-            let generator_linear = &generators[1];
-            enforce_equal_point(
-                Eq::from(fee_action_set.commit()),
-                Eq::from(*generator_linear) - *generator_constant * fee_digest,
-                "FeeFuse: fee action set does not commit to the fee digest",
-            )?;
-            enforce_equal_point(
-                Eq::from(fee_tachygram_set.commit()),
-                Eq::from(*generator_linear) - *generator_constant * fee_change_commitment,
-                "FeeFuse: fee tachygram set does not commit to the fee change note",
-            )?;
             let output = (
                 output_action_set.commit(),
                 output_tachygram_set.commit(),
                 left_anchor,
             );
-            Ok((output, fee_digest, fee_change_commitment))
+            Ok((output, fee_digest, fee_change_commitment, [
+                Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm, Fp::from(u64::from(fee)),
+            ]))
         })?;
 
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _)| digest))?;
-        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 2")]
-        let staged_digest = &oracles.staged()[0];
-        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 2")]
-        let staged_change = &oracles.staged()[1];
-        fee_digest.enforce_equal(dr, staged_digest)?;
-        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change)| change))?;
-        fee_change.enforce_equal(dr, staged_change)?;
+        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
+        for index in 0..Self::NUM_STAGED {
+            let value = native.clone().map(|(_, _, _, fields)| fields[index]);
+            Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
+        }
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _, _)| digest))?;
+        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
         let z = oracles.zeta().clone();
         for (column, root, err) in [
             (
@@ -1137,7 +1000,7 @@ impl Step<Pasta> for FeeFuse {
 
 /// Proves a zero-action bundle's zero fee.
 ///
-/// Opens O0/O1 singleton sets at ζ, with both derived roots staged before ζ.
+/// Opens O0/O1 singleton sets at $\zeta$, with fee-note fields staged before $\zeta$.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1146,12 +1009,11 @@ impl Step<Pasta> for FeeSeed {
     type Left = ();
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
+    /// `(max_fee_note, anchor, output_action_set, output_tachygram_set)`
     type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(36);
-    // O0/O1 carry the fee singleton sets; both derived roots are staged before ζ.
-    const NUM_STAGED: usize = 2;
+    const NUM_STAGED: usize = 4;
 
     fn staged(
         &self,
@@ -1159,11 +1021,11 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        enforce_zero(
-            Fp::from(u64::from(witness.0.value)),
-            "FeeSeed: maximum fee must be zero",
-        )?;
-        fee_roots(witness.0, value::Positive::ZERO, "FeeSeed")
+        let &(max_fee_note, ..) = witness;
+        Ok(alloc::vec![
+            Fp::from(u64::from(max_fee_note.value)), Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi), Fp::from(max_fee_note.rcm),
+        ])
     }
 
     fn polynomials(
@@ -1200,8 +1062,6 @@ impl Step<Pasta> for FeeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let native = D::try_just(|| {
             let (max_fee_note, anchor, fee_action_set, fee_tachygram_set) = witness.take();
             let () = left.take();
@@ -1236,27 +1096,26 @@ impl Step<Pasta> for FeeSeed {
                 "FeeSeed: fee change note commitment is zero",
             )?;
             let output = (fee_action_set.commit(), fee_tachygram_set.commit(), anchor);
-            Ok((output, fee_digest, fee_change_commitment))
+            Ok((output, fee_digest, fee_change_commitment, [Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm]))
         })?;
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _)| digest))?;
-        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 2")]
-        let staged_digest = &oracles.staged()[0];
-        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 2")]
-        let staged_change_root = oracles.staged()[1].clone();
-        fee_digest.enforce_equal(dr, staged_digest)?;
+        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 4")]
+        for index in 0..Self::NUM_STAGED {
+            let value = native.clone().map(|(_, _, _, fields)| fields[index]);
+            Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
+        }
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, _, _)| digest))?;
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
-        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change)| change))?;
-        fee_change.enforce_equal(dr, &staged_change_root)?;
+        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &[fee_change],
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         )?;
@@ -1357,26 +1216,20 @@ impl Step<Pasta> for StampUnmerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let dividend_action_handle = Slot::left(0);
-        let dividend_tachygram_handle = Slot::left(1);
-        let quotient_action_handle = Slot::output(0);
-        let quotient_tachygram_handle = Slot::output(1);
-        let divisor_action_handle = Slot::right(0);
-        let divisor_tachygram_handle = Slot::right(1);
         enforce_poly_product(
             dr,
             oracles,
-            &divisor_action_handle,
-            &quotient_action_handle,
-            &dividend_action_handle,
+            &Slot::right(0),
+            &Slot::output(0),
+            &Slot::left(0),
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &divisor_tachygram_handle,
-            &quotient_tachygram_handle,
-            &dividend_tachygram_handle,
+            &Slot::right(1),
+            &Slot::output(1),
+            &Slot::left(1),
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
         let output = D::try_just(|| {

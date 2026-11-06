@@ -29,11 +29,11 @@ use crate::{
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit,
             QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
-        spendable::{QrSpendableInit, SpendableInit},
-        stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift},
+        spendable::SpendableInit,
+        stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction},
         summary::{SummaryAdvance, SummarySeed},
     },
     value,
@@ -75,46 +75,36 @@ pub fn nullifier_derive(
 }
 
 /// Prepare the witness for [`NullifierFuse`]:
-/// `(left_seq, merged_seq, right_seq)`.
+/// `(merged_seq)`.
 #[must_use]
 pub fn nullifier_fuse(
-    (left, right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
+    (left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
     left_nfs: &[Nullifier],
     right_nfs: &[Nullifier],
 ) -> StepWitness<'static, NullifierFuse> {
     let (_, left_epoch_start, ..) = left;
-    let (_, right_epoch_start, ..) = right;
     let merged = [left_nfs, right_nfs].concat();
-    (
-        NfSeqPoly::new(left_epoch_start, left_nfs),
-        NfSeqPoly::new(left_epoch_start, &merged),
-        NfSeqPoly::new(right_epoch_start, right_nfs),
-    )
+    (NfSeqPoly::new(left_epoch_start, &merged),)
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
-/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+/// `(combined_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch.
 #[must_use]
 pub fn unspent_fuse(
-    (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    (left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
     let (_, left_epoch_start, ..) = left;
-    let (_, right_epoch_start, ..) = right;
     let combined = [left_elapsed, right_elapsed].concat();
-    (
-        NfSeqPoly::new(left_epoch_start, left_elapsed),
-        NfSeqPoly::new(left_epoch_start, &combined),
-        NfSeqPoly::new(right_epoch_start, right_elapsed),
-    )
+    (NfSeqPoly::new(left_epoch_start, &combined),)
 }
 
 /// Prepare the witness for [`UnspentBind`]:
-/// `(elapsed_seq, nf_seq, complement_seq)`.
+/// `(complement_seq)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
@@ -137,11 +127,7 @@ pub fn unspent_bind(
     let (_span, tail) = from_span.split_at(elapsed.len());
     let complement_seq =
         NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
-    (
-        NfSeqPoly::new(epoch_start, elapsed),
-        NfSeqPoly::new(nullifiers_epoch_start, window),
-        complement_seq,
-    )
+    (complement_seq,)
 }
 
 /// Prepare the witness for [`SpendableInit`]:
@@ -176,8 +162,7 @@ pub fn anchor_span_seed(
     )
 }
 
-/// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
-/// right_members)`.
+/// Prepare the witness for [`AnchorSpanFuse`]: `(combined)`.
 ///
 /// `left_members` and `right_members` are the members polynomials of the two
 /// halves.
@@ -187,22 +172,7 @@ pub fn anchor_span_fuse(
     left_members: &[Anchor],
     right_members: &[Anchor],
 ) -> StepWitness<'static, AnchorSpanFuse> {
-    (
-        left_members.iter().copied().collect(),
-        left_members.iter().chain(right_members).copied().collect(),
-        right_members.iter().copied().collect(),
-    )
-}
-
-/// Prepare the witness for [`StampLift`]: `(members)`.
-///
-/// `members` is the span's members polynomial.
-#[must_use]
-pub fn stamp_lift(
-    (_stamp, _span): (StepLeft<StampLift>, StepRight<StampLift>),
-    members: &[Anchor],
-) -> StepWitness<'static, StampLift> {
-    (members.iter().copied().collect(),)
+    (left_members.iter().chain(right_members).copied().collect(),)
 }
 
 /// Prepare the witness for [`SummarySeed`]:
@@ -221,7 +191,7 @@ pub fn summary_seed(
     )
 }
 
-/// Prepare the witness for [`SummaryAdvance`]: `(acc, extended, stamp)`.
+/// Prepare the witness for [`SummaryAdvance`]: `(extended, stamp)`.
 #[must_use]
 pub fn summary_advance(
     (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),
@@ -234,19 +204,9 @@ pub fn summary_advance(
         .copied()
         .collect::<TachygramSetPoly>();
     (
-        acc_tgs.iter().copied().collect::<TachygramSetPoly>(),
         extended,
         stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
-}
-
-/// Prepare the witness for [`QrSpendableInit`]: `(contents)`.
-#[must_use]
-pub fn qr_spendable_init(
-    (_unspent, _bucket): (StepLeft<QrSpendableInit>, StepRight<QrSpendableInit>),
-    bucket_members: &[Tachygram],
-) -> StepWitness<'static, QrSpendableInit> {
-    (bucket_members.iter().copied().collect(),)
 }
 
 /// Prepare the witness for [`QrSummaryIntake`]: `(discriminant)`.
@@ -288,8 +248,7 @@ pub const fn qr_empty_intake_seed(
     (anchor, epoch, discriminant)
 }
 
-/// Prepare the witness for [`QrIntakeMerge`]: `(left_contents,
-/// right_contents, merged)`.
+/// Prepare the witness for [`QrIntakeMerge`]: `(merged)`.
 #[must_use]
 pub fn qr_intake_merge(
     (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
@@ -297,8 +256,6 @@ pub fn qr_intake_merge(
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeMerge> {
     (
-        left_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        right_tgs.iter().copied().collect::<TachygramSetPoly>(),
         left_tgs
             .iter()
             .chain(right_tgs)
@@ -307,8 +264,7 @@ pub fn qr_intake_merge(
     )
 }
 
-/// Prepare the witness for [`QrIntakeSplit`]: `(contents, non_residue,
-/// residue)`.
+/// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
 #[must_use]
 pub fn qr_intake_split(
     (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
@@ -320,7 +276,6 @@ pub fn qr_intake_split(
         discriminant.at(profile.depth),
     );
     (
-        members.iter().copied().collect::<TachygramSetPoly>(),
         non_residue
             .iter()
             .map(|&(member, _root)| Tachygram::from(member))
@@ -332,8 +287,7 @@ pub fn qr_intake_split(
     )
 }
 
-/// Prepare the witness for [`QrSideSelect`]: `(non_residue_contents,
-/// interpolant, quotient)`.
+/// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
 /// # Panics
 ///
@@ -359,52 +313,6 @@ pub fn qr_side_select(
     )
     .expect("members of a split are distinct");
     (
-        non_residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-        interpolant.into(),
-        quotient.into(),
-    )
-}
-
-/// Prepare the witness for [`QrSideDescend`]: `(bit, sibling_contents,
-/// interpolant, quotient)`.
-///
-/// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
-/// is the residue side when set. The decomposition is the sibling's, at the
-/// sibling's class multiplier.
-///
-/// # Panics
-///
-/// Panics if the sibling's decomposition does not exist, which needs a
-/// repeated member. A split partitions distinct tachygrams, so this is
-/// unreachable.
-#[must_use]
-pub fn qr_side_descend(
-    (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
-    members: &[Tachygram],
-    side: bool,
-) -> StepWitness<'static, QrSideDescend> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = sides;
-    let (residue, non_residue) = collections::qr::split(
-        members.iter().copied().map(Fp::from),
-        discriminant.at(profile.depth),
-    );
-    let sibling = if side { non_residue } else { residue };
-    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
-    let (interpolant, quotient) = collections::qr::decomposition(
-        &sibling,
-        collections::qr::class_multiplier(!side),
-        discriminant.at(profile.depth),
-    )
-    .expect("members of a split are distinct");
-    (
-        side,
-        sibling
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
         interpolant.into(),
         quotient.into(),
     )
@@ -423,7 +331,7 @@ pub const fn qr_bucket_seal(
 }
 
 /// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
-/// sequence, contents)`.
+/// sequence)`.
 ///
 /// # Panics
 ///
@@ -433,7 +341,6 @@ pub const fn qr_bucket_seal(
 pub fn qr_unspent_init(
     (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
-    bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_start, _anchor_next, discriminant, profile) = bucket;
     (
@@ -441,7 +348,6 @@ pub fn qr_unspent_init(
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
-        bucket_members.iter().copied().collect(),
     )
 }
 
@@ -472,7 +378,7 @@ pub const fn evidence_tree_open(
 }
 
 /// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
-/// elapsed_seq, extended_seq, contents)`.
+/// extended_seq)`.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
@@ -481,7 +387,6 @@ pub fn unspent_lift(
     (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
     value: Tachygram,
     elapsed: &[Nullifier],
-    bucket_members: &[Tachygram],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
     let (epoch, _anchor_start, _anchor_next, discriminant, profile) = bucket;
@@ -490,9 +395,7 @@ pub fn unspent_lift(
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        elapsed_seq.clone(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
-        bucket_members.iter().copied().collect(),
     )
 }
 
@@ -567,8 +470,7 @@ pub fn spend_action(
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
-/// (left_action_set, left_tachygram_set), (output_action_set,
-/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
+/// (output_action_set, output_tachygram_set))`.
 ///
 /// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
 /// singleton set contains one element: the fee digest or the fee change note's
@@ -612,16 +514,8 @@ pub fn fee_fuse(
         max_fee_note,
         fee,
         (
-            action_digests.iter().copied().collect(),
-            tachygrams.iter().copied().collect(),
-        ),
-        (
             output_action_digests.into_iter().collect(),
             output_tachygrams.into_iter().collect(),
-        ),
-        (
-            ActionSetPoly::from_iter([fee_digest]),
-            TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
     )
 }

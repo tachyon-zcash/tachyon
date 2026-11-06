@@ -224,25 +224,6 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 
     const INDEX: Index = Index::new(30);
 
-    fn polynomials(
-        &self,
-        witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "EvidenceTreeLeafPair: left contents do not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.1.as_ref(),
-            "EvidenceTreeLeafPair: right contents do not match the right slot",
-        )?;
-        Ok(super::unit_polynomials())
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,

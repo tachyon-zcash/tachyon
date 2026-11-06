@@ -20,11 +20,6 @@
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
 //! profile against a bucket and opens the bucket at it.
 
-#![expect(
-    clippy::pattern_type_mismatch,
-    reason = "Maybe projections borrow fixed witness tuples without moving their polynomial wrappers"
-)]
-
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -45,7 +40,7 @@ use udon::field::Field as _;
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
 use crate::{
-    collections::qr::QUADRATIC_NON_RESIDUE,
+    collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
     digest::poseidon,
     pasta::Fp,
     primitives::{
@@ -57,6 +52,7 @@ use crate::{
 };
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
+///
 /// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
@@ -232,8 +228,7 @@ impl Header<Fp> for QrIntakeSides {
 /// Split metadata and committed hints for a descent.
 ///
 /// Slots O0/O1 carry the interpolant and quotient. The source's bridge hash
-/// binds its non-residue polynomial; see `scratch/for-alex.md` for the
-/// distinction between this binding and binding both sides.
+/// binds its non-residue polynomial.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
@@ -477,29 +472,19 @@ impl Step<Pasta> for QrIntakeMerge {
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    /// `(left_contents, right_contents, merged)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
+    /// `(merged)`
+    type Witness<'source> = (TachygramSetPoly,);
 
     const INDEX: Index = Index::new(16);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "QrIntakeMerge: left contents do not match the left slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.1.as_ref(),
-            "QrIntakeMerge: right contents do not match the right slot",
-        )?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.2.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -596,25 +581,20 @@ impl Step<Pasta> for QrIntakeSplit {
     type Left = QrIntake;
     type Output = QrIntakeSides;
     type Right = ();
-    /// `(contents, non_residue, residue)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
+    /// `(non_residue, residue)`
+    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(17);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.0.as_ref(),
-            "QrIntakeSplit: contents do not match the left slot",
-        )?;
         Ok([
-            super::coefficients(witness.2.as_ref()),
             super::coefficients(witness.1.as_ref()),
+            super::coefficients(witness.0.as_ref()),
         ])
     }
 
@@ -692,25 +672,20 @@ impl Step<Pasta> for QrSideSelect {
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
-    /// `(non_residue_contents, interpolant, quotient)`
-    type Witness<'source> = (TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+    /// `(interpolant, quotient)`
+    type Witness<'source> = (QrInterpolantPoly, QrQuotientPoly);
 
     const INDEX: Index = Index::new(38);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[1],
-            witness.0.as_ref(),
-            "QrSideSelect: non-residue contents do not match the left slot",
-        )?;
         Ok([
+            super::coefficients(witness.0.as_ref()),
             super::coefficients(witness.1.as_ref()),
-            super::coefficients(witness.2.as_ref()),
         ])
     }
 
@@ -788,8 +763,8 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit, sibling_contents, interpolant, quotient)`
-    type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+    /// `(bit)`
+    type Witness<'source> = (bool,);
 
     const INDEX: Index = Index::new(18);
     const NUM_STAGED: usize = 1;
@@ -807,31 +782,13 @@ impl Step<Pasta> for QrSideDescend {
         &self,
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         #[expect(
             clippy::indexing_slicing,
             reason = "a boolean selects index zero or one in a two-slot header"
         )]
-        let (selected, sibling) = (
-            &left.polynomials[usize::from(!witness.0)],
-            &left.polynomials[usize::from(witness.0)],
-        );
-        super::enforce_slot(
-            sibling,
-            witness.1.as_ref(),
-            "QrSideDescend: sibling does not match the sibling slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.as_ref(),
-            "QrSideDescend: interpolant does not match selection",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[1],
-            witness.3.as_ref(),
-            "QrSideDescend: quotient does not match selection",
-        )?;
+        let selected = &left.polynomials[usize::from(!witness.0)];
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(selected);
         Ok(polynomials)
@@ -962,7 +919,7 @@ impl Step<Pasta> for QrSideDescend {
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
         let interpolant_square = interpolant_at_z.square(dr)?;
         let class_residual = interpolant_square.sub(dr, &sibling_product);
-        let multiplier_delta = Element::constant(dr, Fp::from(4));
+        let multiplier_delta = Element::constant(dr, QUADRATIC_NON_RESIDUE - Fp::ONE);
         let scaled_bit = bit_element.mul(dr, &multiplier_delta)?;
         let one = Element::constant(dr, Fp::ONE);
         let sibling_multiplier = scaled_bit.add(dr, &one);
@@ -1286,13 +1243,12 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence, contents)`
+    /// `(value, classes, mask, sequence)`
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
-        TachygramSetPoly,
     );
 
     const INDEX: Index = Index::new(19);
@@ -1310,14 +1266,9 @@ impl Step<Pasta> for QrUnspentInit {
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[0],
-            witness.4.as_ref(),
-            "QrUnspentInit: contents do not match the bucket",
-        )?;
         let mut polynomials = super::unit_polynomials();
         polynomials[0] = super::coefficients(witness.3.as_ref());
         Ok(polynomials)
@@ -1346,7 +1297,7 @@ impl Step<Pasta> for QrUnspentInit {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
-            let (value, classes, mask, sequence, contents) = witness.take();
+            let (value, classes, mask, _) = witness.take();
             let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile) =
                 left.take();
             let () = right.take();
@@ -1361,12 +1312,12 @@ impl Step<Pasta> for QrUnspentInit {
                 epoch_next,
                 bucket_anchor_next,
             );
-            Ok((sequence, contents, value, bucket_epoch, output))
+            Ok((value, bucket_epoch, output))
         })?;
         let value_element = Element::alloc(
             dr,
             &mut (),
-            native.clone().map(|(_, _, value, ..)| Fp::from(value)),
+            native.clone().map(|(value, ..)| Fp::from(value)),
         )?;
         #[expect(
             clippy::indexing_slicing,
@@ -1375,19 +1326,15 @@ impl Step<Pasta> for QrUnspentInit {
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let index_element = Element::alloc(
-            dr,
-            &mut (),
-            native
-                .as_ref()
-                .map(|(_, _, _, bucket_epoch, _)| Fp::from(u64::from(*bucket_epoch)) + Fp::ONE),
-        )?;
-        let index_times_z = index_element.mul(dr, &z)?;
-        let shifted = value_element.add(dr, &index_times_z);
-        let square = shifted.square(dr)?;
-        let cube = square.mul(dr, &shifted)?;
-        let two = Element::constant(dr, Fp::from(2));
-        let expected_sequence = cube.sub(dr, &two);
+        let challenge = z.value().map(|value| *value);
+        let expected = D::try_just(|| {
+            let (value, bucket_epoch, _) = native.clone().take();
+            Ok(indexed_multiset::direct_eval(
+                [(u64::from(bucket_epoch), Fp::from(value))],
+                challenge.take(),
+            ))
+        })?;
+        let expected_sequence = Element::alloc(dr, &mut (), expected)?;
         sequence_at_z
             .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {
@@ -1404,7 +1351,7 @@ impl Step<Pasta> for QrUnspentInit {
             ragu_core::Error::InvalidWitness("QrUnspentInit: found nullifier in the bucket".into())
         })?;
 
-        let output = native.map(|(_, _, _, _, output)| output);
+        let output = native.map(|(_, _, output)| output);
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }

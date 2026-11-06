@@ -54,19 +54,6 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 2] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
 }
 
-/// Prover-side check that `poly` is the polynomial a child slot carries.
-fn enforce_slot(
-    slot: &[pasta::Fp],
-    poly: &Polynomial<pasta::Fp, ProductionRank>,
-    err: &'static str,
-) -> ragu_core::Result<()> {
-    if coefficients(poly) == slot {
-        Ok(())
-    } else {
-        Err(ragu_core::Error::InvalidWitness(err.into()))
-    }
-}
-
 /// Application-wide encoded header width, including one suffix element.
 ///
 /// | Header           | Scalars | Points | Commitments  | Payload |
