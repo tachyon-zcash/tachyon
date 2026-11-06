@@ -520,6 +520,9 @@ impl Step<Pasta> for QrStampIntakeSeed {
 /// entry anchor of `epoch + 1` only if `anchor` is both the entry anchor and
 /// the final anchor of `epoch`. That holds only when the epoch published no
 /// stamp. `discriminant` is a free witness. See [`QrDiscriminant`].
+///
+/// `O0` is committed before ζ and opens to one there, so it is the constant
+/// polynomial $1$: the intake holds no member.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
@@ -536,7 +539,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -555,6 +558,13 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let one = Element::constant(dr, Fp::ONE);
+        oracles
+            .query_at_zeta(dr, Slot::output(0))?
+            .enforce_equal(dr, &one)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: intake is not empty".into())
+            })?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let discriminant_element =
