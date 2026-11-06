@@ -491,8 +491,8 @@ impl Step<Pasta> for NullifierFuse {
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `merged_seq`
-    type Witness<'source> = NfSeqPoly;
+    /// `(merged_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(12);
 
@@ -503,7 +503,7 @@ impl Step<Pasta> for NullifierFuse {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -552,11 +552,11 @@ impl Step<Pasta> for NullifierFuse {
             &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (left_cm, left_epoch_start, _) = left.take();
             let (_, _, right_epoch_end) = right.take();
-            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
-        })?;
+            ((left_cm, left_epoch_start, right_epoch_end), ())
+        });
         let (data, aux) = output.cast();
         let fields = NoteNullifiersOutput {
             cm: left_encoded.as_gadget().cm.clone(),

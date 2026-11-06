@@ -66,7 +66,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
 
     assert_eq!(
         *root.data(),
-        (epoch, start, anchor_end, discriminant, QrProfile::ROOT,)
+        (epoch, start, anchor_end, discriminant, QrProfile::ROOT)
     );
     assert_eq!(root.commitments()[0], acc_commit);
 }
@@ -271,13 +271,13 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let (_, interpolant, quotient) =
+        let (interpolant, quotient) =
             witness::qr_side_select((*honest_sides.data(), ()), &intake.members, false);
         assert_matches!(
             PROOF_SYSTEM.fuse(
                 rng,
                 qr::QrSideSelect,
-                (non_residue.iter().copied().collect(), interpolant, quotient),
+                (interpolant, quotient),
                 sides,
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             ).err(),
@@ -332,8 +332,8 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             let select_witness = witness::qr_side_select((*split.data(), ()), &members, side);
             let expected_selection = *split.data();
             let expected_hints = [
+                Eq::from(select_witness.0.commit()).to_affine(),
                 Eq::from(select_witness.1.commit()).to_affine(),
-                Eq::from(select_witness.2.commit()).to_affine(),
             ];
             let (selection, ()) = PROOF_SYSTEM
                 .fuse(
@@ -347,13 +347,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             assert_eq!(*selection.data(), expected_selection);
             assert_eq!(selection.commitments()[..2], expected_hints);
             let (child, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    qr::QrSideDescend,
-                    witness::qr_side_descend((*split.data(), *selection.data()), &members, side),
-                    split.clone(),
-                    selection,
-                )
+                .fuse(rng, qr::QrSideDescend, (side,), split.clone(), selection)
                 .unwrap();
             assert_eq!(
                 *child.data(),
@@ -381,125 +375,6 @@ fn qr_side_descend_carries_each_side_one_level_down() {
 }
 
 #[test]
-fn qr_side_descend_rejects_foreign_witness_parts() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (root, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
-        )
-        .unwrap();
-    let (split, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            witness::qr_intake_split((*root.data(), ()), &members),
-            root,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-
-    let (residue_selection, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideSelect,
-            witness::qr_side_select((*split.data(), ()), &members, true),
-            split.clone(),
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    let (non_residue_selection, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideSelect,
-            witness::qr_side_select((*split.data(), ()), &members, false),
-            split.clone(),
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    let (_, residue_sibling, residue_interpolant, residue_quotient) =
-        witness::qr_side_descend((*split.data(), *residue_selection.data()), &members, true);
-    let (_, non_residue_sibling, non_residue_interpolant, non_residue_quotient) =
-        witness::qr_side_descend(
-            (*split.data(), *non_residue_selection.data()),
-            &members,
-            false,
-        );
-    for (descend_witness, expected) in [
-        (
-            (
-                true,
-                non_residue_sibling.clone(),
-                residue_interpolant.clone(),
-                residue_quotient.clone(),
-            ),
-            "QrSideDescend: sibling does not match the sibling slot",
-        ),
-        (
-            (
-                true,
-                residue_sibling.clone(),
-                non_residue_interpolant.clone(),
-                residue_quotient.clone(),
-            ),
-            "QrSideDescend: interpolant does not match selection",
-        ),
-        (
-            (
-                false,
-                non_residue_sibling.clone(),
-                residue_interpolant.clone(),
-                non_residue_quotient.clone(),
-            ),
-            "QrSideDescend: interpolant does not match selection",
-        ),
-        (
-            (
-                true,
-                residue_sibling,
-                residue_interpolant,
-                non_residue_quotient,
-            ),
-            "QrSideDescend: quotient does not match selection",
-        ),
-        (
-            (
-                false,
-                non_residue_sibling,
-                non_residue_interpolant,
-                residue_quotient,
-            ),
-            "QrSideDescend: quotient does not match selection",
-        ),
-    ] {
-        let selection = if descend_witness.0 {
-            residue_selection.clone()
-        } else {
-            non_residue_selection.clone()
-        };
-        assert_matches!(
-            PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    qr::QrSideDescend,
-                    descend_witness,
-                    split.clone(),
-                    selection,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == expected
-        );
-    }
-}
-
-#[test]
 fn qr_side_select_defers_hint_validation_to_descent() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
@@ -523,40 +398,22 @@ fn qr_side_select_defers_hint_validation_to_descent() {
         )
         .unwrap();
 
-    {
-        let (_, interpolant, quotient) =
-            witness::qr_side_select((*sides.data(), ()), &members, true);
-        assert_matches!(
-            PROOF_SYSTEM.fuse(
-                rng,
-                qr::QrSideSelect,
-                (members.iter().copied().collect(), interpolant, quotient),
-                sides.clone(),
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-            ).err(),
-            Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == "QrSideSelect: non-residue contents do not match the left slot"
-        );
-    }
     for side in [false, true] {
-        let (non_residue, interpolant, quotient) =
-            witness::qr_side_select((*sides.data(), ()), &members, !side);
+        let (interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &members, !side);
         let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
-                (non_residue, interpolant.clone(), quotient.clone()),
+                (interpolant, quotient),
                 sides.clone(),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let (_, sibling, ..) =
-            witness::qr_side_descend((*sides.data(), *selection.data()), &members, side);
         assert_matches!(
             PROOF_SYSTEM.fuse(
                 rng,
                 qr::QrSideDescend,
-                (side, sibling, interpolant, quotient),
+                (side,),
                 sides.clone(),
                 selection,
             ).err(),
@@ -645,7 +502,6 @@ fn qr_side_descend_matches_selection_metadata() {
             .unwrap();
         let selection_witness =
             witness::qr_side_select((*foreign_sides.data(), ()), other_members, false);
-        let (_, interpolant, quotient) = selection_witness.clone();
         let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -655,13 +511,11 @@ fn qr_side_descend_matches_selection_metadata() {
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let (bit, sibling, ..) =
-            witness::qr_side_descend((*sides.data(), *selection.data()), &members, false);
         assert_matches!(
             PROOF_SYSTEM.fuse(
                 rng,
                 qr::QrSideDescend,
-                (bit, sibling, interpolant, quotient),
+                (false,),
                 sides.clone(),
                 selection,
             ).err(),
@@ -674,25 +528,23 @@ fn qr_side_descend_matches_selection_metadata() {
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            (residue.clone(), non_residue),
+            (residue, non_residue),
             root,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let (_, interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &members, false);
+    let (interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &members, false);
     let (selection, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
-            (residue, interpolant.clone(), quotient.clone()),
+            (interpolant, quotient),
             foreign_sides,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let (bit, sibling, ..) =
-        witness::qr_side_descend((*sides.data(), *selection.data()), &members, false);
     assert_matches!(PROOF_SYSTEM.fuse(
-        rng, qr::QrSideDescend, (bit, sibling, interpolant, quotient), sides, selection,
+        rng, qr::QrSideDescend, (false,), sides, selection,
     ).err(), Some(ragu_core::Error::InvalidWitness(err))
         if err.to_string() == "QrSideDescend: selection non-residue hash does not match sides");
 }
@@ -733,17 +585,12 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .unwrap();
 
     {
-        let (_, interpolant, quotient) =
-            witness::qr_side_select((*sides.data(), ()), &members, true);
+        let (interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &members, true);
         let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
-                (
-                    padded_non_residue.iter().copied().collect(),
-                    interpolant.clone(),
-                    quotient.clone(),
-                ),
+                (interpolant, quotient),
                 sides.clone(),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -753,12 +600,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
                 .fuse(
                     rng,
                     qr::QrSideDescend,
-                    (
-                        true,
-                        padded_non_residue.iter().copied().collect(),
-                        interpolant,
-                        quotient,
-                    ),
+                    (true,),
                     sides.clone(),
                     selection,
                 )
@@ -773,34 +615,19 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .copied()
         .filter(|&member| member != smuggled)
         .collect();
-    let (_, interpolant, quotient) =
+    let (interpolant, quotient) =
         witness::qr_side_select((*sides.data(), ()), &members_without_smuggled, false);
     let (selection, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrSideSelect,
-            (
-                padded_non_residue.iter().copied().collect(),
-                interpolant.clone(),
-                quotient.clone(),
-            ),
+            (interpolant, quotient),
             sides.clone(),
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     let (child, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (
-                false,
-                short_residue.iter().copied().collect(),
-                interpolant,
-                quotient,
-            ),
-            sides,
-            selection,
-        )
+        .fuse(rng, qr::QrSideDescend, (false,), sides, selection)
         .unwrap();
     let (.., child_profile) = *child.data();
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
@@ -869,14 +696,12 @@ fn qr_side_descend_refuses_a_full_register() {
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let descend_witness =
-        witness::qr_side_descend((*sides.data(), *selection.data()), &intake.members, true);
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                descend_witness,
+                (true,),
                 sides,
                 selection,
             )
@@ -925,7 +750,7 @@ fn qr_intake_merge_joins_two_spans() {
         .collect::<TachygramSetPoly>();
     assert_eq!(
         *merged.data(),
-        (epoch, start, end, discriminant, QrProfile::ROOT,)
+        (epoch, start, end, discriminant, QrProfile::ROOT)
     );
     assert_eq!(
         merged.commitments()[0],
@@ -1027,13 +852,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         )
         .unwrap();
     let (deeper, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            witness::qr_side_descend((*split.data(), *selection.data()), &left_members, true),
-            split,
-            selection,
-        )
+        .fuse(rng, qr::QrSideDescend, (true,), split, selection)
         .unwrap();
     let deeper_members: Vec<Tachygram> = left_members
         .iter()
@@ -1535,7 +1354,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
-    for (bucket_pcd, init_witness, expected) in vec![
+    for (bucket_pcd, init_witness, expected) in [
         (
             bucket.pcd.clone(),
             {
@@ -1826,6 +1645,11 @@ fn unspent_lift_rejects_invalid_extensions() {
                 &[nf0],
             ),
             "UnspentLift: found nullifier in the bucket",
+        ),
+        (
+            &bucket,
+            witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf1]),
+            "UnspentLift: extended is not elapsed with the tested pair",
         ),
         (
             &bucket,

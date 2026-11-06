@@ -655,8 +655,6 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let descend_witness =
-            witness::qr_side_descend((*sides.data(), *selection.data()), &intake.members, side);
         let members = intake
             .members
             .iter()
@@ -666,13 +664,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             })
             .collect::<Vec<_>>();
         let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrSideDescend,
-                descend_witness,
-                sides.clone(),
-                selection,
-            )
+            .fuse(rng, qr::QrSideDescend, (side,), sides.clone(), selection)
             .unwrap();
         QrIntakeEntry { pcd, members }
     };

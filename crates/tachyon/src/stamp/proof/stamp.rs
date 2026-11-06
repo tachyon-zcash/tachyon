@@ -270,8 +270,6 @@ impl Step<Pasta> for OutputAction {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let cm_root = left_encoded.as_gadget().cm.clone();
         let pad_root = left_encoded.as_gadget().pad.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
@@ -293,7 +291,7 @@ impl Step<Pasta> for OutputAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &action_roots,
             "OutputAction: action set does not commit to the action",
         )?;
@@ -304,7 +302,7 @@ impl Step<Pasta> for OutputAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &tachygram_roots,
             "OutputAction: tachygram set does not commit to the bound pair",
         )?;
@@ -406,8 +404,6 @@ impl Step<Pasta> for SpendAction {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let ak_assignment = D::try_just(|| {
             let bytes: [u8; 32] = witness.as_ref().take().1.ak.0.into();
             EpAffine::from_bytes(bytes)
@@ -447,7 +443,7 @@ impl Step<Pasta> for SpendAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &[action_root],
             "SpendAction: action set does not commit to the action",
         )?;
@@ -459,7 +455,7 @@ impl Step<Pasta> for SpendAction {
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &[current_root, next_root],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
@@ -525,27 +521,21 @@ impl Step<Pasta> for StampMerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_action_handle = Slot::left(0);
-        let left_tachygram_handle = Slot::left(1);
-        let merged_action_handle = Slot::output(0);
-        let merged_tachygram_handle = Slot::output(1);
-        let right_action_handle = Slot::right(0);
-        let right_tachygram_handle = Slot::right(1);
         // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
-            &left_action_handle,
-            &right_action_handle,
-            &merged_action_handle,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "StampMerge: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &left_tachygram_handle,
-            &right_tachygram_handle,
-            &merged_tachygram_handle,
+            &Slot::left(1),
+            &Slot::right(1),
+            &Slot::output(1),
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
@@ -633,27 +623,21 @@ impl Step<Pasta> for ActionMerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let left_action_handle = Slot::left(0);
-        let left_tachygram_handle = Slot::left(1);
-        let merged_action_handle = Slot::output(0);
-        let merged_tachygram_handle = Slot::output(1);
-        let right_action_handle = Slot::right(0);
-        let right_tachygram_handle = Slot::right(1);
         // Confirm union via product-opening relation.
         enforce_poly_product(
             dr,
             oracles,
-            &left_action_handle,
-            &right_action_handle,
-            &merged_action_handle,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "ActionMerge: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &left_tachygram_handle,
-            &right_tachygram_handle,
-            &merged_tachygram_handle,
+            &Slot::left(1),
+            &Slot::right(1),
+            &Slot::output(1),
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
@@ -1077,8 +1061,6 @@ impl Step<Pasta> for FeeSeed {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let action_handle = Slot::output(0);
-        let tachygram_handle = Slot::output(1);
         let maximum = Element::alloc(
             dr,
             &mut (),
@@ -1123,14 +1105,14 @@ impl Step<Pasta> for FeeSeed {
         enforce_poly_roots(
             dr,
             oracles,
-            &action_handle,
+            &Slot::output(0),
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
         enforce_poly_roots(
             dr,
             oracles,
-            &tachygram_handle,
+            &Slot::output(1),
             &[fee_change],
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         )?;
@@ -1236,26 +1218,20 @@ impl Step<Pasta> for StampUnmerge {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let dividend_action_handle = Slot::left(0);
-        let dividend_tachygram_handle = Slot::left(1);
-        let quotient_action_handle = Slot::output(0);
-        let quotient_tachygram_handle = Slot::output(1);
-        let divisor_action_handle = Slot::right(0);
-        let divisor_tachygram_handle = Slot::right(1);
         enforce_poly_product(
             dr,
             oracles,
-            &divisor_action_handle,
-            &quotient_action_handle,
-            &dividend_action_handle,
+            &Slot::right(0),
+            &Slot::output(0),
+            &Slot::left(0),
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
         )?;
         enforce_poly_product(
             dr,
             oracles,
-            &divisor_tachygram_handle,
-            &quotient_tachygram_handle,
-            &dividend_tachygram_handle,
+            &Slot::right(1),
+            &Slot::output(1),
+            &Slot::left(1),
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();

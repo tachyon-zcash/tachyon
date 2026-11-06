@@ -298,12 +298,12 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let end = witness
+        let anchor_end = witness
             .0
             .next_stamp(witness.1, &witness.2.commit())
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = alloc::vec![-Fp::from(end), Fp::ONE];
+        polynomials[0] = super::coefficients(AnchorSetPoly::from_iter([anchor_end]).as_ref());
         polynomials[1] = super::coefficients(witness.2.as_ref());
         Ok(polynomials)
     }
@@ -385,8 +385,8 @@ impl Step<Pasta> for AnchorSpanFuse {
     type Left = AnchorSpan;
     type Output = AnchorSpan;
     type Right = AnchorSpan;
-    /// `combined`
-    type Witness<'source> = AnchorSetPoly;
+    /// `(combined)`
+    type Witness<'source> = (AnchorSetPoly,);
 
     const INDEX: Index = Index::new(32);
 
@@ -397,7 +397,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -428,6 +428,11 @@ impl Step<Pasta> for AnchorSpanFuse {
         left_end.enforce_equal(dr, &right_start).map_err(|_err| {
             ragu_core::Error::InvalidWitness("AnchorSpanFuse: spans do not share a vertex".into())
         })?;
+        let output = D::try_just(|| {
+            let (left_anchor_start, ..) = left.take();
+            let (_, right_anchor_end) = right.take();
+            Ok(((left_anchor_start, right_anchor_end), ()))
+        })?;
         enforce_poly_product(
             dr,
             oracles,
@@ -436,11 +441,6 @@ impl Step<Pasta> for AnchorSpanFuse {
             &Slot::output(0),
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
-        let output = D::try_just(|| {
-            let (left_anchor_start, ..) = left.take();
-            let (_, right_anchor_end) = right.take();
-            Ok(((left_anchor_start, right_anchor_end), ()))
-        })?;
         let (data, aux) = output.cast();
         let fields = AnchorSpanOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
@@ -468,8 +468,8 @@ impl Step<Pasta> for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `combined_elapsed_seq`
-    type Witness<'source> = NfSeqPoly;
+    /// `(combined_elapsed_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(2);
 
@@ -480,7 +480,7 @@ impl Step<Pasta> for UnspentFuse {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -520,14 +520,6 @@ impl Step<Pasta> for UnspentFuse {
         left_epoch.enforce_equal(dr, &right_epoch).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentFuse: halves do not meet at one epoch".into())
         })?;
-        enforce_poly_product(
-            dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::right(0),
-            &Slot::output(0),
-            "UnspentFuse: combined is not the concatenation of the halves",
-        )?;
         let output = D::try_just(|| {
             let (left_anchor_start, left_epoch_start, ..) = left.take();
             let (_, _, right_epoch_next, right_anchor_next) = right.take();
@@ -541,6 +533,14 @@ impl Step<Pasta> for UnspentFuse {
                 (),
             ))
         })?;
+        enforce_poly_product(
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
+            "UnspentFuse: combined is not the concatenation of the halves",
+        )?;
         let (data, aux) = output.cast();
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_encoded.as_gadget().anchor_start.clone(),
@@ -763,8 +763,8 @@ impl Step<Pasta> for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `complement_seq`
-    type Witness<'source> = NfSeqPoly;
+    /// `(complement_seq)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(3);
 
@@ -775,7 +775,7 @@ impl Step<Pasta> for UnspentBind {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 

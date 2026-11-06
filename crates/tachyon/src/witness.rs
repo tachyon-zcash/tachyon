@@ -29,8 +29,8 @@ use crate::{
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
-            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideSelect,
+            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::SpendableInit,
         stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction},
@@ -74,7 +74,8 @@ pub fn nullifier_derive(
     )
 }
 
-/// Prepare the witness for [`NullifierFuse`]: `merged_seq`.
+/// Prepare the witness for [`NullifierFuse`]:
+/// `(merged_seq)`.
 #[must_use]
 pub fn nullifier_fuse(
     (left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
@@ -82,10 +83,12 @@ pub fn nullifier_fuse(
     right_nfs: &[Nullifier],
 ) -> StepWitness<'static, NullifierFuse> {
     let (_, left_epoch_start, ..) = left;
-    NfSeqPoly::new(left_epoch_start, &[left_nfs, right_nfs].concat())
+    let merged = [left_nfs, right_nfs].concat();
+    (NfSeqPoly::new(left_epoch_start, &merged),)
 }
 
-/// Prepare the witness for [`UnspentFuse`]: `combined_elapsed_seq`.
+/// Prepare the witness for [`UnspentFuse`]:
+/// `(combined_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch.
@@ -96,10 +99,12 @@ pub fn unspent_fuse(
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
     let (_, left_epoch_start, ..) = left;
-    NfSeqPoly::new(left_epoch_start, &[left_elapsed, right_elapsed].concat())
+    let combined = [left_elapsed, right_elapsed].concat();
+    (NfSeqPoly::new(left_epoch_start, &combined),)
 }
 
-/// Prepare the witness for [`UnspentBind`]: `complement_seq`.
+/// Prepare the witness for [`UnspentBind`]:
+/// `(complement_seq)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
@@ -120,7 +125,9 @@ pub fn unspent_bind(
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
-    NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail)
+    let complement_seq =
+        NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
+    (complement_seq,)
 }
 
 /// Prepare the witness for [`SpendableInit`]:
@@ -155,7 +162,7 @@ pub fn anchor_span_seed(
     )
 }
 
-/// Prepare the witness for [`AnchorSpanFuse`]: `combined`.
+/// Prepare the witness for [`AnchorSpanFuse`]: `(combined)`.
 ///
 /// `left_members` and `right_members` are the members of the two halves.
 #[must_use]
@@ -164,7 +171,7 @@ pub fn anchor_span_fuse(
     left_members: &[Anchor],
     right_members: &[Anchor],
 ) -> StepWitness<'static, AnchorSpanFuse> {
-    left_members.iter().chain(right_members).copied().collect()
+    (left_members.iter().chain(right_members).copied().collect(),)
 }
 
 /// Prepare the witness for [`SummarySeed`]:
@@ -235,14 +242,18 @@ pub const fn qr_empty_intake_seed(
     (anchor, epoch, discriminant)
 }
 
-/// Prepare the witness for [`QrIntakeMerge`]: `merged`.
+/// Prepare the witness for [`QrIntakeMerge`]: `(merged)`.
 #[must_use]
 pub fn qr_intake_merge(
     (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
     left_tgs: &[Tachygram],
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeMerge> {
-    left_tgs.iter().chain(right_tgs).copied().collect()
+    (left_tgs
+        .iter()
+        .chain(right_tgs)
+        .copied()
+        .collect::<TachygramSetPoly>(),)
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
@@ -268,8 +279,7 @@ pub fn qr_intake_split(
     )
 }
 
-/// Prepare the witness for [`QrSideSelect`]: `(non_residue_contents,
-/// interpolant, quotient)`.
+/// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
 /// # Panics
 ///
@@ -294,56 +304,7 @@ pub fn qr_side_select(
         discriminant.at(profile.depth),
     )
     .expect("members of a split are distinct");
-    (
-        non_residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-        interpolant.into(),
-        quotient.into(),
-    )
-}
-
-/// Prepare the witness for [`QrSideDescend`]: `(bit, sibling_contents,
-/// interpolant, quotient)`.
-///
-/// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
-/// is the residue side when set. The decomposition is the sibling's, at the
-/// sibling's class multiplier.
-///
-/// # Panics
-///
-/// Panics if the sibling's decomposition does not exist, which needs a
-/// repeated member. A split partitions distinct tachygrams, so this is
-/// unreachable.
-#[must_use]
-pub fn qr_side_descend(
-    (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
-    members: &[Tachygram],
-    side: bool,
-) -> StepWitness<'static, QrSideDescend> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = sides;
-    let (residue, non_residue) = collections::qr::split(
-        members.iter().copied().map(Fp::from),
-        discriminant.at(profile.depth),
-    );
-    let sibling = if side { non_residue } else { residue };
-    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
-    let (interpolant, quotient) = collections::qr::decomposition(
-        &sibling,
-        collections::qr::class_multiplier(!side),
-        discriminant.at(profile.depth),
-    )
-    .expect("members of a split are distinct");
-    (
-        side,
-        sibling
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-        interpolant.into(),
-        quotient.into(),
-    )
+    (interpolant.into(), quotient.into())
 }
 
 /// Prepare the witness for [`QrBucketSeal`]: `(anchor_final_prev)`.

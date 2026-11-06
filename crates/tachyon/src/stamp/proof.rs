@@ -55,19 +55,6 @@ fn unit_polynomials() -> [Vec<pasta::Fp>; 2] {
     array::from_fn(|_| alloc::vec![pasta::Fp::ONE])
 }
 
-/// Prover-side check of a retained polynomial copy against a child slot.
-fn enforce_slot(
-    slot: &[pasta::Fp],
-    poly: &Polynomial<pasta::Fp, ProductionRank>,
-    err: &'static str,
-) -> ragu_core::Result<()> {
-    if coefficients(poly) == slot {
-        Ok(())
-    } else {
-        Err(ragu_core::Error::InvalidWitness(err.into()))
-    }
-}
-
 /// Step admission checks, separate from the unrestricted protocol anchor hash.
 fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
     dr: &mut D,

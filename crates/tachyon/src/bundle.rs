@@ -14,12 +14,12 @@
 //!
 //! The first byte `tachyonBundleState` selects one of three bundle states:
 //!
-//! | value         | state            | bundle contents                                  |
-//! | ------------- | ---------------- | ------------------------------------------------ |
-//! | `0b0000_0000` | non-tachyon      | no bundle                                        |
-//! | `0b0000_0001` | proof stamp      | bundle with anchor, tachygrams, proof            |
-//! | `0b0000_0010` | pointer stamp    | bundle with aggregate's wtxid                    |
-//! | `...`         | *reserved*       | *n/a*                                            |
+//! | value         | state         | bundle contents                       |
+//! | ------------- | ------------- | ------------------------------------- |
+//! | `0b0000_0000` | non-tachyon   | no bundle                             |
+//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
+//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid         |
+//! | `...`         | *reserved*    | *n/a*                                 |
 //!
 //! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
 //! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
@@ -603,21 +603,6 @@ impl Plan {
     }
 }
 
-impl Bundle<Unproven> {
-    /// Attach a stamp, producing a bundle in its corresponding state.
-    #[must_use]
-    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
-        Bundle {
-            actions: self.actions,
-            value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp,
-        }
-    }
-}
-
 impl Bundle<ProofStamp> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
@@ -906,88 +891,105 @@ impl<P: ProofType> Bundle<ProofStamp<P>> {
     }
 }
 
-/// Read everything after the `tachyonBundleState` byte: value balance,
-/// action descriptors, the max fee note's value commitment, action sigs,
-/// binding sig and memo. The stamp trailer follows.
-fn read_body<R: Read>(mut reader: R) -> io::Result<Bundle<Unproven>> {
-    let value_balance = {
-        let mut bytes = [0u8; size_of::<i64>()];
-        reader.read_exact(&mut bytes)?;
-        value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
-            io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
-        })
-    }?;
-
-    // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
-    // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
-    // invalid data or EOF before significant problems occur.
-    // TODO: assert a reasonable maximum, to allow pre-allocation?
-    let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "actions vector length exceeds usize",
-            )
-        })?;
-
-    if n_actions == 0 && value_balance != value::Balance::ZERO {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "bundle with no actions must have zero value balance",
-        ));
+impl Bundle<Unproven> {
+    /// Attach a stamp, producing a bundle in its corresponding state.
+    #[must_use]
+    pub fn stamp<S: StampState>(self, stamp: S) -> Bundle<S> {
+        Bundle {
+            actions: self.actions,
+            value_balance: self.value_balance,
+            fee_max_commitment: self.fee_max_commitment,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp,
+        }
     }
 
-    let mut descriptors: Vec<action::Descriptor> = Vec::new();
-    for _ in 0..n_actions {
-        descriptors.push(action::Descriptor::read(&mut reader)?);
-    }
+    /// Read everything after the `tachyonBundleState` byte: value balance,
+    /// action descriptors, the max fee note's value commitment, action sigs,
+    /// binding sig and memo. The stamp trailer follows.
+    fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
+        let value_balance = {
+            let mut bytes = [0u8; size_of::<i64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
+            })
+        }?;
 
-    let fee_max_commitment = {
-        let point = serialization::read_ep_affine(&mut reader)?;
-        if point.is_identity() {
+        // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
+        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
+        // invalid data or EOF before significant problems occur.
+        // TODO: assert a reasonable maximum, to allow pre-allocation?
+        let n_actions =
+            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "actions vector length exceeds usize",
+                )
+            })?;
+
+        if n_actions == 0 && value_balance != value::Balance::ZERO {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "fee commitment is the identity",
+                "bundle with no actions must have zero value balance",
             ));
         }
-        value::Commitment::from(point)
-    };
 
-    let mut signatures: Vec<action::Signature> = Vec::new();
-    for _ in 0..n_actions {
-        signatures.push(action::Signature::read(&mut reader)?);
+        let mut descriptors: Vec<action::Descriptor> = Vec::new();
+        for _ in 0..n_actions {
+            descriptors.push(action::Descriptor::read(&mut reader)?);
+        }
+
+        let fee_max_commitment = {
+            let point = serialization::read_ep_affine(&mut reader)?;
+            if point.is_identity() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "fee commitment is the identity",
+                ));
+            }
+            value::Commitment::from(point)
+        };
+
+        let mut signatures: Vec<action::Signature> = Vec::new();
+        for _ in 0..n_actions {
+            signatures.push(action::Signature::read(&mut reader)?);
+        }
+
+        let actions: Vec<Action> = descriptors
+            .into_iter()
+            .zip(signatures)
+            .map(Action::from)
+            .collect();
+
+        let binding_sig = Signature::read(&mut reader)?;
+
+        // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
+        // not pre-allocate, on the same reasoning as `n_actions` above.
+        let n_memo =
+            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize")
+            })?;
+
+        let mut memo: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 64];
+        #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
+        while memo.len() < n_memo {
+            let take = (n_memo - memo.len()).min(chunk.len());
+            reader.read_exact(&mut chunk[..take])?;
+            memo.extend_from_slice(&chunk[..take]);
+        }
+
+        Ok(Self {
+            value_balance,
+            actions,
+            fee_max_commitment,
+            binding_sig,
+            memo,
+            stamp: Unproven,
+        })
     }
-
-    let actions: Vec<Action> = descriptors
-        .into_iter()
-        .zip(signatures)
-        .map(Action::from)
-        .collect();
-
-    let binding_sig = Signature::read(&mut reader)?;
-
-    // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
-    // not pre-allocate, on the same reasoning as `n_actions` above.
-    let n_memo = usize::try_from(serialization::read_compactsize(&mut reader)?)
-        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize"))?;
-
-    let mut memo: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; 64];
-    #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
-    while memo.len() < n_memo {
-        let take = (n_memo - memo.len()).min(chunk.len());
-        reader.read_exact(&mut chunk[..take])?;
-        memo.extend_from_slice(&chunk[..take]);
-    }
-
-    Ok(Bundle {
-        value_balance,
-        actions,
-        fee_max_commitment,
-        binding_sig,
-        memo,
-        stamp: Unproven,
-    })
 }
 
 impl<S: StampState> Bundle<S> {
@@ -1002,6 +1004,8 @@ impl<S: StampState> Bundle<S> {
 
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
+    /// See the module-level wire format documentation.
+    ///
     /// # Errors
     ///
     /// Returns an error if reading fails, the state byte does not match `S`,
@@ -1013,7 +1017,7 @@ impl<S: StampState> Bundle<S> {
                 "unexpected tachyonBundleState",
             ));
         }
-        let body = read_body(&mut reader)?;
+        let body = Bundle::<Unproven>::read_body(&mut reader)?;
         Ok(body.stamp(S::read(&mut reader)?))
     }
 
@@ -1160,7 +1164,7 @@ impl TachyonBundle {
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
             StateByte::ProofStamped => {
-                let body = read_body(&mut reader)?;
+                let body = Bundle::<Unproven>::read_body(&mut reader)?;
                 let (fee, coverage, anchor, tachygram_set, tachygrams, bytes, kind) =
                     stamp::read_stamp(&mut reader)?;
                 if kind == stamp::FULL_PROOF_KIND {
@@ -1197,7 +1201,7 @@ impl TachyonBundle {
                 }
             },
             StateByte::PointerStamped => {
-                let body = read_body(&mut reader)?;
+                let body = Bundle::<Unproven>::read_body(&mut reader)?;
                 Self::Adjunct(body.stamp(PointerStamp::read(&mut reader)?))
             },
         })
@@ -1245,7 +1249,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has its own proof, but its `hStampCoverageTachyon`
+    /// Confirm this bundle has a proof stamp, but its `hStampCoverageTachyon`
     /// does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
@@ -1258,7 +1262,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has its own proof, and its `hStampCoverageTachyon`
+    /// Confirm this bundle has a proof stamp, and its `hStampCoverageTachyon`
     /// represents this bundle's actions.
     #[must_use]
     pub fn is_autonome(&self) -> bool {

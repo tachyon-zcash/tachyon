@@ -58,6 +58,7 @@ use crate::{
 };
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
+///
 /// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
@@ -233,8 +234,7 @@ impl Header<Fp> for QrIntakeSides {
 /// Split metadata and committed hints for a descent.
 ///
 /// Slots O0/O1 carry the interpolant and quotient. The source's bridge hash
-/// binds its non-residue polynomial; see `scratch/for-alex.md` for the
-/// distinction between this binding and binding both sides.
+/// binds its non-residue polynomial.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
@@ -544,8 +544,8 @@ impl Step<Pasta> for QrIntakeMerge {
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    /// `merged`
-    type Witness<'source> = TachygramSetPoly;
+    /// `(merged)`
+    type Witness<'source> = (TachygramSetPoly,);
 
     const INDEX: Index = Index::new(16);
 
@@ -556,7 +556,7 @@ impl Step<Pasta> for QrIntakeMerge {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         let mut polynomials = super::unit_polynomials();
-        polynomials[0] = super::coefficients(witness.as_ref());
+        polynomials[0] = super::coefficients(witness.0.as_ref());
         Ok(polynomials)
     }
 
@@ -763,25 +763,20 @@ impl Step<Pasta> for QrSideSelect {
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
-    /// `(non_residue_contents, interpolant, quotient)`
-    type Witness<'source> = (TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+    /// `(interpolant, quotient)`
+    type Witness<'source> = (QrInterpolantPoly, QrQuotientPoly);
 
     const INDEX: Index = Index::new(38);
 
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        super::enforce_slot(
-            &left.polynomials[1],
-            witness.0.as_ref(),
-            "QrSideSelect: non-residue contents do not match the left slot",
-        )?;
         Ok([
+            super::coefficients(witness.0.as_ref()),
             super::coefficients(witness.1.as_ref()),
-            super::coefficients(witness.2.as_ref()),
         ])
     }
 
@@ -869,8 +864,8 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit, sibling_contents, interpolant, quotient)`
-    type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+    /// `(bit)`
+    type Witness<'source> = (bool,);
 
     const INDEX: Index = Index::new(18);
     const NUM_STAGED: usize = 1;
@@ -888,31 +883,13 @@ impl Step<Pasta> for QrSideDescend {
         &self,
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
+        _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         #[expect(
             clippy::indexing_slicing,
             reason = "a boolean selects one of the two side slots"
         )]
-        let (selected, sibling) = (
-            &left.polynomials[usize::from(!witness.0)],
-            &left.polynomials[usize::from(witness.0)],
-        );
-        super::enforce_slot(
-            sibling,
-            witness.1.as_ref(),
-            "QrSideDescend: sibling does not match the sibling slot",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[0],
-            witness.2.as_ref(),
-            "QrSideDescend: interpolant does not match selection",
-        )?;
-        super::enforce_slot(
-            &right.polynomials[1],
-            witness.3.as_ref(),
-            "QrSideDescend: quotient does not match selection",
-        )?;
+        let selected = &left.polynomials[usize::from(!witness.0)];
         let mut polynomials = super::unit_polynomials();
         polynomials[0].clone_from(selected);
         Ok(polynomials)
@@ -1026,7 +1003,7 @@ impl Step<Pasta> for QrSideDescend {
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
         let interpolant_square = interpolant_at_z.square(dr)?;
         let class_residual = interpolant_square.sub(dr, &sibling_product);
-        let scaled_bit = bit_element.scale(dr, Coeff::Arbitrary(Fp::from(4)));
+        let scaled_bit = bit_element.scale(dr, Coeff::Arbitrary(QUADRATIC_NON_RESIDUE - Fp::ONE));
         let sibling_multiplier = scaled_bit.add(dr, &one);
         let expected_class = sibling_multiplier.mul(dr, &shifted)?;
         class_residual
