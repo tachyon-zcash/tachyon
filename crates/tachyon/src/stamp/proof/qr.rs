@@ -430,6 +430,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
 ///
 /// The contents are committed before the random challenge and checked against
 /// the constant polynomial $1$, which represents an empty intake.
+/// O0 opens once at the challenge and is constrained to one.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
@@ -471,7 +472,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
             .query(dr, Slot::output(0), &z)?
             .enforce_equal(dr, &one)
             .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: intake is not empty".into())
+                ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: contents must be one".into())
             })?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
@@ -1018,8 +1019,7 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
-/// The contents commitment is represented by Ragu's commitment to its
-/// coordinates, which is also used in evidence-tree leaves.
+/// O0/O1 hold the contents. `contents_hash` is their certified bridge hash.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -1031,12 +1031,12 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub discriminant: Element<'dr, D>,
     pub depth: Element<'dr, D>,
     pub bits: Element<'dr, D>,
-    pub contents_bridge_hash: [Element<'dr, D>; 2],
+    pub contents_hash: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrBucket {
     /// `(epoch, anchor_start, anchor_next, discriminant, profile,
-    /// contents_double)`
+    /// contents_hash)`
     type Data = (
         EpochIndex,
         Anchor,
@@ -1089,7 +1089,7 @@ impl Header<Fp> for QrBucket {
                     .as_ref()
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
-            contents_bridge_hash: [
+            contents_hash: [
                 Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[0]))?,
                 Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[1]))?,
             ],
@@ -1130,6 +1130,7 @@ impl Header<Fp> for QrBucket {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
+/// L0/O0/O1 open once each to preserve the contents and certify the O1 digest.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -1214,7 +1215,7 @@ impl Step<Pasta> for QrBucketSeal {
             discriminant: left_encoded.as_gadget().discriminant.clone(),
             depth: left_encoded.as_gadget().depth.clone(),
             bits: left_encoded.as_gadget().bits.clone(),
-            contents_bridge_hash: oracles.bridge_hash().clone(),
+            contents_hash: oracles.bridge_hash().clone(),
         };
         let z = oracles.zeta().clone();
         let contents_at_z = oracles.query(dr, Slot::left(0), &z)?;

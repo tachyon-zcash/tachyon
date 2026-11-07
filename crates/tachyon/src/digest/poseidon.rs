@@ -296,16 +296,8 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: [Fp; 2]) -> Result<Fp>
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
 const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
-/// Digests a sealed bucket into the leaf of a evidence tree.
-///
-/// # Panics
-///
-/// Panics if `contents` is the identity point.
+/// Digests a sealed bucket's metadata and contents bridge hash into a leaf.
 #[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "nonidentity commitment has a bridge hash"
-)]
 pub fn evidence_tree_leaf(
     epoch: Fp,
     anchor_start: Fp,
@@ -313,13 +305,8 @@ pub fn evidence_tree_leaf(
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
-    contents: EqAffine,
+    contents: [Fp; 2],
 ) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = PROOF_SYSTEM
-        .bridge_hash(contents)
-        .expect("nonidentity commitment has a bridge hash")
-        .coordinates()
-        .expect("bridge hash must not be the identity point");
     *emulate(|driver| {
         let epoch_element = Element::constant(driver, epoch);
         let start_element = Element::constant(driver, anchor_start);
@@ -327,10 +314,7 @@ pub fn evidence_tree_leaf(
         let discriminant_element = Element::constant(driver, discriminant);
         let depth_element = Element::constant(driver, depth);
         let bits_element = Element::constant(driver, bits);
-        let bridge_hash = [
-            Element::constant(driver, bridge_hash_x),
-            Element::constant(driver, bridge_hash_y),
-        ];
+        let bridge_hash = contents.map(|value| Element::constant(driver, value));
         with_driver::evidence_tree_leaf(
             driver,
             &epoch_element,

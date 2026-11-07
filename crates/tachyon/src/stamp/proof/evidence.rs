@@ -51,7 +51,7 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
         &bucket.anchor_next,
         &bucket.discriminant,
         (&bucket.depth, &bucket.bits),
-        &bucket.contents_bridge_hash,
+        &bucket.contents_hash,
     )
 }
 
@@ -202,9 +202,10 @@ impl Header<Fp> for EvidenceTreePair {
 ///
 /// # Soundness
 ///
-/// Each digest is derived from one threaded bucket header, and the four
-/// equalities carry the network fields as [`EvidenceTreePairFuse`] does. The
-/// emitted pair holds two sealed buckets as leaves and claims nothing more.
+/// Each digest uses the contents hash certified by
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) or [`EvidenceTreeOpen`]. The four
+/// equalities carry the network fields as [`EvidenceTreePairFuse`] does.
+/// The emitted pair holds two sealed buckets as leaves and claims nothing more.
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
@@ -705,6 +706,8 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
 /// Two permutations (the leaf digest).
+/// O0/O1 hold the contents and open once each. O1's bridge hash enters the
+/// leaf.
 ///
 /// # Soundness
 ///
@@ -742,8 +745,10 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let contents = witness.1.as_ref().iter_coeffs().collect::<Vec<_>>();
-        Ok([contents.clone(), contents])
+        Ok([
+            witness.1.as_ref().iter_coeffs().collect(),
+            witness.1.as_ref().iter_coeffs().collect(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -784,7 +789,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             )?,
         ];
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let contents_bridge_hash = oracles.bridge_hash().clone();
+        let contents_hash = oracles.bridge_hash().clone();
         let output = D::just(|| {
             let (carrier_profile, _) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.clone().take();
@@ -794,9 +799,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                 anchor_next,
                 discriminant,
                 carrier_profile,
-                contents_bridge_hash
-                    .clone()
-                    .map(|value| *value.value().take()),
+                contents_hash.clone().map(|value| *value.value().take()),
             )
         });
         let expected = left_encoded.as_gadget().root.clone();
@@ -813,7 +816,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             discriminant: fields[3].clone(),
             depth: profile[0].clone(),
             bits: profile[1].clone(),
-            contents_bridge_hash,
+            contents_hash,
         };
         let computed = bucket_leaf(dr, &output_fields)?;
         expected.enforce_equal(dr, &computed).map_err(|_err| {

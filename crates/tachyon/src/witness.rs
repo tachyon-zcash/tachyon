@@ -344,7 +344,7 @@ pub fn qr_unspent_init(
     (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
@@ -391,7 +391,7 @@ pub fn unspent_lift(
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),

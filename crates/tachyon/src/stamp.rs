@@ -839,9 +839,10 @@ pub enum ProveError {
 
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.
 ///
-/// The PCD header `(action_acc, tachygram_acc, anchor)` is entirely not stored
-/// here.  The covered actions are present only as reference. A verifier must
-/// reconstruct the header from public data.
+/// The scalar header carries the tachygram bridge hash and anchor. Verification
+/// checks the output slots against the covered action digests and carried
+/// tachygram commitment. Bundle verification also checks the published
+/// tachygrams.
 ///
 /// Only the uncompressed proof type supports lifting, merging and
 /// unmerging. Compressed stamps support reading, writing and verification.
