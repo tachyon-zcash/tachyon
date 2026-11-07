@@ -14,6 +14,7 @@
 //! [`QrStampIntakeSeed`] from one unsummarized stamp, and
 //! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
+//! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
@@ -35,15 +36,17 @@ use crate::{
     pasta,
     pasta::{Ep, Eq, Fp, Fq},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantCommit,
+        QrInterpolantPoly, QrProfile, QrQuotientCommit, QrQuotientPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
 
-/// Tachygrams under routing. Every member of `contents` takes `profile`, and
-/// a split classifies at `discriminant.at(profile.depth)`. A builder keeps its
+/// Tachygrams under routing, complete for `profile` over the covered span.
+///
+/// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
@@ -82,8 +85,8 @@ impl Header for QrIntake {
     }
 }
 
-/// One intake's members partitioned at its discriminant. Extracting either
-/// side attests the other.
+/// A factorization of one intake's members. Selecting and extracting either
+/// side attests the exceptional-value assignment and the other side's class.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -119,6 +122,28 @@ impl Header for QrIntakeSides {
             Vec::new(),
             vec![Eq::from(non_residue), Eq::from(residue)],
         )
+    }
+}
+
+/// A split statement and committed hints for a descent.
+#[derive(Clone, Debug)]
+pub struct QrSideSelection;
+
+impl Header for QrSideSelection {
+    /// `(source, interpolant, quotient)`
+    type Data = (
+        <QrIntakeSides as Header>::Data,
+        QrInterpolantCommit,
+        QrQuotientCommit,
+    );
+
+    const SUFFIX: Suffix = Suffix::new(16);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (source, interpolant, quotient) = *data;
+        let (fp, fq, ep, mut eq) = QrIntakeSides::encode(&source);
+        eq.extend([Eq::from(interpolant), Eq::from(quotient)]);
+        (fp, fq, ep, eq)
     }
 }
 
@@ -348,10 +373,10 @@ impl Step for QrIntakeMerge {
 ///
 /// # Soundness
 ///
-/// The product pins the two sides to a factorization of the contents;
-/// [`QrSideDescend`] attests each child's sibling. The exceptional value $-R$
-/// has root $0$ under either class, so the non-residue side must open nonzero
-/// there.
+/// The product pins the two sides to a factorization of the contents.
+/// [`QrSideSelect`] checks the exceptional-value assignment, and
+/// [`QrSideDescend`] attests each child's sibling.
+/// The three witnessed polynomials open once each at the product challenge.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -385,18 +410,6 @@ impl Step for QrIntakeSplit {
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 
-        let exceptional = -discriminant.at(profile.depth);
-        let non_residue_at_exceptional = non_residue.eval(exceptional);
-        ctx.enforce_poly_query(
-            non_residue.commit().into(),
-            exceptional,
-            non_residue_at_exceptional,
-        )?;
-        enforce_nonzero(
-            non_residue_at_exceptional,
-            "QrIntakeSplit: exceptional value claimed the non-residue class",
-        )?;
-
         Ok((
             (
                 epoch,
@@ -409,6 +422,51 @@ impl Step for QrIntakeSplit {
             ),
             (),
         ))
+    }
+}
+
+/// Fix a split's hint commitments and check its exceptional-value assignment.
+///
+/// The non-residue contents open once at $-R$; the two hint polynomials supply
+/// output commitments. [`QrSideDescend`] checks their class identity.
+#[derive(Debug)]
+pub struct QrSideSelect;
+
+impl Step for QrSideSelect {
+    type Aux<'source> = ();
+    type Left = QrIntakeSides;
+    type Output = QrSideSelection;
+    type Right = ();
+    /// `(non_residue_contents, interpolant, quotient)`
+    type Witness<'source> = (TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
+
+    const INDEX: Index = Index::new(38);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (non_residue_contents, interpolant, quotient): Self::Witness<'source>,
+        left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let (_, _, _, sides_discriminant, sides_profile, sides_non_residue, _) = left;
+        enforce_equal_point(
+            non_residue_contents.commit().into(),
+            sides_non_residue.into(),
+            "QrSideSelect: non-residue contents do not match header",
+        )?;
+        let exceptional = -sides_discriminant.at(sides_profile.depth);
+        let non_residue_at_exceptional = non_residue_contents.eval(exceptional);
+        ctx.enforce_poly_query(
+            non_residue_contents.commit().into(),
+            exceptional,
+            non_residue_at_exceptional,
+        )?;
+        enforce_nonzero(
+            non_residue_at_exceptional,
+            "QrSideSelect: exceptional value claimed the non-residue class",
+        )?;
+        Ok(((left, interpolant.commit(), quotient.commit()), ()))
     }
 }
 
@@ -428,12 +486,13 @@ impl Step for QrIntakeSplit {
 ///
 /// # Soundness
 ///
-/// The sibling is pinned to its header commitment; the challenge absorbs the
-/// sibling, interpolant and quotient commitments and $R$. $R$ is prover-chosen,
-/// so without it a prover could solve the identity for $R$ after $z$. Every
-/// root of the sibling then satisfies $u(x)^2 = c \cdot (x + R)$ at the
-/// sibling's class $c$, and the split's product places every member of the
-/// other class in the child. The child may hold a stray member of the
+/// The selection's source matches the split, and all three witnessed
+/// polynomials are pinned to input commitments and open once at the challenge.
+/// Selection assigns the exceptional value to the residue side.
+/// The challenge absorbs their commitments, $R$ and the sibling's class
+/// multiplier. Every root of the sibling then satisfies $u(x)^2 = c \cdot (x +
+/// R)$ at the sibling's class $c$, and the split's product places every member
+/// of the other class in the child. The child may hold a stray member of the
 /// sibling's class; consumers open it nonzero, so a stray member cannot pass a
 /// value that is present. $R$ is read off the header, so a descent classifies
 /// at the same $R_0$ as every other step of the network. The parent's depth is
@@ -446,7 +505,7 @@ impl Step for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrIntake;
-    type Right = ();
+    type Right = QrSideSelection;
     /// `(bit, sibling_contents, interpolant, quotient)`
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
@@ -456,12 +515,66 @@ impl Step for QrSideDescend {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (bit, sibling_contents, interpolant, quotient): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (
+            sides_epoch,
+            sides_anchor_prev,
+            sides_anchor_end,
+            sides_discriminant,
+            sides_profile,
+            sides_non_residue,
+            sides_residue,
+        ): <Self::Left as Header>::Data,
+        (
+            (
+                selection_epoch,
+                selection_anchor_prev,
+                selection_anchor_end,
+                selection_discriminant,
+                selection_profile,
+                selection_non_residue,
+                selection_residue,
+            ),
+            selection_interpolant,
+            selection_quotient,
+        ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(sides_epoch) - Fp::from(selection_epoch),
+            "QrSideDescend: selection epoch does not match sides",
+        )?;
+        enforce_zero(
+            Fp::from(sides_anchor_prev) - Fp::from(selection_anchor_prev),
+            "QrSideDescend: selection anchor_prev does not match sides",
+        )?;
+        enforce_zero(
+            Fp::from(sides_anchor_end) - Fp::from(selection_anchor_end),
+            "QrSideDescend: selection anchor_end does not match sides",
+        )?;
+        enforce_zero(
+            Fp::from(sides_discriminant) - Fp::from(selection_discriminant),
+            "QrSideDescend: selection discriminant does not match sides",
+        )?;
+        enforce_zero(
+            Fp::from(u64::from(sides_profile.depth)) - Fp::from(u64::from(selection_profile.depth)),
+            "QrSideDescend: selection depth does not match sides",
+        )?;
+        enforce_zero(
+            Fp::from(u64::from(sides_profile.bits)) - Fp::from(u64::from(selection_profile.bits)),
+            "QrSideDescend: selection profile does not match sides",
+        )?;
+        enforce_equal_point(
+            sides_non_residue.into(),
+            selection_non_residue.into(),
+            "QrSideDescend: selection non-residue does not match sides",
+        )?;
+        enforce_equal_point(
+            sides_residue.into(),
+            selection_residue.into(),
+            "QrSideDescend: selection residue does not match sides",
+        )?;
         // TODO: a real circuit needs a bit decomposition of `depth` here; mock
         // ragu accepts the native comparison.
-        if profile.depth >= u32::BITS {
+        if sides_profile.depth >= u32::BITS {
             return Err(ragu_core::Error::InvalidWitness(
                 "QrSideDescend: profile has no bit left for another side".into(),
             ));
@@ -472,43 +585,49 @@ impl Step for QrSideDescend {
         // TODO: select point coordinates in the real circuit. These native group
         // selectors produce identity intermediates when the commitments agree or
         // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
-        let sibling_commit = sibling_contents.commit();
-        let sibling = Eq::from(residue)
-            + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
+        let sibling = Eq::from(sides_residue)
+            + ((Eq::from(sides_non_residue) - Eq::from(sides_residue)) * Fp::from(u64::from(bit)));
         enforce_equal_point(
-            Eq::from(sibling_commit),
+            sibling_contents.commit().into(),
             sibling,
             "QrSideDescend: sibling does not match the header",
         )?;
-        let selected = Eq::from(non_residue)
-            + ((Eq::from(residue) - Eq::from(non_residue)) * Fp::from(u64::from(bit)));
+        let selected = Eq::from(sides_non_residue)
+            + ((Eq::from(sides_residue) - Eq::from(sides_non_residue)) * Fp::from(u64::from(bit)));
 
-        let interpolant_commit = interpolant.commit();
-        let quotient_commit = quotient.commit();
+        enforce_equal_point(
+            interpolant.commit().into(),
+            selection_interpolant.into(),
+            "QrSideDescend: interpolant does not match selection",
+        )?;
+        enforce_equal_point(
+            quotient.commit().into(),
+            selection_quotient.into(),
+            "QrSideDescend: quotient does not match selection",
+        )?;
+        let sibling_multiplier =
+            Fp::ONE + ((QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit)));
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
         let z = ctx.derive_challenge(&[
-            sibling_commit.into(),
-            interpolant_commit.into(),
-            quotient_commit.into(),
-            {
-                // The mock absorbs only points, so absorb `[R]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * discriminant.at(profile.depth)
-            },
+            sibling_contents.commit().into(),
+            interpolant.commit().into(),
+            quotient.commit().into(),
+            // The mock absorbs only points, so bind scalars on G_0.
+            g0 * sides_discriminant.at(sides_profile.depth),
+            g0 * sibling_multiplier,
         ])?;
         let sibling_at_z = sibling_contents.eval(z);
         let interpolant_at_z = interpolant.eval(z);
         let quotient_at_z = quotient.eval(z);
-        ctx.enforce_poly_query(sibling_commit.into(), z, sibling_at_z)?;
-        ctx.enforce_poly_query(interpolant_commit.into(), z, interpolant_at_z)?;
-        ctx.enforce_poly_query(quotient_commit.into(), z, quotient_at_z)?;
-        let shifted = z + discriminant.at(profile.depth);
+        ctx.enforce_poly_query(sibling_contents.commit().into(), z, sibling_at_z)?;
+        ctx.enforce_poly_query(interpolant.commit().into(), z, interpolant_at_z)?;
+        ctx.enforce_poly_query(quotient.commit().into(), z, quotient_at_z)?;
+        let shifted = z + sides_discriminant.at(sides_profile.depth);
         let class_residual = interpolant_at_z.square() - (sibling_at_z * quotient_at_z);
-        let sibling_multiplier =
-            Fp::ONE + ((QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit)));
         enforce_zero(
             class_residual - (sibling_multiplier * shifted),
             "QrSideDescend: the sibling fails its class decomposition",
@@ -516,11 +635,11 @@ impl Step for QrSideDescend {
 
         Ok((
             (
-                epoch,
-                anchor_prev,
-                anchor_end,
-                discriminant,
-                profile.descend(bit),
+                sides_epoch,
+                sides_anchor_prev,
+                sides_anchor_end,
+                sides_discriminant,
+                sides_profile.descend(bit),
                 TachygramSetCommit::from(selected),
             ),
             (),
@@ -741,7 +860,7 @@ pub(super) fn enforce_value_profile(
 ///
 /// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c \cdot
 /// s_j$ is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero
-/// rule forces the residue side, where [`QrIntakeSplit`] files the exceptional
+/// rule forces the residue side, where [`QrSideSelect`] files the exceptional
 /// value. Among boolean vectors of weight `depth` only the leading positions
 /// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
