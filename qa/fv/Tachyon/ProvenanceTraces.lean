@@ -71,6 +71,34 @@ theorem StampTrace.forget {s : Stamp F A} :
   | .unmerge dividend divisor hu => .unmerge dividend.forget divisor.forget hu
   | .lift a t hepoch => .lift a t.forget hepoch
 
+/-- Replace private leaf construction by an accepted-relation refinement. All
+merge, unmerge and lift evidence, including the terminal header, is preserved. -/
+def ActionsTrace.mapLeaf {Other : F → A → Type x}
+    (refineLeaf : ∀ d a, Leaf d a → Other d a) {s : Stamp F A} :
+    ActionsTrace IsFee epoch R Leaf s → ActionsTrace IsFee epoch R Other s
+  | .action d a leaf hd => .action d a (refineLeaf d a leaf) hd
+  | .merge left right hm => .merge (left.mapLeaf refineLeaf) (right.mapLeaf refineLeaf) hm
+  | .lift a t he => .lift a (t.mapLeaf refineLeaf) he
+
+def StampTrace.mapLeaf {Other : F → A → Type x}
+    (refineLeaf : ∀ d a, Leaf d a → Other d a) {s : Stamp F A} :
+    StampTrace IsFee epoch R Leaf s → StampTrace IsFee epoch R Other s
+  | .feeFuse f leaf actions hf =>
+      .feeFuse f (refineLeaf f _ leaf) (actions.mapLeaf refineLeaf) hf
+  | .feeSeed f a leaf hf => .feeSeed f a (refineLeaf f a leaf) hf
+  | .merge left right hm => .merge (left.mapLeaf refineLeaf) (right.mapLeaf refineLeaf) hm
+  | .unmerge dividend divisor hu =>
+      .unmerge (dividend.mapLeaf refineLeaf) (divisor.mapLeaf refineLeaf) hu
+  | .lift a t he => .lift a (t.mapLeaf refineLeaf) he
+
+/-- Any two-way local refinement gives both directions for complete accepted
+stamp paths, even when earlier unmerges have removed their original fee. -/
+theorem StampTrace.refinement_iff {Other : F → A → Type x}
+    (forward : ∀ d a, Leaf d a → Other d a) (backward : ∀ d a, Other d a → Leaf d a)
+    {s : Stamp F A} :
+    Nonempty (StampTrace IsFee epoch R Leaf s) ↔ Nonempty (StampTrace IsFee epoch R Other s) :=
+  ⟨fun ⟨t⟩ => ⟨t.mapLeaf forward⟩, fun ⟨t⟩ => ⟨t.mapLeaf backward⟩⟩
+
 /-- The trace's leaf occurrences. -/
 def ActionsTrace.leaves {s : Stamp F A} :
     ActionsTrace IsFee epoch R Leaf s → List (LeafRecord Leaf)

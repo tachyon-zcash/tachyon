@@ -27,6 +27,35 @@ the publication rules that `Chain.Valid` collects.
 
 ## What is verified
 
+### Private arithmetic graph (step-budget)
+
+`FixedBase.lean` models the three fixed radix-8 stages for each of R and G.
+`Accepted.invariant` establishes canonical integer limbs and the partial sums at
+24/54/85 windows; `Accepted.product` derives the completed multiplication.
+`Accepted.complete` constructs the stages from the old scalar opening, including
+zero scalars and identity partial sums. `accepted_iff` gives both directions.
+The tag decodes to identity only when set, with a finite sentinel carrier;
+`decode_encode` and `encode_valid` cover honest export. A sentinel with tag false
+remains the sentinel group element.
+
+`windows_correct` proves the sum of fixed table entries equals integer scalar
+multiplication. `select8_correct` verifies the three-bit selection tree and
+`amount_product` covers the 17-window bounded amount path, with either signed V
+base. `suffix_injective` checks the six actual scalar suffixes (17 through 22);
+`Accepted.unique_producer` requires the right base's preceding stage.
+`StampTrace.mapLeaf` and `StampTrace.refinement_iff` lift two-way leaf refinements
+through the existing merge/unmerge/lift graph without changing terminal headers.
+
+This is an integer/group interpretation, not a verified circuit compiler. The
+correspondence obligations are Boolean allocation, separate 128/127-bit limb
+recomposition below the circuit modulus, the canonical scalar comparison,
+correct grouping of the ordered bits across bit 128, the two coordinate
+selectors using the same bits, and the complete-add/finite-point codec.
+`boolean_recomposition_injective` and `Word.digits_eq` establish uniqueness at
+the integer interpretation; the real backend must enforce their premises.
+Hash consumers compare both canonical limbs (`hash_limb_match`), not a single
+circuit-field residue. Headers containing these limbs stay prover-private.
+
 The merge and unmerge results follow the soundness argument for `StampUnmerge` in three parts. Every
 derivable header pairs its action set with its tachygram set through `R`. A verified bundle
 publishes exactly its covered leaves' tachygrams. Every covered digest traces back to a leaf that
