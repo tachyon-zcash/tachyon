@@ -4,8 +4,9 @@ import Tachyon.Value
 # Fee accounting
 
 A spend commits `+v` for the spent note (`SpendBind`), an output commits `-v` for the created note
-(`OutputBind`), and the bundle's max fee commitment is `-maxFee` for the max fee note (`FeeFuse`).
-`FeeFuse` also creates the change note at `maxFee - fee` and checks both in range. Under the binding
+(`OutputBind`), and the bundle's max fee commitment is `-maxFee` for the max fee note
+(`FeeValueCommit` → `FeeBind` → `FeeFuse`). `FeeBind` creates the change root at `maxFee - fee`
+and checks the ranges before `FeeFuse` extends the sets. Under the binding
 signature, value spent equals value created, including the change note, plus the fee and the value
 balance, or the bundle computes a nontrivial relation among $(\mathcal{V}, \mathcal{R})$.
 -/
