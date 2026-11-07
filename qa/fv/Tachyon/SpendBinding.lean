@@ -3,8 +3,11 @@ import Tachyon.Spendable
 /-!
 # Spend binding
 
-`SpendBind` takes a `NoteSpendable (cm, epoch_current, anchor)` and derives the note's nullifiers at
-`epoch_current` and the epoch after, at the lineage's anchor. `SpendAction` publishes that pair as an
+`SpendPrepare` joins `NoteSpendable (cm, epoch_current, anchor)` with `NoteSecret` and derives the
+note's nullifiers at `epoch_current` and the epoch after, at the lineage's anchor. `SpendBind`
+preserves that prepared data while adding the value commitment. `spendBind` below is their erased
+nullifier/anchor relation; `StepBudget.prepare_header_eq` connects it to preparation.
+`SpendAction` publishes that pair as an
 `Actions` leaf at the same anchor. A stamp covering the leaf evaluates its tachygrams at the stamp's
 anchor epoch, which `SpendableTrace.anchorEpochOrBreak` pins to `epoch_current`.
 -/
@@ -20,8 +23,8 @@ structure SpendHeader (F A : Type*) where
   nf_next : F
   anchor : A
 
-/-- `SpendBind`: the note's nullifiers at the lineage's epoch and the next, at the lineage's
-anchor. -/
+/-- The erased SpendPrepare → SpendBind relation: the note's nullifiers at the lineage's
+epoch and the next, at the lineage's anchor. -/
 def spendBind (nf : F → ℕ → F) (sp : NoteSpendable F A) : SpendHeader F A :=
   ⟨sp.cm, nf sp.cm sp.epoch_current, nf sp.cm (sp.epoch_current + 1), sp.anchor⟩
 
