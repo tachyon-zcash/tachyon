@@ -3,13 +3,12 @@
 use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use pasta_curves::Fp;
-use ragu_arithmetic::PoseidonPermutation as _;
-use ragu_pasta::PoseidonFp;
+use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 
 use crate::{
     digest::poseidon,
     nullifier::{NF_DERIVATION_WIDTH, Nullifier},
+    pasta::Fp,
     primitives::EpochIndex,
 };
 

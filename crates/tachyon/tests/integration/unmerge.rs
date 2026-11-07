@@ -1,9 +1,8 @@
 extern crate alloc;
 
 use alloc::vec;
+use core::{assert_matches, iter};
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
@@ -18,22 +17,20 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, fee_digests, mock_sighash, mock_wtxid,
-    random_block, shared_sk,
+    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
+    shared_sk,
 };
 
-/// Removing one contributor from an aggregate leaves a stamp that covers the
-/// others.
 #[test]
-fn unmerge_removes_one_contributor() {
+fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    let anchor = Anchor::random(rng);
+    let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
 
-    let alice_bob = alice
+    let all_three = alice
         .stamp
         .clone()
         .merge(
@@ -48,8 +45,7 @@ fn unmerge_removes_one_contributor() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("merge A and B");
-    let all_three = alice_bob
+        .unwrap()
         .merge(
             rng,
             (
@@ -62,54 +58,78 @@ fn unmerge_removes_one_contributor() {
                 [carol.fee_descriptor()].into(),
             ),
         )
-        .expect("merge AB and C");
+        .unwrap();
 
-    alice.stamp = all_three
-        .unmerge(
-            rng,
-            (
-                alice
-                    .descriptors()
-                    .chain(bob.descriptors())
-                    .chain(carol.descriptors())
-                    .collect(),
-                [
-                    alice.fee_descriptor(),
-                    bob.fee_descriptor(),
-                    carol.fee_descriptor(),
-                ]
-                .into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
-        )
-        .expect("divide B out");
-    let wtxid = mock_wtxid(&alice);
-    alice
-        .verify(
-            rng,
-            &mock_sighash(alice.commitment()),
-            &wtxid.into(),
-            &[&carol.strip(wtxid)],
-        )
-        .expect("the quotient covers A and its adjunct C");
+    for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
+        (
+            bob.stamp.clone(),
+            bob.descriptors().collect(),
+            [bob.fee_descriptor()].into(),
+            vec![carol.clone()],
+        ),
+        (
+            bob.stamp
+                .clone()
+                .merge(
+                    rng,
+                    (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
+                    (
+                        carol.stamp.clone(),
+                        carol.descriptors().collect(),
+                        [carol.fee_descriptor()].into(),
+                    ),
+                )
+                .unwrap(),
+            bob.descriptors().chain(carol.descriptors()).collect(),
+            [bob.fee_descriptor(), carol.fee_descriptor()].into(),
+            vec![],
+        ),
+    ] {
+        let mut unmerged = alice.clone();
+        unmerged.stamp = all_three
+            .clone()
+            .unmerge(
+                rng,
+                (
+                    alice
+                        .descriptors()
+                        .chain(bob.descriptors())
+                        .chain(carol.descriptors())
+                        .collect(),
+                    [
+                        alice.fee_descriptor(),
+                        bob.fee_descriptor(),
+                        carol.fee_descriptor(),
+                    ]
+                    .into(),
+                ),
+                (divisor, divisor_descriptors, divisor_fees),
+            )
+            .unwrap();
+        let wtxid = mock_wtxid(&unmerged);
+        let stripped: Vec<_> = adjuncts
+            .into_iter()
+            .map(|adjunct| adjunct.strip(wtxid))
+            .collect();
+        unmerged
+            .verify(
+                rng,
+                &mock_sighash(unmerged.commitment()),
+                &wtxid.into(),
+                &stripped.iter().collect::<Vec<_>>(),
+            )
+            .unwrap();
+    }
 }
 
-/// The quotient keeps the dividend's fee. Dividing `B` out of `B` merged into
-/// `A` undoes the merge, leaving a stamp that verifies on `A`. Dividing `A`
-/// out instead leaves `A`'s fee on a stamp covering `B`, which fails on `B`
-/// and verifies once merged into `C`'s stamp at `C`'s fee.
 #[test]
 fn unmerge_keeps_the_dividend_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let alice_fee = value::Positive::try_from(40u64).expect("fee within MAX_MONEY");
-    let bob_fee = value::Positive::try_from(70u64).expect("fee within MAX_MONEY");
-    let carol_fee = value::Positive::try_from(90u64).expect("fee within MAX_MONEY");
+    let anchor = Anchor::random(rng);
+    let alice_fee = value::Positive::try_from(40u64).unwrap();
+    let bob_fee = value::Positive::try_from(70u64).unwrap();
+    let carol_fee = value::Positive::try_from(90u64).unwrap();
     let [alice, bob, mut carol] = [alice_fee, bob_fee, carol_fee].map(|fee| {
         let (plan, signed, spend_pcds) = wallet.signed(
             rng,
@@ -120,7 +140,7 @@ fn unmerge_keeps_the_dividend_fee() {
         signed.stamp(
             plan.stamp_plan(anchor, fee)
                 .prove(rng, &wallet.pak, spend_pcds)
-                .expect("prove with the fee"),
+                .unwrap(),
         )
     });
 
@@ -139,7 +159,7 @@ fn unmerge_keeps_the_dividend_fee() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("merge B into A");
+        .unwrap();
 
     let mut kept = alice.clone();
     kept.stamp = on_alice
@@ -156,8 +176,7 @@ fn unmerge_keeps_the_dividend_fee() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("divide B out of the aggregate on A");
-    assert_eq!(kept.stamp.fee, alice_fee, "the quotient keeps A's fee");
+        .unwrap();
     let kept_wtxid = mock_wtxid(&kept);
     kept.verify(
         rng,
@@ -165,7 +184,7 @@ fn unmerge_keeps_the_dividend_fee() {
         &kept_wtxid.into(),
         &[],
     )
-    .expect("the quotient covers A at A's fee");
+    .unwrap();
 
     let mut hostless = bob.clone();
     hostless.stamp = on_alice
@@ -181,20 +200,20 @@ fn unmerge_keeps_the_dividend_fee() {
                 [alice.fee_descriptor()].into(),
             ),
         )
-        .expect("divide A out of the aggregate on A");
-    assert_eq!(hostless.stamp.fee, alice_fee, "the quotient keeps A's fee");
+        .unwrap();
+    assert_eq!(hostless.stamp.fee, alice_fee);
     let hostless_wtxid = mock_wtxid(&hostless);
-    let err = hostless
-        .verify(
+    assert_matches!(
+        hostless.verify(
             rng,
             &mock_sighash(hostless.commitment()),
             &hostless_wtxid.into(),
             &[],
-        )
-        .expect_err("B must not verify at A's fee");
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
-    };
+        ),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 
     carol.stamp = carol
         .stamp
@@ -211,8 +230,7 @@ fn unmerge_keeps_the_dividend_fee() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("merge the quotient into C");
-    assert_eq!(carol.stamp.fee, carol_fee, "the merge keeps C's fee");
+        .unwrap();
     let carol_wtxid = mock_wtxid(&carol);
     carol
         .verify(
@@ -221,101 +239,14 @@ fn unmerge_keeps_the_dividend_fee() {
             &carol_wtxid.into(),
             &[&bob.strip(carol_wtxid)],
         )
-        .expect("the merge covers C and its adjunct B");
+        .unwrap();
 }
 
-/// Sub-aggregate boundaries do not bound removal. Merging `C`, the complement
-/// of a mined `B·C`, into `A·B` and dividing `B·C` out leaves `A`, though no
-/// merge produced `B·C` as a part of `(A·B)·C`.
-#[test]
-fn unmerge_by_a_divisor_across_merge_boundaries() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-
-    let alice_bob = alice
-        .stamp
-        .clone()
-        .merge(
-            rng,
-            (
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
-        )
-        .expect("merge A and B");
-    let mined = bob
-        .stamp
-        .clone()
-        .merge(
-            rng,
-            (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
-            (
-                carol.stamp.clone(),
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
-        )
-        .expect("merge B and C");
-    let all_three = alice_bob
-        .merge(
-            rng,
-            (
-                alice.descriptors().chain(bob.descriptors()).collect(),
-                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
-            ),
-            (
-                carol.stamp.clone(),
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
-        )
-        .expect("merge AB and C");
-
-    alice.stamp = all_three
-        .unmerge(
-            rng,
-            (
-                alice
-                    .descriptors()
-                    .chain(bob.descriptors())
-                    .chain(carol.descriptors())
-                    .collect(),
-                [
-                    alice.fee_descriptor(),
-                    bob.fee_descriptor(),
-                    carol.fee_descriptor(),
-                ]
-                .into(),
-            ),
-            (
-                mined,
-                bob.descriptors().chain(carol.descriptors()).collect(),
-                [bob.fee_descriptor(), carol.fee_descriptor()].into(),
-            ),
-        )
-        .expect("divide the mined BC out");
-    let wtxid = mock_wtxid(&alice);
-    alice
-        .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
-        .expect("the quotient covers A alone");
-}
-
-/// A divisor proved at an earlier anchor divides only once lifted to the
-/// dividend's anchor.
 #[test]
 fn unmerge_by_a_lifted_divisor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let bob = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
@@ -334,7 +265,7 @@ fn unmerge_by_a_lifted_divisor() {
             &[bob.fee_descriptor()].into(),
             vec![span],
         )
-        .expect("lift B onto A's anchor");
+        .unwrap();
 
     let alice_bob = alice
         .stamp
@@ -351,11 +282,10 @@ fn unmerge_by_a_lifted_divisor() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("merge A and the lifted B");
+        .unwrap();
 
-    let err = alice_bob
-        .clone()
-        .unmerge(
+    assert_matches!(
+        alice_bob.clone().unmerge(
             rng,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
@@ -366,12 +296,10 @@ fn unmerge_by_a_lifted_divisor() {
                 bob.descriptors().collect(),
                 [bob.fee_descriptor()].into(),
             ),
-        )
-        .expect_err("an unlifted divisor must not unmerge");
-    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
-        panic!("expected ProofFailed(InvalidWitness), got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "StampUnmerge: anchors must match");
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+            if err.to_string() == "StampUnmerge: anchors must match"
+    );
 
     alice.stamp = alice_bob
         .unmerge(
@@ -386,20 +314,18 @@ fn unmerge_by_a_lifted_divisor() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("divide the lifted B out");
+        .unwrap();
     let wtxid = mock_wtxid(&alice);
     alice
         .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
-        .expect("the quotient covers A alone");
+        .unwrap();
 }
 
-/// Dividing a stamp by itself proves a stamp over no leaves, which no bundle
-/// covers.
 #[test]
 fn unmerge_by_itself_leaves_no_leaves() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
 
     let quotient = alice
@@ -417,41 +343,25 @@ fn unmerge_by_itself_leaves_no_leaves() {
                 [alice.fee_descriptor()].into(),
             ),
         )
-        .expect("divide A by itself");
-    assert!(
-        quotient.tachygrams.is_empty(),
-        "the quotient publishes no tachygrams"
-    );
-    assert_eq!(
-        quotient.tachygram_set,
-        TachygramSetPoly::from_iter([]).commit(),
-        "the quotient commits to the empty tachygram set"
-    );
-    assert!(
-        quotient
-            .verify_proof(rng, [])
-            .expect("proof system verification"),
-        "the quotient commits to the empty action set"
-    );
+        .unwrap();
+    assert!(quotient.tachygrams.is_empty());
+    assert!(quotient.verify_proof(rng, []).unwrap());
 
     alice.stamp = quotient;
     let wtxid = mock_wtxid(&alice);
-    let err = alice
-        .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
-        .expect_err("an empty stamp covers no bundle");
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
-    };
+    assert_matches!(
+        alice.verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 }
 
-/// A divisor holding some of one bundle's leaves splits it. The divisor must
-/// carry the bundle's fee, so the quotient proves over the kept action alone,
-/// and the bundle no longer verifies.
 #[test]
 fn unmerge_splitting_a_bundle() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
 
     let (_, _, kept_plan) = build_output_plan(rng, wallet.random_note(300));
     let removed_note = wallet.random_note(300);
@@ -464,14 +374,14 @@ fn unmerge_splitting_a_bundle() {
     let mut whole = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().expect("bundle commitment")),
+            &mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
-        .expect("sign")
+        .unwrap()
         .stamp(
             plan.stamp_plan(anchor, value::Positive::ZERO)
                 .prove(rng, &wallet.pak, vec![])
-                .expect("prove the whole bundle"),
+                .unwrap(),
         );
 
     let part = stamp::Plan::new(
@@ -482,7 +392,7 @@ fn unmerge_splitting_a_bundle() {
         value::Positive::ZERO,
     )
     .prove(rng, &wallet.pak, vec![])
-    .expect("prove the removed action with the bundle's fee");
+    .unwrap();
 
     let quotient = whole
         .stamp
@@ -499,32 +409,28 @@ fn unmerge_splitting_a_bundle() {
                 [whole.fee_descriptor()].into(),
             ),
         )
-        .expect("divide the removed action out");
+        .unwrap();
     assert!(
         quotient
-            .verify_proof(rng, [kept_descriptor.digest().expect("action digest")])
-            .expect("proof system verification"),
-        "the quotient verifies against the kept action's digest"
+            .verify_proof(rng, [kept_descriptor.digest().unwrap()])
+            .unwrap()
     );
 
     whole.stamp = quotient;
     let wtxid = mock_wtxid(&whole);
-    let err = whole
-        .verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[])
-        .expect_err("a split bundle must not verify");
-    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = err else {
-        panic!("expected Coverage(StampActionsMismatch), got {err:?}");
-    };
+    assert_matches!(
+        whole.verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::StampActionsMismatch
+        ))
+    );
 }
 
-/// `StampUnmerge` divides `A·B` by `B` with honest operands. It binds the
-/// dividend and divisor sets to their headers, and rejects a quotient whose
-/// product with the divisor is not the dividend.
 #[test]
 fn unmerge_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let anchor = Anchor::random(rng);
     let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
@@ -543,31 +449,35 @@ fn unmerge_binds_its_sets() {
                 [bob.fee_descriptor()].into(),
             ),
         )
-        .expect("merge A and B");
+        .unwrap();
 
     let alice_bob_actions: ActionSetPoly = alice
         .descriptors()
         .chain(bob.descriptors())
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain(fee_digests([alice.fee_descriptor(), bob.fee_descriptor()]))
+        .map(|desc| desc.digest().unwrap())
+        .chain(
+            [alice.fee_descriptor(), bob.fee_descriptor()]
+                .into_iter()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
         .collect();
     let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
     let alice_actions: ActionSetPoly = alice
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain(fee_digests([alice.fee_descriptor()]))
+        .map(|desc| desc.digest().unwrap())
+        .chain(iter::once(alice.fee_descriptor().digest().unwrap()))
         .collect();
     let alice_tachygrams: TachygramSetPoly = alice.stamp.tachygrams.iter().copied().collect();
     let bob_actions: ActionSetPoly = bob
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain(fee_digests([bob.fee_descriptor()]))
+        .map(|desc| desc.digest().unwrap())
+        .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
     let carol_actions: ActionSetPoly = carol
         .descriptors()
-        .map(|desc| desc.digest().expect("action digest"))
-        .chain(fee_digests([carol.fee_descriptor()]))
+        .map(|desc| desc.digest().unwrap())
+        .chain(iter::once(carol.fee_descriptor().digest().unwrap()))
         .collect();
     let carol_tachygrams: TachygramSetPoly = carol.stamp.tachygrams.iter().copied().collect();
 
@@ -586,80 +496,76 @@ fn unmerge_binds_its_sets() {
         (alice_actions, alice_tachygrams),
         (bob_actions.clone(), bob_tachygrams),
     );
-    #[expect(
-        clippy::redundant_clone,
-        reason = "false positive: the loop below carries both proofs again"
-    )]
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            StampUnmerge,
-            valid.clone(),
-            alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-            bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-        )
-        .expect("honest operands prove");
-
-    let mut wrong_dividend_actions = valid.clone();
-    wrong_dividend_actions.0.0 = carol_actions.clone();
-    let mut wrong_dividend_tachygrams = valid.clone();
-    wrong_dividend_tachygrams.0.1 = carol_tachygrams.clone();
-    let mut wrong_divisor_actions = valid.clone();
-    wrong_divisor_actions.2.0 = carol_actions;
-    let mut wrong_divisor_tachygrams = valid.clone();
-    wrong_divisor_tachygrams.2.1 = carol_tachygrams;
-    // The action quotient removes A's leaves instead of B's.
-    let mut wrong_action_quotient = valid.clone();
-    wrong_action_quotient.1.0 = bob_actions;
-    // The tachygram quotient removes one of A's tachygrams in place of one of
-    // B's, under an honest action quotient.
-    let alice_tachygram = *alice.stamp.tachygrams.first().expect("A has tachygrams");
-    let bob_tachygram = *bob.stamp.tachygrams.first().expect("B has tachygrams");
-    let mut wrong_tachygram_quotient = valid;
-    wrong_tachygram_quotient.1.1 = alice
-        .stamp
-        .tachygrams
-        .iter()
-        .copied()
-        .filter(|&tachygram| tachygram != alice_tachygram)
-        .chain([bob_tachygram])
-        .collect();
 
     for (corrupt, expected) in [
         (
-            wrong_dividend_actions,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.0.0 = carol_actions.clone();
+                corrupt
+            },
             "StampUnmerge: dividend action accumulator must commit to header commit",
         ),
         (
-            wrong_divisor_actions,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.2.0 = carol_actions;
+                corrupt
+            },
             "StampUnmerge: divisor action accumulator must commit to header commit",
         ),
         (
-            wrong_dividend_tachygrams,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.0.1 = carol_tachygrams.clone();
+                corrupt
+            },
             "StampUnmerge: dividend tachygram accumulator must commit to header commit",
         ),
         (
-            wrong_divisor_tachygrams,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.2.1 = carol_tachygrams;
+                corrupt
+            },
             "StampUnmerge: divisor tachygram accumulator must commit to header commit",
         ),
         (
-            wrong_action_quotient,
+            {
+                let mut corrupt = valid.clone();
+                corrupt.1.0 = bob_actions;
+                corrupt
+            },
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
         ),
         (
-            wrong_tachygram_quotient,
+            {
+                let mut corrupt = valid;
+                let dropped = *alice.stamp.tachygrams.first().unwrap();
+                corrupt.1.1 = alice
+                    .stamp
+                    .tachygrams
+                    .iter()
+                    .copied()
+                    .filter(|&tachygram| tachygram != dropped)
+                    .chain([*bob.stamp.tachygrams.first().unwrap()])
+                    .collect();
+                corrupt
+            },
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         ),
     ] {
-        let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.fuse(
-            rng,
-            StampUnmerge,
-            corrupt,
-            alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-            bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-        ) else {
-            panic!("expected InvalidWitness: {expected}");
-        };
-        assert_eq!(inner.to_string(), expected);
+        assert_matches!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    StampUnmerge,
+                    corrupt,
+                    alice_bob.proof.clone().carry::<Stamp>(dividend_header),
+                    bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
+                )
+                .err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        );
     }
 }

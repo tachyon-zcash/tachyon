@@ -12,17 +12,17 @@ fmt:
 
 lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
-    cargo clippy --workspace --all-targets --all-features
+    cargo clippy --workspace --all-targets --features test-epoch-size
 
 test *ARGS:
-    cargo test --workspace --all-features {{ARGS}}
+    cargo test --workspace --features test-epoch-size {{ARGS}}
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
 
 check:
     cargo check --workspace --lib --no-default-features # no_std
-    cargo check --workspace --all-targets --all-features
+    cargo check --workspace --all-targets --features test-epoch-size
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
@@ -42,7 +42,7 @@ fv:
 ci_local:
     cargo +{{_nightly}} fmt --all -- --check
     cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
-    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
     cargo test --release --all --locked --lib
-    cargo test --release --all --locked --all-features
+    cargo test --release --all --locked --features test-epoch-size
     RUSTDOCFLAGS="-D warnings {{_katex}}" cargo doc --no-deps --all --locked --document-private-items

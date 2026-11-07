@@ -1,12 +1,17 @@
+use core::cmp::Ordering;
+
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use ff::Field as _;
-use group::{Curve as _, Group as _};
 use lazy_static::lazy_static;
-use pasta_curves::{Eq, Fp};
+use rand_core::CryptoRng;
+use udon::{curve::Projective as _, field::Field as _};
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::{digest::poseidon, serialization};
+use crate::{
+    digest::poseidon,
+    pasta::{Eq, Fp},
+    serialization,
+};
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -27,10 +32,27 @@ pub enum AnchorError {
 }
 
 /// Running anchor over the consensus state.
-#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
+impl PartialOrd for Anchor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Anchor {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.as_inner().reduce().cmp(&other.0.as_inner().reduce())
+    }
+}
+
 impl Anchor {
+    /// Sample a uniformly random anchor.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// Advance the anchor by absorbing one stamp and the epoch of the block
     /// that contains it.
     ///
@@ -101,69 +123,4 @@ impl Default for Anchor {
 }
 
 #[cfg(test)]
-mod tests {
-    use pasta_curves::Eq;
-    use rand::{SeedableRng as _, rngs::StdRng};
-
-    use super::*;
-    use crate::{Tachygram, TachygramSetPoly};
-
-    #[test]
-    fn order_matters() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let first = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
-        let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
-
-        let forward = Anchor::default()
-            .next_stamp(EpochIndex::new(7), &first)
-            .unwrap()
-            .next_stamp(EpochIndex::new(7), &second)
-            .unwrap();
-
-        let reverse = Anchor::default()
-            .next_stamp(EpochIndex::new(7), &second)
-            .unwrap()
-            .next_stamp(EpochIndex::new(7), &first)
-            .unwrap();
-
-        assert_ne!(forward, reverse);
-    }
-
-    #[test]
-    fn next_stamp_rejects_invalid_sets() {
-        let rng = &mut StdRng::seed_from_u64(0);
-
-        // The identity commitment is not a valid set
-        {
-            let anchor = Anchor(Fp::random(&mut *rng));
-            let zero_set = TachygramSetCommit::from(Eq::identity());
-
-            let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex::new(7), &zero_set)
-            else {
-                panic!("should not be able to advance with an identity stamp");
-            };
-        }
-
-        // An empty set commits to a constant polynomial
-        {
-            let anchor = Anchor(Fp::random(&mut *rng));
-            let one_set = TachygramSetCommit::default();
-
-            let Err(AnchorError::NextStampEmpty) = anchor.next_stamp(EpochIndex::new(1), &one_set)
-            else {
-                panic!("should not be able to advance with an empty stamp");
-            };
-        }
-    }
-
-    #[test]
-    fn next_epoch_rejects_epoch_zero() {
-        let rng = &mut StdRng::seed_from_u64(0);
-
-        let anchor = Anchor(Fp::random(rng));
-
-        let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex::new(0)) else {
-            panic!("should not be able to advance to epoch zero");
-        };
-    }
-}
+mod tests;

@@ -8,7 +8,6 @@
 
 use alloc::collections::BTreeSet;
 
-use pasta_curves::Fp;
 use ragu::{Header, Step};
 
 use crate::{
@@ -19,6 +18,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::Nullifier,
+    pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
         QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
@@ -29,7 +29,7 @@ use crate::{
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
-            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::{QrSpendableInit, SpendableInit},
         stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift},
@@ -328,6 +328,42 @@ pub fn qr_intake_split(
             .iter()
             .map(|&(member, _root)| Tachygram::from(member))
             .collect(),
+    )
+}
+
+/// Prepare the witness for [`QrSideSelect`]: `(non_residue_contents,
+/// interpolant, quotient)`.
+///
+/// # Panics
+///
+/// Panics if the sibling's decomposition does not exist due to repeated
+/// members.
+#[must_use]
+pub fn qr_side_select(
+    (sides, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
+    members: &[Tachygram],
+    side: bool,
+) -> StepWitness<'static, QrSideSelect> {
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
+    let (residue, non_residue) = collections::qr::split(
+        members.iter().copied().map(Fp::from),
+        discriminant.at(profile.depth),
+    );
+    let sibling = if side { &non_residue } else { &residue };
+    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
+    let (interpolant, quotient) = collections::qr::decomposition(
+        sibling,
+        collections::qr::class_multiplier(!side),
+        discriminant.at(profile.depth),
+    )
+    .expect("members of a split are distinct");
+    (
+        non_residue
+            .iter()
+            .map(|&(member, _root)| Tachygram::from(member))
+            .collect(),
+        interpolant.into(),
+        quotient.into(),
     )
 }
 

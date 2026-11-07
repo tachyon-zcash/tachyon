@@ -3,11 +3,11 @@
 use core::cmp;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use group::GroupEncoding as _;
-use pasta_curves::{EpAffine, arithmetic::CurveAffine as _};
+use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
+    pasta::EpAffine,
     primitives::{ActionDigest, ActionDigestError},
     value,
 };
@@ -31,7 +31,6 @@ impl Descriptor {
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         let cv_max_fee = EpAffine::from(self.max_commitment)
             .coordinates()
-            .into_option()
             .ok_or(ActionDigestError::IdentityCv)?;
         Ok(ActionDigest::from(poseidon::fee_digest(
             cv_max_fee,

@@ -1,6 +1,8 @@
 //! Proof-related keys: ProofAuthorizingKey.
 
 use derive_more::Debug;
+use ff::PrimeField as _;
+use udon::field::Field as _;
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -74,11 +76,20 @@ impl SpendValidatingKey {
     /// construction the signer derives `rk` via
     /// [`ActionSigningKey<Spend>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
+    /// field.
     #[must_use]
     pub fn derive_action_public(
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> public::ActionVerificationKey {
-        public::ActionVerificationKey(self.0.randomize(&alpha.0))
+        #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
+        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+            .into_option()
+            .expect("canonical randomizer encoding is a scalar");
+        public::ActionVerificationKey(self.0.randomize(&scalar))
     }
 }

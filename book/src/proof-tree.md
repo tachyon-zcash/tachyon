@@ -32,7 +32,7 @@ The sync service produces `ArbitraryUnspent` segments without ever holding the n
 
 A `Summary` folds a run of one epoch's stamps into one accumulator alongside the anchor (`SummarySeed`, `SummaryAdvance`); summaries are note-independent, so anyone can build them.
 Summaries and single stamps root an epoch's QR evidence.
-Once per epoch a builder routes every published tachygram into buckets by quadratic-residue profile (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`).
+Once per epoch a builder routes every published tachygram into buckets by quadratic-residue profile (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`).
 A nullifier has one profile, so it can have been published in only one bucket, and one exclusion opening on that bucket proves it absent from the epoch (`QrUnspentInit`).
 Every `ArbitraryUnspent` starts that way and covers whole epochs, half-open: `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`.
 Both anchor bounds are entry anchors, and an entry anchor belongs to the epoch it opens, so `anchor_next` belongs to `epoch_next` and is excluded.
@@ -105,7 +105,7 @@ The wallet runs every step that touches the note's commitment or master key.
 It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), produces spend and output actions (`SpendBind`, `SpendAction`, `OutputBind`, `OutputAction`), merges and lifts them (`ActionMerge`, `ActionLift`), and applies its bundle's fee (`FeeFuse`, `FeeSeed`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
-It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
+It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works with published `Stamp`s.
 It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), fuses with `StampMerge`, removes contributors with `StampUnmerge`, and proves an innocent aggregate's zero fee with `FeeSeed`.
@@ -129,6 +129,7 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 | EvidenceTreeDescend | possible | yes | no |
 | EvidenceTreeOpen | possible | yes | no |
 | QrSideDescend | possible | yes | no |
+| QrSideSelect | possible | yes | no |
 | QrUnspentInit | possible | yes | no |
 | UnspentFuse | possible | yes | no |
 | UnspentLift | possible | yes | no |
@@ -216,14 +217,36 @@ Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed 
 A profile is the string of sides on the path to a bucket.
 
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, `QrEmptyIntakeSeed` starts an empty one over an epoch that published no stamp, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
-`QrIntakeSplit` factors an intake's contents into two sides at $R = R_0 + \mathsf{depth}$ as `QrIntakeSides`, and `QrSideDescend` extracts one side while attesting the other at its class multiplier $c$:
+`QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
+The split's discriminant at this depth is defined by the progression:
+
+$$R = R_0 + \mathsf{depth}$$
+
+`QrSideSelect` copies the entire split statement and fixes the interpolant and quotient commitments as `QrSideSelection`.
+It pins the non-residue polynomial to the split's commitment and checks the exceptional-value assignment:
+
+$$q_0(-R) \neq 0$$
+
+`QrSideDescend` takes the split and selection as inputs and matches every copied source field.
+Its witness bit chooses the child, sibling and class multiplier.
+The multiplier is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
+It pins the sibling to the split and the hints to the selection, then checks the identity with $s$ for the sibling and $c$ for its multiplier:
 
 $$u(X)^2 - c\,(X + R) = s(X)\, h(X)$$
 
-holds only when every root of the sibling $s$ takes its side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$; with the split's product, every member of the extracted class is then in the child.
-A child may carry a stray member of the other class, which only tightens the openings its consumers make, but it cannot lack a member of its own.
-The exceptional value $-R$ has root $0$ under either class, so the split also opens the non-residue side nonzero at $-R$.
-The descent's challenge absorbs the three commitments and a scalar-binding point of $R$. $R_0$ is prover-chosen, so without it a prover could solve the identity for $R$ after $z$. $R_0$ is read off the header, so every step of one network classifies at the same progression.
+Every root of the sibling satisfies the corresponding class equation:
+
+$$u(x)^2 = c\,(x + R)$$
+
+Together with the split's product and selection's exceptional-value assignment, this establishes completeness of the extracted class in the child.
+A child may carry stray members of the sibling's class, strengthening its consumers' exclusion openings.
+The exceptional value has zero class root, and selection assigns it to the residue side through its nonzero opening of the non-residue polynomial.
+Selection's hints are arbitrary committed polynomials; descent establishes their identity.
+The descent's challenge absorbs the three commitments and scalar-binding points for the discriminant and sibling multiplier, fixing every operand of the tested residual before the challenge.
+Every step of one network classifies at the progression carried by its headers.
+Split witnesses three polynomials and opens each once at its product challenge.
+Selection witnesses the non-residue polynomial and two hints, opening only the non-residue polynomial at the exceptional point and producing the two hint commitments.
+Descent witnesses and opens the sibling and both hints once each, forwarding the selected child's commitment.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
@@ -246,7 +269,7 @@ With $s_j = x + R_0 + j$ and $c$ the non-residue,
 
 $$r_j^2 = \bigl(c - (c - 1)\, b_j\bigr)\, s_j, \qquad b_j = 0 \implies s_j \neq 0,$$
 
-so $b_j$ is the value's own side at every position, with $s_j = 0$ filed residue-side as the split files it.
+so each bit is the value's own side, with zero shifted values filed residue-side as selection assigns them.
 The mask selects the bucket's depth $d$ as a prefix and the fold compares the bucket's sides against the value's,
 
 $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m_j\,(a_j + b_j), \qquad a_{32} = \mathsf{bits},$$
@@ -544,6 +567,7 @@ flowchart LR
 | Summary | (epoch, anchor_prev, anchor_end, acc_commit) |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
+| QrSideSelection | (source: QrIntakeSides, interpolant, quotient) |
 | QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
 | EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) |
 | EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
@@ -571,7 +595,8 @@ flowchart LR
 | QrEmptyIntakeSeed | — | — | anchor, epoch, discriminant | QrIntake |
 | QrIntakeMerge | QrIntake | QrIntake | left_contents, right_contents, merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | contents, non_residue, residue | QrIntakeSides |
-| QrSideDescend | QrIntakeSides | — | bit, sibling_contents, interpolant, quotient | QrIntake |
+| QrSideSelect | QrIntakeSides | — | non_residue_contents, interpolant, quotient | QrSideSelection |
+| QrSideDescend | QrIntakeSides | QrSideSelection | bit, sibling_contents, interpolant, quotient | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
 | EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |
