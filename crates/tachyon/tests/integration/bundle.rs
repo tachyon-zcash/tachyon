@@ -472,19 +472,25 @@ fn stamped_bundle_round_trips() {
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
         .unwrap();
-    let compressed = stamped.compress(rng, &[]).unwrap();
+    let descriptors = stamped.descriptors().collect();
+    let fees = BTreeSet::from([stamped.fee_descriptor()]);
+    let compressed = Bundle {
+        stamp: stamped.stamp.compress(rng, &descriptors, &fees).unwrap(),
+        actions: stamped.actions,
+        value_balance: stamped.value_balance,
+        fee_max_commitment: stamped.fee_max_commitment,
+        binding_sig: stamped.binding_sig,
+        memo: stamped.memo,
+    };
     let mut bytes = Vec::new();
     compressed.write(&mut bytes).unwrap();
     let mut erased_buf = Vec::new();
-    TachyonBundle::from(compressed.clone())
-        .write(&mut erased_buf)
-        .unwrap();
+    let erased = TachyonBundle::from(compressed);
+    erased.write(&mut erased_buf).unwrap();
     assert_eq!(erased_buf, bytes);
     let mut block = Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::read(&*bytes).unwrap();
-    assert_eq!(
-        TachyonBundle::read(&*bytes).unwrap(),
-        TachyonBundle::from(compressed)
-    );
+    assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
+    Bundle::<PointerStamp>::try_from(erased).unwrap_err();
     let sighash = mock_sighash(block.commitment());
     let wtxid = mock_wtxid(&block).into();
     block.verify(rng, &sighash, &wtxid, &[]).unwrap();
@@ -633,8 +639,6 @@ fn bundle_state_mismatches_are_rejected() {
             .to_string(),
         "unexpected tachyonBundleState"
     );
-    Bundle::<PointerStamp>::try_from(TachyonBundle::from(stamped.compress(rng, &[]).unwrap()))
-        .unwrap_err();
     Bundle::<ProofStamp<ragu::CompressedProof<Pasta>>>::try_from(TachyonBundle::from(adjunct))
         .unwrap_err();
 }
