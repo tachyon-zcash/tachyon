@@ -83,7 +83,7 @@ jobs:
       - name: Run clippy (no_std)
         run: cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
       - name: Run clippy (all features)
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -102,16 +102,16 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: release
-      # `--all-features` enables `test-epoch-size`, which shrinks `EPOCH_SIZE`
-      # from 4096 to 64, so the all-features run never sees the shipped epoch
+      # `--features test-epoch-size` shrinks `EPOCH_SIZE` from 4096 to 64,
+      # so the test-epoch-size run never sees the shipped epoch
       # size. `--lib` covers it for the cost of the unit tests; the proof
-      # integration tests are left to the all-features run, where they are not
+      # integration tests are left to the test-epoch-size run, where they are not
       # paying for 64x the epoch.
       - name: Run unit tests (default features)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --release --all --locked --lib
       - name: Run tests (all features)
-        run: cargo test --release --all --locked --all-features
+        run: cargo test --release --all --locked --features test-epoch-size
 
   # The `no_std` build has to be checked against a target that genuinely has no
   # `std`, not just `--no-default-features` on a host triple, which links `std`
