@@ -29,6 +29,10 @@ $$
 $$
 
 For an output operation, $\mathsf{cm}$ is the published [tachygram](./tachygrams.md).
+`OutputBind` derives this commitment and the bounded value contribution from
+the same note opening. `SpendPrepare` joins the certified secret opening to
+the spendable commitment before `SpendBind` computes its value commitment.
+The [proof tree](./proof-tree.md#spend-binding) describes this provenance.
 
 ## Nullifier
 

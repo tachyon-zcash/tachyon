@@ -44,6 +44,11 @@ It contains:
 - `proof` - the recursive proof (which may be aggregated)
 - `tachygrams` - nullifiers and commitments for each action
 
+The prover keeps the [arithmetic certificates and preparation headers](./proof-tree.md#private-arithmetic-certificates-and-cost)
+private. Validators reconstruct the terminal `Stamp` header from published
+action descriptors, fee descriptors and tachygrams. Action and binding
+signatures authenticate the corresponding action keys and value equation.
+
 The proof establishes:
 
 - tachygrams either create a new note or destroy an existing note
