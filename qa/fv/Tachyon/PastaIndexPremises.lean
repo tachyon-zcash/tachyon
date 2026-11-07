@@ -5,7 +5,8 @@ import Mathlib.FieldTheory.Finite.Basic
 # Concrete Pasta indexed-encoding premises
 
 The `Fp` modulus is the same numeral as ragu's `qa/fv/Ragu/Core.lean:6`
-(`PALLAS_BASE`), used by `pasta_curves::Fp` in the indexed multiset encoding.
+(`PALLAS_BASE`), used by `crate::pasta::Fp` (Udon's `PallasBase` adapter) in
+the indexed multiset encoding. The adapter migration preserves this modulus.
 The epoch bound follows `BLOCK_MAX / EPOCH_SIZE + 1` in Tachyon's `constants.rs`.
 
 We keep primality as an explicit `Fact modulus.Prime` argument: ragu imports
