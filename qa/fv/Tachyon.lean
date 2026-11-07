@@ -9,3 +9,4 @@ import Tachyon.Consensus.Bundle
 import Tachyon.Consensus.Chain
 import Tachyon.Spendable
 import Tachyon.Consensus
+import Tachyon.FixedBase

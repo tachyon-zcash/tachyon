@@ -6,16 +6,19 @@ use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NoteSecret, spendable::NoteSpendable};
-use crate::{
-    constants::MAX_MONEY,
-    keys::PaymentKey,
-    note,
-    nullifier::Nullifier,
-    pasta::{Ep, Eq, Fp, Fq},
-    primitives::Anchor,
-    ragu_constraint::{enforce_nonzero, enforce_zero},
-    value,
+use super::{
+    super::super::{
+        keys::PaymentKey,
+        note,
+        nullifier::Nullifier,
+        pasta::{Ep, Eq, Fp, Fq},
+        primitives::Anchor,
+        ragu_constraint::{enforce_nonzero, enforce_zero},
+        value,
+    },
+    delegation::NoteSecret,
+    scale::{self, R, ScaleResult},
+    spendable::NoteSpendable,
 };
 
 /// Header binding a spend to its lineage note, epoch nullifier pair and value
@@ -30,10 +33,7 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
-    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
-    /// one epoch on; `anchor` threads the spendable lineage's pool position;
-    /// `pk` and `cv` come from the certified note.
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`
     type Data = (
         note::Commitment,
         Nullifier,
@@ -62,60 +62,74 @@ impl Header for SpendHeader {
     }
 }
 
-/// Derives a spend's epoch nullifier pair from the note's master key, commits
-/// the note's value, and binds both to the spendable lineage.
-///
-/// The secret is tied to the lineage's note by `secret_cm == spendable_cm`.
-/// The pair is `mk`'s nullifiers at the lineage's epoch $e$ and at $e + 1$,
-/// one group sponge each. Both are emitted on the [`SpendHeader`] for the
-/// action-producing step to publish, with the note's `pk` and
-/// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
-///
-/// Two permutations (the pair) and two scalar multiplications (`cv`).
-///
-/// # Soundness
-///
-/// `mk`, `cm` and the note are threaded from the right header, bound together
-/// at [`NoteSeed`](super::delegation::NoteSeed). `epoch_current` is a
-/// left-header field, and $e + 1$ comes from
-/// [`EpochIndex::next`](crate::primitives::EpochIndex::next). The pair, `pk`
-/// and the value are threaded or computed from threaded values, so nothing in
-/// them is free. `rcv` is free; it only blinds `cv`.
-///
-/// Two sponges run whether or not $e$ and $e + 1$ share a group.
+/// Wallet-private bounded note and nullifier provenance.
 #[derive(Debug)]
-pub struct SpendBind;
+pub struct SpendPrepared;
 
-impl Step for SpendBind {
+impl Header for SpendPrepared {
+    /// `(cm, nf_current, nf_next, anchor, pk, value)`
+    type Data = (
+        note::Commitment,
+        Nullifier,
+        Nullifier,
+        Anchor,
+        PaymentKey,
+        value::Positive,
+    );
+
+    const SUFFIX: Suffix = Suffix::new(23);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (cm, current, next, anchor, pk, value) = *data;
+        (
+            vec![
+                Fp::from(cm),
+                Fp::from(current),
+                Fp::from(next),
+                Fp::from(anchor),
+                Fp::from(pk),
+                Fp::from(u64::from(value)),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
+/// Joins the note secret to its spendable lineage and derives both nullifiers.
+/// Two sponges run, including at a shared group. No polynomials.
+#[derive(Debug)]
+pub struct SpendPrepare;
+
+impl Step for SpendPrepare {
     type Aux<'source> = ();
     type Left = NoteSpendable;
-    type Output = SpendHeader;
+    type Output = SpendPrepared;
     type Right = NoteSecret;
-    /// `(rcv,)`
-    type Witness<'source> = (value::Trapdoor,);
+    /// `()`
+    type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(45);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (rcv,): Self::Witness<'source>,
+        (): Self::Witness<'source>,
         (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
         (secret_cm, note, mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(secret_cm) - Fp::from(spendable_cm),
-            "SpendBind: secret does not match note",
+            "SpendPrepare: secret does not match note",
         )?;
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "SpendBind: note value exceeds maximum".into(),
-            ));
-        }
+        scale::amount_bits(note.value)?;
 
         // The pair needs a following epoch; the final epoch has none.
         let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
+            ragu_core::Error::InvalidWitness(
+                "SpendPrepare: no epoch follows the spend epoch".into(),
+            )
         })?;
 
         // TODO: a real circuit needs a low-bit decomposition of each epoch for
@@ -126,9 +140,12 @@ impl Step for SpendBind {
         // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(
             Fp::from(nf_current),
-            "SpendBind: current-epoch nullifier is zero",
+            "SpendPrepare: current-epoch nullifier is zero",
         )?;
-        enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
+        enforce_nonzero(
+            Fp::from(nf_next),
+            "SpendPrepare: next-epoch nullifier is zero",
+        )?;
 
         Ok((
             (
@@ -137,8 +154,39 @@ impl Step for SpendBind {
                 nf_next,
                 anchor,
                 note.pk,
-                rcv.commit(note.value),
+                note.value,
             ),
+            (),
+        ))
+    }
+}
+
+/// Adds the bounded positive value product to a private R certificate.
+/// Seventeen value windows; no polynomials.
+#[derive(Debug)]
+pub struct SpendBind;
+
+impl Step for SpendBind {
+    type Aux<'source> = ();
+    type Left = SpendPrepared;
+    type Output = SpendHeader;
+    type Right = ScaleResult<R>;
+    /// `()`
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(8);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (cm, current, next, anchor, pk, value): <Self::Left as Header>::Data,
+        (_lo, _hi, point, identity): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let product = scale::value_product::<false>(value)?;
+        let cv = scale::finite(product + scale::decode(point, identity)?)?;
+        Ok((
+            (cm, current, next, anchor, pk, value::Commitment::from(cv)),
             (),
         ))
     }
