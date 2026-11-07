@@ -266,82 +266,6 @@ impl<P> ProofStamp<P> {
         stamp_digest
     }
 
-    /// Read a stamp from the consensus wire format, decoding its
-    /// `proof_len`-byte proof with `from_bytes`.
-    fn read_with<R: Read>(
-        mut reader: R,
-        proof_len: usize,
-        from_bytes: fn(&[u8]) -> Result<P, wire::Error<'_>>,
-    ) -> io::Result<Self> {
-        let fee = {
-            let mut bytes = [0u8; size_of::<u64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-        }?;
-
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
-
-        let anchor = Anchor::read(&mut reader)?;
-
-        // Parsing does not confirm this against the tachygrams below.
-        let tachygram_set =
-            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
-
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-
-        // proof stamp should never have an empty set
-        if n_tachygrams == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-        }
-
-        // the polynomial multiset includes a constant term
-        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "too many tachygrams",
-            ));
-        }
-
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-        for _ in 0..n_tachygrams {
-            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-            if !tachygrams.insert(tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not unique",
-                ));
-            }
-
-            if tachygrams.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
-                ));
-            }
-        }
-
-        let proof = {
-            let mut bytes = vec![0u8; proof_len];
-            reader.read_exact(&mut bytes)?;
-            from_bytes(&bytes)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
-        };
-
-        Ok(Self {
-            coverage: covered_actions,
-            anchor,
-            tachygram_set,
-            tachygrams,
-            proof: Box::new(proof),
-            fee,
-        })
-    }
-
     /// Write a stamp to the consensus wire format, encoding its proof with
     /// `to_bytes`.
     fn write_with<W: Write>(
@@ -774,12 +698,75 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     ///
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
-    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
-        Self::read_with(
-            reader,
-            ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>(),
-            ragu::Proof::from_bytes,
-        )
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
+
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
+
+        let anchor = Anchor::read(&mut reader)?;
+
+        // Parsing does not confirm this against the tachygrams below.
+        let tachygram_set =
+            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
+
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many tachygrams",
+            ));
+        }
+
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
+        }
+
+        let proof = {
+            let mut bytes =
+                vec![0u8; ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>()];
+            reader.read_exact(&mut bytes)?;
+            ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
+        };
+
+        Ok(Self {
+            coverage: covered_actions,
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee,
+        })
     }
 
     /// Write a stamp to the consensus wire format. The proof blob has a
@@ -1395,12 +1382,78 @@ impl ProofStamp<ragu::CompressedProof<Pasta>> {
     ///
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
-    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
-        Self::read_with(
-            reader,
-            ragu::CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>(),
-            ragu::CompressedProof::from_bytes,
-        )
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
+
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
+
+        let anchor = Anchor::read(&mut reader)?;
+
+        // Parsing does not confirm this against the tachygrams below.
+        let tachygram_set =
+            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
+
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many tachygrams",
+            ));
+        }
+
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
+        }
+
+        let proof = {
+            let mut bytes =
+                vec![
+                    0u8;
+                    ragu::CompressedProof::<Pasta>::encoded_len::<ProductionRank, HEADER_SIZE>()
+                ];
+            reader.read_exact(&mut bytes)?;
+            ragu::CompressedProof::<Pasta>::from_bytes(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
+        };
+
+        Ok(Self {
+            coverage: covered_actions,
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee,
+        })
     }
 
     /// Write a stamp to the consensus wire format. The proof blob has a
