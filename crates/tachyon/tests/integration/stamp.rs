@@ -422,7 +422,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded: ProofStamp<ragu::Proof<Pasta, ProductionRank>> = ProofStamp::read(&*buf).unwrap();
+    let decoded = ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
