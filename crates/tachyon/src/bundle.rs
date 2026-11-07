@@ -96,8 +96,8 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use group::CurveAffine as _;
 use rand_core::CryptoRng;
+use udon::curve::Affine as _;
 
 use crate::{
     ActionDigest, ActionDigestError, Note, TachygramSetCommit, TachygramSetPoly,
@@ -927,7 +927,7 @@ impl<S: StampState> Bundle<S> {
 
         let fee_max_commitment = {
             let point = serialization::read_ep_affine(&mut reader)?;
-            if bool::from(point.is_identity()) {
+            if point.is_identity() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "fee commitment is the identity",

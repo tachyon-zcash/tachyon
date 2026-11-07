@@ -3,9 +3,9 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use udon::curve::Affine as _;
 
-use crate::{action, bundle, reddsa, value};
+use crate::{action, bundle, pasta::EpAffine, reddsa, value};
 
 /// The randomized action verification key `rk`: per-action, public.
 ///
@@ -61,9 +61,7 @@ impl From<ActionVerificationKey> for EpAffine {
     fn from(key: ActionVerificationKey) -> Self {
         let bytes: [u8; 32] = key.0.into();
         #[expect(clippy::expect_used, reason = "a verification key is a curve point")]
-        Self::from_bytes(&bytes)
-            .into_option()
-            .expect("verification key is a valid curve point")
+        Self::from_bytes(bytes).expect("verification key is a valid curve point")
     }
 }
 
