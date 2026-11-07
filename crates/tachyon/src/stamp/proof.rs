@@ -15,6 +15,8 @@
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
 
+#![allow(missing_debug_implementations, missing_docs, reason = "todo")]
+
 pub mod delegation;
 pub mod evidence;
 pub mod output;

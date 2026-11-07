@@ -34,12 +34,7 @@ use crate::{
 #[derive(Debug)]
 pub struct OutputHeader;
 
-#[expect(missing_docs, reason = "fields mirror the OutputHeader header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub cm: Element<'dr, D>,
     pub pad: Element<'dr, D>,
