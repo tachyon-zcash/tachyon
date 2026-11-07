@@ -660,6 +660,77 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
 
         Ok(Self { stamp, ..self })
     }
+
+    /// Verify the stamp's proof against the given action digests, which
+    /// include the digests of covered fee descriptors.
+    ///
+    /// # Soundness
+    ///
+    /// The parameter is a multiset: order does not matter, multiplicity does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
+    pub fn verify_proof<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        action_digests: &[ActionDigest],
+    ) -> Result<bool, ragu_core::Error> {
+        self.stamp.verify_proof(rng, action_digests.iter().copied())
+    }
+
+    /// Verify everything about this bundle. Does not verify any details about
+    /// the provided adjuncts.
+    ///
+    /// - Signatures are valid
+    /// - Adjuncts are covered
+    /// - Tachygrams are consistent
+    /// - Proof is correct
+    ///
+    /// If you need more control, call each verify method directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerificationError`] if any of those checks fails, or if the
+    /// proof is disproved.
+    pub fn verify<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        sighash: &[u8; 32],
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<PointerStamp>],
+    ) -> Result<(), VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+
+        let (adjunct_descs, adjunct_fee_descriptors) = self
+            .verify_pointers(wtxid, adjuncts)
+            .map_err(VerificationError::Pointers)?;
+
+        let (covered_descs, covered_fee_descriptors) = self
+            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
+            .map_err(VerificationError::Coverage)?;
+
+        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
+            .map_err(VerificationError::Tachygrams)?;
+
+        let covered_digests = covered_descs
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(VerificationError::Actions)?;
+
+        if self
+            .verify_proof(rng, &covered_digests)
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(())
+        } else {
+            Err(VerificationError::Disproved)
+        }
+    }
 }
 
 impl<P> Bundle<ProofStamp<P>>
@@ -797,83 +868,6 @@ where
             adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect(),
             adjuncts.iter().map(|&adj| adj.fee_descriptor()).collect(),
         ))
-    }
-}
-
-#[expect(
-    clippy::multiple_inherent_impl,
-    reason = "concrete proof verification follows the shared stamp checks"
-)]
-impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
-    /// Verify the stamp's proof against the given action digests, which
-    /// include the digests of covered fee descriptors.
-    ///
-    /// # Soundness
-    ///
-    /// The parameter is a multiset: order does not matter, multiplicity does.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
-    /// proof is reported as `Ok(false)`, not an error.
-    pub fn verify_proof<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        action_digests: &[ActionDigest],
-    ) -> Result<bool, ragu_core::Error> {
-        self.stamp.verify_proof(rng, action_digests.iter().copied())
-    }
-
-    /// Verify everything about this bundle. Does not verify any details about
-    /// the provided adjuncts.
-    ///
-    /// - Signatures are valid
-    /// - Adjuncts are covered
-    /// - Tachygrams are consistent
-    /// - Proof is correct
-    ///
-    /// If you need more control, call each verify method directly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VerificationError`] if any of those checks fails, or if the
-    /// proof is disproved.
-    pub fn verify<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        sighash: &[u8; 32],
-        wtxid: &[u8; 64],
-        adjuncts: &[&Bundle<PointerStamp>],
-    ) -> Result<(), VerificationError> {
-        self.verify_signatures(sighash)
-            .map_err(VerificationError::Signatures)?;
-
-        let (adjunct_descs, adjunct_fee_descriptors) = self
-            .verify_pointers(wtxid, adjuncts)
-            .map_err(VerificationError::Pointers)?;
-
-        let (covered_descs, covered_fee_descriptors) = self
-            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-            .map_err(VerificationError::Coverage)?;
-
-        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
-            .map_err(VerificationError::Tachygrams)?;
-
-        let covered_digests = covered_descs
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .map_err(VerificationError::Actions)?;
-
-        if self
-            .verify_proof(rng, &covered_digests)
-            .map_err(VerificationError::Proof)?
-        {
-            Ok(())
-        } else {
-            Err(VerificationError::Disproved)
-        }
     }
 }
 

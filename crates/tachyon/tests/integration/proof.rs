@@ -70,7 +70,13 @@ fn honest_spend_bind(
     let secret_pcd = user.secret_pcd(rng, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
+        .fuse(
+            rng,
+            spend::SpendBind,
+            witness::spend_bind((*spendable.data(), *secret_pcd.data()), rcv),
+            spendable,
+            secret_pcd,
+        )
         .unwrap();
     bind_pcd
 }
@@ -141,7 +147,11 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
             .fuse(
                 rng,
                 pool::UnspentFuse,
-                (NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),),
+                {
+                    let mut witness = witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1], &[nf2, nf3]);
+                    witness.0 = NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]);
+                    witness
+                },
                 left.clone(),
                 right.clone(),
             )
@@ -250,18 +260,20 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         .unwrap();
     for (fuse_witness, (first, second), expected) in [
         (
-            (AnchorSetPoly::from_iter(left_members.iter().copied()),),
+            witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]),
             (left.clone(), right.clone()),
             "AnchorSpanFuse: combined is not the union of the halves",
         ),
         (
-            (AnchorSetPoly::from_iter(
-                left_members
+            witness::anchor_span_fuse(
+                (*left.data(), *right.data()),
+                &left_members,
+                &right_members
                     .iter()
-                    .chain(&right_members)
                     .copied()
-                    .chain([fork]),
-            ),),
+                    .chain([fork])
+                    .collect::<Vec<_>>(),
+            ),
             (left.clone(), right.clone()),
             "AnchorSpanFuse: combined is not the union of the halves",
         ),
@@ -302,7 +314,7 @@ fn spend_rejects_invalid_note() {
             .fuse(
                 rng,
                 spend::SpendBind,
-                (rcv,),
+                witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
                 spendable_pcd.clone(),
                 secret_pcd,
             )
@@ -341,7 +353,11 @@ fn step_accepts_zero_value_note() {
     };
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (zero_output, rcv))
+        .seed(
+            rng,
+            output::OutputBind,
+            witness::output_bind(((), ()), zero_output, rcv),
+        )
         .unwrap();
     let theta = ActionEntropy::random(rng);
     let anchor = Anchor::random(rng);
@@ -386,25 +402,33 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let spendable = user.spendable_init(rng, &note, &pool, height);
     let secret_pcd = user.secret_pcd(rng, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
+        .fuse(
+            rng,
+            spend::SpendBind,
+            witness::spend_bind((*spendable.data(), *secret_pcd.data()), rcv),
+            spendable,
+            secret_pcd,
+        )
         .unwrap();
-    let (.., action_set, tachygram_set) =
-        witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
+    let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
     let (.., foreign_action_set, _) =
         witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
 
     for (action_witness, expected) in [
         (
-            (
-                theta,
-                user.pak,
-                action_set,
-                TachygramSetPoly::from_iter([Tachygram::random(rng)]),
-            ),
+            {
+                let mut witness = valid.clone();
+                witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
+                witness
+            },
             "SpendAction: tachygram set does not commit to the nullifier pair",
         ),
         (
-            (theta, user.pak, foreign_action_set, tachygram_set),
+            {
+                let mut witness = valid;
+                witness.2 = foreign_action_set;
+                witness
+            },
             "SpendAction: action set does not commit to the action",
         ),
     ] {
@@ -571,6 +595,11 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let wide = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
     let later = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
+    let honest = witness::unspent_bind(
+        (*unspent.data(), *range.data()),
+        &user.covering_window(&note, &range),
+        &elapsed,
+    );
 
     for (bind_range, bind_witness, expected) in [
         (
@@ -584,23 +613,35 @@ fn unspent_bind_rejects_mismatched_sequences() {
         ),
         (
             range,
-            (NfSeqPoly::new(
-                EpochIndex::new(0),
-                &[mk.derive_nullifier(EpochIndex::new(0))],
-            ),),
+            {
+                let mut witness = honest.clone();
+                witness.0 = NfSeqPoly::new(
+                    EpochIndex::new(0),
+                    &[mk.derive_nullifier(EpochIndex::new(0))],
+                );
+                witness
+            },
             "UnspentBind: sequence does not match the derivation",
         ),
         (
             wide,
-            (NfSeqPoly::new(
-                EpochIndex::new(1),
-                &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
-            ),),
+            {
+                let mut witness = honest.clone();
+                witness.0 = NfSeqPoly::new(
+                    EpochIndex::new(1),
+                    &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
+                );
+                witness
+            },
             "UnspentBind: sequence does not match the derivation",
         ),
         (
             later,
-            (NfSeqPoly::new(EpochIndex::new(64), &[]),),
+            {
+                let mut witness = honest;
+                witness.0 = NfSeqPoly::new(EpochIndex::new(64), &[]);
+                witness
+            },
             "UnspentBind: sequence does not match the derivation",
         ),
     ] {
@@ -629,7 +670,12 @@ fn unspent_bind_rejects_uncovered_end() {
     let unspent = detached_segment(rng, last, |epoch| mk.derive_nullifier(epoch));
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let witness = (NfSeqPoly::new(EpochIndex::new(0), &[]),);
+    let mut witness = witness::unspent_bind(
+        (*unspent.data(), *range.data()),
+        &user.covering_window(&note, &range),
+        &[],
+    );
+    witness.0 = NfSeqPoly::new(EpochIndex::new(0), &[]);
 
     assert_matches!(
         PROOF_SYSTEM
@@ -747,14 +793,22 @@ fn nullifier_derive_rejects_invalid_windows() {
             "NullifierDerive: sequence does not match the derived window",
         ),
         (
-            (
-                EpochIndex::new(14),
-                witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12)).1,
-            ),
+            {
+                let mut witness =
+                    witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12));
+                witness.0 = EpochIndex::new(14);
+                witness
+            },
             "NullifierDerive: epoch_start is not group-aligned",
         ),
         (
-            (past_the_end, NfSeqPoly::new(past_the_end, &[])),
+            {
+                let mut witness =
+                    witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(0));
+                witness.0 = past_the_end;
+                witness.1 = NfSeqPoly::new(past_the_end, &[]);
+                witness
+            },
             "NullifierDerive: window exceeds the epoch range",
         ),
     ] {
@@ -854,7 +908,11 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     ));
 
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
+        .seed(
+            rng,
+            output::OutputBind,
+            witness::output_bind(((), ()), note, rcv),
+        )
         .unwrap();
     assert_eq!(
         *bind_pcd.data(),
@@ -864,23 +922,25 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             rcv.commit(-note.value),
         )
     );
-    let (.., action_set, tachygram_set) =
-        witness::output_action((*bind_pcd.data(), ()), theta, anchor);
+    let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
     let (.., foreign_action_set, _) =
         witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
     for (action_witness, expected) in [
         (
-            (
-                theta,
-                anchor,
-                action_set,
-                TachygramSetPoly::from_iter([Tachygram::random(rng)]),
-            ),
+            {
+                let mut witness = valid.clone();
+                witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
+                witness
+            },
             "OutputAction: tachygram set does not commit to the bound pair",
         ),
         (
-            (theta, anchor, foreign_action_set, tachygram_set),
+            {
+                let mut witness = valid;
+                witness.2 = foreign_action_set;
+                witness
+            },
             "OutputAction: action set does not commit to the action",
         ),
     ] {
@@ -944,7 +1004,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     let members: Vec<Nullifier> = (0..32)
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
-    let (merged_seq,) = witness::nullifier_fuse(
+    let merged_witness = witness::nullifier_fuse(
         (*left.data(), *right.data()),
         &members[..16],
         &members[16..],
@@ -959,9 +1019,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
             .fuse(
                 rng,
                 delegation::NullifierFuse,
-                (
-                    NfSeqPoly::new(EpochIndex::new(0), &wrong_members),
-                ),
+                witness::nullifier_fuse((*left.data(), *right.data()), &wrong_members, &[]),
                 left.clone(),
                 right.clone(),
             )
@@ -971,7 +1029,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     );
 
     let (merged, ()) = PROOF_SYSTEM
-        .fuse(rng, delegation::NullifierFuse, (merged_seq,), left, right)
+        .fuse(rng, delegation::NullifierFuse, merged_witness, left, right)
         .unwrap();
     assert_eq!(
         *merged.data(),
@@ -1001,12 +1059,18 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],
     );
+    let mut witness = witness::unspent_bind(
+        (*unspent.data(), *range.data()),
+        &user.covering_window(&note, &range),
+        &[nf(epoch1)],
+    );
+    witness.0 = complement_seq;
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 pool::UnspentBind,
-                (complement_seq,),
+                witness,
                 unspent,
                 range,
             )

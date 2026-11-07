@@ -32,7 +32,11 @@ fn fee_less_output_bundle(
 ) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (output_plan.note, rcv))
+        .seed(
+            rng,
+            output::OutputBind,
+            witness::output_bind(((), ()), output_plan.note, rcv),
+        )
         .unwrap();
     let (cm, pad, _cv) = *bind_pcd.data();
     let (pcd, ()) = PROOF_SYSTEM

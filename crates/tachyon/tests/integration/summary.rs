@@ -39,14 +39,18 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     assert_eq!(seeded.commitments()[0], Eq::from(commit_a).to_affine());
 
     let foreign: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
-    let (_extended, stamp) = witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
             "SummaryAdvance: extended accumulator must fold the stamp",
         ),
         (
-            (stamp_a.iter().copied().collect(), stamp),
+            {
+                let mut witness =
+                    witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
+                witness.0 = stamp_a.iter().copied().collect();
+                witness
+            },
             "SummaryAdvance: extended accumulator must fold the stamp",
         ),
     ] {

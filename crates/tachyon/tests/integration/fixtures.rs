@@ -251,7 +251,11 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .fuse(
             rng,
             StampMerge,
-            (merged_acts, merged_tg),
+            witness::stamp_merge(
+                (*left_pcd.data(), *right_pcd.data()),
+                merged_acts,
+                merged_tg,
+            ),
             left_pcd,
             right_pcd,
         )
@@ -672,7 +676,13 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             })
             .collect::<Vec<_>>();
         let (pcd, ()) = PROOF_SYSTEM
-            .fuse(rng, qr::QrSideDescend, (side,), sides.clone(), selection)
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                witness::qr_side_descend((*sides.data(), *selection.data()), side),
+                sides.clone(),
+                selection,
+            )
             .unwrap();
         QrIntakeEntry { pcd, members }
     };

@@ -13,7 +13,7 @@ use zcash_tachyon::{
             stamp::{Stamp, StampUnmerge},
         },
     },
-    value,
+    value, witness,
 };
 
 use crate::fixtures::{
@@ -484,7 +484,11 @@ fn unmerge_binds_its_sets() {
         bob_tachygrams.commit(),
         bob.stamp.anchor,
     );
-    let valid = (alice_actions, alice_tachygrams);
+    let valid = witness::stamp_unmerge(
+        (dividend_header, divisor_header),
+        alice_actions,
+        alice_tachygrams,
+    );
 
     for (corrupt, expected) in [
         (

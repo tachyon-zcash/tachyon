@@ -27,13 +27,17 @@ use crate::{
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
+        output::OutputBind,
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideSelect,
-            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
+            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
+        spend::SpendBind,
         spendable::SpendableInit,
-        stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction},
+        stamp::{
+            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampMerge, StampUnmerge,
+        },
         summary::{SummaryAdvance, SummarySeed},
     },
     value,
@@ -307,6 +311,15 @@ pub fn qr_side_select(
     (interpolant.into(), quotient.into())
 }
 
+/// Prepare the witness for [`QrSideDescend`]: `(bit,)`.
+#[must_use]
+pub const fn qr_side_descend(
+    (_left, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
+    bit: bool,
+) -> StepWitness<'static, QrSideDescend> {
+    (bit,)
+}
+
 /// Prepare the witness for [`QrBucketSeal`]: `(anchor_final_prev)`.
 ///
 /// `anchor_final_prev` is the final anchor of the preceding epoch, or
@@ -387,6 +400,25 @@ pub fn unspent_lift(
     )
 }
 
+/// Prepare the witness for [`OutputBind`]: `(note, rcv)`.
+#[must_use]
+pub const fn output_bind(
+    (_left, _right): (StepLeft<OutputBind>, StepRight<OutputBind>),
+    note: Note,
+    rcv: value::Trapdoor,
+) -> StepWitness<'static, OutputBind> {
+    (note, rcv)
+}
+
+/// Prepare the witness for [`SpendBind`]: `(rcv,)`.
+#[must_use]
+pub const fn spend_bind(
+    (_left, _right): (StepLeft<SpendBind>, StepRight<SpendBind>),
+    rcv: value::Trapdoor,
+) -> StepWitness<'static, SpendBind> {
+    (rcv,)
+}
+
 /// Prepare the witness for [`OutputAction`]: `(theta, anchor, action_set,
 /// tachygram_set)`.
 ///
@@ -455,6 +487,36 @@ pub fn spend_action(
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
     )
+}
+
+/// Prepare the witness for [`StampMerge`]: `(action_set, tachygram_set)`.
+#[must_use]
+pub const fn stamp_merge(
+    (_left, _right): (StepLeft<StampMerge>, StepRight<StampMerge>),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
+) -> StepWitness<'static, StampMerge> {
+    (action_set, tachygram_set)
+}
+
+/// Prepare the witness for [`ActionMerge`]: `(action_set, tachygram_set)`.
+#[must_use]
+pub const fn action_merge(
+    (_left, _right): (StepLeft<ActionMerge>, StepRight<ActionMerge>),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
+) -> StepWitness<'static, ActionMerge> {
+    (action_set, tachygram_set)
+}
+
+/// Prepare the witness for [`StampUnmerge`]: `(action_set, tachygram_set)`.
+#[must_use]
+pub const fn stamp_unmerge(
+    (_left, _right): (StepLeft<StampUnmerge>, StepRight<StampUnmerge>),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
+) -> StepWitness<'static, StampUnmerge> {
+    (action_set, tachygram_set)
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
