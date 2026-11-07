@@ -20,7 +20,7 @@ use udon::{
     field::Field as _,
 };
 
-use super::{PROOF_SYSTEM, output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
+use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
@@ -29,7 +29,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private, public::ACTION_AUTH_GENERATOR},
     note::{self, Note},
     pasta::{EpAffine, Eq, Fp},
-    primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
+    primitives::{ActionDigest, Anchor, TachygramSetCommit, effect},
     relations::{
         arithmetic as circuit, curve,
         enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
@@ -79,12 +79,8 @@ impl Header<Fp> for Actions {
 
 /// Header for one or more fee-bearing lineages.
 ///
-/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets.
-/// Their circuit representation commits to the original commitment's
-/// coordinates using `Application::bridge_hash`. Ragu binds the tachygram
-/// field to the second output polynomial, but has no equivalent binding for
-/// the action field. [`StampMerge`] proves the products of its input sets.
+/// O0/O1 hold the action and tachygram sets. `stamp_tg_commit` holds O1's
+/// bridge hash. [`StampMerge`] enforces both output sets as input products.
 ///
 /// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
 /// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
@@ -100,13 +96,12 @@ pub struct Stamp;
 #[derive(Gadget, Write)]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
-    pub action_commit: [Element<'dr, D>; 2],
     pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Stamp {
-    /// `(action_commit, stamp_tg_commit, anchor)`
-    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+    /// `(stamp_tg_commit, anchor)`
+    type Data = ([Fp; 2], Anchor);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
@@ -116,62 +111,55 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        let commitments = D::try_just(|| {
-            let fields = witness.clone().take();
-            let mut doubles = [[Fp::ZERO; 2]; 2];
-            for (output, commitment) in doubles
-                .iter_mut()
-                .zip([Eq::from(fields.0), Eq::from(fields.1)])
-            {
-                let point = commitment.to_affine();
-                if point.is_identity() {
-                    return Err(ragu_core::Error::InvalidWitness(
-                        "cannot encode the identity commitment".into(),
-                    ));
-                }
-                *output = PROOF_SYSTEM
-                    .bridge_hash(point)?
-                    .coordinates()
-                    .ok_or_else(|| {
-                        ragu_core::Error::InvalidWitness(
-                            "cannot encode the identity double commitment".into(),
-                        )
-                    })?
-                    .into();
-            }
-            Ok(doubles)
-        })?;
         Ok(StampOutput {
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            action_commit: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[0][0]),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[0][1]),
-                )?,
-            ],
             stamp_tg_commit: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[1][0]),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    commitments.as_ref().map(|values| values[1][1]),
-                )?,
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.0[0]))?,
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.0[1]))?,
             ],
         })
+    }
+}
+
+impl Stamp {
+    /// Reconstructs the header from the public tachygram commitment and anchor.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the commitment or its bridge hash is the identity.
+    pub fn header(
+        commitment: TachygramSetCommit,
+        anchor: Anchor,
+    ) -> ragu_core::Result<([Fp; 2], Anchor)> {
+        Ok((
+            poseidon::bridge_hash(Eq::from(commitment).to_affine())?,
+            anchor,
+        ))
+    }
+
+    #[expect(
+        clippy::type_complexity,
+        reason = "the encoded header and its carried data"
+    )]
+    fn output<'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        oracles: &Oracles<'_, 'dr, D>,
+        anchor: Element<'dr, D>,
+    ) -> (
+        Encoded<'dr, D, Self, HEADER_SIZE>,
+        DriverValue<D, <Self as Header<Fp>>::Data>,
+    ) {
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let anchor_value = anchor.value();
+        let data = D::just(|| ([*x.take(), *y.take()], Anchor::from(*anchor_value.take())));
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor,
+            stamp_tg_commit: oracles.bridge_hash().clone(),
+        });
+        (encoded, data)
     }
 }
 
@@ -490,7 +478,7 @@ impl Step<Pasta> for StampMerge {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -533,30 +521,8 @@ impl Step<Pasta> for StampMerge {
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("StampMerge: anchors must match".into())
             })?;
-        let output = D::try_just(|| {
-            let (merged_action_set, merged_tachygram_set) = witness.take();
-            let (_, _, left_anchor) = left.take();
-            Ok((
-                (
-                    merged_action_set.commit(),
-                    merged_tachygram_set.commit(),
-                    left_anchor,
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = StampOutput {
-            anchor: left_anchor_element,
-            action_commit: encoded.as_gadget().action_commit.clone(),
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            aux,
-        ))
+        let (encoded, data) = Stamp::output(oracles, left_anchor_element);
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -725,25 +691,8 @@ impl Step<Pasta> for StampLift {
                 "StampLift: stamp anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let output = D::try_just(|| {
-            let (stamp_action_commit, stamp_tachygram_commit, _stamp_anchor) = left.take();
-            let (_span_anchor_start, span_anchor_end) = right.take();
-            Ok((
-                (stamp_action_commit, stamp_tachygram_commit, span_anchor_end),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let fields = StampOutput {
-            anchor: right_encoded.as_gadget().anchor_end.clone(),
-            action_commit: left_encoded.as_gadget().action_commit.clone(),
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            aux,
-        ))
+        let (encoded, data) = Stamp::output(oracles, right_encoded.as_gadget().anchor_end.clone());
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -961,21 +910,8 @@ impl Step<Pasta> for FeeFuse {
                 .enforce_equal(dr, &output)
                 .map_err(|_err| ragu_core::Error::InvalidWitness(error.into()))?;
         }
-        let output = D::just(|| {
-            let (_, _, (actions, tachygrams)) = witness.take();
-            (actions.commit(), tachygrams.commit(), left.take())
-        });
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = StampOutput {
-            anchor: left_encoded.as_gadget().anchor.clone(),
-            action_commit: encoded.as_gadget().action_commit.clone(),
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            output,
-            D::unit(),
-        ))
+        let (encoded, data) = Stamp::output(oracles, left_encoded.as_gadget().anchor.clone());
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -1099,20 +1035,8 @@ impl Step<Pasta> for FeeSeed {
             &[fee_change],
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         )?;
-        let output = witness.map(|(_, anchor, actions, tachygrams)| {
-            (actions.commit(), tachygrams.commit(), anchor)
-        });
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        let fields = StampOutput {
-            anchor: anchor_element,
-            action_commit: encoded.as_gadget().action_commit.clone(),
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            output,
-            D::unit(),
-        ))
+        let (encoded, data) = Stamp::output(oracles, anchor_element);
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -1126,9 +1050,8 @@ impl Step<Pasta> for FeeSeed {
 ///
 /// # Soundness
 ///
-/// The quotient is witnessed but not free. The dividend and divisor are bound
-/// to their header commitments, and each product relation absorbs all three
-/// operands into its challenge, so
+/// The quotient is witnessed but not free. Each product relation opens the
+/// dividend, divisor and quotient slots at the framework's challenge, so
 /// $\mathsf{divisor} \cdot \mathsf{quotient} = \mathsf{dividend}$ holds as a
 /// polynomial identity in each column.
 ///
@@ -1183,7 +1106,7 @@ impl Step<Pasta> for StampUnmerge {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -1224,29 +1147,7 @@ impl Step<Pasta> for StampUnmerge {
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("StampUnmerge: anchors must match".into())
             })?;
-        let output = D::try_just(|| {
-            let (quotient_action_set, quotient_tachygram_set) = witness.take();
-            let (_, _, left_anchor) = left.take();
-            Ok((
-                (
-                    quotient_action_set.commit(),
-                    quotient_tachygram_set.commit(),
-                    left_anchor,
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let fields = StampOutput {
-            anchor: left_anchor_element,
-            action_commit: encoded.as_gadget().action_commit.clone(),
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            aux,
-        ))
+        let (encoded, data) = Stamp::output(oracles, left_anchor_element);
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }

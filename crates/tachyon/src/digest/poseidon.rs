@@ -22,12 +22,16 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
+    primitives::TachygramSetCommit,
     stamp::proof::PROOF_SYSTEM,
 };
 
@@ -255,34 +259,38 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
-/// Advances the anchor by absorbing one stamp's epoch and tachygram-set
-/// commitment.
+/// The bridge hash of a polynomial commitment.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `tgs` is the identity point.
-#[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "nonidentity commitment has a bridge hash"
-)]
-pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (bridge_hash_x, bridge_hash_y) = PROOF_SYSTEM
-        .bridge_hash(tgs)
-        .expect("nonidentity commitment has a bridge hash")
+/// Fails if the commitment or its bridge hash is the identity.
+pub fn bridge_hash(commitment: EqAffine) -> ragu_core::Result<[Fp; 2]> {
+    let coordinates = PROOF_SYSTEM
+        .bridge_hash(commitment)?
         .coordinates()
-        .expect("bridge hash must not be the identity point");
-    *emulate(|driver| {
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))?;
+    Ok(coordinates.into())
+}
+
+/// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
+///
+/// # Errors
+///
+/// Fails for the empty set's bridge hash or an unusable bridge hash setup.
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: [Fp; 2]) -> Result<Fp> {
+    if tgs == bridge_hash(TachygramSetCommit::default().as_ref().to_affine())? {
+        return Err(ragu_core::Error::InvalidWitness(
+            "invalid anchor step".into(),
+        ));
+    }
+    Ok(*emulate(|driver| {
         let anchor_element = Element::constant(driver, anchor_prev);
         let epoch_element = Element::constant(driver, epoch);
-        let bridge_hash = [
-            Element::constant(driver, bridge_hash_x),
-            Element::constant(driver, bridge_hash_y),
-        ];
+        let bridge_hash = tgs.map(|value| Element::constant(driver, value));
         with_driver::anchor_next_stamp(driver, &anchor_element, &epoch_element, &bridge_hash)
     })
     .value()
-    .take()
+    .take())
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";

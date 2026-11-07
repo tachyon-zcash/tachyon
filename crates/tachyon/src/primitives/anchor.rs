@@ -29,6 +29,9 @@ pub enum AnchorError {
     /// The provided epoch index is zero.
     #[display("next epoch cannot be zero")]
     NextEpochZero,
+    /// The tachygram commitment has an unusable bridge hash.
+    #[display("invalid tachygram commitment bridge hash")]
+    InvalidBridgeHash,
 }
 
 /// Running anchor over the consensus state.
@@ -61,7 +64,7 @@ impl Anchor {
     /// # Errors
     ///
     /// Fails if `stamp_commit` is the identity point or a commitment to an
-    /// empty set.
+    /// empty set, or has an unusable bridge hash.
     pub fn next_stamp(
         self,
         epoch: EpochIndex,
@@ -72,11 +75,15 @@ impl Anchor {
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
-            Ok(Self(poseidon::anchor_next_stamp(
-                self.0,
-                epoch.into(),
-                stamp_commit.as_ref().to_affine(),
-            )))
+            Ok(Self(
+                poseidon::anchor_next_stamp(
+                    self.0,
+                    epoch.into(),
+                    poseidon::bridge_hash(stamp_commit.as_ref().to_affine())
+                        .map_err(|_err| AnchorError::InvalidBridgeHash)?,
+                )
+                .map_err(|_err| AnchorError::InvalidBridgeHash)?,
+            ))
         }
     }
 

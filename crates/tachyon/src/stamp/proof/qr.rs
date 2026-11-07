@@ -319,10 +319,8 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`]. `stamp_commit`
-/// is folded into `anchor_end`.
-/// The anchor fold uses Ragu's certified representation of the stamp
-/// commitment.
+/// `discriminant` is a free witness; see [`QrDiscriminant`]. O0/O1 hold the
+/// same stamp set and open once each; O1's bridge hash enters `anchor_end`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -342,8 +340,10 @@ impl Step<Pasta> for QrStampIntakeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let stamp = witness.3.as_ref().iter_coeffs().collect::<Vec<_>>();
-        Ok([stamp.clone(), stamp])
+        Ok([
+            witness.3.as_ref().iter_coeffs().collect(),
+            witness.3.as_ref().iter_coeffs().collect(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

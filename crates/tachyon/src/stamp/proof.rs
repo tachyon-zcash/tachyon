@@ -28,7 +28,7 @@ pub mod stamp;
 pub mod summary;
 
 use lazy_static::lazy_static;
-use ragu::{Application, ApplicationBuilder};
+use ragu::{Application, ApplicationBuilder, RegistryTags};
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{Cycle as _, FixedGenerators as _, drivers::Driver, pasta::Pasta};
 use ragu_primitives::Element;
@@ -36,7 +36,7 @@ use udon::curve::Affine as _;
 
 use crate::{constants::EPOCH_MAX, pasta, relations::arithmetic::bounded};
 
-/// Step admission checks, separate from the unrestricted protocol anchor hash.
+/// Step admission checks for the stamp's epoch and nonempty tachygram set.
 fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
     dr: &mut D,
     epoch: &Element<'dr, D>,
@@ -70,7 +70,13 @@ pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
 {
+    // Registry tags use the fixed Tachyon beacon and configuration digest.
+    let manifest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .hash(b"Tachyon PCD: Pasta, R13, H9, steps 0..38, ragu a73db816");
+    let tags = RegistryTags::<Pasta>::from_beacon(b"Tachyon registry beacon", manifest.as_bytes());
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        .with_registry_tags(tags, manifest.as_bytes())?
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?

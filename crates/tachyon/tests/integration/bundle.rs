@@ -470,7 +470,12 @@ fn stamped_bundle_round_trips() {
     assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
     assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
     decoded
-        .verify_signatures(&mock_sighash(decoded.commitment()))
+        .verify(
+            rng,
+            &mock_sighash(decoded.commitment()),
+            &mock_wtxid(&decoded).into(),
+            &[],
+        )
         .unwrap();
     let descriptors = stamped.descriptors().collect();
     let fees = BTreeSet::from([stamped.fee_descriptor()]);
@@ -1043,9 +1048,26 @@ fn bundle_lift_over_an_aggregate() {
         .map(|desc| desc.digest().unwrap())
         .chain(
             covered_fee_descriptors
-                .into_iter()
+                .iter()
                 .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect();
     assert!(lifted.verify_proof(rng, &digests).unwrap());
+
+    let mut bytes = Vec::new();
+    lifted.write(&mut bytes).unwrap();
+    let decoded = Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*bytes).unwrap();
+    assert!(decoded.verify_proof(rng, &digests).unwrap());
+    let compressed = decoded
+        .stamp
+        .compress(
+            rng,
+            &covered_descs.into_iter().collect(),
+            &covered_fee_descriptors.into_iter().collect(),
+        )
+        .unwrap();
+    bytes.clear();
+    compressed.write(&mut bytes).unwrap();
+    let decoded_stamp = ProofStamp::<ragu::CompressedProof<Pasta>>::read(&*bytes).unwrap();
+    assert!(decoded_stamp.verify_proof(rng, digests).unwrap());
 }

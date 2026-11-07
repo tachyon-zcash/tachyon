@@ -83,6 +83,7 @@ impl Header<Fp> for Summary {
 ///
 /// `anchor_prev` and `epoch` are free witnesses. Consensus computes each fold
 /// with the epoch of the block that contains the stamp.
+/// O0/O1 carry the same stamp set and open once each at the challenge.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -102,8 +103,10 @@ impl Step<Pasta> for SummarySeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let stamp = witness.2.as_ref().iter_coeffs().collect::<Vec<_>>();
-        Ok([stamp.clone(), stamp])
+        Ok([
+            witness.2.as_ref().iter_coeffs().collect(),
+            witness.2.as_ref().iter_coeffs().collect(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -157,6 +160,7 @@ impl Step<Pasta> for SummarySeed {
 
 /// Fold the next stamp into the accumulator while the anchor absorbs the same
 /// commitment.
+/// L0/O0 hold the accumulated sets; O1 holds the stamp, each opened once.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 

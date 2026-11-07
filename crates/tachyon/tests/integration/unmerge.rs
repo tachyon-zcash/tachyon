@@ -450,16 +450,6 @@ fn unmerge_binds_its_sets() {
         )
         .unwrap();
 
-    let alice_bob_actions: ActionSetPoly = alice
-        .descriptors()
-        .chain(bob.descriptors())
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            [alice.fee_descriptor(), bob.fee_descriptor()]
-                .into_iter()
-                .map(|descriptor| descriptor.digest().unwrap()),
-        )
-        .collect();
     let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
     let alice_actions: ActionSetPoly = alice
         .descriptors()
@@ -473,17 +463,8 @@ fn unmerge_binds_its_sets() {
         .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
-
-    let dividend_header = (
-        alice_bob_actions.commit(),
-        alice_bob_tachygrams.commit(),
-        alice_bob.anchor,
-    );
-    let divisor_header = (
-        bob_actions.commit(),
-        bob_tachygrams.commit(),
-        bob.stamp.anchor,
-    );
+    let dividend_header = Stamp::header(alice_bob_tachygrams.commit(), alice_bob.anchor).unwrap();
+    let divisor_header = Stamp::header(bob_tachygrams.commit(), bob.stamp.anchor).unwrap();
     let valid = witness::stamp_unmerge(
         (dividend_header, divisor_header),
         alice_actions,

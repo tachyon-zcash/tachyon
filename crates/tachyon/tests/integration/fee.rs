@@ -10,7 +10,7 @@ use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
-        ProofStamp,
+        ProofStamp, StampProof as _,
         proof::{
             PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
@@ -558,16 +558,27 @@ fn fee_seed_binds_its_singletons_and_header() {
     }
 
     let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
+    let compressed = {
+        let compressed = PROOF_SYSTEM.compress(&seed_pcd, rng).unwrap();
+        let bytes = compressed.proof().to_bytes().unwrap();
+        ragu::CompressedProof::<Pasta>::from_bytes(&bytes).unwrap()
+    };
+    let proof = {
+        let bytes = seed_pcd.proof().to_bytes().unwrap();
+        ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes).unwrap()
+    };
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),
         ((other.2.commit(), valid.3.commit(), anchor), false),
         ((valid.2.commit(), other.3.commit(), anchor), false),
         ((valid.2.commit(), valid.3.commit(), other_anchor), false),
     ] {
-        let pcd = seed_pcd.proof().clone().carry::<Stamp>(header);
-        assert_eq!(
-            PROOF_SYSTEM.verify_uncompressed(&pcd, &mut *rng).unwrap(),
-            expected
-        );
+        assert_eq!(proof.verify(rng, header).unwrap(), expected);
+        assert_eq!(compressed.verify(rng, header).unwrap(), expected);
     }
+    let pcd = seed_pcd
+        .proof()
+        .clone()
+        .carry::<Stamp>(Stamp::header(valid.3.commit(), anchor).unwrap());
+    assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
 }

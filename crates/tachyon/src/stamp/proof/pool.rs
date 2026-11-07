@@ -243,7 +243,7 @@ impl Header<Fp> for AnchorSpan {
 
 /// Start an [`AnchorSpan`] from one stamp.
 ///
-/// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
+/// The step folds the stamp's bridge hash into `anchor_start`.
 /// The span's only member is the resulting anchor.
 ///
 /// # Soundness

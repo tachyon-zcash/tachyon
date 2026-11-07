@@ -221,14 +221,10 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             Some("StampLift: stamp anchor is neither the span's start nor a member"),
         ),
     ] {
-        let (stamp, plan, fee_descriptor) =
-            build_output_stamp(rng, stamp_anchor, user.random_note(200));
-        let stamp_pcd = stamp.proof.carry((
-            ActionSetPoly::from_iter([plan.digest().unwrap(), fee_descriptor.digest().unwrap()])
-                .commit(),
-            TachygramSetPoly::from_iter(stamp.tachygrams).commit(),
-            stamp_anchor,
-        ));
+        let (stamp, ..) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
+        let stamp_pcd = stamp
+            .proof
+            .carry(stamp::Stamp::header(stamp.tachygram_set, stamp_anchor).unwrap());
         let lifted = PROOF_SYSTEM.fuse(rng, stamp::StampLift, (), stamp_pcd, span.clone());
         if let Some(message) = expected {
             assert_matches!(
@@ -236,7 +232,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
                 Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == message
             );
         } else {
-            assert_eq!(lifted.unwrap().0.data().2, anchor_end);
+            assert_eq!(lifted.unwrap().0.data().1, anchor_end);
         }
     }
 }
