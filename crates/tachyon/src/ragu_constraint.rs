@@ -5,10 +5,11 @@
 //! message. The wireless emulator is cheaper but never checks constraint
 //! satisfaction, so it cannot reject an invalid witness.
 
-use group::Curve as _;
-use pasta_curves::{Eq, EqAffine, Fp, Fq};
 use ragu_core::{Error, Result};
 use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
+use udon::curve::Projective as _;
+
+use crate::pasta::{Eq, EqAffine, Fp, Fq};
 
 /// Enforces `value == 0`.
 pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
