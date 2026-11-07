@@ -3,9 +3,25 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use udon::curve::Affine as _;
+use lazy_static::lazy_static;
+use udon::{curve::Affine as _, field::Field as _};
 
-use crate::{action, bundle, pasta::EpAffine, reddsa, value};
+use crate::{
+    action, bundle,
+    pasta::{EpAffine, Fq},
+    reddsa, value,
+};
+
+lazy_static! {
+    /// Orchard RedPallas action-authorizing generator, decoded once as a
+    /// public circuit constant. No signing key enters a step.
+    pub(crate) static ref ACTION_AUTH_GENERATOR: EpAffine = {
+        #[expect(clippy::expect_used, reason = "one is a canonical RedPallas scalar")]
+        let scalar_one = reddsa::SigningKey::<reddsa::ActionAuth>::try_from(Fq::ONE.to_bytes())
+            .expect("one is a valid scalar");
+        EpAffine::from(ActionVerificationKey(reddsa::VerificationKey::from(&scalar_one)))
+    };
+}
 
 /// The randomized action verification key `rk`: per-action, public.
 ///

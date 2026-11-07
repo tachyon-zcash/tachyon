@@ -26,7 +26,7 @@
 //! operands it covers and any relation-specific nuance.
 //!
 //! Implementation invariant: the eval fed to each identity check is the same
-//! eval emitted in that operand's opening claim (one `query` call per
+//! eval emitted in that operand's opening claim (one `query` call at ζ per
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
@@ -36,6 +36,22 @@ use ragu_primitives::{Element, GadgetExt as _};
 use udon::field::Field as _;
 
 use crate::pasta::Fp;
+
+/// Evaluates one nullifier-sequence member. `index_plus_one` includes the
+/// sequence's one-based index offset.
+pub(crate) fn indexed_member_factor<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    value: &Element<'dr, D>,
+    index_plus_one: &Element<'dr, D>,
+    z: &Element<'dr, D>,
+) -> Result<Element<'dr, D>> {
+    let indexed = index_plus_one.mul(dr, z)?;
+    let shifted = value.add(dr, &indexed);
+    let square = shifted.square(dr)?;
+    let cube = square.mul(dr, &shifted)?;
+    let two = Element::constant(dr, Fp::from(2));
+    Ok(cube.sub(dr, &two))
+}
 
 pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,

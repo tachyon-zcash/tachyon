@@ -128,23 +128,33 @@ impl Step<Pasta> for SummarySeed {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        super::enforce_stamp_domain(dr, &epoch_element, oracles.bridge_hash())?;
+        let anchor = poseidon::with_driver::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (anchor_prev, epoch, _) = witness.take();
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(epoch),
-                [*x.take(), *y.take()],
-            )?);
-            Ok(((epoch, anchor_prev, anchor_end), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+            (epoch, anchor_prev, Anchor::from(*anchor.value().take()))
+        });
+        let fields = SummaryOutput {
+            epoch: epoch_element,
+            anchor_prev: previous,
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -196,8 +206,7 @@ impl Step<Pasta> for SummaryAdvance {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         enforce_poly_product(
             dr,
             oracles,
@@ -206,19 +215,30 @@ impl Step<Pasta> for SummaryAdvance {
             &Slot::output(0),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let output = D::try_just(|| {
-            let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
-            right.take();
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(summary_anchor_end),
-                Fp::from(summary_epoch),
-                [*x.take(), *y.take()],
-            )?);
-            Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        super::enforce_stamp_domain(dr, &left_encoded.as_gadget().epoch, oracles.bridge_hash())?;
+        let anchor = poseidon::with_driver::anchor_next_stamp(
+            dr,
+            &left_encoded.as_gadget().anchor_end,
+            &left_encoded.as_gadget().epoch,
+            oracles.bridge_hash(),
+        )?;
+        let output = D::just(|| {
+            let (summary_epoch, summary_anchor_prev, ..) = left.take();
+            (
+                summary_epoch,
+                summary_anchor_prev,
+                Anchor::from(*anchor.value().take()),
+            )
+        });
+        let fields = SummaryOutput {
+            epoch: left_encoded.as_gadget().epoch.clone(),
+            anchor_prev: left_encoded.as_gadget().anchor_prev.clone(),
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

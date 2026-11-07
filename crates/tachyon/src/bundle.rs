@@ -110,7 +110,7 @@ use crate::{
     digest::blake2b,
     fee,
     keys::{private, public},
-    primitives::{Anchor, AnchorSetPoly, effect},
+    primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
         self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampProof,
@@ -630,9 +630,8 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         }
     }
 
-    /// Advance the stamp's anchor along `spans`. Each entry is an anchor span
-    /// and its members polynomial. The first span must contain the stamp's
-    /// anchor, and each later span must contain the previous span's
+    /// Advance the stamp's anchor along `spans`. The first span must contain
+    /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
     /// `anchor_start` or one of its members.
     ///
@@ -644,10 +643,7 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()

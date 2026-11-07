@@ -10,12 +10,10 @@ use alloc::collections::BTreeSet;
 
 use ragu::{header::Header, step::Step};
 use ragu_core::pasta::Pasta;
-use udon::curve::Projective as _;
 
 use crate::{
     collections,
     constants::EVIDENCE_TREE_ARITY,
-    digest::poseidon,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
@@ -153,16 +151,8 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_hash)`.
-///
-/// # Panics
-///
-/// Panics if the set commitment or its bridge hash is the identity.
+/// stamp_set)`.
 #[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "set polynomials have nonidentity commitments"
-)]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
     anchor_start: Anchor,
@@ -172,22 +162,13 @@ pub fn anchor_span_seed(
     (
         anchor_start,
         epoch,
-        poseidon::bridge_hash(
-            tgs.iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
-                .commit()
-                .as_ref()
-                .to_affine(),
-        )
-        .expect("valid stamp commitment"),
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 
 /// Prepare the witness for [`AnchorSpanFuse`]: `(combined,)`.
 ///
-/// `left_members` and `right_members` are the members polynomials of the two
-/// halves.
+/// `left_members` and `right_members` are the members of the two halves.
 #[must_use]
 pub fn anchor_span_fuse(
     (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
@@ -220,14 +201,9 @@ pub fn summary_advance(
     acc_tgs: &[Tachygram],
     stamp_tgs: &[Tachygram],
 ) -> StepWitness<'static, SummaryAdvance> {
-    let extended = acc_tgs
-        .iter()
-        .chain(stamp_tgs.iter())
-        .copied()
-        .collect::<TachygramSetPoly>();
     (
-        extended,
-        stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        acc_tgs.iter().chain(stamp_tgs).copied().collect(),
+        stamp_tgs.iter().copied().collect(),
     )
 }
 
@@ -416,12 +392,11 @@ pub fn unspent_lift(
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
-    let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
+        NfSeqPoly::new(epoch_start, elapsed) * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
 }
 
@@ -547,9 +522,8 @@ pub const fn stamp_unmerge(
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
 /// (output_action_set, output_tachygram_set))`.
 ///
-/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
-/// singleton set contains one element: the fee digest or the fee change note's
-/// commitment. The output set polynomials represent the unions.
+/// `action_digests` and `tachygrams` are the left `Actions` sets. The output
+/// sets add the fee digest and the fee change note's commitment.
 ///
 /// # Panics
 ///

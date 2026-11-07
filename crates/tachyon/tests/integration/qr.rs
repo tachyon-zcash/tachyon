@@ -3,6 +3,14 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem};
 
+use ragu::{
+    header::Header,
+    step::{Encoded, HeaderInput, Index, Oracles, Step},
+};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    pasta::Pasta,
+};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -1024,6 +1032,69 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     );
 }
 
+/// [`qr::QrEmptyIntakeSeed`] committing its intake to one prover-chosen member.
+struct NonEmptyIntakeSeed(Tachygram);
+
+impl Step<Pasta> for NonEmptyIntakeSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = qr::QrIntake;
+    type Right = ();
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
+
+    const INDEX: Index = <qr::QrEmptyIntakeSeed as Step<Pasta>>::INDEX;
+
+    fn polynomials(
+        &self,
+        _: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([vec![-Fp::from(self.0), Fp::ONE], vec![Fp::ONE]])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        qr::QrEmptyIntakeSeed.witness::<D, HEADER_SIZE>(dr, oracles, witness, left, right)
+    }
+}
+
+#[test]
+fn qr_empty_intake_seed_rejects_a_member() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let member = Tachygram::random(rng);
+    let anchor = Anchor::random(rng);
+    let discriminant = QrDiscriminant::random(rng);
+    assert_matches!(
+        PROOF_SYSTEM
+            .seed(
+                rng,
+                NonEmptyIntakeSeed(member),
+                (anchor, EpochIndex::new(1), discriminant),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrEmptyIntakeSeed: contents must be one"
+    );
+}
+
 #[test]
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1568,7 +1639,7 @@ fn unspent_lift_carries_a_spendable() {
 #[test]
 fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(EpochIndex::new(3).first_block().0, |_| {
         random_block(rng, 1, 2)
@@ -1579,14 +1650,22 @@ fn unspent_lift_rejects_invalid_extensions() {
     let first = epoch_bucket(rng, &pool, epoch0);
     let segment = qr_bucket_segment(rng, &first, nf);
     let bucket = epoch_bucket(rng, &pool, epoch1);
-    let past = epoch_bucket(rng, &pool, epoch2);
+    let detached_previous = Anchor::from(Fp::from(42));
+    let detached_entry = detached_previous.next_epoch(epoch1).unwrap();
+    let detached_intake = seed_qr_empty_intake(
+        rng,
+        detached_entry,
+        epoch1,
+        QrDiscriminant::from(Fp::from(17)),
+    );
+    let detached = seal_qr_intake(rng, detached_intake, detached_previous);
     let honest = witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf0]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
 
     for (lift_bucket, lift, expected) in [
         (
-            &past,
-            witness::unspent_lift((*segment.data(), *past.pcd.data()), nf1.into(), &[nf0]),
+            &detached,
+            witness::unspent_lift((*segment.data(), *detached.pcd.data()), nf1.into(), &[nf0]),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (

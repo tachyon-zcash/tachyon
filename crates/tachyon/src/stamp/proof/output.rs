@@ -20,8 +20,8 @@ use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
     note::Note,
-    pasta::{EpAffine, Fp},
-    ragu_constraint::enforce_nonzero,
+    pasta::{EpAffine, Fp, Fq},
+    relations::{arithmetic as circuit, curve},
     value,
 };
 
@@ -106,39 +106,50 @@ impl Step<Pasta> for OutputBind {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (note, rcv) = witness.take();
-            if u64::from(note.value) > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "OutputBind: note value exceeds maximum".into(),
-                ));
-            }
-
-            let (cm, pad) = {
-                let (rcm, pk, value, psi) = (
-                    Fp::from(note.rcm),
-                    Fp::from(note.pk),
-                    u64::from(note.value),
-                    Fp::from(note.psi),
-                );
-                (
-                    Tachygram::from(poseidon::note_commitment(rcm, pk, value, psi)),
-                    Tachygram::from(poseidon::pad_tachygram(rcm, pk, value, psi)),
-                )
-            };
-
-            // Two zero tachygrams collide whatever they were meant to be, and a
-            // zero root leaves the accumulator factor `(X - tg)` trivial.
-            enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
-            enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
-
-            Ok(((cm, pad, rcv.commit(-note.value)), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let amount = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|data| Fp::from(u64::from(data.0.value))),
+        )?;
+        circuit::bounded::<D, 51>(dr, &amount, MAX_MONEY)?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.rcm)),
+        )?;
+        let pk = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.pk)),
+        )?;
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.psi)),
+        )?;
+        let cm = poseidon::with_driver::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
+        let pad = poseidon::with_driver::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
+        cm.clone().enforce_nonzero(dr)?;
+        pad.clone().enforce_nonzero(dr)?;
+        let amount_bits = circuit::bits::<D, 51>(dr, &amount)?;
+        let rcv_bits = circuit::scalar_bits(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
+        let cv = curve::commitment(dr, &amount_bits, &rcv_bits, true)?;
+        let output = D::just(|| {
+            (
+                Tachygram::from(*cm.value().take()),
+                Tachygram::from(*pad.value().take()),
+                value::Commitment::from(cv.value().take()),
+            )
+        });
+        let fields = OutputHeaderOutput { cm, pad, cv };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

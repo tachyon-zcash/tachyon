@@ -30,11 +30,41 @@ pub mod summary;
 use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder, RegistryTags};
 use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
+use ragu_core::{Cycle as _, FixedGenerators as _, drivers::Driver, pasta::Pasta};
+use ragu_primitives::Element;
+use udon::curve::Affine as _;
 
-use crate::pasta;
+use crate::{constants::EPOCH_MAX, pasta, relations::arithmetic::bounded};
 
-/// Eight payload elements for QR split/selection and bucket headers and one
+/// Step admission checks for the stamp's epoch and nonempty tachygram set.
+fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
+    dr: &mut D,
+    epoch: &Element<'dr, D>,
+    bridge_hash: &[Element<'dr, D>; 2],
+) -> ragu_core::Result<()> {
+    let generator = *Pasta::host_generators(pasta::baked())
+        .g()
+        .first()
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("fixed generator table is empty".into()))?;
+    let (low, high) = PROOF_SYSTEM
+        .bridge_hash(generator)?
+        .coordinates()
+        .ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("bridge hash must not be the identity point".into())
+        })?;
+    let low_element = Element::constant(dr, low);
+    let high_element = Element::constant(dr, high);
+    let equal_low = bridge_hash[0].is_equal(dr, &mut (), &low_element)?;
+    let equal_high = bridge_hash[1].is_equal(dr, &mut (), &high_element)?;
+    equal_low
+        .and(dr, &equal_high)?
+        .element()
+        .enforce_zero(dr)
+        .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+    bounded::<D, 32>(dr, epoch, u64::from(EPOCH_MAX))
+}
+
+/// Eight payload elements for QR split, selection and bucket headers, plus one
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 

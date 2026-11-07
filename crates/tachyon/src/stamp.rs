@@ -2,7 +2,6 @@
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 #![allow(
-    clippy::multiple_inherent_impl,
     clippy::same_name_method,
     reason = "todo: take read/write off StampState"
 )]
@@ -42,8 +41,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{Eq, Fp},
     primitives::{
-        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, AnchorSetPoly, Tachygram,
-        TachygramSetCommit,
+        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit,
     },
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -644,10 +642,7 @@ impl Plan {
         spend_pcds: Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProofStamp<ragu::Proof<Pasta, ProductionRank>>, ProveError> {
         let fee_descriptor = fee::Descriptor {
@@ -680,7 +675,7 @@ impl Plan {
         {
             let reached = spans
                 .last()
-                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().1);
+                .map_or_else(|| spendable_pcd.data().2, |last| last.data().1);
             if reached != self.anchor {
                 return Err(ProveError::MissingPcd(
                     format!("spend {index} does not reach the plan's anchor").into(),
@@ -702,7 +697,7 @@ impl Plan {
             let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
-            for (span, _members) in spans {
+            for span in spans {
                 stamp_pcd = PROOF_SYSTEM
                     .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
@@ -1089,9 +1084,9 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         ))
     }
 
-    /// Advances the stamp's anchor along `spans`, each paired with its members
-    /// polynomial. The first span must contain the stamp's anchor, and each
-    /// later span must contain the previous span's `anchor_end`.
+    /// Advances the stamp's anchor along `spans`. The first span must contain
+    /// the stamp's anchor, and each later span must contain the previous span's
+    /// `anchor_end`.
     ///
     /// # Errors
     ///
@@ -1101,10 +1096,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -1122,7 +1114,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
                 "StampLift: action set does not match the stamp".into(),
             )));
         }
-        for (span, _members) in spans {
+        for span in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(rng, StampLift, (), stamp_pcd, span)
                 .map_err(ProveError::ProofFailed)?
@@ -1157,10 +1149,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()
