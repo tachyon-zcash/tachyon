@@ -197,10 +197,6 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn stamp_lift_accepts_only_anchors_the_span_holds() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -233,13 +229,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             TachygramSetPoly::from_iter(stamp.tachygrams).commit(),
             stamp_anchor,
         ));
-        let lifted = PROOF_SYSTEM.fuse(
-            rng,
-            stamp::StampLift,
-            witness::stamp_lift((*stamp_pcd.data(), *span.data())),
-            stamp_pcd,
-            span.clone(),
-        );
+        let lifted = PROOF_SYSTEM.fuse(rng, stamp::StampLift, (), stamp_pcd, span.clone());
         if let Some(message) = expected {
             assert_matches!(
                 lifted.err(),
@@ -697,10 +687,6 @@ fn unspent_bind_rejects_uncovered_end() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn spendable_lift_rejects_mismatched_segments() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -755,7 +741,7 @@ fn spendable_lift_rejects_mismatched_segments() {
                 .fuse(
                     rng,
                     spendable::SpendableLift,
-                    witness::spendable_lift((*spendable.data(), *unspent.data())),
+                    (),
                     spendable.clone(),
                     unspent,
                 )

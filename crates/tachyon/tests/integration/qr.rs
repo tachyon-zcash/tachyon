@@ -1003,10 +1003,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1046,13 +1042,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
 
     let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data())),
-            unspent,
-            bucket.pcd,
-        )
+        .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
         .unwrap();
     assert_eq!(*spendable.data(), (note.commitment(), epoch1, anchor_next));
 
@@ -1080,10 +1070,6 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let rng = &mut StdRng::seed_from_u64(196);
     let user = WalletSim::new(shared_sk());
@@ -1112,13 +1098,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert_eq!(bucket.pcd.data().2, unpublished);
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
     let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data())),
-            unspent,
-            bucket.pcd,
-        )
+        .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
         .unwrap();
     assert_eq!(
         *spendable.data(),
@@ -1148,7 +1128,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert_ne!(bound_next.data().1, unpublished);
     assert_matches!(
         PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableLift, witness::spendable_lift((*spendable.data(), *bound_next.data())), spendable, bound_next)
+            .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "SpendableLift: unspent not adjacent to spendable"
@@ -1156,10 +1136,6 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1250,7 +1226,7 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
                 .fuse(
                     rng,
                     spendable::QrSpendableInit,
-                    witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data())),
+                    (),
                     unspent,
                     bucket.pcd,
                 )
@@ -1261,10 +1237,6 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn qr_spendable_init_rejects_an_absent_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1291,7 +1263,7 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
             .fuse(
                 rng,
                 spendable::QrSpendableInit,
-                witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data())),
+                (),
                 unspent,
                 bucket.pcd,
             )

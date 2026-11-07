@@ -555,10 +555,6 @@ impl Plan {
         clippy::too_many_lines,
         reason = "proves, lifts and merges every planned action"
     )]
-    #[expect(
-        clippy::unit_arg,
-        reason = "all steps use witness builders, including unit witnesses"
-    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -626,13 +622,7 @@ impl Plan {
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for (span, _members) in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        ActionLift,
-                        witness::action_lift((*stamp_pcd.data(), *span.data())),
-                        stamp_pcd,
-                        span,
-                    )
+                    .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
@@ -1144,10 +1134,6 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
-    #[expect(
-        clippy::unit_arg,
-        reason = "all steps use witness builders, including unit witnesses"
-    )]
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1169,13 +1155,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
                 .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
         for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    StampLift,
-                    witness::stamp_lift((*stamp_pcd.data(), *span.data())),
-                    stamp_pcd,
-                    span,
-                )
+                .fuse(rng, StampLift, (), stamp_pcd, span)
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }

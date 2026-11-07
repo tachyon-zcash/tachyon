@@ -26,10 +26,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        evidence::{
-            EvidenceTreeCap, EvidenceTreeDescend, EvidenceTreeFuse, EvidenceTreeLeafPair,
-            EvidenceTreeOpen, EvidenceTreePairFuse,
-        },
+        evidence::{EvidenceTreeDescend, EvidenceTreeLeafPair, EvidenceTreeOpen},
         output::OutputBind,
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
@@ -37,10 +34,9 @@ use crate::{
             QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spend::SpendBind,
-        spendable::{QrSpendableInit, SpendableInit, SpendableLift},
+        spendable::SpendableInit,
         stamp::{
-            ActionLift, ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift,
-            StampMerge, StampUnmerge,
+            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampMerge, StampUnmerge,
         },
         summary::{SummaryAdvance, SummarySeed},
     },
@@ -154,20 +150,6 @@ pub fn spendable_init(
     )
 }
 
-/// Prepare the witness for [`QrSpendableInit`]: `()`.
-#[must_use]
-pub const fn qr_spendable_init(
-    (_left, _right): (StepLeft<QrSpendableInit>, StepRight<QrSpendableInit>),
-) -> StepWitness<'static, QrSpendableInit> {
-}
-
-/// Prepare the witness for [`SpendableLift`]: `()`.
-#[must_use]
-pub const fn spendable_lift(
-    (_left, _right): (StepLeft<SpendableLift>, StepRight<SpendableLift>),
-) -> StepWitness<'static, SpendableLift> {
-}
-
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
 /// stamp_commit)`.
 #[must_use]
@@ -195,20 +177,6 @@ pub fn anchor_span_fuse(
     right_members: &[Anchor],
 ) -> StepWitness<'static, AnchorSpanFuse> {
     (left_members.iter().chain(right_members).copied().collect(),)
-}
-
-/// Prepare the witness for [`StampLift`]: `()`.
-#[must_use]
-pub const fn stamp_lift(
-    (_left, _right): (StepLeft<StampLift>, StepRight<StampLift>),
-) -> StepWitness<'static, StampLift> {
-}
-
-/// Prepare the witness for [`ActionLift`]: `()`.
-#[must_use]
-pub const fn action_lift(
-    (_left, _right): (StepLeft<ActionLift>, StepRight<ActionLift>),
-) -> StepWitness<'static, ActionLift> {
 }
 
 /// Prepare the witness for [`SummarySeed`]:
@@ -403,30 +371,6 @@ pub const fn evidence_tree_leaf_pair(
     right_contents: TachygramSetPoly,
 ) -> StepWitness<'static, EvidenceTreeLeafPair> {
     (left_contents, right_contents)
-}
-
-/// Prepare the witness for [`EvidenceTreePairFuse`]: `()`.
-#[must_use]
-pub const fn evidence_tree_pair_fuse(
-    (_left, _right): (
-        StepLeft<EvidenceTreePairFuse>,
-        StepRight<EvidenceTreePairFuse>,
-    ),
-) -> StepWitness<'static, EvidenceTreePairFuse> {
-}
-
-/// Prepare the witness for [`EvidenceTreeFuse`]: `()`.
-#[must_use]
-pub const fn evidence_tree_fuse(
-    (_left, _right): (StepLeft<EvidenceTreeFuse>, StepRight<EvidenceTreeFuse>),
-) -> StepWitness<'static, EvidenceTreeFuse> {
-}
-
-/// Prepare the witness for [`EvidenceTreeCap`]: `()`.
-#[must_use]
-pub const fn evidence_tree_cap(
-    (_left, _right): (StepLeft<EvidenceTreeCap>, StepRight<EvidenceTreeCap>),
-) -> StepWitness<'static, EvidenceTreeCap> {
 }
 
 /// Prepare the witness for [`EvidenceTreeDescend`]: `(path)`.

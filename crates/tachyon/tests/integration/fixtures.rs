@@ -731,10 +731,6 @@ pub(crate) struct EvidenceTreeEntry {
     pub leaves: Vec<EvidenceLeaf>,
 }
 
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     mut buckets: Vec<QrBucketEntry>,
@@ -797,13 +793,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     let mut halves = pairs.into_iter();
     while let (Some(left), Some(right)) = (halves.next(), halves.next()) {
         let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                evidence::EvidenceTreeFuse,
-                witness::evidence_tree_fuse((*left.data(), *right.data())),
-                left,
-                right,
-            )
+            .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
             .unwrap();
         layer.push(pcd);
     }
@@ -819,31 +809,13 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
             children.next(),
         ) {
             let (left, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    evidence::EvidenceTreePairFuse,
-                    witness::evidence_tree_pair_fuse((*first.data(), *second.data())),
-                    first,
-                    second,
-                )
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), first, second)
                 .unwrap();
             let (right, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    evidence::EvidenceTreePairFuse,
-                    witness::evidence_tree_pair_fuse((*third.data(), *fourth.data())),
-                    third,
-                    fourth,
-                )
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), third, fourth)
                 .unwrap();
             let (pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    evidence::EvidenceTreeFuse,
-                    witness::evidence_tree_fuse((*left.data(), *right.data())),
-                    left,
-                    right,
-                )
+                .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
                 .unwrap();
             parents.push(pcd);
         }
@@ -859,7 +831,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
             .fuse(
                 rng,
                 evidence::EvidenceTreeCap,
-                witness::evidence_tree_cap((*root.data(), ())),
+                (),
                 root,
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -1338,10 +1310,6 @@ impl WalletSim {
         unspent
     }
 
-    #[expect(
-        clippy::unit_arg,
-        reason = "all steps use witness builders, including unit witnesses"
-    )]
     pub fn lift<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -1351,13 +1319,7 @@ impl WalletSim {
     ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (lifted, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                spendable::SpendableLift,
-                witness::spendable_lift((*spendable.data(), *unspent.data())),
-                spendable,
-                unspent,
-            )
+            .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
             .unwrap();
         lifted
     }
@@ -1384,10 +1346,6 @@ impl WalletSim {
         self.lift(rng, spendable, unspent, note)
     }
 
-    #[expect(
-        clippy::unit_arg,
-        reason = "all steps use witness builders, including unit witnesses"
-    )]
     pub fn spendable_at<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -1411,13 +1369,7 @@ impl WalletSim {
         let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| mk.derive_nullifier(epoch));
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (spendable, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                spendable::QrSpendableInit,
-                witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data())),
-                unspent,
-                bucket.pcd,
-            )
+            .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
             .unwrap();
         self.lift_to_epoch(rng, pool, note, spendable, target)
     }

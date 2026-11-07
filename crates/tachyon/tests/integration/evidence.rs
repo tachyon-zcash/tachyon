@@ -90,10 +90,6 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
 }
 
 #[test]
-#[expect(
-    clippy::unit_arg,
-    reason = "all steps use witness builders, including unit witnesses"
-)]
 fn evidence_tree_joins_reject_mismatched_trees() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
@@ -216,7 +212,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             .fuse(
                 rng,
                 evidence::EvidenceTreePairFuse,
-                witness::evidence_tree_pair_fuse((*left.data(), *left.data())),
+                (),
                 left.clone(),
                 left.clone(),
             )
@@ -226,7 +222,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             .fuse(
                 rng,
                 evidence::EvidenceTreePairFuse,
-                witness::evidence_tree_pair_fuse((*right.data(), *right.data())),
+                (),
                 right.clone(),
                 right.clone(),
             )
@@ -234,14 +230,14 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             .0;
         assert_matches!(
             PROOF_SYSTEM
-                .fuse(rng, evidence::EvidenceTreePairFuse, witness::evidence_tree_pair_fuse((*left.data(), *right.data())), left, right)
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == format!("EvidenceTreePairFuse: {complaint}")
         );
         assert_matches!(
             PROOF_SYSTEM
-                .fuse(rng, evidence::EvidenceTreeFuse, witness::evidence_tree_fuse((*left_pair.data(), *right_pair.data())), left_pair, right_pair)
+                .fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == format!("EvidenceTreeFuse: {complaint}")
