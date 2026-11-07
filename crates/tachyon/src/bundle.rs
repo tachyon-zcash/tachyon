@@ -630,20 +630,6 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         }
     }
 
-    fn covered_descriptors(
-        &self,
-        adjuncts: &[&Bundle<dyn StampState>],
-    ) -> (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>) {
-        let descriptors: BTreeSet<action::Descriptor> = self
-            .descriptors()
-            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
-            .collect();
-        let fee_descriptors: BTreeSet<fee::Descriptor> = iter::once(self.fee_descriptor())
-            .chain(adjuncts.iter().map(|&adj| adj.fee_descriptor()))
-            .collect();
-        (descriptors, fee_descriptors)
-    }
-
     /// Advance the stamp's anchor along `spans`. The first span must contain
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
@@ -659,39 +645,19 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         adjuncts: &[&Bundle<dyn StampState>],
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
-        let (descriptors, fee_descriptors) = self.covered_descriptors(adjuncts);
+        let descriptors: BTreeSet<action::Descriptor> = self
+            .descriptors()
+            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
+            .collect();
+        let fee_descriptors: BTreeSet<fee::Descriptor> = iter::once(self.fee_descriptor())
+            .chain(adjuncts.iter().map(|&adj| adj.fee_descriptor()))
+            .collect();
 
         let stamp = self
             .stamp
             .lift(rng, &descriptors, &fee_descriptors, spans)?;
 
         Ok(Self { stamp, ..self })
-    }
-
-    /// Compress the stamp's proof for the block, using the descriptors of this
-    /// bundle and its adjuncts.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProveError`] if an action digest cannot be computed or the
-    /// proof does not verify against the covered descriptors.
-    pub fn compress<RNG: CryptoRng>(
-        self,
-        rng: &mut RNG,
-        adjuncts: &[&Bundle<dyn StampState>],
-    ) -> Result<Bundle<ProofStamp<ragu::CompressedProof<Pasta>>>, ProveError> {
-        let (descriptors, fee_descriptors) = self.covered_descriptors(adjuncts);
-
-        let stamp = self.stamp.compress(rng, &descriptors, &fee_descriptors)?;
-
-        Ok(Bundle {
-            actions: self.actions,
-            value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp,
-        })
     }
 }
 

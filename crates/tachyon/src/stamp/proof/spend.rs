@@ -36,7 +36,6 @@ use crate::{
 /// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
-/// `anchor` threads the spendable lineage's pool position.
 #[derive(Debug)]
 pub struct SpendHeader;
 

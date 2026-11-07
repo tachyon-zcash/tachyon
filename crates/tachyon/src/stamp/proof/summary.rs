@@ -35,8 +35,6 @@ use crate::{
 /// Slot O0 commits the root polynomial of every tachygram in the run,
 /// which is exactly the set of stamps folded over the coverage extent
 /// `(anchor_prev, anchor_end]`.
-/// `anchor_prev` is a free witness of the seed step, as `anchor_start` is for
-/// [`AnchorSpan`](super::pool::AnchorSpan).
 #[derive(Clone, Debug)]
 pub struct Summary;
 
@@ -88,13 +86,12 @@ impl Header<Fp> for Summary {
 }
 
 /// Start a summary from one stamp. The step performs the same fold as
-/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and carries the stamp in
-/// `O0/O1`.
+/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
 ///
 /// # Soundness
 ///
-/// `epoch` is a free witness. Consensus computes each fold with the epoch of
-/// the block that contains the stamp.
+/// `anchor_prev` and `epoch` are free witnesses. Consensus computes each fold
+/// with the epoch of the block that contains the stamp.
 #[derive(Debug)]
 pub struct SummarySeed;
 

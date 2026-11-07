@@ -57,12 +57,11 @@ use crate::{
     },
 };
 
-/// Tachygrams under routing, complete for `profile` over the covered span.
+/// Tachygrams under routing, complete for `profile` over `(anchor_prev,
+/// anchor_end]`.
 ///
 /// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
-/// Slot O0 carries contents drawn from the folds over `(anchor_prev,
-/// anchor_end]`; `discriminant` is the network's $R_0$.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -239,8 +238,6 @@ impl Header<Fp> for QrIntakeSides {
 pub struct QrSideSelection;
 
 impl Header<Fp> for QrSideSelection {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
-    /// non_residue_hash)`
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
@@ -1047,7 +1044,6 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
-/// Slots O0/O1 carry contents.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
