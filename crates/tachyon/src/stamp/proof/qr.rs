@@ -59,12 +59,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
-#[expect(missing_docs, reason = "fields mirror the QrIntake header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
@@ -132,12 +127,7 @@ impl Header<Fp> for QrIntake {
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
-#[expect(missing_docs, reason = "fields mirror the QrIntakeSides header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
@@ -928,12 +918,7 @@ impl Step<Pasta> for QrSideDescend {
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
-#[expect(missing_docs, reason = "fields mirror the QrBucket header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,

@@ -48,12 +48,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-#[expect(missing_docs, reason = "fields mirror the NoteSecret header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub rcm: Element<'dr, D>,
@@ -126,12 +121,7 @@ impl Header<Fp> for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-#[expect(missing_docs, reason = "fields mirror the NoteNullifiers header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub epoch_start: Element<'dr, D>,

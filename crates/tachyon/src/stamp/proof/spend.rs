@@ -38,12 +38,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendHeader;
 
-#[expect(missing_docs, reason = "fields mirror the SpendHeader header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub cm: Element<'dr, D>,
     pub nf_current: Element<'dr, D>,

@@ -37,12 +37,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-#[expect(missing_docs, reason = "fields mirror the Summary header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_prev: Element<'dr, D>,

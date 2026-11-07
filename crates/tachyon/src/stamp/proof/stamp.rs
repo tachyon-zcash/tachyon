@@ -52,12 +52,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Actions;
 
-#[expect(missing_docs, reason = "fields mirror the Actions header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
 }
@@ -98,12 +93,7 @@ impl Header<Fp> for Actions {
 #[derive(Debug)]
 pub struct Stamp;
 
-#[expect(missing_docs, reason = "fields mirror the Stamp header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
     pub action_commit: [Element<'dr, D>; 2],

@@ -84,12 +84,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
-#[expect(missing_docs, reason = "fields mirror the ArbitraryUnspent header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     pub epoch_start: Element<'dr, D>,
@@ -139,12 +134,7 @@ impl Header<Fp> for ArbitraryUnspent {
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
-#[expect(missing_docs, reason = "fields mirror the NoteUnspent header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,
@@ -217,12 +207,7 @@ impl Header<Fp> for NoteUnspent {
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
-#[expect(missing_docs, reason = "fields mirror the AnchorSpan header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,

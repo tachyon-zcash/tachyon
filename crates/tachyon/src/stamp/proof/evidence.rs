@@ -54,12 +54,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
-#[expect(missing_docs, reason = "fields mirror the EvidenceTree header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,
@@ -119,12 +114,7 @@ impl Header<Fp> for EvidenceTree {
 #[derive(Clone, Debug)]
 pub struct EvidenceTreePair;
 
-#[expect(missing_docs, reason = "fields mirror the EvidenceTreePair header")]
 #[derive(Gadget, Write)]
-#[expect(
-    missing_debug_implementations,
-    reason = "gadgets do not implement Debug"
-)]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     pub epoch: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,
