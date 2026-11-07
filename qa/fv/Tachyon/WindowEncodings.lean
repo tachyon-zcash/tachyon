@@ -173,31 +173,34 @@ the same descriptor preimage and signed debit, via the checked refinement. -/
 def outputDigestOpening (m : Model F G) (hJ : m.sentinel ≠ 0) (n : Note F) (s : FixedBase.Limbs)
     (hc : s.canonical m.scalarModulus) (o : Output F G) (theta : F) (a : Action F A G)
     (hb : NewOutputBind (K := K) m n s o) (ha : NewOutputAction m o theta a) :
-    DigestOpening K m.taggedDigest m.valueBase m.blindBase a.digest (-(n.amount : ℤ)) where
+    DigestOpening K m.taggedDigest m.valueBase m.blindBase a.digest (-(n.amount : ℤ)) none where
   input := .action o.cv a.rk
   rcv := s.value
   digest := ha.1.2.1.symm
+  amount := rfl
   opens := (outputValueOpening m hJ n s hc o a.rk hb).opens
 
 def spendDigestOpening (m : Model F G) (hJ : m.sentinel ≠ 0) (valid : NoteSpendable F A → Prop)
     (s : FixedBase.Limbs) (hc : s.canonical m.scalarModulus) (o : Spend F A G)
     (pak : Pak F G) (theta : F) (a : Action F A G)
     (hb : NewSpendBind (K := K) m valid s o) (ha : NewSpendAction m o pak theta a) :
-    DigestOpening K m.taggedDigest m.valueBase m.blindBase a.digest (o.prepared.amount : ℤ) where
+    DigestOpening K m.taggedDigest m.valueBase m.blindBase a.digest (o.prepared.amount : ℤ) none where
   input := .action o.cv a.rk
   rcv := s.value
   digest := ha.1.2.2.2.2.1.symm
+  amount := rfl
   opens := (spendValueOpening m hJ valid s hc o a.rk hb).opens
 
 def feeDigestOpening (m : Model F G) (hJ : m.sentinel ≠ 0) (n : Note F) (fee : ℕ)
     (hc : (feeScalar m n).canonical m.scalarModulus) (cv : G) (r : Ready F)
     (h : ReadyAccepted (K := K) m n fee cv r) :
-    DigestOpening K m.taggedDigest m.valueBase m.blindBase r.digest (-(n.amount : ℤ)) where
+    DigestOpening K m.taggedDigest m.valueBase m.blindBase r.digest (-(n.amount : ℤ)) (some fee) where
   input := .fee cv fee
   rcv := (feeScalar m n).value
   digest := by
     obtain ⟨_, _, _, _, _, _, _, hd, _, _⟩ := (h.provenance hJ hc).1
     exact hd.symm
+  amount := rfl
   opens := by simpa [DigestInput.commitment] using feeValueOpening m hJ n fee hc cv r h
 
 end Tachyon.StepBudget
