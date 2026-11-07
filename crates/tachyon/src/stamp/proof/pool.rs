@@ -590,7 +590,7 @@ impl Step<Pasta> for UnspentLift {
                 unspent_epoch_next,
                 unspent_anchor_next,
             ) = left.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile) =
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile, _) =
                 right.take();
             enforce_zero(
                 Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),

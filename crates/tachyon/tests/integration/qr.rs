@@ -12,6 +12,7 @@ use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
+    digest::poseidon,
     nullifier::Nullifier,
     pasta::{Eq, Fp},
     stamp::proof::{
@@ -23,10 +24,10 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrIntakeEntry, WalletSim, build_qr_partition, build_unspent_pcd_over_epochs,
-    epoch_bucket, qr_bucket_at, qr_bucket_segment, qr_epoch_unspent, qr_profile_of, random_block,
-    random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk, small_epoch,
-    split_qr_intake,
+    PoolSim, QrIntakeEntry, WalletSim, WithPolynomials, build_qr_partition,
+    build_unspent_pcd_over_epochs, epoch_bucket, qr_bucket_at, qr_bucket_segment, qr_epoch_unspent,
+    qr_profile_of, random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake,
+    shared_sk, small_epoch, split_qr_intake,
 };
 
 #[test]
@@ -911,6 +912,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
             discriminant,
             profile,
+            poseidon::bridge_hash(contents).unwrap(),
         )
     );
     assert_eq!(bucket.pcd.commitments()[0], contents);
@@ -943,6 +945,26 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
 }
 
 #[test]
+fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let witness = witness::qr_empty_intake_seed(
+        ((), ()),
+        Anchor::default(),
+        EpochIndex::new(0),
+        QrDiscriminant::random(rng),
+    );
+    assert_matches!(
+        PROOF_SYSTEM.seed(
+            rng,
+            WithPolynomials(qr::QrEmptyIntakeSeed, [vec![Fp::ONE, Fp::ONE], vec![Fp::ONE]]),
+            witness,
+        ).err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrEmptyIntakeSeed: contents must be one"
+    );
+}
+
+#[test]
 fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
@@ -962,7 +984,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let discriminant = QrDiscriminant::random(rng);
     let intake = seed_qr_empty_intake(rng, entry1, epoch1, discriminant);
     let bucket = seal_qr_intake(rng, intake, final0);
-    let (epoch, anchor_start, anchor_next, _, profile) = *bucket.pcd.data();
+    let (epoch, anchor_start, anchor_next, _, profile, _) = *bucket.pcd.data();
     assert_eq!((epoch, anchor_start, anchor_next), (epoch1, entry1, entry2));
     assert_eq!(profile, QrProfile::ROOT);
     assert_eq!(

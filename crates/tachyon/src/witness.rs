@@ -28,7 +28,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        evidence::{EvidenceTreeDescend, EvidenceTreeLeafPair, EvidenceTreeOpen},
+        evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
         output::OutputBind,
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
@@ -368,27 +368,13 @@ pub fn qr_unspent_init(
     (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
-}
-
-/// Prepare the witness for [`EvidenceTreeLeafPair`]: `(left_contents,
-/// right_contents)`.
-#[must_use]
-pub const fn evidence_tree_leaf_pair(
-    (_left, _right): (
-        StepLeft<EvidenceTreeLeafPair>,
-        StepRight<EvidenceTreeLeafPair>,
-    ),
-    left_contents: TachygramSetPoly,
-    right_contents: TachygramSetPoly,
-) -> StepWitness<'static, EvidenceTreeLeafPair> {
-    (left_contents, right_contents)
 }
 
 /// Prepare the witness for [`EvidenceTreeDescend`]: `(path)`.
@@ -429,7 +415,7 @@ pub fn unspent_lift(
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = unspent;
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,

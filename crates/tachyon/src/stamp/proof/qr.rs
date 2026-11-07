@@ -388,6 +388,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
 /// entry anchor of `epoch + 1` only if `anchor` is both the entry anchor and
 /// the final anchor of `epoch`. That holds only when the epoch published no
 /// stamp. `discriminant` is a free witness. See [`QrDiscriminant`].
+/// O0 opens once at the challenge and is constrained to one.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
@@ -404,7 +405,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -423,6 +424,12 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let zeta = oracles.zeta().clone();
+        let contents = oracles.query(dr, Slot::output(0), &zeta)?;
+        let one = Element::constant(dr, Fp::ONE);
+        contents.enforce_equal(dr, &one).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: contents must be one".into())
+        })?;
         let output = D::try_just(|| {
             let (anchor, epoch, discriminant) = witness.take();
             let () = left.take();
@@ -918,6 +925,7 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
+/// O0/O1 hold the contents. `contents_hash` is their certified bridge hash.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -929,11 +937,20 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub discriminant: Element<'dr, D>,
     pub depth: Element<'dr, D>,
     pub bits: Element<'dr, D>,
+    pub contents_hash: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for QrBucket {
-    /// `(epoch, anchor_start, anchor_next, discriminant, profile)`
-    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
+    /// `(epoch, anchor_start, anchor_next, discriminant, profile,
+    /// contents_hash)`
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        QrProfile,
+        [Fp; 2],
+    );
     type Output = Kind![Fp; QrBucketOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(11);
@@ -978,6 +995,10 @@ impl Header<Fp> for QrBucket {
                     .as_ref()
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
+            contents_hash: [
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[0]))?,
+                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[1]))?,
+            ],
         })
     }
 }
@@ -1015,6 +1036,7 @@ impl Header<Fp> for QrBucket {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
+/// L0/O0/O1 open once each to preserve the contents and certify the O1 digest.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -1034,7 +1056,7 @@ impl Step<Pasta> for QrBucketSeal {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([left.polynomials[0].clone(), alloc::vec![Fp::ONE]])
+        Ok([left.polynomials[0].clone(), left.polynomials[0].clone()])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1059,6 +1081,7 @@ impl Step<Pasta> for QrBucketSeal {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_final_prev,) = witness.take();
             let (epoch, anchor_prev, anchor_end, discriminant, profile) = left.take();
@@ -1077,11 +1100,35 @@ impl Step<Pasta> for QrBucketSeal {
                 .next_epoch(epoch_next)
                 .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
-            Ok(((epoch, anchor_prev, crossing, discriminant, profile), ()))
+            Ok((
+                (
+                    epoch,
+                    anchor_prev,
+                    crossing,
+                    discriminant,
+                    profile,
+                    [*hash_x.take(), *hash_y.take()],
+                ),
+                (),
+            ))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
+        let zeta = oracles.zeta().clone();
+        let contents = oracles.query(dr, Slot::left(0), &zeta)?;
+        for slot in [Slot::output(0), Slot::output(1)] {
+            oracles
+                .query(dr, slot, &zeta)?
+                .enforce_equal(dr, &contents)?;
+        }
+        for (output_hash, oracle_hash) in encoded
+            .as_gadget()
+            .contents_hash
+            .iter()
+            .zip(oracles.bridge_hash())
+        {
+            output_hash.enforce_equal(dr, oracle_hash)?;
+        }
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -1257,7 +1304,7 @@ impl Step<Pasta> for QrUnspentInit {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
             let (value, classes, mask, _) = witness.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile) =
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile, _) =
                 left.take();
             let () = right.take();
             enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;

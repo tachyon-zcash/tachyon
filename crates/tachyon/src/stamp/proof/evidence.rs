@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 use ragu::{
     header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_core::{
     drivers::{Driver, DriverValue},
@@ -26,18 +26,18 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::{curve::Projective as _, field::Field as _};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 
 use super::qr::QrBucket;
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
-    pasta::{Eq, Fp},
+    pasta::Fp,
     primitives::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetPoly,
     },
     ragu_constraint::enforce_zero,
+    relations::enforce::enforce_poly_equal,
 };
 
 /// A Poseidon Merkle root over one network's sealed buckets.
@@ -187,9 +187,10 @@ impl Header<Fp> for EvidenceTreePair {
 ///
 /// # Soundness
 ///
-/// Each digest is derived from one threaded bucket header, and the four
-/// equalities carry the network fields as [`EvidenceTreePairFuse`] does. The
-/// emitted pair holds two sealed buckets as leaves and claims nothing more.
+/// Each digest uses the contents hash certified by
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) or [`EvidenceTreeOpen`]. The four
+/// equalities carry the network fields as [`EvidenceTreePairFuse`] does.
+/// The emitted pair holds two sealed buckets as leaves and claims nothing more.
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
@@ -198,8 +199,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
     type Left = QrBucket;
     type Output = EvidenceTreePair;
     type Right = QrBucket;
-    /// `(left_contents, right_contents)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(30);
 
@@ -207,7 +207,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         &self,
         dr: &mut D,
         _oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -226,15 +226,21 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let (left_contents, right_contents) = witness.take();
-            let (left_epoch, left_anchor_start, left_anchor_next, left_discriminant, left_profile) =
-                left.take();
+            let (
+                left_epoch,
+                left_anchor_start,
+                left_anchor_next,
+                left_discriminant,
+                left_profile,
+                left_contents_hash,
+            ) = left.take();
             let (
                 right_epoch,
                 right_anchor_start,
                 right_anchor_next,
                 right_discriminant,
                 right_profile,
+                right_contents_hash,
             ) = right.take();
             enforce_zero(
                 Fp::from(left_epoch) - Fp::from(right_epoch),
@@ -260,7 +266,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(left_discriminant),
                 Fp::from(u64::from(left_profile.depth)),
                 Fp::from(u64::from(left_profile.bits)),
-                Eq::from(left_contents.commit()).to_affine(),
+                left_contents_hash,
             ));
             let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
                 Fp::from(right_epoch),
@@ -269,7 +275,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(right_discriminant),
                 Fp::from(u64::from(right_profile.depth)),
                 Fp::from(u64::from(right_profile.bits)),
-                Eq::from(right_contents.commit()).to_affine(),
+                right_contents_hash,
             ));
 
             Ok((
@@ -664,6 +670,8 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
 /// Two permutations (the leaf digest).
+/// O0/O1 hold the contents and open once each. O1's bridge hash enters the
+/// leaf.
 ///
 /// # Soundness
 ///
@@ -703,14 +711,14 @@ impl Step<Pasta> for EvidenceTreeOpen {
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
             witness.1.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
+            witness.1.as_ref().iter_coeffs().collect(),
         ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -729,9 +737,11 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
-            let (profile, contents_poly) = witness.take();
-            let contents = contents_poly.commit();
+            let (profile, _) = witness.take();
+            let contents_hash = [*hash_x.take(), *hash_y.take()];
             let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
             let () = right.take();
             enforce_zero(
@@ -743,18 +753,33 @@ impl Step<Pasta> for EvidenceTreeOpen {
                         Fp::from(discriminant),
                         Fp::from(u64::from(profile.depth)),
                         Fp::from(u64::from(profile.bits)),
-                        Eq::from(contents).to_affine(),
+                        contents_hash,
                     ),
                 "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
             )?;
 
             Ok((
-                (epoch, anchor_start, anchor_next, discriminant, profile),
+                (
+                    epoch,
+                    anchor_start,
+                    anchor_next,
+                    discriminant,
+                    profile,
+                    contents_hash,
+                ),
                 (),
             ))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        for (output_hash, oracle_hash) in encoded
+            .as_gadget()
+            .contents_hash
+            .iter()
+            .zip(oracles.bridge_hash())
+        {
+            output_hash.enforce_equal(dr, oracle_hash)?;
+        }
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

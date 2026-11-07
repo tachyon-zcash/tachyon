@@ -34,8 +34,8 @@ use ragu_core::pasta::Pasta;
 
 use crate::pasta;
 
-/// Eight payload elements for QR split/selection headers and one suffix
-/// element.
+/// Eight payload elements for QR split/selection and bucket headers and one
+/// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
