@@ -597,7 +597,7 @@ impl Plan {
 }
 
 impl Bundle<Unproven> {
-    /// Attach a proof stamp, producing a `Bundle<ProofStamp<P>>`.
+    /// Attach a proof stamp, producing a `Bundle<ProofStamp>`.
     #[must_use]
     pub fn stamp(
         self,
@@ -705,35 +705,9 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
         wtxid: &[u8; 64],
         adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
-        self.verify_signatures(sighash)
-            .map_err(VerificationError::Signatures)?;
-
-        let (adjunct_descs, adjunct_fee_descriptors) = self
-            .verify_pointers(wtxid, adjuncts)
-            .map_err(VerificationError::Pointers)?;
-
-        let (covered_descs, covered_fee_descriptors) = self
-            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-            .map_err(VerificationError::Coverage)?;
-
-        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
-            .map_err(VerificationError::Tachygrams)?;
-
-        let covered_digests = covered_descs
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .map_err(VerificationError::Actions)?;
-
-        if self
-            .verify_proof(rng, &covered_digests)
-            .map_err(VerificationError::Proof)?
-        {
-            Ok(())
-        } else {
-            Err(VerificationError::Disproved)
-        }
+        self.verify_with(sighash, wtxid, adjuncts, |digests| {
+            self.verify_proof(rng, digests)
+        })
     }
 }
 
@@ -873,6 +847,43 @@ where
             adjuncts.iter().map(|&adj| adj.fee_descriptor()).collect(),
         ))
     }
+
+    /// Verify everything about this bundle, checking the proof against the
+    /// covered action digests with `verify_proof`.
+    fn verify_with(
+        &self,
+        sighash: &[u8; 32],
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<PointerStamp>],
+        verify_proof: impl FnOnce(&[ActionDigest]) -> Result<bool, ragu_core::Error>,
+    ) -> Result<(), VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+
+        let (adjunct_descs, adjunct_fee_descriptors) = self
+            .verify_pointers(wtxid, adjuncts)
+            .map_err(VerificationError::Pointers)?;
+
+        let (covered_descs, covered_fee_descriptors) = self
+            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
+            .map_err(VerificationError::Coverage)?;
+
+        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
+            .map_err(VerificationError::Tachygrams)?;
+
+        let covered_digests = covered_descs
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(VerificationError::Actions)?;
+
+        if verify_proof(&covered_digests).map_err(VerificationError::Proof)? {
+            Ok(())
+        } else {
+            Err(VerificationError::Disproved)
+        }
+    }
 }
 
 impl Bundle<ProofStamp<ragu::CompressedProof<Pasta>>> {
@@ -916,35 +927,9 @@ impl Bundle<ProofStamp<ragu::CompressedProof<Pasta>>> {
         wtxid: &[u8; 64],
         adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
-        self.verify_signatures(sighash)
-            .map_err(VerificationError::Signatures)?;
-
-        let (adjunct_descs, adjunct_fee_descriptors) = self
-            .verify_pointers(wtxid, adjuncts)
-            .map_err(VerificationError::Pointers)?;
-
-        let (covered_descs, covered_fee_descriptors) = self
-            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
-            .map_err(VerificationError::Coverage)?;
-
-        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
-            .map_err(VerificationError::Tachygrams)?;
-
-        let covered_digests = covered_descs
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .map_err(VerificationError::Actions)?;
-
-        if self
-            .verify_proof(rng, &covered_digests)
-            .map_err(VerificationError::Proof)?
-        {
-            Ok(())
-        } else {
-            Err(VerificationError::Disproved)
-        }
+        self.verify_with(sighash, wtxid, adjuncts, |digests| {
+            self.verify_proof(rng, digests)
+        })
     }
 }
 
