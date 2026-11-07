@@ -55,7 +55,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 6. Serialize and compress the merged stamp
 7. Publish aggregate transaction
 
-An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
+An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which constructs its own private three-stage R certificate and runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
 <!-- TODO
 - Explain tachygram set union validation algorithm

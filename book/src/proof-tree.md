@@ -53,25 +53,31 @@ A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, inclu
 
 ### Spending
 
-To spend, the wallet runs `SpendBind`.
+To spend, the wallet runs `SpendPrepare`.
 It consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
-It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the lineage's epoch and the epoch after it, and commits the note's value as `cv` under the witnessed value-randomness.
+It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the lineage's epoch and the epoch after it.
 Nonzero guards close the `nf == 0` degenerate.
-The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
+The private `SpendPrepared` carries `(cm, nf_current, nf_next, anchor, pk, value)`.
+`SpendBind` consumes this preparation and a three-stage R multiplication certificate, computes the bounded positive value product, and emits `SpendHeader` with the same provenance fields and the finite value commitment `cv`.
 
-`SpendAction` consumes that `SpendHeader`, witnessing the action entropy `theta` and the proof authorizing key.
+`SpendAction` consumes that `SpendHeader` and a three-stage G multiplication certificate, witnessing the action entropy `theta` and the proof authorizing key.
 It requires the key to derive the header's `pk`, so the randomized action key `rk` belongs to the lineage's note, whose minted value `cv` commits to[^notes].
-It derives the action randomizer `alpha` from `theta` and `cm`, then the action digest from `cv` and `rk`, and emits `Actions` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+It derives the action randomizer `alpha` from `theta` and `cm`, matches both canonical integer limbs to the G certificate, and adds `ak` to its product to obtain finite `rk`.
+It derives the action digest from `cv` and `rk`, and emits `Actions` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
 
-An output operation also takes two steps, `OutputBind` and `OutputAction`.
-`OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and the value commitment `cv`.
-`OutputAction` derives `alpha` from the witnessed `theta` and `cm`, adds an anchor, and emits single-action `Actions` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
+An output operation takes eight local steps.
+Three R stages certify the blind product for `OutputBind`.
+`OutputBind` witnesses the note, derives its tachygram pair `cm` and `pad` from the same fields[^tachygrams], and combines 17 negative-value windows with the R product to obtain finite `cv`.
+Three G stages certify the randomizer product for `OutputAction`.
+`OutputAction` derives `alpha` from the witnessed `theta` and `cm`, matches both limbs to that certificate, requires finite `rk`, and emits single-action `Actions` at the witnessed anchor.
+The wallet typically anchors outputs at the transaction's spend anchor.
 
 A transaction with multiple spend and output actions composes them with `ActionMerge`.
 The output is `Actions` whose multisets are the union of the two inputs' at the shared anchor.
 If a spend's lineage is at an earlier anchor of the same epoch, the wallet first runs `ActionLift` along one or more `AnchorSpan`s to move the actions to the transaction's anchor.
-After the merges, `FeeFuse` applies the bundle's fee to those actions, adding the fee digest to the action set and the [fee change note](./fee.md#fee-change-note) commitment to the tachygram set, and emits a `Stamp`.
-A bundle with no actions uses `FeeSeed` instead.
+After the merges, three R stages, `FeeValueCommit` and `FeeBind` produce private `FeeReady` with the fee digest and [fee change note](./fee.md#fee-change-note) commitment.
+`FeeFuse` consumes `Actions` and `FeeReady`, extends both sets by those roots, and emits a `Stamp`.
+A bundle with no actions uses three R stages followed by `FeeSeed` with a zero-maximum fee note.
 
 After the transaction stamp is composed, the wallet may run `StampLift` along more spans to move the stamp's anchor closer to the chain's latest anchor before publication.
 An `AnchorSpan` commits to every anchor produced inside it.
@@ -88,7 +94,8 @@ Each input is anchored at the height its wallet chose.
 The aggregator runs `StampLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
 The merged stamp stays with one receiving bundle and keeps that bundle's fee, and the bundles it covers are stripped to point at the receiver.
-An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
+An innocent aggregate is itself a bundle with its own max fee note.
+The aggregator constructs its own private R certificate, proves its zero fee with `FeeSeed`, and merges that stamp with the aligned stamps.
 `StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
 It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee.
 An aggregator uses it when a block includes some of its contributors while the aggregate is still being built: it divides the aggregate by the included contributors' stamps and keeps building from the quotient.
@@ -102,7 +109,8 @@ Verification always rebuilds `Pcd<Stamp>`.
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), produces spend and output actions (`SpendBind`, `SpendAction`, `OutputBind`, `OutputAction`), merges and lifts them (`ActionMerge`, `ActionLift`), and applies its bundle's fee (`FeeFuse`, `FeeSeed`).
+It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), produces spend and output actions (`SpendPrepare`, `SpendBind`, `SpendAction`, `OutputBind`, `OutputAction`), merges and lifts them (`ActionMerge`, `ActionLift`), and applies its bundle's fee (`FeeValueCommit`, `FeeBind`, `FeeFuse`, `FeeSeed`).
+The wallet constructs the R and G multiplication certificates privately.
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
@@ -140,12 +148,17 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 | SpendableInit | yes | no | no |
 | QrSpendableInit | yes | no | no |
 | SpendableLift | yes | no | no |
+| ScaleStart/ScaleMiddle/ScaleEnd R | yes | no | own zero-action fee |
+| ScaleStart/ScaleMiddle/ScaleEnd G | yes | no | no |
+| SpendPrepare | yes | no | no |
 | SpendBind | yes | no | no |
 | OutputBind | yes | no | no |
 | OutputAction | yes | no | no |
 | SpendAction | yes | no | no |
 | ActionMerge | yes | no | no |
 | ActionLift | yes | no | no |
+| FeeValueCommit | yes | no | no |
+| FeeBind | yes | no | no |
 | FeeFuse | yes | no | no |
 | FeeSeed | yes | no | yes |
 | StampMerge | yes | no | yes |
@@ -367,10 +380,11 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
-`SpendBind` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
+`SpendPrepare` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
 It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-`SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
+`SpendPrepare` bounds the amount and successor epoch and emits `SpendPrepared`.
+`SpendBind` reads that bounded value and the certified R product, repeats the amount bound, and computes $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$ using 17 local value windows.
 The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with the note's `pk` and `cv`.
 
 `NoteSeed` computed the secret's `cm` from its note, so `secret.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
@@ -388,17 +402,51 @@ A stamp commits to two multisets, an action-digest set and a tachygram set[^tach
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
 Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
 `OutputAction` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
-`SpendAction` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, then the action verification key and action digest, and emits `Actions` whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
+`SpendAction` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, matches its limbs to the G certificate, adds `ak`, and derives the action digest. It emits `Actions` with the one-action digest set, two-nullifier tachygram set and threaded anchor. `SpendPrepare` derives the nullifier pair from the master key.
 
-Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step, and a scalar multiplication about a quarter.
-The work splits as follows, each stamp step also opening its action-set and tachygram-set polynomials:
+### Private arithmetic certificates and cost
 
-| Step | Permutations | Scalar multiplications |
-| ---- | ------------ | ---------------------- |
-| OutputBind | 2 (`cm`, `pad`) | 2 (`cv`) |
-| OutputAction | 2 (`alpha`, action digest) | 1 (`rk`) |
-| SpendBind | 2 (nullifier pair) | 2 (`cv`) |
-| SpendAction | 3 (`pk`, `alpha`, action digest) | 1 (`rk`) |
+For each fixed base $B \in \{\mathcal{R},\mathcal{G}\}$, `ScaleStart<B>`, `ScaleMiddle<B>` and `ScaleEnd<B>` execute windows `[0,24)`, `[24,54)` and `[54,85)`.
+Each radix-8 digit selects $[d\,8^j]B$ from a fixed eight-entry table using the same three bits for both coordinate-selection trees.
+The zero digit denotes logical identity.
+Start checks the 255-bit integer is below the scalar modulus $q$ and emits separate 128/127-bit limbs.
+Middle and End recompose the full ordered bit array to both authenticated limbs and extend the authenticated partial sum.
+Window 42 includes bits 126, 127 and 128 across the limb boundary.
+The six base/phase headers have distinct suffixes and unique producers.
+
+Every logical point has a finite carrier and an identity flag.
+The standard Pallas generator is the sentinel carrier for identity.
+A true flag requires that sentinel, and a false flag interprets the carrier as its finite point.
+Export selects sentinel coordinates for identity before allocating the finite carrier.
+Final `cv` and `rk` are finite. `SpendAction` adds `ak` before this check.
+
+Hash consumers derive the canonical Fp integer, embed it in Fq, and compare both integer limbs to the certificate.
+The implementation compares the exact integer rather than its field residue.
+All arithmetic headers remain private to their prover, including scalar limbs that contain blinds or randomizers.
+Rerandomization preserves the header's contents and its privacy requirements.
+
+| Construction | Local executed steps |
+| --- | ---: |
+| Output | 3 R + OutputBind + 3 G + OutputAction = 8 |
+| Spend | SpendPrepare + 3 R + SpendBind + 3 G + SpendAction = 9 |
+| Fee applied to Actions | 3 R + FeeValueCommit + FeeBind + FeeFuse = 6 |
+| Zero-action fee | 3 R + FeeSeed = 4 |
+
+These counts exclude predecessor subtrees, merge/lift work and framework operations.
+The application registers 48 steps. The native mock executes fixed window ranges and polynomial-opening checks, and provides no circuit gate measurements.
+The separate ProductionRank/H9 diagnostic probe reports these wrapped counts, against limits of 2,048 gates and 8,191 constraints:
+
+| Probe slice | Gates | Constraints |
+| --- | ---: | ---: |
+| ScaleStart R | 1,585 | 3,402 |
+| ScaleMiddle R | 1,602 | 3,223 |
+| ScaleEnd R | 1,646 | 3,311 |
+| OutputBind | 1,487 | 2,986 |
+| FeeBind | 1,704 | 3,629 |
+
+These slice measurements cover their adapters. Whole-registry finalization and proof runtime are separate backend checks.
+
+### Set composition
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
@@ -407,12 +455,14 @@ Every stamp's action set polynomial is a product of linear factors, one per leaf
 Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's.
 Once consensus checks the published [anchor](./anchor.md), every spend leaf beneath it derived its nullifier pair at that anchor's epoch, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
+`FeeFuse` transforms `Actions` into a `Stamp` by extending each set by its authenticated `FeeReady` root as in [Dynamic Fee](./fee.md#fee-change-note).
+It binds both witnessed left sets to their header commitments and checks both extensions at one challenge with four polynomial queries.
+The right-input roots are fixed before this challenge.
 
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
-The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
+The other steps thread the anchor from a validated spendable through `SpendPrepare`/`SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
 Consensus verifies the published anchor against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
@@ -451,8 +501,10 @@ flowchart TB
   end
 
   subgraph spend_stamp [spend action]
-    w_bind[/rcv/]
+    s_prepare[SpendPrepare]
+    w_bind["Scale R: Start → Middle → End"]
     s_bind[SpendBind]
+    s_spend_g["Scale G: Start → Middle → End"]
   end
 
   subgraph merge [transaction assembly]
@@ -460,10 +512,15 @@ flowchart TB
     s_spendstamp[SpendAction]
     w_outbind[/note/]
     s_outbind[OutputBind]
-    w_output[/rcv, theta, anchor/]
+    s_output_r["Scale R: Start → Middle → End"]
+    s_output_g["Scale G: Start → Middle → End"]
+    w_output[/theta, anchor/]
     s_output[OutputAction]
     s_merge[ActionMerge]
-    w_fee[/max fee note, fee, fee sets/]
+    s_fee_r["Scale R: Start → Middle → End"]
+    s_fee_value[FeeValueCommit]
+    s_fee_bind[FeeBind]
+    w_fee[/max fee note, fee/]
     s_fee[FeeFuse]
   end
 
@@ -482,20 +539,28 @@ flowchart TB
   unspent_in --> s_unspentbind
   s_init -->|NoteSpendable| s_lift
   s_unspentbind -->|NoteUnspent| s_lift
-  s_lift -->|NoteSpendable| s_bind
+   s_lift -->|NoteSpendable| s_prepare
 
-  s_seed -->|NoteSecret| s_bind
+   s_seed -->|NoteSecret| s_prepare
+   s_prepare -->|SpendPrepared| s_bind
   w_bind --> s_bind
-  s_bind -->|SpendHeader| s_spendstamp
+   s_bind -->|SpendHeader| s_spendstamp
+   s_spend_g -->|ScaleResult G| s_spendstamp
   w_stamp --> s_spendstamp
 
-  w_outbind --> s_outbind
+   w_outbind --> s_outbind
+   s_output_r -->|ScaleResult R| s_outbind
   s_outbind -->|OutputHeader| s_output
-  w_output --> s_output
+   w_output --> s_output
+   s_output_g -->|ScaleResult G| s_output
   s_spendstamp -->|Actions| s_merge
   s_output -->|Actions| s_merge
   s_merge -->|Actions| s_fee
-  w_fee --> s_fee
+   s_fee_r --> s_fee_value
+   s_fee_value -->|FeeValueOpening| s_fee_bind
+   w_fee --> s_fee_value
+   w_fee --> s_fee_bind
+   s_fee_bind -->|FeeReady| s_fee
   s_fee --> stamp_out
 ```
 
@@ -578,6 +643,10 @@ flowchart LR
 | NoteSpendable | (cm, epoch_current, anchor) |
 | OutputHeader | (cm, pad, cv) |
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) |
+| ScaleState B,24 / B,54; ScaleResult B | (lo, hi, finite point, is_identity), private; B = R or G |
+| SpendPrepared | (cm, nf_current, nf_next, anchor, pk, value), private |
+| FeeValueOpening | (maximum, lo, hi, cv), private |
+| FeeReady | (maximum, fee, fee_digest, change_cm), private |
 | Actions | (action_commit, stamp_tg_commit, anchor) |
 | Stamp | (action_commit, stamp_tg_commit, anchor) |
 
@@ -613,14 +682,20 @@ flowchart LR
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
-| SpendBind | NoteSpendable | NoteSecret | rcv | SpendHeader |
-| OutputBind | — | — | note, rcv | OutputHeader |
-| OutputAction | OutputHeader | — | theta, anchor, action_set, tachygram_set | Actions |
-| SpendAction | SpendHeader | — | theta, pak, action_set, tachygram_set | Actions |
+| ScaleStart B | — | — | bits (255) | ScaleState B,24 |
+| ScaleMiddle B | ScaleState B,24 | — | bits (255) | ScaleState B,54 |
+| ScaleEnd B | ScaleState B,54 | — | bits (255) | ScaleResult B |
+| SpendPrepare | NoteSpendable | NoteSecret | — | SpendPrepared |
+| SpendBind | SpendPrepared | ScaleResult R | — | SpendHeader |
+| OutputBind | ScaleResult R | — | note | OutputHeader |
+| OutputAction | OutputHeader | ScaleResult G | theta, anchor, action_set, tachygram_set | Actions |
+| SpendAction | SpendHeader | ScaleResult G | theta, pak, action_set, tachygram_set | Actions |
 | ActionMerge | Actions | Actions | (action_set, tachygram_set) × left, merged, right | Actions |
 | ActionLift | Actions | AnchorSpan | members | Actions |
-| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output, fee | Stamp |
-| FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
+| FeeValueCommit | ScaleResult R | — | maximum | FeeValueOpening |
+| FeeBind | FeeValueOpening | — | max fee note opening, fee | FeeReady |
+| FeeFuse | Actions | FeeReady | (action_set, tachygram_set) × left, output | Stamp |
+| FeeSeed | ScaleResult R | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorSpan | members | Stamp |
 | StampUnmerge | Stamp | Stamp | (action_set, tachygram_set) × dividend, quotient, divisor | Stamp |
