@@ -27,6 +27,7 @@ use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
+    digest::poseidon,
     note,
     pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
@@ -145,27 +146,26 @@ impl Step<Pasta> for SpendableInit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let native = D::try_just(|| {
-            let (anchor_prev, creation_set, creation_epoch) = witness.take();
+            let (anchor_prev, _, creation_epoch) = witness.take();
             let (cm, ..) = left.take();
             let () = right.take();
-            let creation_commit = creation_set.commit();
-            // The anchor immediately after the creation stamp, computed in-circuit
-            // so the proof certifies the fold of `epoch` and `creation_commit`;
-            // consensus membership of the eventual spend anchor binds the rest
-            // (see the step doc).
-            let anchor = anchor_prev
-                .next_stamp(creation_epoch, &creation_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok((creation_set, cm, (cm, creation_epoch, anchor)))
+            // O1's bridge hash binds the creation set absorbed into the anchor.
+            let anchor = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_prev),
+                Fp::from(creation_epoch),
+                [*hash_x.take(), *hash_y.take()],
+            )?);
+            Ok((cm, (cm, creation_epoch, anchor)))
         })?;
-        let x = Element::alloc(dr, &mut (), native.clone().map(|(_, cm, _)| Fp::from(cm)))?;
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, _)| Fp::from(cm)))?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let evaluation = oracles.query(dr, Slot::output(1), &x)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
         })?;
-        let data = native.map(|(_, _, output)| output);
+        let data = native.map(|(_, output)| output);
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }

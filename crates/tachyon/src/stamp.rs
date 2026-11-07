@@ -258,8 +258,7 @@ pub trait StampProof: sealed::Sealed {
     where
         Self: Sized;
 
-    /// Verify the proof against the stamp header `(action_commit,
-    /// stamp_tg_commit, anchor)`.
+    /// Verify both output sets and the stamp's anchor.
     ///
     /// # Errors
     ///
@@ -290,14 +289,21 @@ impl StampProof for ragu::Proof<Pasta, ProductionRank> {
         rng: &mut RNG,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let pcd = self.clone().carry::<Stamp>(header);
+        let pcd = self
+            .clone()
+            .carry::<Stamp>(Stamp::header(header.1, header.2)?);
         let [action_slot, tachygram_slot] = pcd.commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
         {
             return Ok(false);
         }
-        PROOF_SYSTEM.verify_uncompressed(&pcd, rng)
+        let compressed = match PROOF_SYSTEM.compress(&pcd, rng) {
+            Ok(compressed) => compressed,
+            Err(ragu_core::Error::InvalidWitness(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        PROOF_SYSTEM.verify_compressed(&compressed)
     }
 }
 
@@ -319,7 +325,17 @@ impl StampProof for ragu::CompressedProof<Pasta> {
         _rng: &mut RNG,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        PROOF_SYSTEM.verify_compressed(&self.clone().carry::<Stamp>(header))
+        let [action_slot, tachygram_slot] = self.online_commitments();
+        if action_slot != Eq::from(header.0).to_affine()
+            || tachygram_slot != Eq::from(header.1).to_affine()
+        {
+            return Ok(false);
+        }
+        PROOF_SYSTEM.verify_compressed(
+            &self
+                .clone()
+                .carry::<Stamp>(Stamp::header(header.1, header.2)?),
+        )
     }
 }
 
@@ -787,11 +803,16 @@ impl Plan {
             },
         };
 
-        let (proof, (_, tachygram_set, anchor)) = PROOF_SYSTEM
+        let (proof, (_, anchor)) = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         tachygrams.insert(change);
+        let tachygram_set = tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit();
         Ok(ProofStamp {
             coverage: blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
@@ -1029,32 +1050,18 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         ),
         ragu_core::Error,
     > {
-        let (left_acts_poly, left_tg_poly) = (
-            left_digests.iter().copied().collect::<ActionSetPoly>(),
-            left_tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
-
-        let (right_acts_poly, right_tg_poly) = (
-            right_digests.iter().copied().collect::<ActionSetPoly>(),
-            right_tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
-
-        let left_pcd = left_proof.carry::<Stamp>((
-            left_acts_poly.commit(),
-            left_tg_poly.commit(),
-            left_anchor,
-        ));
-        let right_pcd = right_proof.carry::<Stamp>((
-            right_acts_poly.commit(),
-            right_tg_poly.commit(),
-            right_anchor,
-        ));
+        let left_tg_poly = left_tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        let right_tg_poly = right_tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        let left_pcd =
+            left_proof.carry::<Stamp>(Stamp::header(left_tg_poly.commit(), left_anchor)?);
+        let right_pcd =
+            right_proof.carry::<Stamp>(Stamp::header(right_tg_poly.commit(), right_anchor)?);
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
@@ -1066,12 +1073,8 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             StampMerge,
             witness::stamp_merge(
                 (*left_pcd.data(), *right_pcd.data()),
-                (left_acts_poly, left_tg_poly),
-                (
-                    ActionSetPoly::from_iter(merged_digests.clone()),
-                    TachygramSetPoly::from_iter(tachygrams.clone()),
-                ),
-                (right_acts_poly, right_tg_poly),
+                ActionSetPoly::from_iter(merged_digests.clone()),
+                TachygramSetPoly::from_iter(tachygrams.clone()),
             ),
             left_pcd,
             right_pcd,
@@ -1080,7 +1083,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         Ok((
             merged_digests,
             tachygrams,
-            pcd.data().2,
+            pcd.data().1,
             Box::new(pcd.proof().clone()),
         ))
     }
@@ -1108,17 +1111,23 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             ));
         }
 
+        let header =
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?;
+        let mut stamp_pcd = self.proof.carry::<Stamp>(header);
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let mut stamp_pcd =
-            self.proof
-                .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+        let [action_slot, _] = stamp_pcd.commitments();
+        if action_slot != Eq::from(action_set.commit()).to_affine() {
+            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                "StampLift: action set does not match the stamp".into(),
+            )));
+        }
         for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(rng, StampLift, (), stamp_pcd, span)
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
-        let anchor = stamp_pcd.data().2;
+        let anchor = stamp_pcd.data().1;
         let proof = PROOF_SYSTEM
             .rerandomize(stamp_pcd, rng)
             .map_err(ProveError::ProofFailed)?
@@ -1201,7 +1210,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let (merged_digests, tachygrams, anchor, merged_proof) = Self::prove_merge(
+        let (_, tachygrams, anchor, merged_proof) = Self::prove_merge(
             rng,
             (
                 left_actions_digest,
@@ -1239,13 +1248,11 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        let action_set = merged_digests
-            .into_iter()
-            .collect::<ActionSetPoly>()
-            .commit();
         let proof = PROOF_SYSTEM
             .rerandomize(
-                merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
+                merged_proof.carry::<Stamp>(
+                    Stamp::header(tachygram_set, anchor).map_err(ProveError::ProofFailed)?,
+                ),
                 rng,
             )
             .map_err(ProveError::ProofFailed)?
@@ -1297,22 +1304,10 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .copied()
             .collect();
 
-        let dividend_action_set = desc
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(fees.iter().map(fee::Descriptor::digest))
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
         let quotient_action_set = quotient_desc
             .iter()
             .map(action::Descriptor::digest)
             .chain(quotient_fees.iter().map(fee::Descriptor::digest))
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
-        let divisor_action_set = divisor_desc
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(divisor_fees.iter().map(fee::Descriptor::digest))
             .collect::<Result<ActionSetPoly, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
@@ -1322,22 +1317,21 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .copied()
             .collect::<TachygramSetPoly>();
         let quotient_tachygram_set = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+        let tachygram_set = quotient_tachygram_set.commit();
         let divisor_tachygram_set = divisor_stamp
             .tachygrams
             .iter()
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_pcd = self.proof.carry::<Stamp>((
-            dividend_action_set.commit(),
-            dividend_tachygram_set.commit(),
-            self.anchor,
-        ));
-        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>((
-            divisor_action_set.commit(),
-            divisor_tachygram_set.commit(),
-            divisor_stamp.anchor,
-        ));
+        let dividend_pcd = self.proof.carry::<Stamp>(
+            Stamp::header(dividend_tachygram_set.commit(), self.anchor)
+                .map_err(ProveError::ProofFailed)?,
+        );
+        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>(
+            Stamp::header(divisor_tachygram_set.commit(), divisor_stamp.anchor)
+                .map_err(ProveError::ProofFailed)?,
+        );
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -1345,9 +1339,8 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
                 StampUnmerge,
                 witness::stamp_unmerge(
                     (*dividend_pcd.data(), *divisor_pcd.data()),
-                    (dividend_action_set, dividend_tachygram_set),
-                    (quotient_action_set, quotient_tachygram_set),
-                    (divisor_action_set, divisor_tachygram_set),
+                    quotient_action_set,
+                    quotient_tachygram_set,
                 ),
                 dividend_pcd,
                 divisor_pcd,
@@ -1366,7 +1359,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             ),
         );
 
-        let (_, tachygram_set, anchor) = *pcd.data();
+        let anchor = pcd.data().1;
         let proof = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
@@ -1402,9 +1395,17 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .collect::<Result<ActionSetPoly, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let pcd = self
-            .proof
-            .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
+        let pcd = self.proof.carry::<Stamp>(
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
+        );
+        let [action_slot, tachygram_slot] = pcd.commitments();
+        if action_slot != Eq::from(action_set.commit()).to_affine()
+            || tachygram_slot != Eq::from(self.tachygram_set).to_affine()
+        {
+            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                "stamp output sets do not match the public sets".into(),
+            )));
+        }
         let (compressed, _) = PROOF_SYSTEM
             .compress(&pcd, rng)
             .map_err(ProveError::ProofFailed)?

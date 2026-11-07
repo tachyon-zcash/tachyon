@@ -43,12 +43,10 @@ use super::{
 };
 use crate::{
     collections::indexed_multiset,
+    digest::poseidon,
     note::{self},
     pasta::Fp,
-    primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetCommit,
-    },
+    primitives::{Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram},
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
@@ -242,7 +240,7 @@ impl Header<Fp> for AnchorSpan {
 
 /// Start an [`AnchorSpan`] from one stamp.
 ///
-/// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
+/// The step folds the stamp's bridge hash into `anchor_start`.
 /// The span's only member is the resulting anchor.
 ///
 /// # Soundness
@@ -258,8 +256,8 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Left = ();
     type Output = AnchorSpan;
     type Right = ();
-    /// `(anchor_start, epoch, stamp_commit)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
+    /// `(anchor_start, epoch, stamp_hash)`
+    type Witness<'source> = (Anchor, EpochIndex, [Fp; 2]);
 
     const INDEX: Index = Index::new(31);
 
@@ -269,10 +267,11 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let anchor_end = witness
-            .0
-            .next_stamp(witness.1, &witness.2)
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+            Fp::from(witness.0),
+            Fp::from(witness.1),
+            witness.2,
+        )?);
         Ok([
             AnchorSetPoly::from_iter([anchor_end])
                 .as_ref()
@@ -305,10 +304,12 @@ impl Step<Pasta> for AnchorSpanSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
-            let (anchor_start, epoch, stamp_commit) = witness.take();
-            let anchor_end = anchor_start
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            let (anchor_start, epoch, stamp_hash) = witness.take();
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_start),
+                Fp::from(epoch),
+                stamp_hash,
+            )?);
 
             Ok(((anchor_start, anchor_end), ()))
         })?;

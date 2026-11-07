@@ -10,10 +10,12 @@ use alloc::collections::BTreeSet;
 
 use ragu::{header::Header, step::Step};
 use ragu_core::pasta::Pasta;
+use udon::curve::Projective as _;
 
 use crate::{
     collections,
     constants::EVIDENCE_TREE_ARITY,
+    digest::poseidon,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
@@ -151,8 +153,16 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_commit)`.
+/// stamp_hash)`.
+///
+/// # Panics
+///
+/// Panics if the set commitment or its bridge hash is the identity.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "set polynomials have nonidentity commitments"
+)]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
     anchor_start: Anchor,
@@ -162,7 +172,15 @@ pub fn anchor_span_seed(
     (
         anchor_start,
         epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+        poseidon::bridge_hash(
+            tgs.iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit()
+                .as_ref()
+                .to_affine(),
+        )
+        .expect("valid stamp commitment"),
     )
 }
 
@@ -510,15 +528,14 @@ pub fn spend_action(
     )
 }
 
-/// Prepare the witness for [`StampMerge`]: `(left, merged, right)`.
+/// Prepare the witness for [`StampMerge`]: `(action_set, tachygram_set)`.
 #[must_use]
 pub const fn stamp_merge(
     (_left, _right): (StepLeft<StampMerge>, StepRight<StampMerge>),
-    left: (ActionSetPoly, TachygramSetPoly),
-    merged: (ActionSetPoly, TachygramSetPoly),
-    right: (ActionSetPoly, TachygramSetPoly),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
 ) -> StepWitness<'static, StampMerge> {
-    (left, merged, right)
+    (action_set, tachygram_set)
 }
 
 /// Prepare the witness for [`ActionMerge`]: `(action_set, tachygram_set)`.
@@ -531,15 +548,14 @@ pub const fn action_merge(
     (action_set, tachygram_set)
 }
 
-/// Prepare the witness for [`StampUnmerge`]: `(dividend, quotient, divisor)`.
+/// Prepare the witness for [`StampUnmerge`]: `(action_set, tachygram_set)`.
 #[must_use]
 pub const fn stamp_unmerge(
     (_left, _right): (StepLeft<StampUnmerge>, StepRight<StampUnmerge>),
-    dividend: (ActionSetPoly, TachygramSetPoly),
-    quotient: (ActionSetPoly, TachygramSetPoly),
-    divisor: (ActionSetPoly, TachygramSetPoly),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
 ) -> StepWitness<'static, StampUnmerge> {
-    (dividend, quotient, divisor)
+    (action_set, tachygram_set)
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,

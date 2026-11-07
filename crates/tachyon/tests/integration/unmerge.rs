@@ -433,7 +433,6 @@ fn unmerge_binds_its_sets() {
     let anchor = Anchor::random(rng);
     let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
     let alice_bob = alice
         .stamp
         .clone()
@@ -451,16 +450,6 @@ fn unmerge_binds_its_sets() {
         )
         .unwrap();
 
-    let alice_bob_actions: ActionSetPoly = alice
-        .descriptors()
-        .chain(bob.descriptors())
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            [alice.fee_descriptor(), bob.fee_descriptor()]
-                .into_iter()
-                .map(|descriptor| descriptor.digest().unwrap()),
-        )
-        .collect();
     let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
     let alice_actions: ActionSetPoly = alice
         .descriptors()
@@ -474,67 +463,19 @@ fn unmerge_binds_its_sets() {
         .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
-    let carol_actions: ActionSetPoly = carol
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain(iter::once(carol.fee_descriptor().digest().unwrap()))
-        .collect();
-    let carol_tachygrams: TachygramSetPoly = carol.stamp.tachygrams.iter().copied().collect();
-
-    let dividend_header = (
-        alice_bob_actions.commit(),
-        alice_bob_tachygrams.commit(),
-        alice_bob.anchor,
-    );
-    let divisor_header = (
-        bob_actions.commit(),
-        bob_tachygrams.commit(),
-        bob.stamp.anchor,
-    );
+    let dividend_header = Stamp::header(alice_bob_tachygrams.commit(), alice_bob.anchor).unwrap();
+    let divisor_header = Stamp::header(bob_tachygrams.commit(), bob.stamp.anchor).unwrap();
     let valid = witness::stamp_unmerge(
         (dividend_header, divisor_header),
-        (alice_bob_actions, alice_bob_tachygrams),
-        (alice_actions, alice_tachygrams),
-        (bob_actions.clone(), bob_tachygrams),
+        alice_actions,
+        alice_tachygrams,
     );
 
     for (corrupt, expected) in [
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.0.0 = carol_actions.clone();
-                corrupt
-            },
-            "StampUnmerge: dividend action accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2.0 = carol_actions;
-                corrupt
-            },
-            "StampUnmerge: divisor action accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.0.1 = carol_tachygrams.clone();
-                corrupt
-            },
-            "StampUnmerge: dividend tachygram accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2.1 = carol_tachygrams;
-                corrupt
-            },
-            "StampUnmerge: divisor tachygram accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.1.0 = bob_actions;
+                corrupt.0 = bob_actions;
                 corrupt
             },
             "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
@@ -543,7 +484,7 @@ fn unmerge_binds_its_sets() {
             {
                 let mut corrupt = valid;
                 let dropped = *alice.stamp.tachygrams.first().unwrap();
-                corrupt.1.1 = alice
+                corrupt.1 = alice
                     .stamp
                     .tachygrams
                     .iter()

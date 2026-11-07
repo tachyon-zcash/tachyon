@@ -22,12 +22,12 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::field::Field as _;
 
 use crate::{
+    digest::poseidon,
     pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
-    relations::enforce::enforce_poly_product,
+    relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
 /// One summarized run of an epoch's stamps.
@@ -83,6 +83,7 @@ impl Header<Fp> for Summary {
 ///
 /// `anchor_prev` and `epoch` are free witnesses. Consensus computes each fold
 /// with the epoch of the block that contains the stamp.
+/// O0/O1 carry the same stamp set and open once each at the challenge.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -104,14 +105,14 @@ impl Step<Pasta> for SummarySeed {
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
             witness.2.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
+            witness.2.as_ref().iter_coeffs().collect(),
         ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -130,12 +131,15 @@ impl Step<Pasta> for SummarySeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
-            let (anchor_prev, epoch, stamp) = witness.take();
-            let stamp_commit = stamp.commit();
-            let anchor_end = anchor_prev
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            let (anchor_prev, epoch, _) = witness.take();
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_prev),
+                Fp::from(epoch),
+                [*x.take(), *y.take()],
+            )?);
             Ok(((epoch, anchor_prev, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();
@@ -146,6 +150,7 @@ impl Step<Pasta> for SummarySeed {
 
 /// Fold the next stamp into the accumulator while the anchor absorbs the same
 /// commitment.
+/// L0/O0 hold the accumulated sets; O1 holds the stamp, each opened once.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
@@ -175,7 +180,7 @@ impl Step<Pasta> for SummaryAdvance {
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -201,13 +206,15 @@ impl Step<Pasta> for SummaryAdvance {
             &Slot::output(0),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
-            let (_, stamp) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
-            let anchor_end = summary_anchor_end
-                .next_stamp(summary_epoch, &stamp.commit())
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(summary_anchor_end),
+                Fp::from(summary_epoch),
+                [*x.take(), *y.take()],
+            )?);
             Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
         })?;
         let (data, aux) = output.cast();

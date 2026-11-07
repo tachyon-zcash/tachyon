@@ -71,7 +71,7 @@ lazy_static = { version = "1.5.0", default-features = false, features = [
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
-# rev is ragu `mock/accurate-944`, on ragu#929; bump it when that PR merges.
+# rev is the head of ragu#929; bump it when that PR merges.
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a73db816c2af0d31dba9900eae951ec4fffa662b", default-features = false, features = [
     "mock",
 ] }

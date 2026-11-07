@@ -17,7 +17,7 @@ use zcash_tachyon::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
-    digest::blake2b,
+    digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
     fee,
@@ -186,26 +186,6 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         &[fee::Descriptor],
     ),
 ) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
-    let left_acts = descriptors_a
-        .iter()
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            fee_descriptors_a
-                .iter()
-                .copied()
-                .map(|descriptor| descriptor.digest().unwrap()),
-        )
-        .collect::<ActionSetPoly>();
-    let right_acts = descriptors_b
-        .iter()
-        .map(|desc| desc.digest().unwrap())
-        .chain(
-            fee_descriptors_b
-                .iter()
-                .copied()
-                .map(|descriptor| descriptor.digest().unwrap()),
-        )
-        .collect::<ActionSetPoly>();
     let left_tg = stamp_a
         .tachygrams
         .iter()
@@ -217,16 +197,14 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
-        left_acts.commit(),
-        left_tg.commit(),
-        stamp_a.anchor,
-    ));
-    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
-        right_acts.commit(),
-        right_tg.commit(),
-        stamp_b.anchor,
-    ));
+    let left_pcd = stamp_a
+        .proof
+        .clone()
+        .carry::<Stamp>(Stamp::header(left_tg.commit(), stamp_a.anchor).unwrap());
+    let right_pcd = stamp_b
+        .proof
+        .clone()
+        .carry::<Stamp>(Stamp::header(right_tg.commit(), stamp_b.anchor).unwrap());
 
     let merged_acts = descriptors_a
         .iter()
@@ -253,9 +231,8 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
             StampMerge,
             witness::stamp_merge(
                 (*left_pcd.data(), *right_pcd.data()),
-                (left_acts, left_tg),
-                (merged_acts, merged_tg),
-                (right_acts, right_tg),
+                merged_acts,
+                merged_tg,
             ),
             left_pcd,
             right_pcd,
@@ -451,7 +428,10 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
             .collect::<Vec<_>>()
         {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
+            let next_state = Anchor::from(
+                poseidon::anchor_next_stamp(Fp::from(state), Fp::from(witness.1), witness.2)
+                    .unwrap(),
+            );
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .unwrap();

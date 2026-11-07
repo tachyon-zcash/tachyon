@@ -19,12 +19,17 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
+    primitives::TachygramSetCommit,
+    stamp::proof::PROOF_SYSTEM,
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -215,16 +220,34 @@ fn point_limbs(point: EqAffine) -> (Fp, Fp) {
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
-/// Advances the anchor by absorbing one stamp's epoch and tachygram-set
-/// commitment.
+/// The bridge hash of a polynomial commitment.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `tgs` is the identity point.
-#[must_use]
-pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (tgs_lo, tgs_hi) = point_limbs(tgs);
-    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
+/// Fails if the commitment or its bridge hash is the identity.
+pub fn bridge_hash(commitment: EqAffine) -> ragu_core::Result<[Fp; 2]> {
+    let coordinates = PROOF_SYSTEM
+        .bridge_hash(commitment)?
+        .coordinates()
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))?;
+    Ok(coordinates.into())
+}
+
+/// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
+///
+/// # Errors
+///
+/// Fails for the empty set's bridge hash or an unusable bridge hash setup.
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: [Fp; 2]) -> ragu_core::Result<Fp> {
+    if tgs == bridge_hash(TachygramSetCommit::default().as_ref().to_affine())? {
+        return Err(ragu_core::Error::InvalidWitness(
+            "invalid anchor step".into(),
+        ));
+    }
+    Ok(hash::<4>(
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, tgs[0], tgs[1]],
+    ))
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";

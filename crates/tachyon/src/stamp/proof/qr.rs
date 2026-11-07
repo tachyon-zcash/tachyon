@@ -299,8 +299,8 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`]. `stamp_commit`
-/// is folded into `anchor_end`.
+/// `discriminant` is a free witness; see [`QrDiscriminant`]. O0/O1 hold the
+/// same stamp set and open once each; O1's bridge hash enters `anchor_end`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -322,14 +322,14 @@ impl Step<Pasta> for QrStampIntakeSeed {
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
         Ok([
             witness.3.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
+            witness.3.as_ref().iter_coeffs().collect(),
         ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -348,14 +348,17 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
-            let (anchor_prev, epoch, discriminant, stamp) = witness.take();
-            let stamp_commit = stamp.commit();
+            let (anchor_prev, epoch, discriminant, _) = witness.take();
             let () = left.take();
             let () = right.take();
-            let anchor_end = anchor_prev
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_prev),
+                Fp::from(epoch),
+                [*x.take(), *y.take()],
+            )?);
             Ok((
                 (
                     epoch,
