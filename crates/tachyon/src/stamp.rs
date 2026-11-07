@@ -555,6 +555,10 @@ impl Plan {
         clippy::too_many_lines,
         reason = "proves, lifts and merges every planned action"
     )]
+    #[expect(
+        clippy::unit_arg,
+        reason = "all steps use witness builders, including unit witnesses"
+    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -608,7 +612,13 @@ impl Plan {
             // SpendBind: derive the live pair from the note's master key and
             // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
+                .fuse(
+                    rng,
+                    spend::SpendBind,
+                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
+                    spendable_pcd,
+                    secret_pcd,
+                )
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
@@ -616,7 +626,13 @@ impl Plan {
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for (span, _members) in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(rng, ActionLift, (), stamp_pcd, span)
+                    .fuse(
+                        rng,
+                        ActionLift,
+                        witness::action_lift((*stamp_pcd.data(), *span.data())),
+                        stamp_pcd,
+                        span,
+                    )
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
@@ -663,7 +679,8 @@ impl Plan {
                     .fuse(
                         rng,
                         ActionMerge,
-                        (
+                        witness::action_merge(
+                            (*left_pcd.data(), *right_pcd.data()),
                             ActionSetPoly::from_iter(merged_digests.clone()),
                             TachygramSetPoly::from_iter(merged_tachygrams.clone()),
                         ),
@@ -932,7 +949,11 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         .map_err(ProveError::ActionDigest)?;
 
         let (bind_pcd, ()) = PROOF_SYSTEM
-            .seed(rng, output::OutputBind, (note, rcv))
+            .seed(
+                rng,
+                output::OutputBind,
+                witness::output_bind(((), ()), note, rcv),
+            )
             .map_err(ProveError::ProofFailed)?;
         let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
@@ -1094,7 +1115,8 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             StampMerge,
-            (
+            witness::stamp_merge(
+                (*left_pcd.data(), *right_pcd.data()),
                 (left_acts_poly, left_tg_poly),
                 (
                     ActionSetPoly::from_iter(merged_digests.clone()),
@@ -1122,6 +1144,10 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    #[expect(
+        clippy::unit_arg,
+        reason = "all steps use witness builders, including unit witnesses"
+    )]
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1143,7 +1169,13 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
                 .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
         for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(rng, StampLift, (), stamp_pcd, span)
+                .fuse(
+                    rng,
+                    StampLift,
+                    witness::stamp_lift((*stamp_pcd.data(), *span.data())),
+                    stamp_pcd,
+                    span,
+                )
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
@@ -1372,7 +1404,8 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             .fuse(
                 rng,
                 StampUnmerge,
-                (
+                witness::stamp_unmerge(
+                    (*dividend_pcd.data(), *divisor_pcd.data()),
                     (dividend_action_set, dividend_tachygram_set),
                     (quotient_action_set, quotient_tachygram_set),
                     (divisor_action_set, divisor_tachygram_set),

@@ -26,14 +26,22 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
+        evidence::{
+            EvidenceTreeCap, EvidenceTreeDescend, EvidenceTreeFuse, EvidenceTreeLeafPair,
+            EvidenceTreeOpen, EvidenceTreePairFuse,
+        },
+        output::OutputBind,
         pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideSelect,
-            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
+            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
-        spendable::SpendableInit,
-        stamp::{FeeFuse, FeeSeed, OutputAction, SpendAction},
+        spend::SpendBind,
+        spendable::{QrSpendableInit, SpendableInit, SpendableLift},
+        stamp::{
+            ActionLift, ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift,
+            StampMerge, StampUnmerge,
+        },
         summary::{SummaryAdvance, SummarySeed},
     },
     value,
@@ -146,6 +154,20 @@ pub fn spendable_init(
     )
 }
 
+/// Prepare the witness for [`QrSpendableInit`]: `()`.
+#[must_use]
+pub const fn qr_spendable_init(
+    (_left, _right): (StepLeft<QrSpendableInit>, StepRight<QrSpendableInit>),
+) -> StepWitness<'static, QrSpendableInit> {
+}
+
+/// Prepare the witness for [`SpendableLift`]: `()`.
+#[must_use]
+pub const fn spendable_lift(
+    (_left, _right): (StepLeft<SpendableLift>, StepRight<SpendableLift>),
+) -> StepWitness<'static, SpendableLift> {
+}
+
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
 /// stamp_commit)`.
 #[must_use]
@@ -173,6 +195,20 @@ pub fn anchor_span_fuse(
     right_members: &[Anchor],
 ) -> StepWitness<'static, AnchorSpanFuse> {
     (left_members.iter().chain(right_members).copied().collect(),)
+}
+
+/// Prepare the witness for [`StampLift`]: `()`.
+#[must_use]
+pub const fn stamp_lift(
+    (_left, _right): (StepLeft<StampLift>, StepRight<StampLift>),
+) -> StepWitness<'static, StampLift> {
+}
+
+/// Prepare the witness for [`ActionLift`]: `()`.
+#[must_use]
+pub const fn action_lift(
+    (_left, _right): (StepLeft<ActionLift>, StepRight<ActionLift>),
+) -> StepWitness<'static, ActionLift> {
 }
 
 /// Prepare the witness for [`SummarySeed`]:
@@ -313,6 +349,15 @@ pub fn qr_side_select(
     (interpolant.into(), quotient.into())
 }
 
+/// Prepare the witness for [`QrSideDescend`]: `(bit,)`.
+#[must_use]
+pub const fn qr_side_descend(
+    (_left, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
+    bit: bool,
+) -> StepWitness<'static, QrSideDescend> {
+    (bit,)
+}
+
 /// Prepare the witness for [`QrBucketSeal`]: `(anchor_final_prev)`.
 ///
 /// `anchor_final_prev` is the final anchor of the preceding epoch, or
@@ -344,6 +389,44 @@ pub fn qr_unspent_init(
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
+}
+
+/// Prepare the witness for [`EvidenceTreeLeafPair`]: `(left_contents,
+/// right_contents)`.
+#[must_use]
+pub const fn evidence_tree_leaf_pair(
+    (_left, _right): (
+        StepLeft<EvidenceTreeLeafPair>,
+        StepRight<EvidenceTreeLeafPair>,
+    ),
+    left_contents: TachygramSetPoly,
+    right_contents: TachygramSetPoly,
+) -> StepWitness<'static, EvidenceTreeLeafPair> {
+    (left_contents, right_contents)
+}
+
+/// Prepare the witness for [`EvidenceTreePairFuse`]: `()`.
+#[must_use]
+pub const fn evidence_tree_pair_fuse(
+    (_left, _right): (
+        StepLeft<EvidenceTreePairFuse>,
+        StepRight<EvidenceTreePairFuse>,
+    ),
+) -> StepWitness<'static, EvidenceTreePairFuse> {
+}
+
+/// Prepare the witness for [`EvidenceTreeFuse`]: `()`.
+#[must_use]
+pub const fn evidence_tree_fuse(
+    (_left, _right): (StepLeft<EvidenceTreeFuse>, StepRight<EvidenceTreeFuse>),
+) -> StepWitness<'static, EvidenceTreeFuse> {
+}
+
+/// Prepare the witness for [`EvidenceTreeCap`]: `()`.
+#[must_use]
+pub const fn evidence_tree_cap(
+    (_left, _right): (StepLeft<EvidenceTreeCap>, StepRight<EvidenceTreeCap>),
+) -> StepWitness<'static, EvidenceTreeCap> {
 }
 
 /// Prepare the witness for [`EvidenceTreeDescend`]: `(path)`.
@@ -392,6 +475,25 @@ pub fn unspent_lift(
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
+}
+
+/// Prepare the witness for [`OutputBind`]: `(note, rcv)`.
+#[must_use]
+pub const fn output_bind(
+    (_left, _right): (StepLeft<OutputBind>, StepRight<OutputBind>),
+    note: Note,
+    rcv: value::Trapdoor,
+) -> StepWitness<'static, OutputBind> {
+    (note, rcv)
+}
+
+/// Prepare the witness for [`SpendBind`]: `(rcv,)`.
+#[must_use]
+pub const fn spend_bind(
+    (_left, _right): (StepLeft<SpendBind>, StepRight<SpendBind>),
+    rcv: value::Trapdoor,
+) -> StepWitness<'static, SpendBind> {
+    (rcv,)
 }
 
 /// Prepare the witness for [`OutputAction`]: `(theta, anchor, action_set,
@@ -462,6 +564,38 @@ pub fn spend_action(
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
     )
+}
+
+/// Prepare the witness for [`StampMerge`]: `(left, merged, right)`.
+#[must_use]
+pub const fn stamp_merge(
+    (_left, _right): (StepLeft<StampMerge>, StepRight<StampMerge>),
+    left: (ActionSetPoly, TachygramSetPoly),
+    merged: (ActionSetPoly, TachygramSetPoly),
+    right: (ActionSetPoly, TachygramSetPoly),
+) -> StepWitness<'static, StampMerge> {
+    (left, merged, right)
+}
+
+/// Prepare the witness for [`ActionMerge`]: `(action_set, tachygram_set)`.
+#[must_use]
+pub const fn action_merge(
+    (_left, _right): (StepLeft<ActionMerge>, StepRight<ActionMerge>),
+    action_set: ActionSetPoly,
+    tachygram_set: TachygramSetPoly,
+) -> StepWitness<'static, ActionMerge> {
+    (action_set, tachygram_set)
+}
+
+/// Prepare the witness for [`StampUnmerge`]: `(dividend, quotient, divisor)`.
+#[must_use]
+pub const fn stamp_unmerge(
+    (_left, _right): (StepLeft<StampUnmerge>, StepRight<StampUnmerge>),
+    dividend: (ActionSetPoly, TachygramSetPoly),
+    quotient: (ActionSetPoly, TachygramSetPoly),
+    divisor: (ActionSetPoly, TachygramSetPoly),
+) -> StepWitness<'static, StampUnmerge> {
+    (dividend, quotient, divisor)
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
