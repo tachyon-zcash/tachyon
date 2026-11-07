@@ -67,47 +67,65 @@ $(\pk, \maxfee - \fee, \psi, \rcm)$ takes the max fee note's other fields. Its
 tachygram. A fee equal to $\maxfee$ leaves a zero-valued fee change note, which
 still has its tachygram.
 
-$\mathsf{FeeFuse}$ transforms actions. It adds $d_\fee$ to their action
-set and $\cm_\chg$ to its tachygram set:
+$\mathsf{FeeValueCommit}$ consumes the private three-stage R certificate
+for $r$ and witnesses $\maxfee$. It bounds the maximum, computes the 17
+negative-value windows, and adds the certified R product. Its private
+$\mathtt{FeeValueOpening}$ carries $(\maxfee, \mathsf{lo}, \mathsf{hi}, \cv_\maxfee)$.
+The commitment is finite.
 
-- Left: $\mathtt{Actions}$
-- Right: empty
-- Output: $\mathtt{Stamp}$
-- Witness: the max fee note opening, $\fee$, the left set polynomials $A$ and
-  $T$, the output set polynomials $A'$ and $T'$, and the fee singleton set
-  polynomials $S_A$ and $S_T$
-
-The step derives $r$ and $\cv_\maxfee$ from the opening, and rejects an
-identity $\cv_\maxfee$. It checks $\maxfee \leq \mathsf{MAX\_MONEY}$ and
-$\maxfee - \fee \in [0, \mathsf{MAX\_MONEY}]$, and derives $\cm_\chg \neq 0$
-and the fee digest
+$\mathsf{FeeBind}$ consumes this opening and witnesses the max fee note and
+$\fee$. It requires the note's maximum to match the header, bounds
+$\maxfee$, $\fee$ and $\maxfee-\fee$ to $[0,\mathsf{MAX\_MONEY}]$, and
+derives $r$ from the note's owner fields. It compares both canonical integer
+limbs of that hash to the opening. From the same owner fields it derives
+$\cm_\chg \neq 0$ and the fee digest
 
 $$
 d_\fee = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}\bigl(x(\cv_\maxfee), y(\cv_\maxfee), \fee\bigr),
 $$
 
 where $x$ and $y$ are the affine coordinates of $\cv_\maxfee$.
+The output is private $\mathtt{FeeReady}$ carrying
+$(\maxfee,\fee,d_\fee,\cm_\chg)$.
+These preparation steps have no polynomial relations.
+
+$\mathsf{FeeFuse}$ transforms actions. It adds the two certified roots to
+their respective sets:
+
+- Left: $\mathtt{Actions}$
+- Right: $\mathtt{FeeReady}$
+- Output: $\mathtt{Stamp}$
+- Witness: the left set polynomials $A$ and $T$ and output set polynomials
+  $A'$ and $T'$
 
 It checks the commitments to $A$ and $T$ against the left header, and enforces
 
 $$
-S_A = X - d_\fee,
+A'(z) = A(z)\,(z - d_\fee),
 \qquad
-S_T = X - \cm_\chg,
-\qquad
-A' = A \cdot S_A,
-\qquad
-T' = T \cdot S_T.
+T'(z) = T(z)\,(z - \cm_\chg).
 $$
 
+The challenge $z$ absorbs all four set commitments. Each polynomial is
+queried once. The right-input roots are authenticated before $z$.
 The output header carries the commitments to $A'$ and $T'$ and the left
-actions' anchor.
+actions' anchor. Builders construct the set polynomials outside steps.
 
-$\mathsf{FeeSeed}$ proves a zero-action bundle's zero fee. It has no
-predecessors and witnesses the max fee note opening, the anchor, $S_A$ and
-$S_T$. It enforces $\maxfee = 0$ and checks the singleton relations at
-$\fee = 0$, so the fee change note is the max fee note itself. Its
-$\mathtt{Stamp}$ carries the singleton commitments and the witnessed anchor.
+$\mathsf{FeeSeed}$ proves a zero-action bundle's zero fee. Its left input
+is the private R certificate and its right input is empty. It witnesses
+the max fee note opening, the anchor and both output singleton polynomials.
+It enforces $\maxfee = 0$, derives $r$ and compares both limbs to the
+certificate. It uses the finite certified R product as $\cv_\maxfee$ and
+checks both singleton relations at constant $\fee = 0$. The fee change
+note is the max fee note itself. Its $\mathtt{Stamp}$ carries the singleton
+commitments and the witnessed anchor.
+
+Applying a fee to existing actions executes six local steps. A zero-action
+fee executes four. Both counts include the three R stages.
+Scalar limbs and fee preparation headers stay private to the prover.
+An aggregator constructs these R stages for its own zero-action fee.
+The native mock evaluates owner fields and hashes directly through its
+single-stage witness API.
 
 The fee steps prove a local relation, not funding. Funding comes from
 the bundle's actions, the binding signature over the signed $\cv_\maxfee$,
