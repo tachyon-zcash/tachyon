@@ -153,8 +153,12 @@ carries or about the leaf step's constraints on it.
   may hold extra roots. An extra root only makes a nonzero opening harder. Exclusion is sound when
   the source holds the epoch's publications and the queried value matches the profile
   (`Route.not_published`). The exceptional-value guard is necessary (`exceptional_guard_needed`).
-- A routed bucket holds only the published values that match its profile. Completeness is therefore
-  stated per query (`QueryComplete`). The profile-aware lineage needs completeness only for the
+- `QrIntakeSplit` only factors the source. `QrSideSelect` assigns the exceptional value and fixes
+  arbitrary hint commitments (`SideSelection`); `QrSideDescend` matches the selection's source and
+  hints before checking their class identity (`SideCheck`). A split that places the exceptional
+  root on the non-residue side cannot produce a selection (`split_without_selection`).
+- A routed bucket retains the published values that match its profile and may retain other roots.
+  Completeness is therefore stated per query (`QueryComplete`). The profile-aware lineage needs completeness only for the
   values it opens (`SpendableDerivable.routed_lineage`, `no_double_spend_of_routed`).
   `routed_query_without_global_completeness` exhibits a valid routed query on a bucket that omits a
   different publication of its epoch.

@@ -1,15 +1,21 @@
 //! Value commitments and bounded value types.
 
-use core::{cmp, ops};
+use core::{cmp, ops, ops::Neg as _};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
-use ff::Field as _;
-use group::{Curve as _, GroupEncoding as _};
+use group::GroupEncoding as _;
 use lazy_static::lazy_static;
-use pasta_curves::{Ep, EpAffine, Fq, arithmetic::CurveExt as _};
+use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
 use rand_core::CryptoRng;
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
-use crate::constants::MAX_MONEY;
+use crate::{
+    constants::MAX_MONEY,
+    pasta::{Ep, EpAffine, Fq},
+};
 
 /// Alias for [`ValueTrapdoor`].
 pub type Trapdoor = ValueTrapdoor;
@@ -31,10 +37,20 @@ const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
-    static ref VALUE_COMMIT_V: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v");
+    static ref VALUE_COMMIT_V: Ep = {
+        #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
+        EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v").to_bytes())
+            .expect("valid Orchard generator")
+            .to_projective()
+    };
 
     /// Generator $\mathcal{R}$ for value commitments and binding signatures.
-    static ref VALUE_COMMIT_R: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r");
+    static ref VALUE_COMMIT_R: Ep = {
+        #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
+        EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r").to_bytes())
+            .expect("valid Orchard generator")
+            .to_projective()
+    };
 }
 
 /// Entropy for a value commitment.
@@ -55,7 +71,7 @@ impl Trapdoor {
 
     /// Generate a random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fq::random(rng))
+        Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// A trapdoor derived from other secret data, such as a max fee note's
@@ -260,42 +276,4 @@ impl ops::Neg for Positive {
 }
 
 #[cfg(test)]
-mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
-
-    use super::*;
-
-    #[test]
-    fn balance_zero_is_identity() {
-        assert_eq!(Trapdoor::ZERO.commit(Balance::ZERO), Commitment::default());
-    }
-
-    /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
-    /// The V-components cancel, leaving only the R-component.
-    #[test]
-    fn commit_homomorphic_binding_property() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let rcv_a = Trapdoor::random(rng);
-        let cv_a = rcv_a.commit(Balance::try_from(100).unwrap());
-        let rcv_b = Trapdoor::random(rng);
-        let cv_b = rcv_b.commit(Balance::try_from(200).unwrap());
-
-        let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
-
-        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
-
-        assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
-    }
-
-    #[test]
-    fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
-        assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
-    }
-
-    #[test]
-    fn debug_value_commitment_redacts_point() {
-        let cv = Trapdoor::ZERO.commit(Balance::try_from(100).unwrap());
-        assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
-    }
-}
+mod tests;
