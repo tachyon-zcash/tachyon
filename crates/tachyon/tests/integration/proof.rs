@@ -11,11 +11,12 @@ use zcash_tachyon::{
     TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
+    effect,
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
-    stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
+    stamp::proof::{PROOF_SYSTEM, delegation, output, pool, scale, spend, spendable, stamp},
     value, witness,
 };
 
@@ -68,8 +69,12 @@ fn honest_spend_bind(
 ) -> Pcd<spend::SpendHeader> {
     let secret_pcd = user.secret_pcd(rng, *note);
     let rcv = value::Trapdoor::random(rng);
+    let (prepared, ()) = PROOF_SYSTEM
+        .fuse(rng, spend::SpendPrepare, (), spendable, secret_pcd)
+        .unwrap();
+    let blind = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
+        .fuse(rng, spend::SpendBind, (), prepared, blind)
         .unwrap();
     bind_pcd
 }
@@ -343,31 +348,35 @@ fn spend_rejects_invalid_note() {
         ..note
     };
     let secret_pcd = user.secret_pcd(rng, phantom);
-    let rcv = value::Trapdoor::random(rng);
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
-                spend::SpendBind,
-                (rcv,),
+                spend::SpendPrepare,
+                (),
                 spendable_pcd.clone(),
                 secret_pcd,
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "SpendBind: secret does not match note"
+            if err.to_string() == "SpendPrepare: secret does not match note"
     );
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let theta = ActionEntropy::random(rng);
+    let randomizer = scale::prove::<scale::G, _>(
+        rng,
+        theta.randomizer::<effect::Spend>(note.commitment()).into(),
+    )
+    .unwrap();
     assert_matches!(
         PROOF_SYSTEM
             .fuse(
                 rng,
                 stamp::SpendAction,
-                witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
+                witness::spend_action((*bind_pcd.data(), *randomizer.data()), theta, other.pak),
                 bind_pcd,
-                Proof::bootstrap().carry::<()>(()),
+                randomizer,
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
@@ -387,18 +396,32 @@ fn step_accepts_zero_value_note() {
         rcm: note::CommitmentTrapdoor::random(rng),
     };
     let rcv = value::Trapdoor::random(rng);
+    let blind = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (zero_output, rcv))
+        .fuse(
+            rng,
+            output::OutputBind,
+            (zero_output,),
+            blind,
+            Proof::bootstrap().carry::<()>(()),
+        )
         .unwrap();
     let theta = ActionEntropy::random(rng);
     let anchor = Anchor::random(rng);
+    let output_randomizer = scale::prove::<scale::G, _>(
+        rng,
+        theta
+            .randomizer::<effect::Output>(zero_output.commitment())
+            .into(),
+    )
+    .unwrap();
     PROOF_SYSTEM
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), *output_randomizer.data()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
+            output_randomizer,
         )
         .unwrap();
 
@@ -407,13 +430,20 @@ fn step_accepts_zero_value_note() {
     let height = mine_cm_block(rng, &mut pool, zero_spend.commitment());
     let spendable_pcd = user.spendable_init(rng, &zero_spend, &pool, height);
     let spend_bind = honest_spend_bind(rng, &user, &zero_spend, spendable_pcd);
+    let randomizer = scale::prove::<scale::G, _>(
+        rng,
+        theta
+            .randomizer::<effect::Spend>(zero_spend.commitment())
+            .into(),
+    )
+    .unwrap();
     PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
+            witness::spend_action((*spend_bind.data(), *randomizer.data()), theta, user.pak),
             spend_bind,
-            Proof::bootstrap().carry::<()>(()),
+            randomizer,
         )
         .unwrap();
 }
@@ -432,13 +462,25 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
 
     let spendable = user.spendable_init(rng, &note, &pool, height);
     let secret_pcd = user.secret_pcd(rng, note);
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
+    let (prepared, ()) = PROOF_SYSTEM
+        .fuse(rng, spend::SpendPrepare, (), spendable, secret_pcd)
         .unwrap();
+    let blind = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .fuse(rng, spend::SpendBind, (), prepared, blind)
+        .unwrap();
+    let randomizer = scale::prove::<scale::G, _>(
+        rng,
+        theta.randomizer::<effect::Spend>(note.commitment()).into(),
+    )
+    .unwrap();
     let (.., action_set, tachygram_set) =
-        witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
-    let (.., foreign_action_set, _) =
-        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
+        witness::spend_action((*bind_pcd.data(), *randomizer.data()), theta, user.pak);
+    let (.., foreign_action_set, _) = witness::spend_action(
+        (*bind_pcd.data(), *randomizer.data()),
+        ActionEntropy::random(rng),
+        user.pak,
+    );
 
     for (action_witness, expected) in [
         (
@@ -462,7 +504,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                     stamp::SpendAction,
                     action_witness,
                     bind_pcd.clone(),
-                    Proof::bootstrap().carry::<()>(()),
+                    randomizer.clone(),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -473,9 +515,9 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
+            witness::spend_action((*bind_pcd.data(), *randomizer.data()), theta, user.pak),
             bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
+            randomizer,
         )
         .unwrap();
     let plan = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -937,8 +979,15 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         Fp::from(note.psi),
     ));
 
+    let blind = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
+        .fuse(
+            rng,
+            output::OutputBind,
+            (note,),
+            blind,
+            Proof::bootstrap().carry::<()>(()),
+        )
         .unwrap();
     assert_eq!(
         *bind_pcd.data(),
@@ -948,10 +997,18 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             rcv.commit(-note.value),
         )
     );
+    let randomizer = scale::prove::<scale::G, _>(
+        rng,
+        theta.randomizer::<effect::Output>(note.commitment()).into(),
+    )
+    .unwrap();
     let (.., action_set, tachygram_set) =
-        witness::output_action((*bind_pcd.data(), ()), theta, anchor);
-    let (.., foreign_action_set, _) =
-        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
+        witness::output_action((*bind_pcd.data(), *randomizer.data()), theta, anchor);
+    let (.., foreign_action_set, _) = witness::output_action(
+        (*bind_pcd.data(), *randomizer.data()),
+        ActionEntropy::random(rng),
+        anchor,
+    );
 
     for (action_witness, expected) in [
         (
@@ -975,7 +1032,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                     stamp::OutputAction,
                     action_witness,
                     bind_pcd.clone(),
-                    Proof::bootstrap().carry::<()>(()),
+                    randomizer.clone(),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -986,9 +1043,9 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), *randomizer.data()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
+            randomizer,
         )
         .unwrap();
     assert_eq!(
