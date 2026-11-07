@@ -5,23 +5,27 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use udon::{curve::Affine as _, field::Field as _};
+use udon::curve::Affine as _;
 
-use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
-use crate::{
-    ActionSetPoly, TachygramSetPoly,
-    constants::MAX_MONEY,
-    digest::poseidon,
-    entropy::ActionEntropy,
-    keys::{ProofAuthorizingKey, private},
-    note::{self, Note},
-    pasta::{Ep, EpAffine, Eq, Fp, Fq},
-    primitives::{
-        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+use super::{
+    super::super::{
+        ActionSetPoly, TachygramSetPoly,
+        digest::poseidon,
+        entropy::ActionEntropy,
+        keys::{ProofAuthorizingKey, public::ActionVerificationKey},
+        note::{self, Note},
+        pasta::{Ep, EpAffine, Eq, Fp, Fq},
+        primitives::{
+            ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+        },
+        ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+        relations::enforce::{enforce_poly_product, enforce_poly_roots},
+        value,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_product, enforce_poly_roots},
-    value,
+    output::OutputHeader,
+    pool::AnchorSpan,
+    scale::{self, G, R, ScalarHi, ScalarLo, ScaleResult},
+    spend::SpendHeader,
 };
 
 /// Non-empty proven action content with no fee in its lineage.
@@ -99,8 +103,8 @@ impl Header for Stamp {
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Two permutations (`alpha`, the action digest) and one scalar
-/// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
+/// Compares both canonical alpha limbs to the private G certificate.
+/// Opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct OutputAction;
 
@@ -108,7 +112,7 @@ impl Step for OutputAction {
     type Aux<'source> = ();
     type Left = OutputHeader;
     type Output = Actions;
-    type Right = ();
+    type Right = ScaleResult<G>;
     /// `(theta, anchor, action_set, tachygram_set)`
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
@@ -119,14 +123,14 @@ impl Step for OutputAction {
         ctx: &mut ragu::StepCtx<'_>,
         (theta, anchor, action_set, tachygram_set): Self::Witness<'source>,
         (cm, pad, cv): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (lo, hi, point, identity): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // TODO: a real circuit squeezes alpha in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
         let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
-
-        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
+        scale::match_scalar(Fq::from(alpha), lo, hi)?;
+        let rk = ActionVerificationKey::try_from(scale::finite(scale::decode(point, identity)?)?)
+            .map_err(|err| {
+            ragu_core::Error::InvalidWitness(alloc::format!("OutputAction: {err}").into())
+        })?;
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "OutputAction: action digest construction failed".into(),
@@ -164,16 +168,15 @@ impl Step for OutputAction {
 /// derives the action randomizer `alpha` from the witnessed `theta` and `cm`,
 /// then the randomized action key `rk`, and enforces the one-action set plus
 /// the stamp accumulator over the two-element tachygram set
-/// `{nf_current, nf_next}` (the pair `SpendBind` derived from the master
+/// `{nf_current, nf_next}` (the pair `SpendPrepare` derived from the master
 /// key).
 ///
 /// `pk = payment_key(ak, nk)` is the only thing tying `ak` to the note.
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Three permutations (`pk`, `alpha`, the action digest) and one scalar
-/// multiplication (`rk`); opens the action-set and tachygram-set
-/// polynomials.
+/// Compares both canonical alpha limbs to the private G certificate, then
+/// adds ak before finite export. Opens the action and tachygram polynomials.
 #[derive(Debug)]
 pub struct SpendAction;
 
@@ -181,7 +184,7 @@ impl Step for SpendAction {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = Actions;
-    type Right = ();
+    type Right = ScaleResult<G>;
     /// `(theta, pak, action_set, tachygram_set)`
     type Witness<'source> = (
         ActionEntropy,
@@ -197,19 +200,25 @@ impl Step for SpendAction {
         ctx: &mut ragu::StepCtx<'_>,
         (theta, pak, action_set, tachygram_set): Self::Witness<'source>,
         (cm, nf_current, nf_next, anchor, pk, cv): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (lo, hi, point, identity): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(pk) - Fp::from(pak.derive_payment_key()),
             "SpendAction: pak not related to note",
         )?;
 
-        // TODO: a real circuit squeezes alpha in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
         let alpha = theta.randomizer::<effect::Spend>(cm);
-
-        let rk = pak.ak.derive_action_public(&alpha);
+        scale::match_scalar(Fq::from(alpha), lo, hi)?;
+        let ak_bytes: [u8; 32] = pak.ak.0.into();
+        let ak = EpAffine::from_bytes(ak_bytes)
+            .ok_or_else(|| ragu_core::Error::InvalidWitness("SpendAction: invalid ak".into()))?;
+        scale::finite(Ep::from(ak))?;
+        let rk = ActionVerificationKey::try_from(scale::finite(
+            Ep::from(ak) + scale::decode(point, identity)?,
+        )?)
+        .map_err(|err| {
+            ragu_core::Error::InvalidWitness(alloc::format!("SpendAction: {err}").into())
+        })?;
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "SpendAction: action digest construction failed".into(),
@@ -515,8 +524,142 @@ impl Step for ActionLift {
     }
 }
 
+/// Wallet-private maximum-fee commitment and scalar opening.
+#[derive(Debug)]
+pub struct FeeValueOpening;
+
+impl Header for FeeValueOpening {
+    /// `(maximum, lo, hi, cv)`
+    type Data = (value::Positive, ScalarLo, ScalarHi, value::Commitment);
+
+    const SUFFIX: Suffix = Suffix::new(24);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (maximum, lo, hi, cv) = *data;
+        (
+            vec![Fp::from(u64::from(maximum)), Fp::from(lo), Fp::from(hi)],
+            Vec::new(),
+            vec![Ep::from(cv)],
+            Vec::new(),
+        )
+    }
+}
+
+/// Wallet-private bounded fee and change roots from one fee opening.
+#[derive(Debug)]
+pub struct FeeReady;
+
+impl Header for FeeReady {
+    /// `(maximum, fee, fee_digest, change_cm)`
+    type Data = (
+        value::Positive,
+        value::Positive,
+        ActionDigest,
+        note::Commitment,
+    );
+
+    const SUFFIX: Suffix = Suffix::new(25);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (maximum, fee, digest, cm) = *data;
+        (
+            vec![
+                Fp::from(u64::from(maximum)),
+                Fp::from(u64::from(fee)),
+                Fp::from(digest),
+                Fp::from(cm),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
+/// Computes the negative maximum-value commitment from a private R result.
+/// Seventeen value windows; no polynomials.
+#[derive(Debug)]
+pub struct FeeValueCommit;
+
+impl Step for FeeValueCommit {
+    type Aux<'source> = ();
+    type Left = ScaleResult<R>;
+    type Output = FeeValueOpening;
+    type Right = ();
+    /// `(maximum)`
+    type Witness<'source> = (value::Positive,);
+
+    const INDEX: Index = Index::new(46);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (maximum,): Self::Witness<'source>,
+        (lo, hi, point, identity): <Self::Left as Header>::Data,
+        (): (),
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let negative = scale::value_product::<true>(maximum)?;
+        let cv = scale::finite(negative + scale::decode(point, identity)?)?;
+        Ok(((maximum, lo, hi, value::Commitment::from(cv)), ()))
+    }
+}
+
+/// Binds the fee commitment's exact scalar to the fee note and derives roots.
+/// Three monetary bounds and three hashes; no polynomials.
+#[derive(Debug)]
+pub struct FeeBind;
+
+impl Step for FeeBind {
+    type Aux<'source> = ();
+    type Left = FeeValueOpening;
+    type Output = FeeReady;
+    type Right = ();
+    /// `(max_fee_note, fee)`
+    type Witness<'source> = (Note, value::Positive);
+
+    const INDEX: Index = Index::new(47);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (max_fee_note, fee): Self::Witness<'source>,
+        (maximum, lo, hi, cv): <Self::Left as Header>::Data,
+        (): (),
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(u64::from(maximum)) - Fp::from(u64::from(max_fee_note.value)),
+            "FeeBind: maximum does not match note",
+        )?;
+        scale::amount_bits(maximum)?;
+        scale::amount_bits(fee)?;
+        let change = u64::from(maximum)
+            .checked_sub(u64::from(fee))
+            .and_then(|amount| value::Positive::try_from(amount).ok())
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeBind: change is out of range".into())
+            })?;
+        scale::amount_bits(change)?;
+        scale::match_scalar(Fq::from(max_fee_note.fee_blind()), lo, hi)?;
+        let coords = EpAffine::from(cv).coordinates().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("FeeBind: fee commitment is the identity".into())
+        })?;
+        let digest = ActionDigest::from(poseidon::fee_digest(coords, u64::from(fee)));
+        let cm = enforce_nonzero(
+            poseidon::note_commitment(
+                Fp::from(max_fee_note.rcm),
+                Fp::from(max_fee_note.pk),
+                u64::from(change),
+                Fp::from(max_fee_note.psi),
+            ),
+            "FeeBind: fee change note commitment is zero",
+        )?;
+        Ok(((maximum, fee, digest, note::Commitment::from(cm)), ()))
+    }
+}
+
 /// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
-/// note's commitment to the action and tachygram sets.
+/// note's commitment to the action and tachygram sets. Opens four polynomials,
+/// with both roots authenticated by the right FeeReady header.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -524,11 +667,9 @@ impl Step for FeeFuse {
     type Aux<'source> = ();
     type Left = Actions;
     type Output = Stamp;
-    type Right = ();
+    type Right = FeeReady;
+    /// `(left_sets, output_sets)`
     type Witness<'source> = (
-        Note,
-        value::Positive,
-        (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
     );
@@ -539,14 +680,11 @@ impl Step for FeeFuse {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (
-            max_fee_note,
-            fee,
             (left_action_set, left_tachygram_set),
             (output_action_set, output_tachygram_set),
-            (fee_action_set, fee_tachygram_set),
         ): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (_maximum, _fee, fee_digest, change_cm): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(left_action_set.commit()),
@@ -559,98 +697,50 @@ impl Step for FeeFuse {
             "FeeFuse: left tachygram accumulator must commit to header commit",
         )?;
 
-        let max_fee = u64::from(max_fee_note.value);
-        if max_fee > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "FeeFuse: maximum fee exceeds MAX_MONEY".into(),
-            ));
+        let output_action_commit = output_action_set.commit();
+        let output_tachygram_commit = output_tachygram_set.commit();
+        let z = ctx.derive_challenge(&[
+            Eq::from(left_action_commit),
+            Eq::from(left_tachygram_commit),
+            Eq::from(output_action_commit),
+            Eq::from(output_tachygram_commit),
+        ])?;
+        let left_action_eval = left_action_set.eval(z);
+        let left_tachygram_eval = left_tachygram_set.eval(z);
+        let output_action_eval = output_action_set.eval(z);
+        let output_tachygram_eval = output_tachygram_set.eval(z);
+        enforce_zero(
+            output_action_eval - left_action_eval * (z - Fp::from(fee_digest)),
+            "FeeFuse: output action set must extend the left set by the fee digest",
+        )?;
+        enforce_zero(
+            output_tachygram_eval - left_tachygram_eval * (z - Fp::from(change_cm)),
+            "FeeFuse: output tachygram set must extend the left set by the change commitment",
+        )?;
+        for (commit, evaluation) in [
+            (Eq::from(left_action_commit), left_action_eval),
+            (Eq::from(left_tachygram_commit), left_tachygram_eval),
+            (Eq::from(output_action_commit), output_action_eval),
+            (Eq::from(output_tachygram_commit), output_tachygram_eval),
+        ] {
+            ctx.enforce_poly_query(commit, z, evaluation)?;
         }
 
-        // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
-        // field difference lies in [0, MAX_MONEY] exactly when the integer
-        // difference does.
-        let change = max_fee
-            .checked_sub(u64::from(fee))
-            .filter(|&change| change <= MAX_MONEY)
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
-            })?;
-
-        let (pk, psi, rcm) = (
-            Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi),
-            Fp::from(max_fee_note.rcm),
-        );
-
-        // TODO: a real circuit squeezes r in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
-        #[expect(
-            clippy::expect_used,
-            reason = "p < q, so every Fp repr is canonical in Fq"
-        )]
-        let cv_max_fee =
-            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
-        })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
-
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        let fee_change_commitment = enforce_nonzero(
-            poseidon::note_commitment(rcm, pk, change, psi),
-            "FeeFuse: fee change note commitment is zero",
-        )?;
-
-        enforce_poly_roots(
-            ctx,
-            fee_action_set.as_ref(),
-            &[fee_digest],
-            "FeeFuse: fee action set does not commit to the fee digest",
-        )?;
-
-        enforce_poly_roots(
-            ctx,
-            fee_tachygram_set.as_ref(),
-            &[fee_change_commitment],
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
-        )?;
-
-        enforce_poly_product(
-            ctx,
-            left_action_set.as_ref(),
-            fee_action_set.as_ref(),
-            output_action_set.as_ref(),
-            "FeeFuse: output action set must be the product of left and fee action sets",
-        )?;
-        enforce_poly_product(
-            ctx,
-            left_tachygram_set.as_ref(),
-            fee_tachygram_set.as_ref(),
-            output_tachygram_set.as_ref(),
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-        )?;
-
         Ok((
-            (
-                output_action_set.commit(),
-                output_tachygram_set.commit(),
-                left_anchor,
-            ),
+            (output_action_commit, output_tachygram_commit, left_anchor),
             (),
         ))
     }
 }
 
-/// Proves a zero-action bundle's zero fee.
+/// Proves a zero-action bundle's zero fee from its private R certificate.
+/// Opens two singleton polynomials. The mock computes owner fields natively.
 #[derive(Debug)]
 pub struct FeeSeed;
 
 impl Step for FeeSeed {
     type Aux<'source> = ();
-    type Left = ();
+    type Left = ScaleResult<R>;
     type Output = Stamp;
     type Right = ();
     /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
@@ -662,7 +752,7 @@ impl Step for FeeSeed {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (max_fee_note, anchor, fee_action_set, fee_tachygram_set): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
+        (lo, hi, point, identity): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -676,17 +766,8 @@ impl Step for FeeSeed {
             Fp::from(max_fee_note.rcm),
         );
 
-        // TODO: a real circuit squeezes r in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
-        #[expect(
-            clippy::expect_used,
-            reason = "p < q, so every Fp repr is canonical in Fq"
-        )]
-        let cv_max_fee =
-            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                .commit(-max_fee_note.value);
+        scale::match_scalar(Fq::from(max_fee_note.fee_blind()), lo, hi)?;
+        let cv_max_fee = value::Commitment::from(scale::finite(scale::decode(point, identity)?)?);
         let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
         })?;
