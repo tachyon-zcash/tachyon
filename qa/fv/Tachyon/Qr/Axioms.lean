@@ -25,3 +25,9 @@ info: 'Tachyon.Qr.exceptional_guard_needed' depends on axioms: [propext, Classic
 -/
 #guard_msgs in
 #print axioms Tachyon.Qr.exceptional_guard_needed
+
+/--
+info: 'Tachyon.Qr.split_without_selection' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.Qr.split_without_selection
