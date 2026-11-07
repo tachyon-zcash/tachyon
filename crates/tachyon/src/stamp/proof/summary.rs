@@ -11,10 +11,10 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     ragu_constraint::enforce_equal_point,
     relations::enforce::enforce_poly_product,

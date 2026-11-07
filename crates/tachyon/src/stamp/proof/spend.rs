@@ -4,7 +4,6 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
@@ -13,6 +12,7 @@ use crate::{
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
+    pasta::{Ep, Eq, Fp, Fq},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,

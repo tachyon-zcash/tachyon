@@ -4,12 +4,16 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
-    Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note,
-    ragu_constraint::enforce_nonzero, value,
+    Tachygram,
+    constants::MAX_MONEY,
+    digest::poseidon,
+    note::Note,
+    pasta::{Ep, Eq, Fp, Fq},
+    ragu_constraint::enforce_nonzero,
+    value,
 };
 
 /// Header binding an output's tachygram pair and value to one note
