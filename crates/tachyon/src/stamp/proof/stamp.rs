@@ -202,6 +202,10 @@ impl Step for SpendAction {
         (cm, nf_current, nf_next, anchor, pk, cv): <Self::Left as Header>::Data,
         (lo, hi, point, identity): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let ak_bytes: [u8; 32] = pak.ak.0.into();
+        let ak = EpAffine::from_bytes(ak_bytes)
+            .ok_or_else(|| ragu_core::Error::InvalidWitness("SpendAction: invalid ak".into()))?;
+        scale::finite(Ep::from(ak))?;
         enforce_zero(
             Fp::from(pk) - Fp::from(pak.derive_payment_key()),
             "SpendAction: pak not related to note",
@@ -209,10 +213,6 @@ impl Step for SpendAction {
 
         let alpha = theta.randomizer::<effect::Spend>(cm);
         scale::match_scalar(Fq::from(alpha), lo, hi)?;
-        let ak_bytes: [u8; 32] = pak.ak.0.into();
-        let ak = EpAffine::from_bytes(ak_bytes)
-            .ok_or_else(|| ragu_core::Error::InvalidWitness("SpendAction: invalid ak".into()))?;
-        scale::finite(Ep::from(ak))?;
         let rk = ActionVerificationKey::try_from(scale::finite(
             Ep::from(ak) + scale::decode(point, identity)?,
         )?)
@@ -658,8 +658,10 @@ impl Step for FeeBind {
 }
 
 /// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
-/// note's commitment to the action and tachygram sets. Opens four polynomials,
-/// with both roots authenticated by the right FeeReady header.
+/// note's commitment to the action and tachygram sets.
+///
+/// Opens four polynomials with roots authenticated by the right FeeReady
+/// header.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -918,3 +920,6 @@ impl Step for StampUnmerge {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests;
