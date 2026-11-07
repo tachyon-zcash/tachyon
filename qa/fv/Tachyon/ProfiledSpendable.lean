@@ -250,7 +250,7 @@ theorem routed_query_without_global_completeness :
   let chain : List (Chain.Stamp ℚ Unit) := [⟨(), [0, -1], 0⟩]
   let b : QrBucket ℚ Unit := ⟨0, (), (), X⟩
   let split : Qr.Split (X * (X + C (1 : ℚ))) 0 :=
-    ⟨X + C 1, X, mul_comm _ _, by norm_num⟩
+    ⟨X + C 1, X, mul_comm _ _⟩
   have hsource : ∀ t : ℚ, Chain.published chain 0 t →
       (X * (X + C (1 : ℚ))).eval t = 0 := by
     rintro t ⟨s, hs, _, ht⟩
@@ -261,7 +261,8 @@ theorem routed_query_without_global_completeness :
   have hquery : RoutedQuery chain (-1) b 1 := by
     refine ⟨⟨0, X * (X + C 1), [true], hsource, ?_, ?_⟩⟩
     · apply Qr.Route.descend (u := 1) (q := 1) split
-      · change (1 : ℚ[X]) ^ 2 - C (-1) * (X + C 0) = (X + C 1) * 1
+      · refine ⟨⟨1, 1, by norm_num [split]⟩, rfl, rfl, ?_⟩
+        change (1 : ℚ[X]) ^ 2 - C (-1) * (X + C 0) = (X + C 1) * 1
         simp [add_comm]
       · exact Qr.Route.root _ _
     · change IsSquare (1 + (0 : ℚ)) ∧ True

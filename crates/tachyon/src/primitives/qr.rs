@@ -1,13 +1,16 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::{Eq, Fp};
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::Pasta;
+use ragu_core::{Cycle as _, pasta::Pasta};
+use rand_core::CryptoRng;
+use udon::field::Field as _;
 
-use crate::collections::qr;
+use crate::{
+    collections::qr,
+    pasta,
+    pasta::{Eq, Fp},
+};
 
 /// A routing network's first discriminant $R_0$.
 ///
@@ -25,6 +28,11 @@ use crate::collections::qr;
 pub struct QrDiscriminant(pub Fp);
 
 impl QrDiscriminant {
+    /// Sample a uniformly random first discriminant.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
     /// The discriminant a split at `depth` classifies at.
     #[must_use]
     pub fn at(self, depth: u32) -> Fp {
@@ -41,7 +49,7 @@ impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrInterpolantCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
 
     /// Evaluate the interpolant at a given point.
@@ -64,7 +72,7 @@ impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
+        QrQuotientCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
 
     /// Evaluate the quotient at a given point.
@@ -157,116 +165,4 @@ impl QrClassRoot {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_root_profile_has_no_bits() {
-        assert_eq!(QrProfile::ROOT.depth, 0);
-        assert_eq!(QrProfile::ROOT.bits, 0);
-    }
-
-    #[test]
-    fn the_bits_record_the_splits_outermost_first() {
-        let low = QrProfile::ROOT.descend(false).descend(false).descend(true);
-        assert_eq!(low.depth, 3);
-        assert_eq!(low.bits, 0b001);
-        let high = QrProfile::ROOT.descend(true).descend(false).descend(false);
-        assert_eq!(high.bits, 0b100);
-    }
-
-    #[test]
-    fn distinct_split_histories_yield_distinct_profiles() {
-        let deep_zeroes = QrProfile::ROOT.descend(false).descend(false);
-        let shallow_zero = QrProfile::ROOT.descend(false);
-        assert_ne!(deep_zeroes, shallow_zero);
-        assert_ne!(deep_zeroes, QrProfile::ROOT);
-    }
-
-    #[test]
-    #[should_panic(expected = "profile has no bit left for another side")]
-    fn descending_past_the_maximum_depth_panics() {
-        let mut profile = QrProfile::ROOT;
-        for _ in 0..=QrProfile::MAX_DEPTH {
-            profile = profile.descend(true);
-        }
-    }
-
-    #[test]
-    fn the_profile_reaches_the_maximum_depth() {
-        let mut profile = QrProfile::ROOT;
-        for _ in 0..QrProfile::MAX_DEPTH {
-            profile = profile.descend(true);
-        }
-        assert_eq!(profile.depth, u32::BITS);
-        assert_eq!(profile.bits, u32::MAX);
-    }
-
-    #[test]
-    fn the_discriminants_progress_by_one() {
-        let first = QrDiscriminant::from(Fp::from(7));
-        assert_eq!(first.at(0), Fp::from(7));
-        assert_eq!(first.at(1), Fp::from(8));
-        assert_eq!(first.at(u32::BITS), Fp::from(7 + 32));
-        assert_eq!(QrDiscriminant::from(-Fp::ONE).at(1), Fp::ZERO);
-    }
-
-    #[test]
-    fn class_roots_square_to_the_shifted_value() {
-        let discriminant = QrDiscriminant::from(Fp::from(11));
-        for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-            for (depth, QrClassRoot(side, root)) in
-                (0..).zip(QrClassRoot::along(value, discriminant))
-            {
-                let shifted = value + discriminant.at(depth);
-                assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
-            }
-        }
-    }
-
-    #[test]
-    fn the_fixed_point_takes_the_residue_side_with_root_zero() {
-        let discriminant = QrDiscriminant::from(Fp::from(13));
-        let position = 5;
-        let value = -discriminant.at(position);
-        let classes = QrClassRoot::along(value, discriminant);
-        assert_eq!(
-            classes[usize::try_from(position).unwrap()],
-            QrClassRoot(true, Fp::ZERO)
-        );
-    }
-
-    #[test]
-    fn the_depth_mask_is_a_prefix_of_the_depth() {
-        for depth in [0, 1, 31, 32] {
-            let mask = QrProfile { depth, bits: 0 }.depth_mask();
-            let ones = mask.iter().filter(|&&selected| selected).count();
-            assert_eq!(ones, usize::try_from(depth).unwrap());
-            assert!(
-                mask.iter()
-                    .zip(mask.iter().skip(1))
-                    .all(|(&earlier, &later)| earlier || !later)
-            );
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "depth out of range")]
-    fn a_depth_mask_past_the_maximum_depth_panics() {
-        let _mask = QrProfile {
-            depth: u32::BITS + 1,
-            bits: 0,
-        }
-        .depth_mask();
-    }
-
-    #[test]
-    #[should_panic(expected = "depth out of range")]
-    fn a_depth_mask_at_the_integer_limit_panics() {
-        let _mask = QrProfile {
-            depth: u32::MAX,
-            bits: 0,
-        }
-        .depth_mask();
-    }
-}
+mod tests;
