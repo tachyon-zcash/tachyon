@@ -10,16 +10,28 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe as _,
+    pasta::Pasta,
+};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
+    digest::poseidon,
     note,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    ragu_constraint::enforce_zero,
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -29,22 +41,42 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
-impl Header for NoteSpendable {
-    /// `(cm, epoch_current, anchor)`. `cm` threads unchanged; the rest
-    /// advances per lift. A lift checks continuity by meeting this point with
-    /// a [`NoteUnspent`] segment's near end.
+#[derive(Gadget, Write)]
+pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
+    pub cm: Element<'dr, D>,
+    pub epoch_current: Element<'dr, D>,
+    pub anchor: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteSpendable {
+    /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
+    type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, epoch_current, anchor) = *data;
-        (
-            vec![Fp::from(cm), Fp::from(epoch_current), Fp::from(anchor)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteSpendableOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+        })
     }
 }
 
@@ -70,7 +102,7 @@ impl Header for NoteSpendable {
 #[derive(Debug)]
 pub struct SpendableInit;
 
-impl Step for SpendableInit {
+impl Step<Pasta> for SpendableInit {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteSpendable;
@@ -80,28 +112,62 @@ impl Step for SpendableInit {
 
     const INDEX: Index = Index::new(4);
 
-    fn witness<'source>(
+    fn polynomials(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, creation_set, creation_epoch): Self::Witness<'source>,
-        (cm, ..): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([
+            alloc::vec![Fp::ONE],
+            witness.1.as_ref().iter_coeffs().collect(),
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let native = D::try_just(|| {
+            let (anchor_prev, _, creation_epoch) = witness.take();
+            let (cm, ..) = left.take();
+            let () = right.take();
+            // O1's bridge hash binds the creation set absorbed into the anchor.
+            let anchor = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_prev),
+                Fp::from(creation_epoch),
+                [*hash_x.take(), *hash_y.take()],
+            )?);
+            Ok((cm, (cm, creation_epoch, anchor)))
+        })?;
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, _)| Fp::from(cm)))?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let cm_in_set = creation_set.eval(cm.into());
-        ctx.enforce_poly_query(creation_set.commit().into(), cm.into(), cm_in_set)?;
-        enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
-        let creation_commit = creation_set.commit();
-
-        // The anchor immediately after the creation stamp, computed in-circuit
-        // so the proof certifies the fold of `epoch` and `creation_commit`;
-        // consensus membership of the eventual spend anchor binds the rest
-        // (see the step doc).
-        let anchor = anchor_prev
-            .next_stamp(creation_epoch, &creation_commit)
-            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-
-        Ok(((cm, creation_epoch, anchor), ()))
+        let evaluation = oracles.query(dr, Slot::output(1), &x)?;
+        evaluation.enforce_zero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
+        })?;
+        let data = native.map(|(_, output)| output);
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
 
@@ -129,61 +195,76 @@ impl Step for SpendableInit {
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
-impl Step for QrSpendableInit {
+impl Step<Pasta> for QrSpendableInit {
     type Aux<'source> = ();
     type Left = NoteUnspent;
     type Output = NoteSpendable;
     type Right = QrBucket;
-    /// `(contents)`
-    type Witness<'source> = (TachygramSetPoly,);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(22);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (contents,): Self::Witness<'source>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
         (
-            cm,
-            unspent_anchor_start,
-            unspent_epoch_start,
-            unspent_epoch_next,
-            unspent_anchor_next,
-        ): <Self::Left as Header>::Data,
-        (bucket_epoch, bucket_anchor_start, bucket_anchor_next, _, _, bucket_commit): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(contents.commit()),
-            Eq::from(bucket_commit),
-            "QrSpendableInit: contents do not match the bucket",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
-            "QrSpendableInit: segment does not start in the bucket's epoch",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
-            "QrSpendableInit: segment does not open where the bucket does",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
-            "QrSpendableInit: segment does not close where the bucket does",
-        )?;
-        let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let native = D::try_just(|| {
+            let (
+                cm,
+                unspent_anchor_start,
+                unspent_epoch_start,
+                unspent_epoch_next,
+                unspent_anchor_next,
+            ) = left.take();
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = right.take();
+            enforce_zero(
+                Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
+                "QrSpendableInit: segment does not start in the bucket's epoch",
+            )?;
+            enforce_zero(
+                Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
+                "QrSpendableInit: segment does not open where the bucket does",
+            )?;
+            enforce_zero(
+                Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
+                "QrSpendableInit: segment does not close where the bucket does",
+            )?;
+            let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+            })?;
+            // Defensive: the anchor equality already rejects a wrong epoch label.
+            enforce_zero(
+                Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
+                "QrSpendableInit: segment does not end in the epoch after the bucket's",
+            )?;
+            Ok((cm, bucket_epoch_next, unspent_anchor_next))
         })?;
-        // Defensive: the anchor equality already rejects a wrong epoch label.
-        enforce_zero(
-            Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
-            "QrSpendableInit: segment does not end in the epoch after the bucket's",
-        )?;
-
+        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, ..)| Fp::from(cm)))?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let cm_in_bucket = contents.eval(cm.into());
-        ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
-        enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
-
-        Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))
+        let evaluation = oracles.query(dr, Slot::right(0), &x)?;
+        evaluation.enforce_zero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
+        })?;
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), native.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), native, D::unit()))
     }
 }
 
@@ -211,7 +292,7 @@ impl Step for QrSpendableInit {
 #[derive(Debug)]
 pub struct SpendableLift;
 
-impl Step for SpendableLift {
+impl Step<Pasta> for SpendableLift {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = NoteSpendable;
@@ -220,31 +301,54 @@ impl Step for SpendableLift {
 
     const INDEX: Index = Index::new(5);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (spendable_cm, spendable_epoch_current, spendable_anchor): <Self::Left as Header>::Data,
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
         (
-            unspent_cm,
-            unspent_anchor_start,
-            unspent_epoch_start,
-            unspent_epoch_next,
-            unspent_anchor_next,
-        ): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(unspent_cm) - Fp::from(spendable_cm),
-            "SpendableLift: unspent cm does not match spendable",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
-            "SpendableLift: segment does not start at the lineage epoch",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
-            "SpendableLift: unspent not adjacent to spendable",
-        )?;
-        Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let () = witness.take();
+            let (spendable_cm, spendable_epoch_current, spendable_anchor) = left.take();
+            let (
+                unspent_cm,
+                unspent_anchor_start,
+                unspent_epoch_start,
+                unspent_epoch_next,
+                unspent_anchor_next,
+            ) = right.take();
+            enforce_zero(
+                Fp::from(unspent_cm) - Fp::from(spendable_cm),
+                "SpendableLift: unspent cm does not match spendable",
+            )?;
+            enforce_zero(
+                Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
+                "SpendableLift: segment does not start at the lineage epoch",
+            )?;
+            enforce_zero(
+                Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
+                "SpendableLift: unspent not adjacent to spendable",
+            )?;
+            Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

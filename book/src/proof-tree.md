@@ -222,12 +222,14 @@ The split's discriminant at this depth is defined by the progression:
 
 $$R = R_0 + \mathsf{depth}$$
 
-`QrSideSelect` copies the entire split statement and fixes the interpolant and quotient commitments as `QrSideSelection`.
-It pins the non-residue polynomial to the split's commitment and checks the exceptional-value assignment:
+Split puts the residue polynomial in O0 and the non-residue polynomial q0 in O1, and records O1's bridge hash in `QrIntakeSides`.
+`QrSideSelect` copies the split's scalar metadata and that hash, and fixes the interpolant and quotient in `QrSideSelection`'s O0/O1 slots.
+It checks its non-residue witness against the split's L1 slot and checks the exceptional-value assignment:
 
 $$q_0(-R) \neq 0$$
 
 `QrSideDescend` takes the split and selection as inputs and matches every copied source field.
+The matching bridge hashes bind the same q0.
 Its witness bit chooses the child, sibling and class multiplier.
 The multiplier is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
 It pins the sibling to the split and the hints to the selection, then checks the identity with $s$ for the sibling and $c$ for its multiplier:
@@ -242,11 +244,11 @@ Together with the split's product and selection's exceptional-value assignment, 
 A child may carry stray members of the sibling's class, strengthening its consumers' exclusion openings.
 The exceptional value has zero class root, and selection assigns it to the residue side through its nonzero opening of the non-residue polynomial.
 Selection's hints are arbitrary committed polynomials; descent establishes their identity.
-The descent's challenge absorbs the three commitments and scalar-binding points for the discriminant and sibling multiplier, fixing every operand of the tested residual before the challenge.
+The framework's challenge zeta fixes both input headers and their slots; the side bit is staged, fixing every operand of the tested residual before the challenge.
 Every step of one network classifies at the progression carried by its headers.
-Split witnesses three polynomials and opens each once at its product challenge.
-Selection witnesses the non-residue polynomial and two hints, opening only the non-residue polynomial at the exceptional point and producing the two hint commitments.
-Descent witnesses and opens the sibling and both hints once each, forwarding the selected child's commitment.
+Split opens its input and two output polynomials once at its product challenge.
+Selection opens the non-residue input at the exceptional point and produces the two hint commitments.
+Descent opens L0/L1 and the selection's R0/R1 once each at zeta, selects the sibling evaluation with its staged bit, and forwards the selected child in O0, whose one opening at zeta checks the slot copy.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
@@ -566,8 +568,8 @@ flowchart LR
 | AnchorSpan | (anchor_start, members, anchor_end) |
 | Summary | (epoch, anchor_prev, anchor_end, acc_commit) |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
-| QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
-| QrSideSelection | (source: QrIntakeSides, interpolant, quotient) |
+| QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash); slots: residue, non_residue |
+| QrSideSelection | copied QrIntakeSides scalar fields; slots: interpolant, quotient |
 | QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
 | EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) |
 | EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
@@ -586,43 +588,43 @@ flowchart LR
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
 | AnchorSpanSeed | — | — | anchor_start, epoch, stamp_commit | AnchorSpan |
-| AnchorSpanFuse | AnchorSpan | AnchorSpan | left_members, combined, right_members | AnchorSpan |
-| SummarySeed | — | — | anchor_prev, epoch, stamp_commit | Summary |
-| SummaryAdvance | Summary | — | acc, extended, stamp | Summary |
-| QrSpendableInit | NoteUnspent | QrBucket | contents | NoteSpendable |
+| AnchorSpanFuse | AnchorSpan | AnchorSpan | combined | AnchorSpan |
+| SummarySeed | — | — | anchor_prev, epoch, stamp_set | Summary |
+| SummaryAdvance | Summary | — | extended, stamp | Summary |
+| QrSpendableInit | NoteUnspent | QrBucket | — | NoteSpendable |
 | QrSummaryIntake | Summary | — | discriminant | QrIntake |
-| QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp_commit | QrIntake |
+| QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp_set | QrIntake |
 | QrEmptyIntakeSeed | — | — | anchor, epoch, discriminant | QrIntake |
-| QrIntakeMerge | QrIntake | QrIntake | left_contents, right_contents, merged | QrIntake |
-| QrIntakeSplit | QrIntake | — | contents, non_residue, residue | QrIntakeSides |
-| QrSideSelect | QrIntakeSides | — | non_residue_contents, interpolant, quotient | QrSideSelection |
-| QrSideDescend | QrIntakeSides | QrSideSelection | bit, sibling_contents, interpolant, quotient | QrIntake |
+| QrIntakeMerge | QrIntake | QrIntake | merged | QrIntake |
+| QrIntakeSplit | QrIntake | — | non_residue, residue | QrIntakeSides |
+| QrSideSelect | QrIntakeSides | — | interpolant, quotient | QrSideSelection |
+| QrSideDescend | QrIntakeSides | QrSideSelection | bit | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
-| QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
-| EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |
+| QrUnspentInit | QrBucket | — | value, classes, mask, sequence | ArbitraryUnspent |
+| EvidenceTreeLeafPair | QrBucket | QrBucket | left_contents, right_contents | EvidenceTreePair |
 | EvidenceTreePairFuse | EvidenceTree | EvidenceTree | — | EvidenceTreePair |
 | EvidenceTreeFuse | EvidenceTreePair | EvidenceTreePair | — | EvidenceTree |
 | EvidenceTreeCap | EvidenceTree | — | — | EvidenceTree |
 | EvidenceTreeDescend | EvidenceTree | — | path | EvidenceTree |
 | EvidenceTreeOpen | EvidenceTree | — | profile, contents | QrBucket |
-| UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
-| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, elapsed_seq, extended_seq, contents | ArbitraryUnspent |
-| UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
+| UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | combined_elapsed_seq | ArbitraryUnspent |
+| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, extended_seq | ArbitraryUnspent |
+| UnspentBind | ArbitraryUnspent | NoteNullifiers | complement_seq | NoteUnspent |
 | NoteSeed | — | — | value, psi, rcm, pak | NoteSecret |
 | NullifierDerive | NoteSecret | — | epoch_start, seq | NoteNullifiers |
-| NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
+| NullifierFuse | NoteNullifiers | NoteNullifiers | merged_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
 | SpendBind | NoteSpendable | NoteSecret | rcv | SpendHeader |
 | OutputBind | — | — | note, rcv | OutputHeader |
 | OutputAction | OutputHeader | — | theta, anchor, action_set, tachygram_set | Actions |
 | SpendAction | SpendHeader | — | theta, pak, action_set, tachygram_set | Actions |
-| ActionMerge | Actions | Actions | (action_set, tachygram_set) × left, merged, right | Actions |
-| ActionLift | Actions | AnchorSpan | members | Actions |
-| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output, fee | Stamp |
+| ActionMerge | Actions | Actions | action_set, tachygram_set | Actions |
+| ActionLift | Actions | AnchorSpan | — | Actions |
+| FeeFuse | Actions | — | max fee note opening, fee, output action_set, output tachygram_set | Stamp |
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
-| StampLift | Stamp | AnchorSpan | members | Stamp |
+| StampLift | Stamp | AnchorSpan | — | Stamp |
 | StampUnmerge | Stamp | Stamp | (action_set, tachygram_set) × dividend, quotient, divisor | Stamp |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.

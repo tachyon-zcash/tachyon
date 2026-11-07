@@ -4,6 +4,7 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 use core::assert_matches;
 
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly, action,
@@ -319,7 +320,7 @@ fn overlapping_stamps_cannot_aggregate() {
             left.tachygrams.union(&right.tachygrams).copied().collect();
         let stamp = ProofStamp {
             coverage: stamp_coverage(descriptors.iter().copied(), &fees),
-            anchor: forged.data().2,
+            anchor: forged.data().1,
             tachygram_set: tachygrams
                 .iter()
                 .copied()
@@ -403,7 +404,12 @@ fn read_rejects_malformed_tachygram_lists() {
         for listed in tachygrams {
             listed.write(&mut buf).unwrap();
         }
-        assert_eq!(ProofStamp::read(&*buf).unwrap_err().to_string(), expected);
+        assert_eq!(
+            ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf)
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
     }
 }
 
@@ -416,7 +422,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded = ProofStamp::read(&*buf).unwrap();
+    let decoded = ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
@@ -468,8 +474,10 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     assert!(lifted.verify_proof(rng, digests).unwrap());
 
     let foreign = BTreeSet::from([random_action(rng).descriptor()]);
-    let misdescribed = stamp.lift(rng, &foreign, &fees, vec![span]).unwrap();
-    assert!(!misdescribed.verify_proof(rng, digests).unwrap());
+    assert_matches!(
+        stamp.lift(rng, &foreign, &fees, vec![span]),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    );
 }
 
 #[test]
@@ -540,10 +548,8 @@ fn mismatched_merge_descriptors_fail_verification() {
         )
         .collect();
 
-    let merged = bundle_a
-        .stamp
-        .clone()
-        .merge(
+    assert_matches!(
+        bundle_a.stamp.clone().merge(
             rng,
             (descriptors_a.clone(), fees_a.clone()),
             (
@@ -551,10 +557,9 @@ fn mismatched_merge_descriptors_fail_verification() {
                 BTreeSet::from([foreign]),
                 fees_b.clone(),
             ),
-        )
-        .unwrap();
-
-    assert!(!merged.verify_proof(rng, digests.clone()).unwrap());
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    );
 
     let honest = bundle_a
         .stamp

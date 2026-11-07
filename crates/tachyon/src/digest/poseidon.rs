@@ -19,12 +19,17 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
     pasta::{EqAffine, Fp},
+    primitives::TachygramSetCommit,
+    stamp::proof::PROOF_SYSTEM,
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -189,52 +194,42 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     array::from_fn(|_| squeeze(&mut emulator, &mut sponge))
 }
 
-/// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.
-///
-/// The 32-byte encoding carries $x$ with the sign of $y$ in its high bit, so
-/// the limb pair determines the point. Each limb reads 16 bytes little-endian,
-/// far below the $\mathbb{F}_p$ modulus.
-///
-/// # Panics
-///
-/// Panics if `point` is the identity.
-#[expect(clippy::expect_used, reason = "constant-size decomposition")]
-fn point_limbs(point: EqAffine) -> (Fp, Fp) {
-    assert!(
-        !point.is_identity(),
-        "commitment must not be the identity point"
-    );
-
-    let encoding = point.to_bytes();
-    let (lo, hi) = encoding.split_at(16);
-    (
-        Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),
-        Fp::from_u128(u128::from_le_bytes(hi.try_into().expect("16 bytes"))),
-    )
-}
-
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
-/// Advances the anchor by absorbing one stamp's epoch and tachygram-set
-/// commitment.
+/// The bridge hash of a polynomial commitment.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `tgs` is the identity point.
-#[must_use]
-pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
-    let (tgs_lo, tgs_hi) = point_limbs(tgs);
-    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, tgs_lo, tgs_hi])
+/// Fails if the commitment or its bridge hash is the identity.
+pub fn bridge_hash(commitment: EqAffine) -> ragu_core::Result<[Fp; 2]> {
+    let coordinates = PROOF_SYSTEM
+        .bridge_hash(commitment)?
+        .coordinates()
+        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))?;
+    Ok(coordinates.into())
+}
+
+/// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
+///
+/// # Errors
+///
+/// Fails for the empty set's bridge hash or an unusable bridge hash setup.
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: [Fp; 2]) -> ragu_core::Result<Fp> {
+    if tgs == bridge_hash(TachygramSetCommit::default().as_ref().to_affine())? {
+        return Err(ragu_core::Error::InvalidWitness(
+            "invalid anchor step".into(),
+        ));
+    }
+    Ok(hash::<4>(
+        ANCHOR_STAMP_DOMAIN,
+        [anchor_prev, epoch, tgs[0], tgs[1]],
+    ))
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
 const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
-/// Digests a sealed bucket into the leaf of a evidence tree.
-///
-/// # Panics
-///
-/// Panics if `contents` is the identity point.
+/// Digests a sealed bucket's metadata and contents bridge hash into a leaf.
 #[must_use]
 pub fn evidence_tree_leaf(
     epoch: Fp,
@@ -243,9 +238,8 @@ pub fn evidence_tree_leaf(
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
-    contents: EqAffine,
+    contents: [Fp; 2],
 ) -> Fp {
-    let (contents_lo, contents_hi) = point_limbs(contents);
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -255,8 +249,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents_lo,
-            contents_hi,
+            contents[0],
+            contents[1],
         ],
     )
 }
