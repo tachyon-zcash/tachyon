@@ -12,8 +12,10 @@ A value commitment is $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$
 $\mathsf{bvk} = \sum_i \mathsf{cv}_i - [\mathsf{vBalance}]\mathcal{V}$ from the bundle's action
 commitments and its max fee commitment, and verifies the binding signature under it. Each
 commitment's opening `(v, rcv)` is known to whoever produced its leaf: `SpendBind` and the output
-binding compute `cv` in-circuit from the note's value, and `FeeFuse` computes the max fee commitment
-from the max fee note.
+binding compute `cv` in-circuit from the note's value, using private fixed-base certificates.
+`FeeValueCommit` computes the max fee commitment and `FeeBind` ties its blind and maximum to the
+max fee note before `FeeFuse` consumes the certified roots. `StepBudget` proves that erasing these
+helper subgraphs recovers the value equations used here.
 
 The group is cyclic of prime order, so $\mathcal{V}$ and $\mathcal{R}$ always satisfy some linear
 relation, and binding is computational. Following the breaks-as-computed-data discipline, an
