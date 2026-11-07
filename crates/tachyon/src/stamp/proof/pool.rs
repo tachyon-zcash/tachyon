@@ -70,10 +70,10 @@ use crate::{
 /// epoch from the same bucket or the same half, and
 /// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
 ///
-/// Slot `O0` holds the `elapsed` [`NfSeqPoly`], one tested nullifier per epoch
-/// in `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next
-/// segment's to test, or [`SpendBind`](super::spend::SpendBind)'s once a
-/// spendable rests on `anchor_next`.
+/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
+/// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
+/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
+/// on `anchor_next`.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
@@ -85,20 +85,16 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
-/// `ArbitraryUnspent` gadget.
+#[expect(missing_docs, reason = "fields mirror the ArbitraryUnspent header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// `epoch_next`.
     pub epoch_next: Element<'dr, D>,
-    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
 }
 
@@ -144,22 +140,17 @@ impl Header<Fp> for ArbitraryUnspent {
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
-/// `NoteUnspent` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteUnspent header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// `epoch_next`.
     pub epoch_next: Element<'dr, D>,
-    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
 }
 
@@ -205,7 +196,7 @@ impl Header<Fp> for NoteUnspent {
     }
 }
 
-/// An anchor path whose slot `O0` holds the anchors inside it.
+/// An anchor path with a commitment to the anchors inside it.
 ///
 /// The members polynomial has one root for each stamp folded into the span. The
 /// root is the anchor that fold produces. `anchor_end` is a member and
@@ -227,16 +218,14 @@ impl Header<Fp> for NoteUnspent {
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
-/// `AnchorSpan` gadget.
+#[expect(missing_docs, reason = "fields mirror the AnchorSpan header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
 }
 
@@ -270,8 +259,7 @@ impl Header<Fp> for AnchorSpan {
 /// Start an [`AnchorSpan`] from one stamp.
 ///
 /// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
-/// The span's only member is the resulting anchor; `O0` carries that
-/// singleton.
+/// The span's only member is the resulting anchor.
 ///
 /// # Soundness
 ///
@@ -376,9 +364,8 @@ impl Step<Pasta> for AnchorSpanSeed {
 ///
 /// # Soundness
 ///
-/// The product check opens both halves' `R0`/`L0` member slots and the
-/// combined `O0` at a challenge that absorbs all three commitments. `combined`
-/// therefore holds exactly the members of both halves.
+/// The product check opens both member polynomials and their product at a
+/// challenge that absorbs all three commitments.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -572,9 +559,9 @@ impl Step<Pasta> for UnspentFuse {
 ///
 /// # Soundness
 ///
-/// `elapsed` is the left segment's `L0` slot and `contents` the bucket's `R0`
-/// slot. The framework fixes both sequences and stages `value`, so the
-/// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
+/// The framework fixes the input and output polynomials and `value` before
+/// the challenge. The identity
+/// $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
 /// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
 /// plus exactly that member. The member's epoch is `epoch_next`, which
 /// advances by one, so `extended` keeps one member per epoch in
@@ -582,7 +569,6 @@ impl Step<Pasta> for UnspentFuse {
 /// [`UnspentBind`] forces it against the note's derivation.
 ///
 /// Three committed polynomials, each opened once.
-/// `L0` is elapsed, `O0` extended, and `R0` the bucket contents.
 #[derive(Debug)]
 pub struct UnspentLift;
 
@@ -759,7 +745,7 @@ impl Step<Pasta> for UnspentLift {
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
 /// the validated [`NoteUnspent`].
-/// `L0` is elapsed, `R0` the derivation, and `O0` the local complement.
+/// Opens the elapsed sequence, derivation and complement once each.
 #[derive(Debug)]
 pub struct UnspentBind;
 

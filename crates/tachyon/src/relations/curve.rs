@@ -1,4 +1,5 @@
-//! Complete point arithmetic, exporting ordinary finite ragu points.
+//! Point arithmetic that permits identity intermediates and returns finite
+//! points to proof steps.
 
 use alloc::vec::Vec;
 

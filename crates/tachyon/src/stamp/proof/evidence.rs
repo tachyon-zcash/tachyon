@@ -69,22 +69,17 @@ fn bucket_leaf<'dr, D: Driver<'dr, F = Fp>>(
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
-/// `EvidenceTree` gadget.
+#[expect(missing_docs, reason = "fields mirror the EvidenceTree header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// `root`.
     pub root: Element<'dr, D>,
 }
 
@@ -139,24 +134,18 @@ impl Header<Fp> for EvidenceTree {
 #[derive(Clone, Debug)]
 pub struct EvidenceTreePair;
 
-/// `EvidenceTreePair` gadget.
+#[expect(missing_docs, reason = "fields mirror the EvidenceTreePair header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// `first`.
     pub first: Element<'dr, D>,
-    /// `second`.
     pub second: Element<'dr, D>,
 }
 

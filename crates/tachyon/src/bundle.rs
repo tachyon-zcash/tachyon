@@ -74,8 +74,8 @@
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
-//! Full and compressed proofs share state `0x01`; typed reads use the proof
-//! type's encoded length. `TachyonBundle` is the compressed block form.
+//! Full and compressed proofs share state `0x01`. The proof type determines
+//! the encoded length. [`TachyonBundle`] carries compressed proofs.
 //!
 //! ## Pointer stamp
 //!
@@ -113,8 +113,8 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProofType, ProveError,
-        StampState, Unproven, proof::pool,
+        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
+        Unproven, proof::pool,
     },
     value,
 };
@@ -163,7 +163,8 @@ impl StateByte {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
-    impl<P: super::stamp::ProofType> Sealed for super::ProofStamp<P> {}
+    impl Sealed for super::ProofStamp<ragu::Proof<super::Pasta, super::ProductionRank>> {}
+    impl Sealed for super::ProofStamp<ragu::CompressedProof<super::Pasta>> {}
     impl Sealed for super::PointerStamp {}
 }
 
@@ -661,7 +662,10 @@ impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
     }
 }
 
-impl<P: ProofType> Bundle<ProofStamp<P>> {
+impl<P> Bundle<ProofStamp<P>>
+where
+    ProofStamp<P>: StampState,
+{
     /// Confirm `hStampCoverageTachyon` represents the combined actions and
     /// fee descriptors of this bundle and the given bundles.
     #[must_use]
@@ -794,7 +798,86 @@ impl<P: ProofType> Bundle<ProofStamp<P>> {
             adjuncts.iter().map(|&adj| adj.fee_descriptor()).collect(),
         ))
     }
+}
 
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "concrete proof verification follows the shared stamp checks"
+)]
+impl Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
+    /// Verify the stamp's proof against the given action digests, which
+    /// include the digests of covered fee descriptors.
+    ///
+    /// # Soundness
+    ///
+    /// The parameter is a multiset: order does not matter, multiplicity does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
+    pub fn verify_proof<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        action_digests: &[ActionDigest],
+    ) -> Result<bool, ragu_core::Error> {
+        self.stamp.verify_proof(rng, action_digests.iter().copied())
+    }
+
+    /// Verify everything about this bundle. Does not verify any details about
+    /// the provided adjuncts.
+    ///
+    /// - Signatures are valid
+    /// - Adjuncts are covered
+    /// - Tachygrams are consistent
+    /// - Proof is correct
+    ///
+    /// If you need more control, call each verify method directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerificationError`] if any of those checks fails, or if the
+    /// proof is disproved.
+    pub fn verify<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        sighash: &[u8; 32],
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<PointerStamp>],
+    ) -> Result<(), VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+
+        let (adjunct_descs, adjunct_fee_descriptors) = self
+            .verify_pointers(wtxid, adjuncts)
+            .map_err(VerificationError::Pointers)?;
+
+        let (covered_descs, covered_fee_descriptors) = self
+            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
+            .map_err(VerificationError::Coverage)?;
+
+        self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
+            .map_err(VerificationError::Tachygrams)?;
+
+        let covered_digests = covered_descs
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(VerificationError::Actions)?;
+
+        if self
+            .verify_proof(rng, &covered_digests)
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(())
+        } else {
+            Err(VerificationError::Disproved)
+        }
+    }
+}
+
+impl Bundle<ProofStamp<ragu::CompressedProof<Pasta>>> {
     /// Verify the stamp's proof against the given action digests, which
     /// include the digests of covered fee descriptors.
     ///

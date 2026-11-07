@@ -1,4 +1,4 @@
-//! Generic fixed-width circuit arithmetic.
+//! Range checks and integer operations for proof steps.
 
 use ragu_core::{
     Result,
@@ -16,8 +16,8 @@ use crate::{
     pasta::{Fp, Fq},
     primitives::EpochIndex,
 };
-/// Unique little-endian decomposition. The canonical comparison matters at
-/// 255 bits, where a modular recomposition alone would allow aliases.
+/// At 255 bits, the representation must also be below the field modulus;
+/// otherwise distinct bit strings could represent the same field element.
 #[expect(clippy::indexing_slicing, reason = "fixed field and bit widths")]
 pub(crate) fn bits<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     dr: &mut D,
@@ -57,9 +57,8 @@ pub(crate) fn bits<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     Ok(bits)
 }
 
-/// Bounded unsigned integer: both the value and its slack have N bits.
-/// The caller supplies a public maximum below 2^N; N is at most 64, so
-/// neither side of the slack equation can wrap in the circuit field.
+/// The caller supplies a public maximum below 2^N. Both the value and
+/// `maximum - value` must fit N bits, preventing field wraparound.
 pub(crate) fn bounded<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     dr: &mut D,
     value: &Element<'dr, D>,
@@ -78,8 +77,8 @@ pub(crate) fn bounded<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     Ok(())
 }
 
-/// A free scalar's canonical bits. It is used only as a blinding witness;
-/// no arithmetic-field embedding of Fq into Fp is assumed.
+/// Blinding scalars live in Fq, not the circuit's Fp. Their bits are checked
+/// against the Fq modulus without converting the scalar to Fp.
 #[expect(clippy::indexing_slicing, reason = "fixed 255-bit scalar width")]
 pub(crate) fn scalar_bits<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
@@ -106,7 +105,6 @@ pub(crate) fn scalar_bits<'dr, D: Driver<'dr, F = Fp>>(
     Ok(bits)
 }
 
-/// A bounded epoch successor, including the input's unsigned range.
 pub(crate) fn epoch_next<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     epoch: &Element<'dr, D>,
@@ -118,7 +116,7 @@ pub(crate) fn epoch_next<'dr, D: Driver<'dr, F = Fp>>(
     Ok(next)
 }
 
-/// Read a range-checked epoch into the prover-side header carrier.
+/// Requires an epoch that has already passed the range check.
 pub(crate) fn epoch_value<'dr, D: Driver<'dr, F = Fp>>(
     epoch: &Element<'dr, D>,
 ) -> DriverValue<D, EpochIndex> {

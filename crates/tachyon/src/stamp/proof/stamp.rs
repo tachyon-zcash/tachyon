@@ -39,10 +39,10 @@ use crate::{
 
 /// Non-empty proven action content with no fee in its lineage.
 ///
-/// Slot `O0` carries the action-digest set and `O1` the tachygram set. Each
-/// leaf step ([`OutputAction`], [`SpendAction`]) witnesses both set
-/// polynomials and enforces them against their roots at a Fiat-Shamir
-/// challenge. The action set is enforced against the action the step derives,
+/// The output polynomials are the action-digest and tachygram sets. Each leaf
+/// step ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
+/// and enforces them against their roots at a Fiat-Shamir challenge.
+/// The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
 /// [`ActionMerge`] enforces each output set as the product of its inputs.
 ///
@@ -54,14 +54,13 @@ use crate::{
 #[derive(Debug)]
 pub struct Actions;
 
-/// `Actions` gadget.
+#[expect(missing_docs, reason = "fields mirror the Actions header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
 }
 
@@ -86,11 +85,11 @@ impl Header<Fp> for Actions {
 /// Header for one or more fee-bearing lineages.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets, which slots `O0` and `O1` carry.
-/// Their circuit fields are bridge-hash-style double commitments.
-/// Every producer takes `stamp_tg_commit` from the O1 oracle; #944 has no
-/// corresponding oracle for the O0 double commitment. [`StampMerge`]
-/// enforces each output set as the product of its child slots.
+/// the action-digest and tachygram sets.
+/// Their circuit representation commits to the original commitment's
+/// coordinates using `Application::bridge_hash`. Ragu binds the tachygram
+/// field to the second output polynomial, but has no equivalent binding for
+/// the action field. [`StampMerge`] proves the products of its input sets.
 ///
 /// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
 /// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
@@ -103,18 +102,15 @@ impl Header<Fp> for Actions {
 #[derive(Debug)]
 pub struct Stamp;
 
-/// `Stamp` gadget.
+#[expect(missing_docs, reason = "fields mirror the Stamp header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// Double commitment of `action_commit` (not oracle-bound to O0).
     pub action_commit: [Element<'dr, D>; 2],
-    /// Double commitment of `stamp_tg_commit`, bound to O1 by each producer.
     pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
@@ -473,7 +469,8 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
+/// Opens both inputs' action and tachygram sets and both products at one
+/// challenge.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -575,7 +572,8 @@ impl Step<Pasta> for StampMerge {
 
 /// Merges action content.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared ζ.
+/// Opens both inputs' action and tachygram sets and both products at one
+/// challenge.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -677,11 +675,11 @@ impl Step<Pasta> for ActionMerge {
 /// does not record the order of its members. A stamp already at `anchor_end`
 /// keeps its anchor.
 ///
+/// Opens the span members and both input and output action and tachygram sets.
+///
 /// # Soundness
 ///
-/// The step opens the span's $M$ at the stamp's anchor. A stamp anchored
-/// outside the span passes only if its anchor collides with `anchor_start` or a
-/// member.
+/// The span's member polynomial $M$ is bound by the right input proof.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -764,7 +762,7 @@ impl Step<Pasta> for StampLift {
 /// The actions' `anchor` must be the span's `anchor_start` or one of its
 /// members.
 ///
-/// Opens five slots: R0 (span members), L0/L1 and O0/O1 (preserved sets).
+/// Opens the span members and both input and output action and tachygram sets.
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -835,8 +833,8 @@ impl Step<Pasta> for ActionLift {
 /// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
 /// note's commitment to the action and tachygram sets.
 ///
-/// Opens `L0/L1/O0/O1`; the note fields and fee are staged before ζ, so
-/// the two driver-derived singleton factors need no separate oracle.
+/// Opens both input and output sets. The fee note and fee are fixed before
+/// the challenge.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -992,7 +990,8 @@ impl Step<Pasta> for FeeFuse {
 }
 
 /// Proves a zero-action bundle's zero fee.
-/// `O0/O1` carry singleton sets; the note's `pk/psi/rcm` are staged before ζ.
+///
+/// Opens both singleton sets. The fee note is fixed before the challenge.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1163,8 +1162,8 @@ impl Step<Pasta> for FeeSeed {
 /// hand, and merging in a complement first lets division remove any leaf
 /// multiset the stamps in hand combine to express.
 ///
-/// Six committed polynomials and six openings at the framework's shared
-/// challenge, with child-slot binding and one scalar equality.
+/// Opens all six polynomials once at the same challenge and requires the
+/// dividend and divisor to have matching anchors.
 #[derive(Debug)]
 pub struct StampUnmerge;
 

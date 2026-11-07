@@ -462,8 +462,8 @@ fn stamped_bundle_round_trips() {
     stamped.write(&mut buf).unwrap();
     let decoded = Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*buf).unwrap();
     assert_eq!(
-        TachyonBundle::read(&*buf).unwrap_err().to_string(),
-        "invalid proof encoding"
+        TachyonBundle::read(&*buf).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
     );
     assert_eq!(decoded.actions, stamped.actions);
     assert_eq!(decoded.value_balance, stamped.value_balance);

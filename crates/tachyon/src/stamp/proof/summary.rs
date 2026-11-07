@@ -32,24 +32,20 @@ use crate::{
 
 /// One summarized run of an epoch's stamps.
 ///
-/// Slot O0 commits the root polynomial of every tachygram in the run,
-/// which is exactly the set of stamps folded over the coverage extent
-/// `(anchor_prev, anchor_end]`.
+/// The first output polynomial contains every tachygram from the stamps folded
+/// over `(anchor_prev, anchor_end]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-/// `Summary` gadget.
+#[expect(missing_docs, reason = "fields mirror the Summary header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
 }
 

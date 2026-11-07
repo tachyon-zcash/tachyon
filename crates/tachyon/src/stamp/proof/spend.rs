@@ -39,24 +39,18 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendHeader;
 
-/// `SpendHeader` gadget.
+#[expect(missing_docs, reason = "fields mirror the SpendHeader header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `nf_current`.
     pub nf_current: Element<'dr, D>,
-    /// `nf_next`.
     pub nf_next: Element<'dr, D>,
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// `pk`.
     pub pk: Element<'dr, D>,
-    /// `cv`.
     pub cv: Point<'dr, D, C>,
 }
 
@@ -123,17 +117,16 @@ impl Header<Fp> for SpendHeader {
 ///
 /// # Soundness
 ///
-/// `mk`, `cm` and the note are threaded from the right header, bound together
-/// at [`NoteSeed`](super::delegation::NoteSeed). `epoch_current` is a
-/// left-header field, and $e + 1$ is a bounded driver-side successor. The pair,
-/// `pk` and the value are threaded or computed from threaded values, so nothing
-/// in them is free. `rcv` is free; it only blinds `cv`.
+/// [`NoteSeed`](super::delegation::NoteSeed) proves that the input master key,
+/// commitment and note belong together. The spendable proof supplies the epoch;
+/// the circuit checks that its successor remains in range. The nullifier pair,
+/// payment key and value all come from these proved inputs. Only the value
+/// commitment's blinding scalar `rcv` is freely chosen.
 ///
 /// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
 pub struct SpendBind;
 
-/// Derive one group and select its lane using the epoch's constrained low bits.
 #[expect(
     clippy::indexing_slicing,
     clippy::missing_asserts_for_indexing,

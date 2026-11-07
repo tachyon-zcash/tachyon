@@ -43,31 +43,24 @@ use crate::{
 /// A note's certified record: its commitment, its opening, and its master key
 /// (wallet-only).
 ///
-/// `mk` is derived from the note's secrets by [`NoteSeed`] and certified here,
-/// so every consuming [`NullifierDerive`] threads a genuine master key without
-/// re-witnessing the note. `note` is the opening `cm` commits to.
+/// [`NoteSeed`] proves that `mk` belongs to the note, so [`NullifierDerive`]
+/// can use it without proving the note's opening again.
 /// [`SpendBind`](super::spend::SpendBind) reads it.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-/// `NoteSecret` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteSecret header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `note.rcm`.
     pub rcm: Element<'dr, D>,
-    /// `note.pk`.
     pub pk: Element<'dr, D>,
-    /// `note.value`.
     pub value: Element<'dr, D>,
-    /// `note.psi`.
     pub psi: Element<'dr, D>,
-    /// `mk`.
     pub mk: Element<'dr, D>,
 }
 
@@ -118,9 +111,8 @@ impl Header<Fp> for NoteSecret {
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
-/// `[epoch_start, epoch_end]`; `nf_commit` commits the range's nullifier
-/// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
+/// Covers epochs `[epoch_start, epoch_end]`. The output polynomial is an
+/// [`NfSeqPoly`] with exactly one member per covered epoch. That
 /// invariant is established at [`NullifierDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
 /// lean on for per-epoch completeness. `cm` binds the range to the real
@@ -135,18 +127,15 @@ impl Header<Fp> for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-/// `NoteNullifiers` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteNullifiers header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
 }
 
@@ -294,32 +283,19 @@ impl Step<Pasta> for NoteSeed {
 /// Derive one window of nullifiers and export it as a
 /// [`NoteNullifiers`].
 ///
-/// `Left = NoteSeed`. Witnesses the window's start epoch (constrained
-/// group-aligned, $w \bmod r = 0$ for $r$ the sponge rate `PoseidonFp::RATE`)
-/// and the window sequence. Runs one `Tachyon-NfDerive` sponge per group over
-/// $(\mathsf{mk}, w)$, each absorbing two elements and squeezing $r$
-/// nullifiers for one permutation, then binds the sequence to the window's
-/// members by a single opening at a free $z$ against their driver-computed
-/// product.
+/// The window starts on a group boundary. One `Tachyon-NfDerive` sponge per
+/// group absorbs the note's master key and the group's first epoch, then
+/// produces `PoseidonFp::RATE` nullifiers.
 ///
 /// # Soundness
 ///
-/// `mk` is threaded from the left header, so it is the note's genuine master
-/// key by PCD soundness. The opening's only free operand is the window
-/// sequence, committed before $z$ exists.
+/// The input proof identifies the note's master key. The start epoch is fixed
+/// before the challenge; its two low bits must be zero, and the final epoch
+/// must remain in range. The circuit derives every nullifier and index from
+/// those inputs. Opening the committed sequence at the random challenge
+/// checks the whole window, whose bounds are published on the output header.
 ///
-/// `epoch_start` is a free witness constrained group-aligned, pinned by the
-/// header it produces: it is emitted on the header directly, so every choice
-/// is an honestly labelled window. A fixed-width Boolean decomposition pins
-/// its unsigned representation, and its two low bits are constrained zero.
-/// Bounding the derived final epoch excludes windows beyond the epoch domain.
-///
-/// `epoch_start` is staged before $z$; each epoch index is that start plus a
-/// circuit constant. The nullifier scalars are sponge outputs of the
-/// threaded `mk`, pinned in-circuit, so the product identity alone forces
-/// every member.
-///
-/// Polynomial inventory: `O0` is the derived sequence; stage `epoch_start`.
+/// Opens the derived sequence once.
 #[derive(Debug)]
 pub struct NullifierDerive;
 
@@ -464,8 +440,8 @@ impl Step<Pasta> for NullifierDerive {
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end + 1`). Witnesses the two range polynomials and their
-/// concatenation, and proves the concat over the child slots as the product
+/// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
+/// product
 ///
 /// $$
 ///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
@@ -481,8 +457,7 @@ impl Step<Pasta> for NullifierDerive {
 /// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
 ///
-/// Polynomial inventory: `L0` and `R0` are the halves, `O0` their
-/// concatenation.
+/// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]
 pub struct NullifierFuse;
 

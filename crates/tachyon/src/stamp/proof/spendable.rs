@@ -41,18 +41,15 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
-/// `NoteSpendable` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteSpendable header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `epoch_current`.
     pub epoch_current: Element<'dr, D>,
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
 }
 

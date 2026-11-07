@@ -62,34 +62,8 @@ fn enforce_stamp_domain<'dr, D: Driver<'dr, F = pasta::Fp>>(
     bounded::<D, 32>(dr, epoch, u64::from(EPOCH_MAX))
 }
 
-/// Application-wide encoded header width, including one suffix element.
-///
-/// | Header           | Scalars | Points | Commitments  | Payload |
-/// | ---------------- | ------: | -----: | -----------: | ------: |
-/// | NoteSecret       | 6       | 0      | 0            | 6       |
-/// | NoteNullifiers   | 3       | 0      | 0            | 3       |
-/// | ArbitraryUnspent | 4       | 0      | 0            | 4       |
-/// | NoteUnspent      | 5       | 0      | 0            | 5       |
-/// | NoteSpendable    | 3       | 0      | 0            | 3       |
-/// | SpendHeader      | 5       | 1      | 0            | 7       |
-/// | OutputHeader     | 2       | 1      | 0            | 4       |
-/// | Actions          | 1       | 0      | 0            | 1       |
-/// | Stamp            | 1       | 0      | 2            | 5       |
-/// | Summary          | 3       | 0      | 0            | 3       |
-/// | QrIntake         | 6       | 0      | 0            | 6       |
-/// | QrBucket         | 6       | 0      | 1            | 8       |
-/// | QrIntakeSides    | 8       | 0      | 0            | 8       |
-/// | QrSideSelection  | 8       | 0      | 0            | 8       |
-/// | EvidenceTree     | 5       | 0      | 0            | 5       |
-/// | EvidenceTreePair | 6       | 0      | 0            | 6       |
-/// | AnchorSpan       | 2       | 0      | 0            | 2       |
-///
-/// Points and double commitments each write two coordinates.
-/// Other headers' polynomials live in their slots, not on the header.
-/// Stamp certifies its O1 double commitment; QrBucket certifies its contents
-/// double commitment. Stamp's O0 double commitment has no oracle binding.
-/// QR split/selection and QrBucket require eight payload elements, so nine is
-/// minimal. Steps have one application fragment.
+/// Eight payload elements for QR split, selection and bucket headers, plus one
+/// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
 fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
