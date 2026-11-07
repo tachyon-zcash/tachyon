@@ -74,8 +74,8 @@
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
-//! Full and compressed proofs share state `0x01`; typed reads use the proof
-//! type's encoded length. `TachyonBundle` is the compressed block form.
+//! Full and compressed proofs share state `0x01`. The proof type determines
+//! the encoded length. [`TachyonBundle`] carries compressed proofs.
 //!
 //! ## Pointer stamp
 //!

@@ -683,18 +683,18 @@ pub trait ProofType: sealed::Sealed + Clone + 'static {
     /// Returns an error if the proof has no encoding.
     fn to_bytes(&self) -> io::Result<Vec<u8>>;
 
-    /// Decode this proof type through Ragu's public API.
+    /// Decode Ragu's envelope and payload.
     ///
     /// # Errors
     ///
     /// Returns an error for malformed bytes or the other proof form.
     fn from_bytes(bytes: &[u8]) -> io::Result<Self>;
 
-    /// Verify the proof against the reconstructed stamp header.
+    /// Return whether the proof verifies against the stamp header.
     ///
     /// # Errors
     ///
-    /// Returns an error if proof-system verification fails.
+    /// Returns an error if verification cannot complete.
     fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -765,15 +765,6 @@ impl ProofType for ragu::CompressedProof<Pasta> {
 ///
 /// Only the uncompressed proof type supports lifting, merging and
 /// unmerging. Compressed stamps support reading, writing and verification.
-///
-/// ```compile_fail,E0599
-/// use ragu_core::pasta::Pasta;
-/// use zcash_tachyon::ProofStamp;
-///
-/// fn lift_compressed(stamp: ProofStamp<ragu::CompressedProof<Pasta>>, rng: &mut impl rand_core::CryptoRng) {
-///     stamp.lift(rng, &Default::default(), &Default::default(), vec![]);
-/// }
-/// ```
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P> {
     /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
@@ -1356,8 +1347,7 @@ impl<P: ProofType> ProofStamp<P> {
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
     /// The header is built from [`Self::tachygram_set`], so the published
-    /// [`Self::tachygrams`] are not read here. For a full proof, its `O0` and
-    /// `O1` slot commitments are also checked against those sets.
+    /// [`Self::tachygrams`] are not read here.
     ///
     /// # Errors
     ///
@@ -1376,14 +1366,12 @@ impl<P: ProofType> ProofStamp<P> {
 }
 
 impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
-    /// Compresses the proof for the block, computing the action digests from
-    /// the covered descriptors. The compressed stamp keeps this stamp's
-    /// coverage, anchor, tachygrams and fee.
+    /// Compresses the proof against the covered action and fee descriptors.
     ///
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or the
-    /// proof does not verify against the covered descriptors.
+    /// proof-system compression fails.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,

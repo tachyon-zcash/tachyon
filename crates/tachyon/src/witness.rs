@@ -75,7 +75,7 @@ pub fn nullifier_derive(
 }
 
 /// Prepare the witness for [`NullifierFuse`]:
-/// `(merged_seq)`.
+/// `(merged_seq,)`.
 #[must_use]
 pub fn nullifier_fuse(
     (left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
@@ -88,7 +88,7 @@ pub fn nullifier_fuse(
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
-/// `(combined_elapsed_seq)`.
+/// `(combined_elapsed_seq,)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch.
@@ -104,7 +104,7 @@ pub fn unspent_fuse(
 }
 
 /// Prepare the witness for [`UnspentBind`]:
-/// `(complement_seq)`.
+/// `(complement_seq,)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
@@ -162,7 +162,7 @@ pub fn anchor_span_seed(
     )
 }
 
-/// Prepare the witness for [`AnchorSpanFuse`]: `(combined)`.
+/// Prepare the witness for [`AnchorSpanFuse`]: `(combined,)`.
 ///
 /// `left_members` and `right_members` are the members polynomials of the two
 /// halves.
@@ -248,7 +248,7 @@ pub const fn qr_empty_intake_seed(
     (anchor, epoch, discriminant)
 }
 
-/// Prepare the witness for [`QrIntakeMerge`]: `(merged)`.
+/// Prepare the witness for [`QrIntakeMerge`]: `(merged,)`.
 #[must_use]
 pub fn qr_intake_merge(
     (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),

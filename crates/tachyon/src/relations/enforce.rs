@@ -1,11 +1,6 @@
-//! Each relation here is a convenience tool over the framework's
-//! [`Oracles::query`] hook at the challenge. They share one shape: the result
-//! is prover-supplied (built off-circuit) rather than computed by the relation,
-//! the framework fixes each operand's slot before deriving a
-//! Fiat-Shamir challenge `z`, and the relation checks the defining
-//! algebraic identity at `z`, emitting one opening claim per operand at
-//! `(commitment, z, eval(z))`. These functions only *record* the openings;
-//! actually verifying them is the proof system's job, not done here.
+//! The framework commits the prover-supplied polynomials before deriving the
+//! Fiat-Shamir challenge $z$. Each relation checks its algebraic identity at
+//! $z$ through [`Oracles::query`]. The proof system verifies the openings.
 //!
 //! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
 //! into `z`, so the operands are fixed *before* `z` exists and the identity at
@@ -42,7 +37,6 @@ use udon::field::Field as _;
 
 use crate::pasta::Fp;
 
-/// Preserve a carried polynomial when a step copies a slot.
 pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     oracles: &mut Oracles<'_, 'dr, D>,
@@ -103,11 +97,9 @@ pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
 ///
 /// # Caller obligation (soundness)
 ///
-/// Only the accumulator is committed and absorbed into `z`; the module-level
-/// binding obligation applies to it. The roots are scalars: each must already
-/// be pinned before this relation contributes anything -- a header-bound value,
-/// a value derived in-circuit from bound values, or a free scalar staged before
-/// the framework's challenge. The call site states each root's pin.
+/// The module-level binding obligation applies to the accumulator. Each root
+/// must be fixed before $z$ by an input header, derivation from fixed values,
+/// or staging. The call site states each root's binding.
 ///
 /// `N` fixes the root count at compile time.
 pub(crate) fn enforce_poly_roots<'dr, D: Driver<'dr, F = Fp>, const N: usize>(

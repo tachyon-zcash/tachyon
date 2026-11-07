@@ -48,24 +48,18 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-/// `NoteSecret` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteSecret header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `note.rcm`.
     pub rcm: Element<'dr, D>,
-    /// `note.pk`.
     pub pk: Element<'dr, D>,
-    /// `note.value`.
     pub value: Element<'dr, D>,
-    /// `note.psi`.
     pub psi: Element<'dr, D>,
-    /// `mk`.
     pub mk: Element<'dr, D>,
 }
 
@@ -116,9 +110,8 @@ impl Header<Fp> for NoteSecret {
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
-/// `[epoch_start, epoch_end]`; `nf_commit` commits the range's nullifier
-/// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
+/// Covers epochs `[epoch_start, epoch_end]`. The output polynomial is an
+/// [`NfSeqPoly`] with exactly one member per covered epoch. That
 /// invariant is established at [`NullifierDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
 /// lean on for per-epoch completeness. `cm` binds the range to the real
@@ -133,18 +126,15 @@ impl Header<Fp> for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-/// `NoteNullifiers` gadget.
+#[expect(missing_docs, reason = "fields mirror the NoteNullifiers header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
-    /// `cm`.
     pub cm: Element<'dr, D>,
-    /// `epoch_start`.
     pub epoch_start: Element<'dr, D>,
-    /// `epoch_end`.
     pub epoch_end: Element<'dr, D>,
 }
 
@@ -276,12 +266,12 @@ impl Step<Pasta> for NoteSeed {
 /// circuit needs a low-bit decomposition of the witnessed epoch, since
 /// $4q = e$ is always solvable in the field.)
 ///
-/// `epoch_start` is staged before $z$; each epoch index is that start plus a
+/// `epoch_start` is fixed before $z$. Each epoch index is that start plus a
 /// circuit constant. The nullifier scalars are sponge outputs of the
 /// threaded `mk`, pinned in-circuit, so the product identity alone forces
 /// every member.
 ///
-/// Polynomial inventory: `O0` is the derived sequence; stage `epoch_start`.
+/// Opens the derived sequence once.
 #[derive(Debug)]
 pub struct NullifierDerive;
 
@@ -417,8 +407,8 @@ impl Step<Pasta> for NullifierDerive {
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end + 1`). Witnesses the two range polynomials and their
-/// concatenation, and proves the concat over the child slots as the product
+/// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
+/// product
 ///
 /// $$
 ///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
@@ -434,8 +424,7 @@ impl Step<Pasta> for NullifierDerive {
 /// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
 ///
-/// Polynomial inventory: `L0` and `R0` are the halves, `O0` their
-/// concatenation.
+/// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]
 pub struct NullifierFuse;
 

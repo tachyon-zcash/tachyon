@@ -51,32 +51,26 @@ use crate::{
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
-/// Tachygrams under routing, complete for `profile` over `(anchor_prev,
-/// anchor_end]`.
+/// Tachygrams under routing, complete for `profile` over the covered span.
 ///
+/// Covers stamp folds over `(anchor_prev, anchor_end]`.
 /// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
-/// `QrIntake` gadget.
+#[expect(missing_docs, reason = "fields mirror the QrIntake header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// `profile.bits`.
     pub bits: Element<'dr, D>,
 }
 
@@ -131,33 +125,27 @@ impl Header<Fp> for QrIntake {
     }
 }
 
-/// A factorization of one intake's members. Selection checks the exceptional
-/// value; descent checks the sibling's class.
+/// A factorization of one intake's members. Selecting and extracting either
+/// side attests the exceptional-value assignment and the other side's class.
 ///
-/// Slots O0/O1 carry the residue/non-residue sides.
+/// The output polynomials are ordered residue, then non-residue.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
-/// `QrIntakeSides` gadget.
+#[expect(missing_docs, reason = "fields mirror the QrIntakeSides header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_prev`.
     pub anchor_prev: Element<'dr, D>,
-    /// `anchor_end`.
     pub anchor_end: Element<'dr, D>,
-    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// `profile.bits`.
     pub bits: Element<'dr, D>,
-    /// Bridge hash of the non-residue polynomial in O1.
+    /// Bridge hash of the split's non-residue polynomial.
     pub non_residue_hash: [Element<'dr, D>; 2],
 }
 
@@ -224,10 +212,9 @@ impl Header<Fp> for QrIntakeSides {
     }
 }
 
-/// Split metadata and committed hints for a descent.
+/// A split statement and committed hints for a descent.
 ///
-/// Slots O0/O1 carry the interpolant and quotient. The source's bridge hash
-/// binds its non-residue polynomial.
+/// The output polynomials are the interpolant and quotient.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
@@ -459,9 +446,8 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// # Soundness
 ///
-/// Both contents are the input intakes' `L0`/`R0` slots. Consensus forbids
-/// republishing a tachygram within two epochs, so the sets are disjoint and the
-/// product is the union's root polynomial.
+/// Consensus forbids republishing a tachygram within two epochs, so the sets
+/// are disjoint and the product is the union's root polynomial.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -569,9 +555,9 @@ impl Step<Pasta> for QrIntakeMerge {
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents.
-/// [`QrSideSelect`] checks the exceptional value; [`QrSideDescend`] checks the
-/// sibling's class. `L0` is contents; `O0/O1` are residue/non-residue.
-/// Each slot opens once at the product challenge.
+/// [`QrSideSelect`] checks the exceptional-value assignment, and
+/// [`QrSideDescend`] attests each child's sibling.
+/// The contents and both sides open once each at the product challenge.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -659,10 +645,10 @@ impl Step<Pasta> for QrIntakeSplit {
     }
 }
 
-/// Fix hints in O0/O1 and check the exceptional-value assignment.
+/// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// L1 is the non-residue side and opens once at -R. The hints are unopened;
-/// descent checks their class identity.
+/// The non-residue contents open once at $-R$; the two hint polynomials supply
+/// output commitments. [`QrSideDescend`] checks their class identity.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -738,22 +724,19 @@ impl Step<Pasta> for QrSideSelect {
 ///
 /// # Soundness
 ///
-/// The sibling is the input's unselected side slot; the framework challenge
-/// fixes both inputs' slots and metadata, and the side bit is staged. Every
-/// root of the sibling then satisfies $u(x)^2 = c \cdot (x + R)$ at the
-/// sibling's class $c$, and the split's product places every member of the
-/// other class in the child. The child may hold a stray member of the
+/// The selection's metadata and non-residue bridge hash match the split.
+/// The framework fixes both inputs' polynomials and the side bit before the
+/// challenge. Every root of the sibling satisfies $u(x)^2 = c \cdot (x + R)$
+/// at the sibling's class $c$, and the split's product places every member of
+/// the other class in the child. The child may hold a stray member of the
 /// sibling's class; consumers open it nonzero, so a stray member cannot pass a
 /// value that is present. $R$ is read off the header, so a descent classifies
 /// at the same $R_0$ as every other step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 ///
-/// Polynomial inventory: `L0/L1` are the sides; `R0/R1` are the interpolant
-/// and quotient. These four slots and the selected output O0 open once each
-/// at zeta, checking the `polynomials()` copy. Matching selection metadata and
-/// the non-residue bridge hash binds the exceptional-value check to the same
-/// q0.
+/// Opens both sides, the interpolant, the quotient and the selected output
+/// once each at $\zeta$.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -945,24 +928,18 @@ impl Step<Pasta> for QrSideDescend {
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
-/// `QrBucket` gadget.
+#[expect(missing_docs, reason = "fields mirror the QrBucket header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
-    /// `epoch`.
     pub epoch: Element<'dr, D>,
-    /// `anchor_start`.
     pub anchor_start: Element<'dr, D>,
-    /// `anchor_next`.
     pub anchor_next: Element<'dr, D>,
-    /// `discriminant`.
     pub discriminant: Element<'dr, D>,
-    /// `profile.depth`.
     pub depth: Element<'dr, D>,
-    /// `profile.bits`.
     pub bits: Element<'dr, D>,
 }
 
@@ -1050,7 +1027,6 @@ impl Header<Fp> for QrBucket {
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
-/// `L0` is copied to `O0`.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 

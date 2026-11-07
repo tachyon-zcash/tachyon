@@ -37,10 +37,10 @@ use crate::{
 
 /// Non-empty proven action content with no fee in its lineage.
 ///
-/// Slot `O0` carries the action-digest set and `O1` the tachygram set. Each
-/// leaf step ([`OutputAction`], [`SpendAction`]) witnesses both set
-/// polynomials and enforces them against their roots at a Fiat-Shamir
-/// challenge. The action set is enforced against the action the step derives,
+/// The output polynomials are the action-digest and tachygram sets. Each leaf
+/// step ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
+/// and enforces them against their roots at a Fiat-Shamir challenge.
+/// The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
 /// [`ActionMerge`] enforces each output set as the product of its inputs.
 ///
@@ -52,14 +52,13 @@ use crate::{
 #[derive(Debug)]
 pub struct Actions;
 
-/// `Actions` gadget.
+#[expect(missing_docs, reason = "fields mirror the Actions header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
 }
 
@@ -84,7 +83,7 @@ impl Header<Fp> for Actions {
 /// Header for one or more fee-bearing lineages.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets, which slots `O0` and `O1` carry.
+/// the action-digest and tachygram sets.
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
@@ -99,18 +98,15 @@ impl Header<Fp> for Actions {
 #[derive(Debug)]
 pub struct Stamp;
 
-/// `Stamp` gadget.
+#[expect(missing_docs, reason = "fields mirror the Stamp header")]
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
     reason = "gadgets do not implement Debug"
 )]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
-    /// `anchor`.
     pub anchor: Element<'dr, D>,
-    /// `action_commit`.
     pub action_commit: [Element<'dr, D>; 2],
-    /// `stamp_tg_commit`.
     pub stamp_tg_commit: [Element<'dr, D>; 2],
 }
 
@@ -464,8 +460,8 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
-/// $\zeta$.
+/// Opens both inputs' action and tachygram sets and both products at one
+/// challenge.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -587,8 +583,8 @@ impl Step<Pasta> for StampMerge {
 
 /// Merges action content.
 ///
-/// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
-/// $\zeta$.
+/// Opens both inputs' action and tachygram sets and both products at one
+/// challenge.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -683,13 +679,11 @@ impl Step<Pasta> for ActionMerge {
 /// does not record the order of its members. A stamp already at `anchor_end`
 /// keeps its anchor.
 ///
-/// Opens five slots: R0 (span members), L0/L1 and O0/O1 (preserved sets).
+/// Opens the span members and both input and output action and tachygram sets.
 ///
 /// # Soundness
 ///
-/// The step opens $M$ at the stamp's anchor, and checks $M$'s commitment
-/// against the header's `members`. A stamp anchored outside the span passes
-/// only if its anchor collides with `anchor_start` or a member.
+/// The span's member polynomial $M$ is bound by the right input proof.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -766,7 +760,7 @@ impl Step<Pasta> for StampLift {
 /// The actions' `anchor` must be the span's `anchor_start` or one of its
 /// members.
 ///
-/// Opens five slots: R0 (span members), L0/L1 and O0/O1 (preserved sets).
+/// Opens the span members and both input and output action and tachygram sets.
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -835,7 +829,8 @@ impl Step<Pasta> for ActionLift {
 /// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
 /// note's commitment to the action and tachygram sets.
 ///
-/// Opens L0/L1 and O0/O1, with singleton factors fixed by the staged fee note.
+/// Opens both input and output sets. The fee note and fee are fixed before
+/// the challenge.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -1001,8 +996,7 @@ impl Step<Pasta> for FeeFuse {
 
 /// Proves a zero-action bundle's zero fee.
 ///
-/// Opens O0/O1 singleton sets at $\zeta$, with fee-note fields staged before
-/// $\zeta$.
+/// Opens both singleton sets. The fee note is fixed before the challenge.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1011,7 +1005,7 @@ impl Step<Pasta> for FeeSeed {
     type Left = ();
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, anchor, output_action_set, output_tachygram_set)`
+    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
     type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(36);
