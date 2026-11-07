@@ -464,8 +464,6 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Each witness entry is an `(action_set, tachygram_set)` pair.
-///
 /// Opens six slots: L0/L1 and R0/R1 inputs, O0/O1 products, at one shared
 /// $\zeta$.
 #[derive(Debug)]
@@ -1138,8 +1136,6 @@ impl Step<Pasta> for FeeSeed {
 }
 
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
-///
-/// Each witness entry is an `(action_set, tachygram_set)` pair.
 ///
 /// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
 /// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its

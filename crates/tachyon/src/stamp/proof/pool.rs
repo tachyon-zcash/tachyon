@@ -140,8 +140,6 @@ impl Header<Fp> for ArbitraryUnspent {
 
 /// A note proven unspent across a span: an [`ArbitraryUnspent`] whose values
 /// [`UnspentBind`] has attributed to the note's genuine derivation.
-///
-/// The header carries `cm` followed by the [`ArbitraryUnspent`] segment fields.
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 

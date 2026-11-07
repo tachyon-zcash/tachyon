@@ -130,7 +130,6 @@ impl Header<Fp> for NoteSecret {
 /// [`UnspentBind`](super::pool::UnspentBind).
 ///
 /// Masking is the consuming step's responsibility.
-/// Slot `O0` holds the nullifier sequence; `epoch_end` is inclusive.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
