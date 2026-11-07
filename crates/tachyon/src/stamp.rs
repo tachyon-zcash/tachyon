@@ -328,115 +328,6 @@ impl StampState for ProofStamp<ragu::CompressedProof<Pasta>> {
     }
 }
 
-impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
-    /// Read a stamp from the consensus wire format. The proof blob has a
-    /// known constant size.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading fails or any component is not a canonical
-    /// encoding.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let fee = {
-            let mut bytes = [0u8; size_of::<u64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-        }?;
-
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
-
-        let anchor = Anchor::read(&mut reader)?;
-
-        // Parsing does not confirm this against the tachygrams below.
-        let tachygram_set =
-            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
-
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-
-        // proof stamp should never have an empty set
-        if n_tachygrams == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-        }
-
-        // the polynomial multiset includes a constant term
-        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "too many tachygrams",
-            ));
-        }
-
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-        for _ in 0..n_tachygrams {
-            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-            if !tachygrams.insert(tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not unique",
-                ));
-            }
-
-            if tachygrams.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
-                ));
-            }
-        }
-
-        let proof = {
-            let mut bytes =
-                vec![0u8; ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>()];
-            reader.read_exact(&mut bytes)?;
-            ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
-        };
-        Ok(Self {
-            coverage: covered_actions,
-            anchor,
-            tachygram_set,
-            tachygrams,
-            proof: Box::new(proof),
-            fee,
-        })
-    }
-
-    /// Write a stamp to the consensus wire format. The proof blob has a
-    /// known constant size.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing fails or the proof has no encoding.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
-        writer.write_all(&self.coverage)?;
-        self.anchor.write(&mut writer)?;
-        serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
-        serialization::write_compactsize(
-            &mut writer,
-            u64::try_from(self.tachygrams.len()).map_err(|_err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygram vector length exceeds u64",
-                )
-            })?,
-        )?;
-        for &tg in &self.tachygrams {
-            serialization::write_fp(&mut writer, &Fp::from(tg))?;
-        }
-        let proof = self
-            .proof
-            .to_bytes()
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
-        writer.write_all(&proof)
-    }
-}
-
 impl ProofStamp<ragu::CompressedProof<Pasta>> {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
@@ -894,6 +785,113 @@ pub struct ProofStamp<P> {
 }
 
 impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
+    /// Read a stamp from the consensus wire format. The proof blob has a
+    /// known constant size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or any component is not a canonical
+    /// encoding.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
+
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
+
+        let anchor = Anchor::read(&mut reader)?;
+
+        // Parsing does not confirm this against the tachygrams below.
+        let tachygram_set =
+            TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
+
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
+
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many tachygrams",
+            ));
+        }
+
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
+        }
+
+        let proof = {
+            let mut bytes =
+                vec![0u8; ragu::Proof::<Pasta, ProductionRank>::encoded_len::<HEADER_SIZE>()];
+            reader.read_exact(&mut bytes)?;
+            ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
+        };
+        Ok(Self {
+            coverage: covered_actions,
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee,
+        })
+    }
+
+    /// Write a stamp to the consensus wire format. The proof blob has a
+    /// known constant size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or the proof has no encoding.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
+        writer.write_all(&self.coverage)?;
+        self.anchor.write(&mut writer)?;
+        serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
+        serialization::write_compactsize(
+            &mut writer,
+            u64::try_from(self.tachygrams.len()).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygram vector length exceeds u64",
+                )
+            })?,
+        )?;
+        for &tg in &self.tachygrams {
+            serialization::write_fp(&mut writer, &Fp::from(tg))?;
+        }
+        let proof = self
+            .proof
+            .to_bytes()
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        writer.write_all(&proof)
+    }
+
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof)`. The proof is not rerandomized.
     ///
@@ -1412,36 +1410,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             fee: self.fee,
         })
     }
-}
 
-impl<P> ProofStamp<P> {
-    /// Confirm `hStampCoverageTachyon` represents the given descriptors.
-    ///
-    /// # Soundness
-    ///
-    /// The parameters are multisets: order does not matter, multiplicity does.
-    #[must_use]
-    pub fn is_covering(
-        &self,
-        action_descs: impl IntoIterator<Item = action::Descriptor>,
-        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
-    ) -> bool {
-        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
-        desc_bytes.sort_unstable();
-        let mut fee_descriptor_bytes = fee_descriptors
-            .into_iter()
-            .map(<[u8; 40]>::from)
-            .collect::<Vec<[u8; 40]>>();
-        fee_descriptor_bytes.sort_unstable();
-        self.coverage
-            == blake2b::stamp_coverage_digest(
-                &blake2b::action_descriptor_digest(&desc_bytes),
-                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
-            )
-    }
-}
-
-impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     /// Reconstruct the PCD header and verify the proof. Call
     /// [`ProofStamp::is_covering`] first to cheaply predict a mismatch.
     ///
@@ -1474,9 +1443,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         }
         PROOF_SYSTEM.verify_uncompressed(&pcd, rng)
     }
-}
 
-impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
     /// Compresses the proof against the covered action and fee descriptors.
     ///
     /// # Errors
@@ -1511,5 +1478,32 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             proof: Box::new(compressed),
             fee: self.fee,
         })
+    }
+}
+
+impl<P> ProofStamp<P> {
+    /// Confirm `hStampCoverageTachyon` represents the given descriptors.
+    ///
+    /// # Soundness
+    ///
+    /// The parameters are multisets: order does not matter, multiplicity does.
+    #[must_use]
+    pub fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+    ) -> bool {
+        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
+        desc_bytes.sort_unstable();
+        let mut fee_descriptor_bytes = fee_descriptors
+            .into_iter()
+            .map(<[u8; 40]>::from)
+            .collect::<Vec<[u8; 40]>>();
+        fee_descriptor_bytes.sort_unstable();
+        self.coverage
+            == blake2b::stamp_coverage_digest(
+                &blake2b::action_descriptor_digest(&desc_bytes),
+                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
+            )
     }
 }
