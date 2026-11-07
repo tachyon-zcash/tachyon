@@ -141,10 +141,6 @@ impl Stamp {
         ))
     }
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "the encoded header and its carried data"
-    )]
     fn output<'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         oracles: &Oracles<'_, 'dr, D>,
         anchor: Element<'dr, D>,

@@ -264,7 +264,7 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// # Errors
 ///
 /// Fails if the commitment or its bridge hash is the identity.
-pub fn bridge_hash(commitment: EqAffine) -> ragu_core::Result<[Fp; 2]> {
+pub fn bridge_hash(commitment: EqAffine) -> Result<[Fp; 2]> {
     let coordinates = PROOF_SYSTEM
         .bridge_hash(commitment)?
         .coordinates()
