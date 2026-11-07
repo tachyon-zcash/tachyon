@@ -19,7 +19,9 @@ commitments and bounded fee values; concrete serialization/circuit equality
 and PCD witness extraction remain external implementation boundaries.
 
 The blinding and change hashes are computed from the same secret tuple, as
-in `FeeFuse`/`FeeSeed`. No raw free blind can absorb a changed maximum fee.
+in `FeeBind`/`FeeSeed`. `StepBudget.ready_refinement` erases FeeValueCommit →
+FeeBind to the same old fee-opening relation; FeeFuse consumes those certified
+roots. No raw free blind can absorb a changed maximum fee.
 This proves fee/fee pairing only, not spend/spend or mixed action pairing.
 -/
 

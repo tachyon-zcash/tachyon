@@ -31,3 +31,4 @@ import Tachyon.FeeAccounting
 import Tachyon.RemovalClosure
 import Tachyon.FixedBase
 import Tachyon.StepBudget
+import Tachyon.WindowEncodings
