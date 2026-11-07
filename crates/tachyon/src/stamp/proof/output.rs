@@ -6,14 +6,16 @@ use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{
-    Tachygram,
-    constants::MAX_MONEY,
-    digest::poseidon,
-    note::Note,
-    pasta::{Ep, Eq, Fp, Fq},
-    ragu_constraint::enforce_nonzero,
-    value,
+use super::{
+    super::super::{
+        Tachygram,
+        digest::poseidon,
+        note::Note,
+        pasta::{Ep, Eq, Fp, Fq},
+        ragu_constraint::enforce_nonzero,
+        value,
+    },
+    scale::{self, R, ScaleResult},
 };
 
 /// Header binding an output's tachygram pair and value to one note
@@ -46,32 +48,30 @@ impl Header for OutputHeader {
 /// value as
 /// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Two permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
+/// Consumes the private R certificate. Two permutations and 17 value windows;
+/// no polynomials.
 #[derive(Debug)]
 pub struct OutputBind;
 
 impl Step for OutputBind {
     type Aux<'source> = ();
-    type Left = ();
+    type Left = ScaleResult<R>;
     type Output = OutputHeader;
     type Right = ();
-    /// `(note, rcv)`.
-    type Witness<'source> = (Note, value::Trapdoor);
+    /// `(note)`
+    type Witness<'source> = (Note,);
 
     const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note, rcv): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
+        (note,): Self::Witness<'source>,
+        (_lo, _hi, point, identity): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "OutputBind: note value exceeds maximum".into(),
-            ));
-        }
+        let value_product = scale::value_product::<true>(note.value)?;
+        let cv = scale::finite(value_product + scale::decode(point, identity)?)?;
 
         let (cm, pad) = {
             let (rcm, pk, value, psi) = (
@@ -91,6 +91,6 @@ impl Step for OutputBind {
         enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
         enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
 
-        Ok(((cm, pad, rcv.commit(-note.value)), ()))
+        Ok(((cm, pad, value::Commitment::from(cv)), ()))
     }
 }
