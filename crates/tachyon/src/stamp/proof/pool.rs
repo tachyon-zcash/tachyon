@@ -61,8 +61,8 @@ use crate::{
 ///
 /// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
 /// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
-/// to test, or [`SpendPrepare`](super::spend::SpendPrepare)'s once a spendable
-/// rests on `anchor_next`.
+/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
+/// on `anchor_next`.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,

@@ -35,10 +35,6 @@ The master key $\mathsf{mk}$ is derived from the note trapdoor $\psi$ and nullif
 The note commitment $\mathsf{cm}$ digests $\psi$ and the payment key $\mathsf{pk}$, which transitively binds $\mathsf{nk}$ via its own derivation, closing the circle with $\mathsf{mk}$.
 
 Distinct notes under the same $\mathsf{nk}$ should not re-use $\psi$ because the pair $(\psi, \mathsf{nk})$ produce an identical $\mathsf{mk}$ and identical sequence of nullifiers.
-At spend time, `SpendPrepare` joins `NoteSecret` to `NoteSpendable` by the
-note commitment and derives the current and next nullifiers from that master
-key and the lineage epoch. `SpendBind` and `SpendAction` thread this pair.
-See [Spend binding](./proof-tree.md#spend-binding).
 
 ## Delegation
 
