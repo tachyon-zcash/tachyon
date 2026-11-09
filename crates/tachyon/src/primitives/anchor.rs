@@ -59,9 +59,15 @@ impl Anchor {
         stamp_hash: TachygramSetBridgeHash,
         empty_hash: TachygramSetBridgeHash,
     ) -> Result<Self, AnchorError> {
-        poseidon::anchor_next_stamp(self.0, epoch.into(), stamp_hash, empty_hash)
-            .map(Self)
-            .map_err(|_err| AnchorError::NextStampEmpty)
+        if stamp_hash == empty_hash {
+            Err(AnchorError::NextStampEmpty)
+        } else {
+            Ok(Self(poseidon::anchor_next_stamp(
+                self.0,
+                epoch.into(),
+                stamp_hash.into(),
+            )))
+        }
     }
 
     /// Advance the anchor into `epoch` with a boundary digest.

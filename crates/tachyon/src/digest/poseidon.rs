@@ -21,7 +21,7 @@ use ragu_primitives::{
 };
 use udon::field::Field as _;
 
-use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp, primitives::TachygramSetBridgeHash};
+use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
@@ -188,30 +188,12 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
 /// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
-///
-/// # Errors
-///
-/// Fails for the empty set's bridge hash.
-pub fn anchor_next_stamp(
-    anchor_prev: Fp,
-    epoch: Fp,
-    stamp_hash: TachygramSetBridgeHash,
-    empty_hash: TachygramSetBridgeHash,
-) -> ragu_core::Result<Fp> {
-    if stamp_hash == empty_hash {
-        return Err(ragu_core::Error::InvalidWitness(
-            "invalid anchor step".into(),
-        ));
-    }
-    Ok(hash::<4>(
+#[must_use]
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, stamp_hash: [Fp; 2]) -> Fp {
+    hash::<4>(
         ANCHOR_STAMP_DOMAIN,
-        [
-            anchor_prev,
-            epoch,
-            stamp_hash.as_ref()[0],
-            stamp_hash.as_ref()[1],
-        ],
-    ))
+        [anchor_prev, epoch, stamp_hash[0], stamp_hash[1]],
+    )
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
@@ -226,7 +208,7 @@ pub fn evidence_tree_leaf(
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
-    contents: TachygramSetBridgeHash,
+    contents: [Fp; 2],
 ) -> Fp {
     hash::<8>(
         QR_BUCKET_DOMAIN,
@@ -237,8 +219,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents.as_ref()[0],
-            contents.as_ref()[1],
+            contents[0],
+            contents[1],
         ],
     )
 }

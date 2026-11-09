@@ -30,7 +30,7 @@ use crate::{
     digest::poseidon,
     note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::enforce_zero,
 };
 
@@ -149,16 +149,14 @@ impl Step<Pasta> for SpendableInit {
         let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let native = D::try_just(|| {
             let (anchor_prev, _, creation_epoch) = witness.take();
-            let empty_hash = TachygramSetCommit::default().bridge()?;
             let (cm, ..) = left.take();
             let () = right.take();
             // O1's bridge hash binds the creation set absorbed into the anchor.
             let anchor = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(creation_epoch),
-                [*hash_x.take(), *hash_y.take()].into(),
-                empty_hash,
-            )?);
+                [*hash_x.take(), *hash_y.take()],
+            ));
             Ok((cm, (cm, creation_epoch, anchor)))
         })?;
         let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, _)| Fp::from(cm)))?;

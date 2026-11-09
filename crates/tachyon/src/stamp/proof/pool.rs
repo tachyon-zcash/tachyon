@@ -270,13 +270,11 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let empty_hash = TachygramSetCommit::default().bridge()?;
         let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
             Fp::from(witness.0),
             Fp::from(witness.1),
-            witness.2,
-            empty_hash,
-        )?);
+            witness.2.into(),
+        ));
         Ok([
             AnchorSetPoly::from_iter([anchor_end])
                 .as_ref()
@@ -311,12 +309,9 @@ impl Step<Pasta> for AnchorSpanSeed {
         let output = D::try_just(|| {
             let (anchor_start, epoch, stamp_hash) = witness.take();
             let empty_hash = TachygramSetCommit::default().bridge()?;
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_start),
-                Fp::from(epoch),
-                stamp_hash,
-                empty_hash,
-            )?);
+            let anchor_end = anchor_start
+                .next_stamp(epoch, stamp_hash, empty_hash)
+                .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
             Ok(((anchor_start, anchor_end), ()))
         })?;

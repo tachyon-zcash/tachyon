@@ -267,7 +267,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(left_discriminant),
                 Fp::from(u64::from(left_profile.depth)),
                 Fp::from(u64::from(left_profile.bits)),
-                left_contents_hash,
+                left_contents_hash.into(),
             ));
             let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
                 Fp::from(right_epoch),
@@ -276,7 +276,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
                 Fp::from(right_discriminant),
                 Fp::from(u64::from(right_profile.depth)),
                 Fp::from(u64::from(right_profile.bits)),
-                right_contents_hash,
+                right_contents_hash.into(),
             ));
 
             Ok((
@@ -754,7 +754,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                         Fp::from(discriminant),
                         Fp::from(u64::from(profile.depth)),
                         Fp::from(u64::from(profile.bits)),
-                        contents_hash,
+                        contents_hash.into(),
                     ),
                 "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
             )?;

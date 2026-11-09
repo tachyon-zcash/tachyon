@@ -363,12 +363,9 @@ impl Step<Pasta> for QrStampIntakeSeed {
             let empty_hash = TachygramSetCommit::default().bridge()?;
             let () = left.take();
             let () = right.take();
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(epoch),
-                [*x.take(), *y.take()].into(),
-                empty_hash,
-            )?);
+            let anchor_end = anchor_prev
+                .next_stamp(epoch, [*x.take(), *y.take()].into(), empty_hash)
+                .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
             Ok((
                 (
                     epoch,
