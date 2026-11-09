@@ -198,12 +198,12 @@ impl Header<Fp> for QrIntakeSides {
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.5.as_ref()[0]),
+                    witness.as_ref().map(|fields| fields.5.coordinates().0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.5.as_ref()[1]),
+                    witness.as_ref().map(|fields| fields.5.coordinates().1),
                 )?,
             ],
         })
@@ -362,7 +362,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
             let () = left.take();
             let () = right.take();
-            let stamp_hash = TachygramSetBridge::from([*x.take(), *y.take()]);
+            let stamp_hash = TachygramSetBridge::from_xy(*x.take(), *y.take())?;
             if stamp_hash == TachygramSetCommit::default().bridge()? {
                 return Err(ragu_core::Error::InvalidWitness(
                     "invalid anchor step".into(),
@@ -640,7 +640,7 @@ impl Step<Pasta> for QrIntakeSplit {
                     anchor_end,
                     discriminant,
                     profile,
-                    [*first.take(), *second.take()].into(),
+                    TachygramSetBridge::from_xy(*first.take(), *second.take())?,
                 ),
                 (),
             ))
@@ -858,13 +858,11 @@ impl Step<Pasta> for QrSideDescend {
             ] {
                 enforce_zero(difference, error)?;
             }
-            for (left_hash, right_hash) in non_residue_hash
-                .as_ref()
-                .iter()
-                .zip(selection_hash.as_ref())
-            {
+            let (left_x, left_y) = non_residue_hash.coordinates();
+            let (right_x, right_y) = selection_hash.coordinates();
+            for (left_hash, right_hash) in [(left_x, right_x), (left_y, right_y)] {
                 enforce_zero(
-                    *left_hash - *right_hash,
+                    left_hash - right_hash,
                     "QrSideDescend: selection non-residue hash does not match sides",
                 )?;
             }
@@ -1017,12 +1015,12 @@ impl Header<Fp> for QrBucket {
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.5.as_ref()[0]),
+                    witness.as_ref().map(|fields| fields.5.coordinates().0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.5.as_ref()[1]),
+                    witness.as_ref().map(|fields| fields.5.coordinates().1),
                 )?,
             ],
         })
@@ -1133,7 +1131,7 @@ impl Step<Pasta> for QrBucketSeal {
                     crossing,
                     discriminant,
                     profile,
-                    [*hash_x.take(), *hash_y.take()].into(),
+                    TachygramSetBridge::from_xy(*hash_x.take(), *hash_y.take())?,
                 ),
                 (),
             ))

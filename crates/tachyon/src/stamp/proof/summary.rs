@@ -135,7 +135,7 @@ impl Step<Pasta> for SummarySeed {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_prev, epoch, _) = witness.take();
-            let stamp_hash = TachygramSetBridge::from([*x.take(), *y.take()]);
+            let stamp_hash = TachygramSetBridge::from_xy(*x.take(), *y.take())?;
             if stamp_hash == TachygramSetCommit::default().bridge()? {
                 return Err(ragu_core::Error::InvalidWitness(
                     "invalid anchor step".into(),
@@ -216,7 +216,7 @@ impl Step<Pasta> for SummaryAdvance {
         let output = D::try_just(|| {
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
-            let stamp_hash = TachygramSetBridge::from([*x.take(), *y.take()]);
+            let stamp_hash = TachygramSetBridge::from_xy(*x.take(), *y.take())?;
             if stamp_hash == TachygramSetCommit::default().bridge()? {
                 return Err(ragu_core::Error::InvalidWitness(
                     "invalid anchor step".into(),

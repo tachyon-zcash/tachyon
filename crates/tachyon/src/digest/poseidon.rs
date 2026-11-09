@@ -19,9 +19,13 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::field::Field as _;
+use udon::{curve::Affine as _, field::Field as _};
 
-use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp};
+use crate::{
+    constants::EVIDENCE_TREE_ARITY,
+    pasta,
+    pasta::{EpAffine, Fp},
+};
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
@@ -187,20 +191,32 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
-/// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
+/// Advances the anchor with the stamp's epoch and tachygram-set bridge hash,
+/// absorbing the point's affine coordinates.
+///
+/// # Panics
+///
+/// Panics if `stamp_hash` is the identity.
 #[must_use]
-pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, stamp_hash: [Fp; 2]) -> Fp {
-    hash::<4>(
-        ANCHOR_STAMP_DOMAIN,
-        [anchor_prev, epoch, stamp_hash[0], stamp_hash[1]],
-    )
+#[expect(clippy::expect_used, reason = "a bridge hash is never the identity")]
+pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, stamp_hash: EpAffine) -> Fp {
+    let (x, y) = stamp_hash
+        .coordinates()
+        .expect("bridge hash must not be the identity point");
+    hash::<4>(ANCHOR_STAMP_DOMAIN, [anchor_prev, epoch, x, y])
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
 const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
-/// Digests a sealed bucket's metadata and contents bridge hash into a leaf.
+/// Digests a sealed bucket's metadata and contents bridge hash into a leaf,
+/// absorbing the point's affine coordinates.
+///
+/// # Panics
+///
+/// Panics if `contents` is the identity.
 #[must_use]
+#[expect(clippy::expect_used, reason = "a bridge hash is never the identity")]
 pub fn evidence_tree_leaf(
     epoch: Fp,
     anchor_start: Fp,
@@ -208,8 +224,11 @@ pub fn evidence_tree_leaf(
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
-    contents: [Fp; 2],
+    contents: EpAffine,
 ) -> Fp {
+    let (contents_x, contents_y) = contents
+        .coordinates()
+        .expect("bridge hash must not be the identity point");
     hash::<8>(
         QR_BUCKET_DOMAIN,
         [
@@ -219,8 +238,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents[0],
-            contents[1],
+            contents_x,
+            contents_y,
         ],
     )
 }

@@ -116,12 +116,12 @@ impl Header<Fp> for Stamp {
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.0.as_ref()[0]),
+                    witness.as_ref().map(|fields| fields.0.coordinates().0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.0.as_ref()[1]),
+                    witness.as_ref().map(|fields| fields.0.coordinates().1),
                 )?,
             ],
         })
@@ -154,7 +154,12 @@ impl Stamp {
         DriverValue<D, <Self as Header<Fp>>::Data>,
     )> {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let data = D::just(|| ([*x.take(), *y.take()].into(), anchor.clone().take()));
+        let data = D::try_just(|| {
+            Ok((
+                TachygramSetBridge::from_xy(*x.take(), *y.take())?,
+                anchor.clone().take(),
+            ))
+        })?;
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: Element::alloc(dr, &mut (), anchor.map(Fp::from))?,
             stamp_tg_commit: oracles.bridge_hash().clone(),

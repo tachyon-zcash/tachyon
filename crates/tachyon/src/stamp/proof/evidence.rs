@@ -742,7 +742,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (profile, _) = witness.take();
-            let contents_hash = TachygramSetBridge::from([*hash_x.take(), *hash_y.take()]);
+            let contents_hash = TachygramSetBridge::from_xy(*hash_x.take(), *hash_y.take())?;
             let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
             let () = right.take();
             enforce_zero(

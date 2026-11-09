@@ -30,7 +30,7 @@ use crate::{
     digest::poseidon,
     note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSetBridge, TachygramSetPoly},
     ragu_constraint::enforce_zero,
 };
 
@@ -155,7 +155,7 @@ impl Step<Pasta> for SpendableInit {
             let anchor = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(creation_epoch),
-                [*hash_x.take(), *hash_y.take()],
+                TachygramSetBridge::from_xy(*hash_x.take(), *hash_y.take())?.into(),
             ));
             Ok((cm, (cm, creation_epoch, anchor)))
         })?;
