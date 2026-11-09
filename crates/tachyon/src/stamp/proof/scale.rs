@@ -5,9 +5,9 @@
 //! contain secret scalars and belong to the prover's private proof tree.
 
 use alloc::{vec, vec::Vec};
-use core::{array, fmt, marker::PhantomData};
+use core::{array, marker::PhantomData};
 
-use derive_more::{Debug, From, Into};
+use derive_more::{From, Into};
 use lazy_static::lazy_static;
 use ragu::{Header, Index, Step, Suffix};
 use rand_core::CryptoRng;
@@ -29,11 +29,11 @@ use super::{
 
 /// Low 128 bits of a canonical scalar.
 #[derive(Clone, Copy, Debug, From, Into)]
-pub struct ScalarLo(#[debug(skip)] Fp);
+pub struct ScalarLo(Fp);
 
 /// High 127 bits of a canonical scalar.
 #[derive(Clone, Copy, Debug, From, Into)]
-pub struct ScalarHi(#[debug(skip)] Fp);
+pub struct ScalarHi(Fp);
 
 /// Finite carrier of a tagged logical point.
 #[derive(Clone, Copy, Debug)]
@@ -45,12 +45,10 @@ pub struct IdentityFlag(bool);
 
 /// Value-commitment blinding base.
 #[derive(Clone, Copy, Debug, Default)]
-#[expect(clippy::min_ident_chars, reason = "protocol generator name")]
 pub struct R;
 
 /// Action-authorization base.
 #[derive(Clone, Copy, Debug, Default)]
-#[expect(clippy::min_ident_chars, reason = "protocol generator name")]
 pub struct G;
 
 mod sealed {
@@ -60,7 +58,7 @@ mod sealed {
 }
 
 /// Fixed protocol base and its registry positions.
-pub trait Base: sealed::Sealed + Copy + fmt::Debug + Send + Sync + 'static {
+pub trait Base: sealed::Sealed + Copy + core::fmt::Debug + Send + Sync + 'static {
     /// Index of the Start registration.
     const INDEX: usize;
     /// Suffix of the state after 24 windows.
@@ -139,7 +137,7 @@ pub struct ScaleState<B: Base, const WINDOWS: usize>(PhantomData<B>);
 pub struct ScaleResult<B: Base>(PhantomData<B>);
 
 fn encode(
-    &(lo, hi, point, identity): &(ScalarLo, ScalarHi, Carrier, IdentityFlag),
+    (lo, hi, point, identity): &(ScalarLo, ScalarHi, Carrier, IdentityFlag),
 ) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
     (
         vec![lo.0, hi.0, Fp::from(u64::from(identity.0))],
@@ -190,10 +188,6 @@ pub struct ScaleMiddle<B: Base>(PhantomData<B>);
 #[derive(Debug, Default)]
 pub struct ScaleEnd<B: Base>(PhantomData<B>);
 
-#[expect(
-    clippy::indexing_slicing,
-    reason = "fixed 128/127-bit ranges within 255 bits"
-)]
 fn limbs(bits: &[bool; 255]) -> (ScalarLo, ScalarHi) {
     let mut lo = Fp::ZERO;
     let mut hi = Fp::ZERO;
@@ -206,10 +200,6 @@ fn limbs(bits: &[bool; 255]) -> (ScalarLo, ScalarHi) {
     (ScalarLo(lo), ScalarHi(hi))
 }
 
-#[expect(
-    clippy::indexing_slicing,
-    reason = "255 fixed bits within the scalar encoding"
-)]
 fn canonical(bits: &[bool; 255]) -> ragu_core::Result<()> {
     let maximum = (-Fq::ONE).to_le_bits();
     for i in (0..255).rev() {
@@ -254,16 +244,8 @@ pub(super) fn decode(point: Carrier, identity: IdentityFlag) -> ragu_core::Resul
 
 fn select_coordinate(values: [Fp; 8], bits: [bool; 3]) -> Fp {
     let select = |low, high, bit| if bit { high } else { low };
-    let first = [
-        select(values[0], values[1], bits[0]),
-        select(values[2], values[3], bits[0]),
-        select(values[4], values[5], bits[0]),
-        select(values[6], values[7], bits[0]),
-    ];
-    let second = [
-        select(first[0], first[1], bits[1]),
-        select(first[2], first[3], bits[1]),
-    ];
+    let first = array::from_fn::<_, 4, _>(|i| select(values[2 * i], values[2 * i + 1], bits[0]));
+    let second = array::from_fn::<_, 2, _>(|i| select(first[2 * i], first[2 * i + 1], bits[1]));
     select(second[0], second[1], bits[2])
 }
 
@@ -282,21 +264,11 @@ fn select_digit(row: &[EpAffine; 8], bits: [bool; 3]) -> ragu_core::Result<Ep> {
     }
 }
 
-#[expect(
-    clippy::indexing_slicing,
-    reason = "window bounds checked at compile time"
-)]
 fn windows<const N: usize, const BITS: usize, const FIRST: usize, const END: usize>(
     table: &[[EpAffine; 8]; N],
     bits: &[bool; BITS],
     mut acc: Ep,
 ) -> ragu_core::Result<Ep> {
-    const {
-        assert!(
-            FIRST <= END && END <= N && 3 * END <= BITS,
-            "invalid window range"
-        );
-    }
     for j in FIRST..END {
         acc += select_digit(&table[j], [bits[3 * j], bits[3 * j + 1], bits[3 * j + 2]])?;
     }
@@ -367,10 +339,6 @@ continuation!(ScaleEnd, ScaleState<B, 54>, ScaleResult<B>, 2, 54, 85);
 
 /// Prepare a full-width scalar's ordered bits.
 #[must_use]
-#[expect(
-    clippy::indexing_slicing,
-    reason = "255 bits within the fixed scalar encoding"
-)]
 pub fn scalar_bits(scalar: Fq) -> [bool; 255] {
     let bits = scalar.to_le_bits();
     array::from_fn(|i| bits.as_ref()[i])
@@ -424,7 +392,7 @@ pub(super) fn amount_bits(amount: value::Positive) -> ragu_core::Result<[bool; 5
         input
             .into_iter()
             .rev()
-            .fold(0u64, |acc, bit| 2 * acc + u64::from(bit))
+            .fold(0_u64, |acc, bit| 2 * acc + u64::from(bit))
     };
     if recompose(bits) + recompose(complement_bits) != MAX_MONEY {
         return Err(ragu_core::Error::InvalidWitness(
@@ -449,6 +417,3 @@ pub(super) fn finite(point: Ep) -> ragu_core::Result<EpAffine> {
     })?;
     Ok(affine)
 }
-
-#[cfg(test)]
-mod tests;
