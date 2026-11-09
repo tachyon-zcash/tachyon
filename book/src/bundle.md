@@ -124,6 +124,7 @@ subgraph shielded_data["Bundle"]
     subgraph tachystamp
         fee
         coverage
+        tachygram_set
         anchor@{shape: odd}
         proof@{shape: notch-rect}
         tachygram_vec@{shape: procs, label: "tachygram"}
@@ -200,7 +201,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
 | `proofTachyon` | `PROOF_SIZE_COMPRESSED` blob | serialized proof of fixed size |
 
-`vTachygrams` must be non-empty and strictly ascending in little-endian byte order, the order the stamp digest commits to.
+`vTachygrams` must be non-empty and strictly ascending by bytewise comparison of each 32-byte little-endian encoding, the order the stamp digest commits to.
 It holds at most $2^{13} - 1$ entries, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$.
 Parsing rejects any other list.
 

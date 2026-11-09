@@ -59,7 +59,8 @@ An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-n
 
 Tachygrams in a stamp must be distinct.
 Parsing and [bundle validation](./bundle.md#stamp-trailer) fix the list and its commitment.
-[`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs would be a repeated root, which `ProofStamp::merge` cannot witness because it builds the deduplicated union.
+[`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
+Validation recomputes `cTachygrams` from the distinct `vTachygrams`, so such a stamp fails verification.
 An honest aggregator never merges stamps whose tachygram sets overlap.
 
 The tachygram cap in the [stamp trailer](./bundle.md#stamp-trailer) bounds a stamp at $2N + B \le 2^{13} - 1$, so one aggregate covers at most 4,095 actions.
