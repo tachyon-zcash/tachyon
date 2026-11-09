@@ -52,7 +52,7 @@ The proof establishes:
 - tachygrams either create a new note or destroy an existing note
 - tachygrams are correctly bound to action keys
 - each `cv` commits to the value of the note its tachygrams belong to
-- the fee change note commits to $\maxfee - \fee$, with the fee at most the signed maximum
+- the fee change note commits to $\feemax - \fee$, with the fee at most the signed maximum
 
 Pool balance is not a statement of the proof. The value balance never enters a circuit; the [binding signature](./authorization.md#binding-signature) enforces it over the published `cv` values.
 
@@ -74,7 +74,7 @@ A Tachyon bundle collects tachyactions with authorization data:
 
 - `tachyactions` - the tachyactions
 - `value_balance` - integer net pool effect, with the max fee note counted as an output
-- `cv_maxfee` - the [max fee note](./fee.md)'s value commitment
+- `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
 - `memo` - opaque recipient-directed payload, empty when absent
 - `tachystamp` - fee, coverage, anchor, tachygram set, tachygrams, proof (may be aggregated or replaced by a pointer)
@@ -138,13 +138,13 @@ subgraph shielded_data["Bundle"]
 
     sig_binding:::signature@{shape: hex, label: "binding_sig"}
     v_balance["value_balance"]
-    cv_maxfee["cv_maxfee"]
+    cv_feemax["cv_feemax"]
     memo
 
-    cv_maxfee ---> proof
+    cv_feemax ---> proof
 
     v_balance ===> sig_binding
-    cv_maxfee ===> sig_binding
+    cv_feemax ===> sig_binding
     memo ===> sig_binding
     tachyaction_vec ===> sig_binding
 end
@@ -221,7 +221,7 @@ $$
 \begin{aligned}
 \mathsf{hStampCoverageTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Coverage}\bigl(\mathsf{hStampActionsTachyon} \,\|\, \mathsf{hStampFeesTachyon}\bigr) \\
 \mathsf{hStampActionsTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Actions}\bigl(a_1 \,\|\, \cdots \,\|\, a_N\bigr), & a_i &= \mathsf{cv}_i \,\|\, \mathsf{rk}_i \\
-\mathsf{hStampFeesTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Fees}\bigl(f_1 \,\|\, \cdots \,\|\, f_B\bigr), & f_j &= \cv_{\maxfee,j} \,\|\, \mathsf{LE64}(\fee_j)
+\mathsf{hStampFeesTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Fees}\bigl(f_1 \,\|\, \cdots \,\|\, f_B\bigr), & f_j &= \cv_{\feemax,j} \,\|\, \mathsf{LE64}(\fee_j)
 \end{aligned}
 $$
 

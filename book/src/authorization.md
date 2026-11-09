@@ -162,11 +162,11 @@ If the values don't balance, the $\mathcal{V}$ term survives. So,
 - If the sum of committed values doesn't truly equal the public balance, the signer cannot produce a valid signature.
 - If a valid signature was produced and then the committed values or the public balance were modified, the validator can't confirm the valid signature.
 
-Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\maxfee = [-\mathsf{maxfee}]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The planner adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\maxfee$ to $\mathsf{bvk}$:
+Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\feemax = [-\feemax]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The planner adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\feemax$ to $\mathsf{bvk}$:
 
 $$\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$$
 
-$$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\maxfee - [\mathsf{value\_balance}]\,\mathcal{V}$$
+$$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\feemax - [\mathsf{value\_balance}]\,\mathcal{V}$$
 
 The fee does not enter $\mathsf{bvk}$. The binding signature is made once, before the fee is chosen.
 
@@ -205,14 +205,14 @@ flowchart LR
 
 
     action_plan & max_fee_note --> value_balance
-    max_fee_note --> cv_maxfee
+    max_fee_note --> cv_feemax
     memo --> memo_2[memo]
 
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
             value_balance
             action@{ shape: st-rect }
-            cv_maxfee
+            cv_feemax
             binding_sig
             memo_2[memo]
             fee
@@ -300,13 +300,13 @@ rect rgb(100, 149, 237, 0.1)
         note over User: action_plan { rk, note, theta, rcv, effect }
     end
 
-    note over User: max_fee_note { pk, maxfee, psi, rcm }
+    note over User: max_fee_note { pk, feemax, psi, rcm }
     note over User: r = Poseidon_FeeBlind(pk, psi, rcm)
-    note over User: cv_maxfee = Pedersen(-maxfee, r)
-    note over User: value_balance = Sum v_spend - Sum v_output - maxfee
+    note over User: cv_feemax = Pedersen(-feemax, r)
+    note over User: value_balance = Sum v_spend - Sum v_output - feemax
     note over User: bundle_plan { spends[], outputs[], max_fee_note, memo }
     note over User: hActionsTachyon = Blake2b(cv_i || rk_i) over the sorted descriptor set, which is the wire order
-    note over User: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
+    note over User: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
     note over User: compute sighash
 end
 
@@ -328,9 +328,9 @@ par Authorizing
                 note over Custody: rk = [alpha]G
             end
         end
-        note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon_FeeBlind(pk, psi, rcm))
+        note over Custody: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
+        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
         note over Custody: confirm sighash (custody requirement, not performed by Plan::sign)
 
         loop per spend action
@@ -348,7 +348,7 @@ par Authorizing
             note over User: every planned descriptor (cv, rk) has exactly one signature
             note over User: bsk = Sum rcv_i + r
             note over User: binding_sig = Sign(bsk, sighash)
-            note over User: bundle { actions[], value_balance, cv_maxfee, binding_sig, memo } unproven
+            note over User: bundle { actions[], value_balance, cv_feemax, binding_sig, memo } unproven
         end
     end
 
@@ -405,18 +405,18 @@ and Proving
             end
         end
 
-        note over Stamper: cv_maxfee = Pedersen(-maxfee, Poseidon_FeeBlind(pk, psi, rcm))
+        note over Stamper: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
         alt no actions
             critical FeeSeed, witness max_fee_note, anchor
-                note over Stamper: maxfee == 0, so fee == 0
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_maxfee), y(cv_maxfee), 0)
+                note over Stamper: feemax == 0, so fee == 0
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0)
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
                 note over Stamper: Stamp (Commit(X - d_fee), Commit(X - cm_chg), anchor)
             end
         else
             critical FeeFuse(Actions), witness max_fee_note, fee
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_maxfee), y(cv_maxfee), fee)
-                note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, maxfee - fee, psi)
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee)
+                note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, feemax - fee, psi)
                 note over Stamper: fee_action = action_poly * (X - d_fee)
                 note over Stamper: fee_tg = tg_poly * (X - cm_chg)
                 note over Stamper: Stamp (Commit(fee_action), Commit(fee_tg), anchor)
@@ -434,15 +434,15 @@ and Proving
 end
 
 create participant Consensus
-note over User: transaction { actions[], value_balance, cv_maxfee, binding_sig, memo, stamp { fee, coverage, anchor, tachygram_set, tachygrams, proof } }
+note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, stamp { fee, coverage, anchor, tachygram_set, tachygrams, proof } }
 deactivate User
 destroy User
 User ->> Consensus: transaction
 break verify_signatures
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
     note over Consensus: compute sighash
-    note over Consensus: bvk = Sum cv_i + cv_maxfee - [value_balance]V
+    note over Consensus: bvk = Sum cv_i + cv_feemax - [value_balance]V
     note over Consensus: check binding_sig against sighash under bvk
     note over Consensus: check each action sig against sighash under rk
 end
@@ -460,7 +460,7 @@ break verify_tachygrams
 end
 break verify_proof
     note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i))
-    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_maxfee_j), y(cv_maxfee_j), fee_j)
+    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j)
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
     note over Consensus: verify proof against Stamp (action_acc, cTachygrams, anchor)
 end
