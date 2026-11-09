@@ -22,7 +22,6 @@ pub mod evidence;
 pub mod output;
 pub mod pool;
 pub mod qr;
-pub mod scale;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
@@ -33,7 +32,6 @@ pub use ragu::Proof;
 use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu_core::Error> {
-    scale::initialize();
     ApplicationBuilder::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
@@ -74,15 +72,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
-        .register(scale::ScaleStart::<scale::R>::default())?
-        .register(scale::ScaleMiddle::<scale::R>::default())?
-        .register(scale::ScaleEnd::<scale::R>::default())?
-        .register(scale::ScaleStart::<scale::G>::default())?
-        .register(scale::ScaleMiddle::<scale::G>::default())?
-        .register(scale::ScaleEnd::<scale::G>::default())?
-        .register(spend::SpendPrepare)?
-        .register(stamp::FeeValueCommit)?
-        .register(stamp::FeeBind)?
         .finalize()
 }
 
