@@ -15,11 +15,11 @@ fn randomizer_reads_the_poseidon_output() {
     assert_ne!(spend, output);
     assert_eq!(
         spend,
-        radix8::decode(poseidon::alpha_spend(theta.0, cm.into()))
+        radix8::fp_signed_digits_fq(poseidon::alpha_spend(theta.0, cm.into()))
     );
     assert_eq!(
         output,
-        radix8::decode(poseidon::alpha_output(theta.0, cm.into()))
+        radix8::fp_signed_digits_fq(poseidon::alpha_output(theta.0, cm.into()))
     );
 }
 

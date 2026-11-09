@@ -79,7 +79,7 @@ impl Note {
     #[must_use]
     pub fn fee_blind(&self) -> value::Trapdoor {
         let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        radix8::decode(blind).into()
+        radix8::fp_signed_digits_fq(blind).into()
     }
 
     /// Computes the note commitment `cm`.
