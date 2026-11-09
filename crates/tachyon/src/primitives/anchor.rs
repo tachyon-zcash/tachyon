@@ -4,14 +4,10 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
 use rand_core::CryptoRng;
-use udon::{curve::Projective as _, field::Field as _};
+use udon::field::Field as _;
 
-use super::{EpochIndex, TachygramSetCommit};
-use crate::{
-    digest::poseidon,
-    pasta::{Eq, Fp},
-    serialization,
-};
+use super::{EpochIndex, TachygramSetBridgeHash};
+use crate::{digest::poseidon, pasta::Fp, serialization};
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -20,18 +16,12 @@ lazy_static! {
 /// Errors that can occur when advancing an anchor.
 #[derive(Debug, Display, Error, PartialEq, TotalEq)]
 pub enum AnchorError {
-    /// The provided tachygram set is the identity point.
-    #[display("next stamp cannot be the identity point")]
-    NextStampZero,
     /// The provided tachygram set is empty.
     #[display("next stamp cannot be empty")]
     NextStampEmpty,
     /// The provided epoch index is zero.
     #[display("next epoch cannot be zero")]
     NextEpochZero,
-    /// The tachygram commitment has an unusable bridge hash.
-    #[display("invalid tachygram commitment bridge hash")]
-    InvalidBridgeHash,
 }
 
 /// Running anchor over the consensus state.
@@ -56,35 +46,22 @@ impl Anchor {
         Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// Advance the anchor by absorbing one stamp and the epoch of the block
-    /// that contains it.
+    /// Advance the anchor with a stamp's bridge hash and containing epoch.
     ///
     /// The containing epoch index may be zero, within the genesis epoch.
     ///
     /// # Errors
     ///
-    /// Fails if `stamp_commit` is the identity point or a commitment to an
-    /// empty set, or has an unusable bridge hash.
+    /// Fails if `stamp_hash` equals the empty set's bridge hash.
     pub fn next_stamp(
         self,
         epoch: EpochIndex,
-        &stamp_commit: &TachygramSetCommit,
+        stamp_hash: TachygramSetBridgeHash,
+        empty_hash: TachygramSetBridgeHash,
     ) -> Result<Self, AnchorError> {
-        if *stamp_commit.as_ref() == Eq::identity() {
-            Err(AnchorError::NextStampZero)
-        } else if stamp_commit == TachygramSetCommit::default() {
-            Err(AnchorError::NextStampEmpty)
-        } else {
-            Ok(Self(
-                poseidon::anchor_next_stamp(
-                    self.0,
-                    epoch.into(),
-                    poseidon::bridge_hash(stamp_commit.as_ref().to_affine())
-                        .map_err(|_err| AnchorError::InvalidBridgeHash)?,
-                )
-                .map_err(|_err| AnchorError::InvalidBridgeHash)?,
-            ))
-        }
+        poseidon::anchor_next_stamp(self.0, epoch.into(), stamp_hash, empty_hash)
+            .map(Self)
+            .map_err(|_err| AnchorError::NextStampEmpty)
     }
 
     /// Advance the anchor into `epoch` with a boundary digest.

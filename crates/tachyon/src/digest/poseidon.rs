@@ -19,18 +19,9 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::FixedVec,
 };
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::field::Field as _;
 
-use crate::{
-    constants::EVIDENCE_TREE_ARITY,
-    pasta,
-    pasta::{EqAffine, Fp},
-    primitives::TachygramSetCommit,
-    stamp::proof::PROOF_SYSTEM,
-};
+use crate::{constants::EVIDENCE_TREE_ARITY, pasta, pasta::Fp, primitives::TachygramSetBridgeHash};
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
@@ -196,33 +187,30 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
-/// The bridge hash of a polynomial commitment.
-///
-/// # Errors
-///
-/// Fails if the commitment or its bridge hash is the identity.
-pub fn bridge_hash(commitment: EqAffine) -> ragu_core::Result<[Fp; 2]> {
-    let coordinates = PROOF_SYSTEM
-        .bridge_hash(commitment)?
-        .coordinates()
-        .ok_or_else(|| ragu_core::Error::InvalidWitness("bridge hash is the identity".into()))?;
-    Ok(coordinates.into())
-}
-
 /// Advances the anchor with the stamp's epoch and tachygram-set bridge hash.
 ///
 /// # Errors
 ///
-/// Fails for the empty set's bridge hash or an unusable bridge hash setup.
-pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: [Fp; 2]) -> ragu_core::Result<Fp> {
-    if tgs == bridge_hash(TachygramSetCommit::default().as_ref().to_affine())? {
+/// Fails for the empty set's bridge hash.
+pub fn anchor_next_stamp(
+    anchor_prev: Fp,
+    epoch: Fp,
+    stamp_hash: TachygramSetBridgeHash,
+    empty_hash: TachygramSetBridgeHash,
+) -> ragu_core::Result<Fp> {
+    if stamp_hash == empty_hash {
         return Err(ragu_core::Error::InvalidWitness(
             "invalid anchor step".into(),
         ));
     }
     Ok(hash::<4>(
         ANCHOR_STAMP_DOMAIN,
-        [anchor_prev, epoch, tgs[0], tgs[1]],
+        [
+            anchor_prev,
+            epoch,
+            stamp_hash.as_ref()[0],
+            stamp_hash.as_ref()[1],
+        ],
     ))
 }
 
@@ -238,7 +226,7 @@ pub fn evidence_tree_leaf(
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
-    contents: [Fp; 2],
+    contents: TachygramSetBridgeHash,
 ) -> Fp {
     hash::<8>(
         QR_BUCKET_DOMAIN,
@@ -249,8 +237,8 @@ pub fn evidence_tree_leaf(
             discriminant,
             depth,
             bits,
-            contents[0],
-            contents[1],
+            contents.as_ref()[0],
+            contents.as_ref()[1],
         ],
     )
 }

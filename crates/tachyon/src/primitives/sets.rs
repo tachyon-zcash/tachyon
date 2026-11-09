@@ -4,7 +4,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
-use udon::curve::Projective as _;
+use udon::curve::{Affine as _, Projective as _};
 
 use super::{ActionDigest, Anchor, Tachygram};
 use crate::{
@@ -12,13 +12,33 @@ use crate::{
     pasta,
     pasta::{Eq, Fp},
     serialization,
+    stamp::proof::PROOF_SYSTEM,
 };
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
+/// Bridge hash of a tachygram-set commitment.
+#[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct TachygramSetBridgeHash([Fp; 2]);
+
 impl TachygramSetCommit {
+    /// Hashes this commitment through the application's bridge-hash stage.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the commitment or its bridge hash is the identity.
+    pub fn bridge(self) -> ragu_core::Result<TachygramSetBridgeHash> {
+        let coordinates = PROOF_SYSTEM
+            .bridge_hash(self.0.to_affine())?
+            .coordinates()
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("bridge hash is the identity".into())
+            })?;
+        Ok(TachygramSetBridgeHash(coordinates.into()))
+    }
+
     /// Read as an affine point from the consensus wire format.
     ///
     /// # Errors

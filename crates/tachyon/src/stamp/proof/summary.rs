@@ -26,7 +26,7 @@ use ragu_primitives::{Element, allocator::Allocator, io::Write};
 use crate::{
     digest::poseidon,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
@@ -135,10 +135,12 @@ impl Step<Pasta> for SummarySeed {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_prev, epoch, _) = witness.take();
+            let empty_hash = TachygramSetCommit::default().bridge()?;
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(epoch),
-                [*x.take(), *y.take()],
+                [*x.take(), *y.take()].into(),
+                empty_hash,
             )?);
             Ok(((epoch, anchor_prev, anchor_end), ()))
         })?;
@@ -210,10 +212,12 @@ impl Step<Pasta> for SummaryAdvance {
         let output = D::try_just(|| {
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
+            let empty_hash = TachygramSetCommit::default().bridge()?;
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(summary_anchor_end),
                 Fp::from(summary_epoch),
-                [*x.take(), *y.take()],
+                [*x.take(), *y.take()].into(),
+                empty_hash,
             )?);
             Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
         })?;

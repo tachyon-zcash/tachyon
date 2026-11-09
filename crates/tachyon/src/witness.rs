@@ -10,12 +10,10 @@ use alloc::collections::BTreeSet;
 
 use ragu::{header::Header, step::Step};
 use ragu_core::pasta::Pasta;
-use udon::curve::Projective as _;
 
 use crate::{
     collections,
     constants::EVIDENCE_TREE_ARITY,
-    digest::poseidon,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
@@ -172,15 +170,12 @@ pub fn anchor_span_seed(
     (
         anchor_start,
         epoch,
-        poseidon::bridge_hash(
-            tgs.iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
-                .commit()
-                .as_ref()
-                .to_affine(),
-        )
-        .expect("valid stamp commitment"),
+        tgs.iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit()
+            .bridge()
+            .expect("valid stamp commitment"),
     )
 }
 

@@ -6,7 +6,6 @@ use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
     constants::{EPOCH_SIZE, EVIDENCE_TREE_ARITY},
-    digest::poseidon,
     pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
     witness,
@@ -56,12 +55,7 @@ fn evidence_tree_admission_rejects_substituted_contents() {
     }
     let replacement: TachygramSetPoly = iter::once(Tachygram::random(rng)).collect();
     let mut forged_header = *bucket.pcd.data();
-    forged_header.5 = poseidon::bridge_hash(
-        PROOF_SYSTEM
-            .commit(&replacement.as_ref().iter_coeffs().collect::<Vec<_>>())
-            .unwrap(),
-    )
-    .unwrap();
+    forged_header.5 = replacement.commit().bridge().unwrap();
     let forged = bucket
         .pcd
         .proof()

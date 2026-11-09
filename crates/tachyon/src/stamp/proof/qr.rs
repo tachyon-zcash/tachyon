@@ -45,7 +45,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetPoly,
+        QrQuotientPoly, Tachygram, TachygramSetBridgeHash, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
@@ -148,7 +148,7 @@ impl Header<Fp> for QrIntakeSides {
         Anchor,
         QrDiscriminant,
         QrProfile,
-        [Fp; 2],
+        TachygramSetBridgeHash,
     );
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
@@ -195,8 +195,16 @@ impl Header<Fp> for QrIntakeSides {
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
             non_residue_hash: [
-                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[0]))?,
-                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[1]))?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| fields.5.as_ref()[0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| fields.5.as_ref()[1]),
+                )?,
             ],
         })
     }
@@ -352,12 +360,14 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
+            let empty_hash = TachygramSetCommit::default().bridge()?;
             let () = left.take();
             let () = right.take();
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(epoch),
-                [*x.take(), *y.take()],
+                [*x.take(), *y.take()].into(),
+                empty_hash,
             )?);
             Ok((
                 (
@@ -626,7 +636,7 @@ impl Step<Pasta> for QrIntakeSplit {
                     anchor_end,
                     discriminant,
                     profile,
-                    [*first.take(), *second.take()],
+                    [*first.take(), *second.take()].into(),
                 ),
                 (),
             ))
@@ -844,9 +854,13 @@ impl Step<Pasta> for QrSideDescend {
             ] {
                 enforce_zero(difference, error)?;
             }
-            for (left_hash, right_hash) in non_residue_hash.into_iter().zip(selection_hash) {
+            for (left_hash, right_hash) in non_residue_hash
+                .as_ref()
+                .iter()
+                .zip(selection_hash.as_ref())
+            {
                 enforce_zero(
-                    left_hash - right_hash,
+                    *left_hash - *right_hash,
                     "QrSideDescend: selection non-residue hash does not match sides",
                 )?;
             }
@@ -949,7 +963,7 @@ impl Header<Fp> for QrBucket {
         Anchor,
         QrDiscriminant,
         QrProfile,
-        [Fp; 2],
+        TachygramSetBridgeHash,
     );
     type Output = Kind![Fp; QrBucketOutput<'_, _>];
 
@@ -996,8 +1010,16 @@ impl Header<Fp> for QrBucket {
                     .map(|fields| Fp::from(u64::from(fields.4.bits))),
             )?,
             contents_hash: [
-                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[0]))?,
-                Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.5[1]))?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| fields.5.as_ref()[0]),
+                )?,
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| fields.5.as_ref()[1]),
+                )?,
             ],
         })
     }
@@ -1107,7 +1129,7 @@ impl Step<Pasta> for QrBucketSeal {
                     crossing,
                     discriminant,
                     profile,
-                    [*hash_x.take(), *hash_y.take()],
+                    [*hash_x.take(), *hash_y.take()].into(),
                 ),
                 (),
             ))

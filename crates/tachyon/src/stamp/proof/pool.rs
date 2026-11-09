@@ -46,7 +46,10 @@ use crate::{
     digest::poseidon,
     note::{self},
     pasta::Fp,
-    primitives::{Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram},
+    primitives::{
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
+        TachygramSetBridgeHash, TachygramSetCommit,
+    },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
@@ -257,7 +260,7 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Output = AnchorSpan;
     type Right = ();
     /// `(anchor_start, epoch, stamp_hash)`
-    type Witness<'source> = (Anchor, EpochIndex, [Fp; 2]);
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetBridgeHash);
 
     const INDEX: Index = Index::new(31);
 
@@ -267,10 +270,12 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        let empty_hash = TachygramSetCommit::default().bridge()?;
         let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
             Fp::from(witness.0),
             Fp::from(witness.1),
             witness.2,
+            empty_hash,
         )?);
         Ok([
             AnchorSetPoly::from_iter([anchor_end])
@@ -305,10 +310,12 @@ impl Step<Pasta> for AnchorSpanSeed {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (anchor_start, epoch, stamp_hash) = witness.take();
+            let empty_hash = TachygramSetCommit::default().bridge()?;
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_start),
                 Fp::from(epoch),
                 stamp_hash,
+                empty_hash,
             )?);
 
             Ok(((anchor_start, anchor_end), ()))
