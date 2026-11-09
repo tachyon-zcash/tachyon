@@ -238,7 +238,7 @@ mod sealed {
 
 /// The Ragu proof a [`ProofStamp`] carries: [`Uncompressed`] or [`Compressed`].
 pub trait Proof: sealed::Sealed {
-    /// The exact length of the proof's Ragu encoding.
+    /// The proof-encoding transport bound for this application.
     fn encoded_len() -> usize;
 
     /// The proof's Ragu encoding.
@@ -389,8 +389,8 @@ impl<P: Proof> StampState for ProofStamp<P> {
 }
 
 impl<P: Proof> ProofStamp<P> {
-    /// Read a stamp from the consensus wire format. The proof blob has a
-    /// known constant size.
+    /// Read a stamp with a compactSize-prefixed proof encoding.
+    /// The proof type's encoded length bounds buffering.
     ///
     /// # Errors
     ///
@@ -450,7 +450,15 @@ impl<P: Proof> ProofStamp<P> {
         }
 
         let proof = {
-            let mut bytes = vec![0u8; P::encoded_len()];
+            let proof_len = usize::try_from(serialization::read_compactsize(&mut reader)?)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            if proof_len > P::encoded_len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "proof size exceeds transport bound",
+                ));
+            }
+            let mut bytes = vec![0u8; proof_len];
             reader.read_exact(&mut bytes)?;
             P::from_bytes(&bytes)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
@@ -466,8 +474,7 @@ impl<P: Proof> ProofStamp<P> {
         })
     }
 
-    /// Write a stamp to the consensus wire format. The proof blob has a
-    /// known constant size.
+    /// Write a stamp with a compactSize-prefixed proof encoding.
     ///
     /// # Errors
     ///
@@ -493,6 +500,15 @@ impl<P: Proof> ProofStamp<P> {
             .proof
             .to_bytes()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        serialization::write_compactsize(
+            &mut writer,
+            u64::try_from(proof.len()).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "proof encoding length exceeds u64",
+                )
+            })?,
+        )?;
         writer.write_all(&proof)
     }
 

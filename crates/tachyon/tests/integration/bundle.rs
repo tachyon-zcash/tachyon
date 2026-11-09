@@ -690,7 +690,12 @@ fn read_rejects_noncanonical_tachygrams() {
     bundle.write(&mut buf).unwrap();
 
     let proof_len = bundle.stamp.proof.to_bytes().unwrap().len();
-    let end = buf.len() - proof_len;
+    let mut proof_size_prefix = Vec::new();
+    CompactSize::try_from(proof_len)
+        .unwrap()
+        .write(&mut proof_size_prefix)
+        .unwrap();
+    let end = buf.len() - proof_len - proof_size_prefix.len();
     let first = end - n * 32;
     let last = end - 32;
     let (head, tail) = buf.split_at_mut(last);

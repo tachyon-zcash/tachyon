@@ -3,6 +3,7 @@ extern crate alloc;
 use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
 use core::assert_matches;
 
+use corez::io;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -409,6 +410,63 @@ fn read_rejects_malformed_tachygram_lists() {
                 .to_string(),
             expected
         );
+    }
+}
+
+#[test]
+fn read_rejects_wrong_proof_size() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let anchor = Anchor::random(rng);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, anchor, wallet.random_note(200));
+    let compressed_size = <stamp::Compressed as stamp::Proof>::encoded_len();
+    let uncompressed_size = <stamp::Uncompressed as stamp::Proof>::encoded_len();
+
+    {
+        let proof = stamp.proof.to_bytes().unwrap();
+        let mut bytes = Vec::new();
+        stamp.write(&mut bytes).unwrap();
+        let mut prefix = Vec::new();
+        CompactSize::try_from(proof.len())
+            .unwrap()
+            .write(&mut prefix)
+            .unwrap();
+        bytes.truncate(bytes.len() - proof.len() - prefix.len());
+        CompactSize::try_from(compressed_size)
+            .unwrap()
+            .write(&mut bytes)
+            .unwrap();
+        bytes.extend_from_slice(&proof);
+        let mut reader = bytes.as_slice();
+        let err = ProofStamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.len(), proof.len() - compressed_size);
+    }
+
+    let compressed = stamp
+        .compress(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &BTreeSet::from([fee_descriptor]),
+        )
+        .unwrap();
+    {
+        let proof = compressed.proof.to_bytes().unwrap();
+        let mut bytes = Vec::new();
+        compressed.write(&mut bytes).unwrap();
+        let mut prefix = Vec::new();
+        CompactSize::try_from(proof.len())
+            .unwrap()
+            .write(&mut prefix)
+            .unwrap();
+        bytes.truncate(bytes.len() - proof.len() - prefix.len());
+        CompactSize::try_from(uncompressed_size)
+            .unwrap()
+            .write(&mut bytes)
+            .unwrap();
+        let err = ProofStamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "proof size exceeds transport bound");
     }
 }
 

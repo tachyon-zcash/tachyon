@@ -60,22 +60,24 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                    | Format               | Description                                |
-//! | ----------------------- | -------------------- | ------------------------------------------ |
-//! | `vFeeTachyon`           | LE64                 | fee, at most `MAX_MONEY`                   |
-//! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of covered actions and fees |
-//! | `anchorTachyon`         | 32 bytes             | pool state reference                       |
-//! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
-//! | `nTachygrams`           | compactsize          | number of tachygrams                       |
-//! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
-//! | `proofTachyon`          | Ragu proof encoding  | encoded length for the context's proof type |
+//! | Name                    | Format                   | Description                                |
+//! | ----------------------- | ------------------------ | ------------------------------------------ |
+//! | `vFeeTachyon`           | LE64                     | fee, at most `MAX_MONEY`                   |
+//! | `hStampCoverageTachyon` | 32 bytes                 | BLAKE2b digest of covered actions and fees |
+//! | `anchorTachyon`         | 32 bytes                 | pool state reference                       |
+//! | `cTachygrams`           | 32 bytes                 | commitment to the tachygrams below         |
+//! | `nTachygrams`           | compactSize              | number of tachygrams                       |
+//! | `vTachygrams`           | 32 * nTachygrams         | tachygrams for this proof                  |
+//! | `sizeProofTachyon`      | compactSize              | length of `proofTachyon` in bytes          |
+//! | `proofTachyon`          | `byte[sizeProofTachyon]` | the Ragu stamp proof                       |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
-//! Full and compressed proofs share state `0x01`. The proof type determines
-//! the encoded length. [`TachyonBundle`] carries compressed proofs.
+//! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
+//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
+//! uncompressed length while stamps are merged and lifted outside consensus.
 //!
 //! ## Pointer stamp
 //!
