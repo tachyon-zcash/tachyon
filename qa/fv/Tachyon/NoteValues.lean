@@ -6,10 +6,8 @@ import Tachyon.Foundation.RelationWitness
 
 The binding signature balances the bundle's value commitments: each action descriptor's `cv` and the
 max fee commitment. The proof ties each `cv` to a note: `SpendBind` commits `+v` of the spent note,
-the output binding commits `-v` of the created note, and FeeValueCommit → FeeBind certifies
-`-maxFee` and the change note at `maxFee - fee`, checking `0 ≤ maxFee - fee` before FeeFuse.
-`WindowEncodings` supplies these unchanged value-opening interfaces from the new graph through
-the proved refinements. A descriptor's digest is the hash of its
+the output binding commits `-v` of the created note, and `FeeFuse` commits `-maxFee` and creates the
+change note at `maxFee - fee`, checking `0 ≤ maxFee - fee`. A descriptor's digest is the hash of its
 `(cv, rk)`, and coverage matches it to a leaf's digest, so the descriptor's `cv` is the leaf's, or the
 two preimages collide (`descriptorOpensOrCollision`).
 

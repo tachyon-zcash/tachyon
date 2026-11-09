@@ -106,17 +106,6 @@ The abstract cm-to-nullifier interpretation is preserved by
 `prepare_header_eq`; as in the original `SpendBinding`, instantiating that
 interpretation requires the same note/master-key pairing assumptions.
 
-`WindowEncodings.lean` refines the arithmetic interpretation to the actual
-255-bit ordered Boolean array. `pack_value` and `cross_limb_window` prove
-that the 85 radix-8 digits agree with the unpadded low-128/high-127 split.
-`field_limbs_injective` checks that both Pasta Fp limb equalities are lossless;
-`hash_match` binds the hash's canonical integer, and `modular_alias_rejected`
-rules out its `s+p` alias. `bounded_amount_product` specializes the 17-window
-proof to the actual monetary bound. `outputValueOpening`, `spendValueOpening`
-and `feeValueOpening` supply the existing accounting interfaces through the
-refinement lemmas; the three `*DigestOpening` adapters supply the unchanged
-paid-creation/debit interface with the same signed values and descriptors.
-
 The merge and unmerge results follow the soundness argument for `StampUnmerge` in three parts. Every
 derivable header pairs its action set with its tachygram set through `R`. A verified bundle
 publishes exactly its covered leaves' tachygrams. Every covered digest traces back to a leaf that
