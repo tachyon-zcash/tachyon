@@ -38,7 +38,12 @@ use rand_core::CryptoRng;
 use udon::field::Field as _;
 
 use crate::{
-    digest::poseidon, keys::PaymentKey, nullifier, pasta::Fp, primitives::Tachygram, radix8, value,
+    digest::poseidon,
+    keys::PaymentKey,
+    nullifier,
+    pasta::{Fp, Fq},
+    primitives::Tachygram,
+    value,
 };
 
 /// Note commitment trapdoor ($rcm$): randomness that blinds the note
@@ -77,9 +82,14 @@ pub struct Note {
 impl Note {
     /// Derive a max fee blind $r$ from note fields.
     #[must_use]
+    #[expect(
+        clippy::expect_used,
+        clippy::missing_panics_doc,
+        reason = "p < q, so every Fp repr is canonical in Fq"
+    )]
     pub fn fee_blind(&self) -> value::Trapdoor {
         let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        radix8::fp_to_fq(blind).into()
+        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// Computes the note commitment `cm`.

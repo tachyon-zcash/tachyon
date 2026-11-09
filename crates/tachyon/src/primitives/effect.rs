@@ -6,7 +6,24 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use crate::{digest::poseidon, entropy::ActionEntropy, note, pasta::Fq, radix8, value};
+use udon::field::Field as _;
+
+use crate::{
+    digest::poseidon,
+    entropy::ActionEntropy,
+    note,
+    pasta::{Fp, Fq},
+    value,
+};
+
+/// Embeds a base-field element in the scalar field, which is larger.
+#[expect(
+    clippy::expect_used,
+    reason = "p < q, so every Fp repr is canonical in Fq"
+)]
+fn embed(alpha: Fp) -> Fq {
+    Fq::from_bytes(alpha.to_bytes()).expect("p < q")
+}
 
 mod sealed {
     pub trait Sealed: Copy {}
@@ -35,7 +52,7 @@ pub struct Output;
 
 impl Effect for Spend {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        radix8::fp_to_fq(poseidon::alpha_spend(theta.0, cm.into()))
+        embed(poseidon::alpha_spend(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
@@ -45,7 +62,7 @@ impl Effect for Spend {
 
 impl Effect for Output {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        radix8::fp_to_fq(poseidon::alpha_output(theta.0, cm.into()))
+        embed(poseidon::alpha_output(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {

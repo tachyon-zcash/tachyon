@@ -74,8 +74,8 @@ fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
 
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 
-/// The digest a max fee note's value commitment blind decodes from,
-/// $h = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
+/// A max fee note's value commitment blind,
+/// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 #[must_use]
 pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {

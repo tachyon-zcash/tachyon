@@ -36,10 +36,10 @@ flowchart TB
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
 
-$$ \alpha_{\text{spend}} = F\bigl(\text{Poseidon}_\text{Tachyon-Spend}(\theta, \mathsf{cm})\bigr) $$
-$$ \alpha_{\text{output}} = F\bigl(\text{Poseidon}_\text{Tachyon-Output}(\theta, \mathsf{cm})\bigr) $$
+$$ \alpha_{\text{spend}} = \text{Poseidon}_\text{Tachyon-Spend}(\theta, \mathsf{cm}) $$
+$$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \mathsf{cm}) $$
 
-`theta` and the Poseidon output are elements of $\mathbb{F}_p$. $F$ reads the output's canonical bits as signed odd radix-8 digits into a scalar in $\mathbb{F}_q$, the same reading as the [max fee note's blind](./fee.md#max-fee-note).
+`theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,
@@ -281,11 +281,11 @@ rect rgb(100, 149, 237, 0.1)
         note over User: random rcv
         note over User: cm = Poseidon(pk, psi, rcm, v)
         alt spend
-            note over User: alpha = F(Poseidon(theta, cm))
+            note over User: alpha = Poseidon(theta, cm)
             note over User: rk = ak + [alpha]G
             note over User: cv = Pedersen(v, rcv)
         else output
-            note over User: alpha = F(Poseidon(theta, cm))
+            note over User: alpha = Poseidon(theta, cm)
             note over User: rk = [alpha]G
             note over User: cv = Pedersen(-v, rcv)
         end
@@ -317,7 +317,7 @@ par Authorizing
 
         loop per action
             note over Custody: cm = Poseidon(pk, psi, rcm, v)
-            note over Custody: alpha = F(Poseidon(theta, cm))
+            note over Custody: alpha = Poseidon(theta, cm)
             alt spend
                 note over Custody: cv = Pedersen(v, rcv)
                 note over Custody: rk = ak + [alpha]G
@@ -337,7 +337,7 @@ par Authorizing
         end
 
         loop per spend action
-            note over Custody: alpha = F(Poseidon(theta, cm))
+            note over Custody: alpha = Poseidon(theta, cm)
             note over Custody: rsk = ask + alpha
             note over Custody: sig = Sign(rsk, sighash)
         end

@@ -15,7 +15,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::curve::Affine as _;
+use udon::{curve::Affine as _, field::Field as _};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -25,7 +25,7 @@ use crate::{
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
-    pasta::{EpAffine, Fp},
+    pasta::{EpAffine, Fp, Fq},
     primitives::{ActionDigest, Anchor, TachygramSetBridge, TachygramSetCommit, effect},
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
@@ -249,8 +249,9 @@ impl Step<Pasta> for OutputAction {
             let (theta, anchor, ..) = witness.take();
             let (cm, pad, cv) = left.take();
             let () = right.take();
-            // TODO: a real circuit walks the canonical bits of alpha's digest as
-            // signed radix-8 windows; mock ragu reads them natively.
+            // TODO: a real circuit squeezes alpha in Fp and needs its bit
+            // decomposition to use it as an Fq scalar (p < q, so no reduction);
+            // mock ragu embeds it natively.
             let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
             let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
             let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
@@ -391,8 +392,9 @@ impl Step<Pasta> for SpendAction {
                 Fp::from(pk) - Fp::from(pak.derive_payment_key()),
                 "SpendAction: pak not related to note",
             )?;
-            // TODO: a real circuit walks the canonical bits of alpha's digest as
-            // signed radix-8 windows; mock ragu reads them natively.
+            // TODO: a real circuit squeezes alpha in Fp and needs its bit
+            // decomposition to use it as an Fq scalar (p < q, so no reduction);
+            // mock ragu embeds it natively.
             let alpha = theta.randomizer::<effect::Spend>(cm);
             let rk = pak.ak.derive_action_public(&alpha);
             let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
@@ -856,9 +858,17 @@ impl Step<Pasta> for FeeFuse {
                 Fp::from(max_fee_note.psi),
                 Fp::from(max_fee_note.rcm),
             );
-            // TODO: a real circuit walks the canonical bits of the blind's digest
-            // as signed radix-8 windows; mock ragu reads them natively.
-            let cv_max_fee = max_fee_note.fee_blind().commit(-max_fee_note.value);
+            // TODO: a real circuit squeezes r in Fp and needs its bit
+            // decomposition to use it as an Fq scalar (p < q, so no reduction);
+            // mock ragu embeds it natively.
+            let blind = poseidon::fee_blind(pk, psi, rcm);
+            #[expect(
+                clippy::expect_used,
+                reason = "p < q, so every Fp repr is canonical in Fq"
+            )]
+            let cv_max_fee =
+                value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                    .commit(-max_fee_note.value);
             let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
             })?;
@@ -995,9 +1005,17 @@ impl Step<Pasta> for FeeSeed {
                 Fp::from(max_fee_note.psi),
                 Fp::from(max_fee_note.rcm),
             );
-            // TODO: a real circuit walks the canonical bits of the blind's digest
-            // as signed radix-8 windows; mock ragu reads them natively.
-            let cv_max_fee = max_fee_note.fee_blind().commit(-max_fee_note.value);
+            // TODO: a real circuit squeezes r in Fp and needs its bit
+            // decomposition to use it as an Fq scalar (p < q, so no reduction);
+            // mock ragu embeds it natively.
+            let blind = poseidon::fee_blind(pk, psi, rcm);
+            #[expect(
+                clippy::expect_used,
+                reason = "p < q, so every Fp repr is canonical in Fq"
+            )]
+            let cv_max_fee =
+                value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                    .commit(-max_fee_note.value);
             let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
             })?;
