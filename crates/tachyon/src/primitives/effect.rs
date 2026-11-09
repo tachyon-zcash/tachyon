@@ -35,7 +35,7 @@ pub struct Output;
 
 impl Effect for Spend {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        radix8::read(poseidon::alpha_spend(theta.0, cm.into()))
+        radix8::decode(poseidon::alpha_spend(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
@@ -45,7 +45,7 @@ impl Effect for Spend {
 
 impl Effect for Output {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        radix8::read(poseidon::alpha_output(theta.0, cm.into()))
+        radix8::decode(poseidon::alpha_output(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {

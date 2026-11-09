@@ -14,7 +14,7 @@ use crate::pasta::{Fp, Fq};
 ///
 /// where $(s_i, m_i, n_i)$ are bits $3i$, $3i + 1$ and $3i + 2$ of the
 /// canonical little-endian encoding of $h$.
-pub(crate) fn read(digest: Fp) -> Fq {
+pub(crate) fn decode(digest: Fp) -> Fq {
     let bits = digest
         .to_bytes()
         .map(|byte| array::from_fn::<u8, 8, _>(|shift| (byte >> shift) & 1));
