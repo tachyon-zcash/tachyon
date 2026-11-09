@@ -17,10 +17,10 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use proof::{
-    PROOF_SYSTEM, output, scale,
+    PROOF_SYSTEM, output,
     stamp::{
-        ActionLift, ActionMerge, Actions, FeeBind, FeeFuse, FeeSeed, FeeValueCommit, OutputAction,
-        SpendAction, Stamp, StampLift, StampMerge, StampUnmerge,
+        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
+        StampLift, StampMerge, StampUnmerge,
     },
 };
 use ragu::PROOF_SIZE_COMPRESSED;
@@ -441,7 +441,7 @@ impl Plan {
     /// Prove a single [`ProofStamp`] for this plan.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
-    /// **spend**, [`spend::SpendPrepare`] derives the live nullifier pair and
+    /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
     /// anchor. If that anchor differs from the plan's anchor, the spend comes
     /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
@@ -522,13 +522,10 @@ impl Plan {
                 ));
             }
 
-            let (prepared, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendPrepare, (), spendable_pcd, secret_pcd)
-                .map_err(ProveError::ProofFailed)?;
-            let blind =
-                scale::prove::<scale::R, _>(rng, rcv.into()).map_err(ProveError::ProofFailed)?;
+            // SpendBind: derive the live pair from the note's master key and
+            // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendBind, (), prepared, blind)
+                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
@@ -640,40 +637,16 @@ impl Plan {
             .transpose()?
         {
             None => {
-                let blind = scale::prove::<scale::R, _>(rng, self.max_fee_note.fee_blind().into())
-                    .map_err(ProveError::ProofFailed)?;
                 let (pcd, ()) = PROOF_SYSTEM
-                    .fuse(
+                    .seed(
                         rng,
                         FeeSeed,
-                        witness::fee_seed((*blind.data(), ()), self.max_fee_note, self.anchor),
-                        blind,
-                        ragu::Proof::bootstrap().carry::<()>(()),
+                        witness::fee_seed(((), ()), self.max_fee_note, self.anchor),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, BTreeSet::new(), BTreeSet::new())
             },
             Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
-                let blind = scale::prove::<scale::R, _>(rng, self.max_fee_note.fee_blind().into())
-                    .map_err(ProveError::ProofFailed)?;
-                let (opening, ()) = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        FeeValueCommit,
-                        (self.max_fee_note.value,),
-                        blind,
-                        ragu::Proof::bootstrap().carry::<()>(()),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
-                let (ready, ()) = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        FeeBind,
-                        (self.max_fee_note, self.fee),
-                        opening,
-                        ragu::Proof::bootstrap().carry::<()>(()),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
                 let stamp_header = (
                     digests.iter().copied().collect::<ActionSetPoly>().commit(),
                     tachygrams
@@ -687,9 +660,15 @@ impl Plan {
                     .fuse(
                         rng,
                         FeeFuse,
-                        witness::fee_fuse((stamp_header, *ready.data()), &digests, &tachygrams),
+                        witness::fee_fuse(
+                            (stamp_header, ()),
+                            self.max_fee_note,
+                            self.fee,
+                            &digests,
+                            &tachygrams,
+                        ),
                         merged_proof.carry::<Actions>(stamp_header),
-                        ready,
+                        ragu::Proof::bootstrap().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, descriptors, tachygrams)
@@ -803,29 +782,19 @@ impl ProofStamp {
         )
         .map_err(ProveError::ActionDigest)?;
 
-        let blind =
-            scale::prove::<scale::R, _>(rng, rcv.into()).map_err(ProveError::ProofFailed)?;
         let (bind_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                output::OutputBind,
-                (note,),
-                blind,
-                ragu::Proof::bootstrap().carry::<()>(()),
-            )
+            .seed(rng, output::OutputBind, (note, rcv))
             .map_err(ProveError::ProofFailed)?;
         let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
-        let randomizer =
-            scale::prove::<scale::G, _>(rng, alpha.into()).map_err(ProveError::ProofFailed)?;
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 OutputAction,
-                witness::output_action((*bind_pcd.data(), *randomizer.data()), theta, anchor),
+                witness::output_action((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
-                randomizer,
+                ragu::Proof::bootstrap().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -843,12 +812,12 @@ impl ProofStamp {
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability and the value commitment `cv` are read straight off the
-    /// bind header (`SpendPrepare` derives the pair and `SpendBind` derives
-    /// cv). [`SpendAction`] derives `alpha` from `theta` and the bound
-    /// `cm`, proves the action `(cv, rk)`, and enforces the stamp
-    /// accumulator over the pair. The spend's `anchor` is taken as the
-    /// stamp's anchor; chain validation lives inside the spendable lineage.
-    /// `digests` holds the proved action's digest.
+    /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
+    /// [`SpendAction`] derives `alpha` from `theta` and the bound `cm`, proves
+    /// the action `(cv, rk)`, and enforces the stamp accumulator over the
+    /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
+    /// validation lives inside the spendable lineage. `digests` holds the
+    /// proved action's digest.
     ///
     /// # Errors
     ///
@@ -880,15 +849,13 @@ impl ProofStamp {
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
-        let randomizer =
-            scale::prove::<scale::G, _>(rng, alpha.into()).map_err(ProveError::ProofFailed)?;
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 SpendAction,
-                witness::spend_action((*bind_pcd.data(), *randomizer.data()), theta, pak),
+                witness::spend_action((*bind_pcd.data(), ()), theta, pak),
                 bind_pcd,
-                randomizer,
+                ragu::Proof::bootstrap().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
