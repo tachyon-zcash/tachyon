@@ -78,11 +78,11 @@ impl Note {
     /// Derive a max fee blind $r$ from note fields.
     #[must_use]
     pub fn fee_blind(&self) -> value::Trapdoor {
-        value::Trapdoor::from_scalar(poseidon::scalar(poseidon::fee_blind(
+        value::Trapdoor::from_scalar(poseidon::fee_blind(
             Fp::from(self.pk),
             Fp::from(self.psi),
             Fp::from(self.rcm),
-        )))
+        ))
     }
 
     /// Computes the note commitment `cm`.

@@ -13,14 +13,8 @@ fn randomizer_reads_the_poseidon_output() {
     let output: Fq = theta.randomizer::<effect::Output>(cm).into();
 
     assert_ne!(spend, output);
-    assert_eq!(
-        spend,
-        poseidon::scalar(poseidon::alpha_spend(theta.0, cm.into()))
-    );
-    assert_eq!(
-        output,
-        poseidon::scalar(poseidon::alpha_output(theta.0, cm.into()))
-    );
+    assert_eq!(spend, poseidon::alpha_spend(theta.0, cm.into()));
+    assert_eq!(output, poseidon::alpha_output(theta.0, cm.into()));
 }
 
 #[test]

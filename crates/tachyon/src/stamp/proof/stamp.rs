@@ -585,9 +585,8 @@ impl Step for FeeFuse {
         // TODO: a real circuit squeezes h in Fp and walks the signed radix-8
         // windows of its canonical bit decomposition; mock ragu decodes it
         // natively.
-        let cv_max_fee =
-            value::Trapdoor::from_scalar(poseidon::scalar(poseidon::fee_blind(pk, psi, rcm)))
-                .commit(-max_fee_note.value);
+        let cv_max_fee = value::Trapdoor::from_scalar(poseidon::fee_blind(pk, psi, rcm))
+            .commit(-max_fee_note.value);
         let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
         })?;
@@ -674,9 +673,8 @@ impl Step for FeeSeed {
         // TODO: a real circuit squeezes h in Fp and walks the signed radix-8
         // windows of its canonical bit decomposition; mock ragu decodes it
         // natively.
-        let cv_max_fee =
-            value::Trapdoor::from_scalar(poseidon::scalar(poseidon::fee_blind(pk, psi, rcm)))
-                .commit(-max_fee_note.value);
+        let cv_max_fee = value::Trapdoor::from_scalar(poseidon::fee_blind(pk, psi, rcm))
+            .commit(-max_fee_note.value);
         let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
         })?;
