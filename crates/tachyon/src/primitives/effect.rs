@@ -6,7 +6,7 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use crate::{digest::poseidon, entropy::ActionEntropy, note, pasta::Fq, value};
+use crate::{digest::poseidon, entropy::ActionEntropy, note, pasta::Fq, radix8, value};
 
 mod sealed {
     pub trait Sealed: Copy {}
@@ -35,7 +35,7 @@ pub struct Output;
 
 impl Effect for Spend {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        poseidon::alpha_spend(theta.0, cm.into())
+        radix8::read(poseidon::alpha_spend(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
@@ -45,7 +45,7 @@ impl Effect for Spend {
 
 impl Effect for Output {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        poseidon::alpha_output(theta.0, cm.into())
+        radix8::read(poseidon::alpha_output(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {

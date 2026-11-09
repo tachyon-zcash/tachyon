@@ -1,7 +1,6 @@
 //! Tachyon Poseidon digests.
 //!
-//! Each public function provides one protocol-defined hash or hash-derived
-//! scalar.
+//! Each named function provides one protocol-defined hash.
 //!
 //! A tagged hash starts from a zero rate and the capacity element
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
@@ -25,7 +24,7 @@ use udon::{curve::Affine as _, field::Field as _};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
-    pasta::{EqAffine, Fp, Fq},
+    pasta::{EqAffine, Fp},
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -77,37 +76,14 @@ fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     squeeze(&mut emulator, &mut sponge)
 }
 
-/// The scalar a digest $h$ denotes, read as a signed odd-digit radix-8 sum:
-///
-/// $$
-///   \sum_{i=0}^{84} (2 s_i - 1)(1 + 2 m_i + 4 n_i) \cdot 8^i \bmod q,
-/// $$
-///
-/// where $(s_i, m_i, n_i)$ are bits $3i$, $3i + 1$ and $3i + 2$ of the
-/// canonical little-endian encoding of $h$.
-fn scalar(digest: Fp) -> Fq {
-    let bits = digest
-        .to_bytes()
-        .map(|byte| array::from_fn::<u8, 8, _>(|shift| (byte >> shift) & 1));
-    let (windows, _) = bits.as_flattened().as_chunks::<3>();
-    windows
-        .iter()
-        .rev()
-        .fold(Fq::ZERO, |acc, &[sign, low, high]| {
-            let magnitude = Fq::from(u64::from(1 + 2 * low + 4 * high));
-            acc * Fq::from(8u64) + if sign == 1 { magnitude } else { -magnitude }
-        })
-}
-
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 
-/// A max fee note's value commitment blind, read as signed odd-digit radix-8
-/// windows of the digest
+/// The digest a max fee note's value commitment blind decodes from,
 /// $h = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 #[must_use]
-pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fq {
-    scalar(hash::<3>(FEE_BLIND_DOMAIN, [pk, psi, rcm]))
+pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
+    hash::<3>(FEE_BLIND_DOMAIN, [pk, psi, rcm])
 }
 
 const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
@@ -176,28 +152,26 @@ pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
 
 const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 
-/// Derives a spend's $\alpha$ from its entropy and note commitment, reading the
-/// digest below as signed odd-digit radix-8 windows.
+/// Derives a spend's $\alpha$ preimage from its entropy and note commitment.
 ///
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
 #[must_use]
-pub fn alpha_spend(theta: Fp, cm: Fp) -> Fq {
-    scalar(hash::<2>(SPEND_ALPHA_DOMAIN, [theta, cm]))
+pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
+    hash::<2>(SPEND_ALPHA_DOMAIN, [theta, cm])
 }
 
 const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 
-/// Derives an output's $\alpha$ from its entropy and note commitment, reading
-/// the digest below as signed odd-digit radix-8 windows.
+/// Derives an output's $\alpha$ preimage from its entropy and note commitment.
 ///
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
 #[must_use]
-pub fn alpha_output(theta: Fp, cm: Fp) -> Fq {
-    scalar(hash::<2>(OUTPUT_ALPHA_DOMAIN, [theta, cm]))
+pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
+    hash::<2>(OUTPUT_ALPHA_DOMAIN, [theta, cm])
 }
 
 const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
@@ -309,6 +283,3 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     hash::<2>(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])
 }
-
-#[cfg(test)]
-mod tests;

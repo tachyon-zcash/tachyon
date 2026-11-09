@@ -75,13 +75,6 @@ pub struct Note {
 }
 
 impl Note {
-    /// Derive a max fee blind $r$ from note fields.
-    #[must_use]
-    pub fn fee_blind(&self) -> value::Trapdoor {
-        let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(blind)
-    }
-
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$

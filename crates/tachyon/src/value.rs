@@ -14,7 +14,10 @@ use udon::{
 
 use crate::{
     constants::MAX_MONEY,
-    pasta::{Ep, EpAffine, Fq},
+    digest::poseidon,
+    note::Note,
+    pasta::{Ep, EpAffine, Fp, Fq},
+    radix8,
 };
 
 /// Alias for [`ValueTrapdoor`].
@@ -74,12 +77,6 @@ impl Trapdoor {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// A trapdoor derived from other secret data, such as a max fee note's
-    /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
-        Self(scalar)
-    }
-
     /// Commit to a given value with this trapdoor.
     ///
     /// $$
@@ -93,6 +90,19 @@ impl Trapdoor {
         let commit_value = *VALUE_COMMIT_V * Fq::from(value);
         let commit_trapdoor = *VALUE_COMMIT_R * self.0;
         ValueCommitment(commit_value + commit_trapdoor)
+    }
+}
+
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "fee blind construction requires access to the private value trapdoor"
+)]
+impl Note {
+    /// Derive a max fee blind $r$ from note fields.
+    #[must_use]
+    pub fn fee_blind(&self) -> Trapdoor {
+        let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
+        ValueTrapdoor(radix8::read(blind))
     }
 }
 

@@ -1,7 +1,7 @@
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
-use crate::{digest::poseidon, note, primitives::effect};
+use crate::{digest::poseidon, note, primitives::effect, radix8};
 
 #[test]
 fn randomizer_reads_the_poseidon_output() {
@@ -13,8 +13,14 @@ fn randomizer_reads_the_poseidon_output() {
     let output: Fq = theta.randomizer::<effect::Output>(cm).into();
 
     assert_ne!(spend, output);
-    assert_eq!(spend, poseidon::alpha_spend(theta.0, cm.into()));
-    assert_eq!(output, poseidon::alpha_output(theta.0, cm.into()));
+    assert_eq!(
+        spend,
+        radix8::read(poseidon::alpha_spend(theta.0, cm.into()))
+    );
+    assert_eq!(
+        output,
+        radix8::read(poseidon::alpha_output(theta.0, cm.into()))
+    );
 }
 
 #[test]
