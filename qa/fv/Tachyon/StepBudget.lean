@@ -410,21 +410,19 @@ def reconstructLeaf [DecidableEq G] (m : Model F G) (hJ : m.sentinel ≠ 0)
     (leaf : Leaf (OldAccepted (K := K) m valid) d a) : Leaf (NewAccepted (K := K) m valid) d a :=
   ⟨leaf.val, (accepted_refinement m hJ valid leaf.val).mpr leaf.property.1, leaf.property.2⟩
 
-variable {Lift : Stamp F A → A → Type*}
-
 /-- Both directions extend to every complete stamp path, including unmerges.
 All existing bundle checks use the same terminal header and covered digests. -/
 theorem stamp_refinement [DecidableEq G] (m : Model F G) (hJ : m.sentinel ≠ 0)
     (valid : NoteSpendable F A → Prop) (IsFee : F → Prop) (epoch : A → ℕ)
     (R : ℕ → F → Multiset F) (s : Stamp F A) :
-    Nonempty (StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid)) Lift s) ↔
-      Nonempty (StampTrace IsFee epoch R (Leaf (OldAccepted (K := K) m valid)) Lift s) :=
+    Nonempty (StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid)) s) ↔
+      Nonempty (StampTrace IsFee epoch R (Leaf (OldAccepted (K := K) m valid)) s) :=
   StampTrace.refinement_iff (eraseLeaf m hJ valid) (reconstructLeaf m hJ valid)
 
 theorem published_through_refinement [DecidableEq F] [DecidableEq G]
     (m : Model F G) (hJ : m.sentinel ≠ 0) (valid : NoteSpendable F A → Prop)
     {IsFee : F → Prop} {epoch : A → ℕ} {R : ℕ → F → Multiset F} {s : Stamp F A}
-    (t : StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid)) Lift s)
+    (t : StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid)) s)
     {covered : Multiset F} (hc : s.actions = setPoly covered) :
     s.tachygrams = setPoly (covered.bind (R (epoch s.anchor))) :=
   (t.mapLeaf (eraseLeaf m hJ valid)).forget.published hc
@@ -435,7 +433,7 @@ theorem bundle_through_refinement [DecidableEq F] [DecidableEq G]
     {actionDigest : Δ → F} {feeDigest : Φ → F} {descs : List Δ} {fee : Φ} {adjunctFees : List Φ}
     {stamp : PublishedStamp F A}
     (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp)
-    (t : StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid)) Lift
+    (t : StampTrace IsFee epoch R (Leaf (NewAccepted (K := K) m valid))
       ⟨setPoly (coveredDigests actionDigest feeDigest descs (fee :: adjunctFees)),
         stamp.tachygramSet, stamp.anchor⟩) :
     (stamp.tachygrams : Multiset F) =
