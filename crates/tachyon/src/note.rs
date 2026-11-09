@@ -38,7 +38,8 @@ use rand_core::CryptoRng;
 use udon::field::Field as _;
 
 use crate::{
-    digest::poseidon, keys::PaymentKey, nullifier, pasta::Fp, primitives::Tachygram, radix8, value,
+    digest::poseidon, keys::PaymentKey, nullifier, pasta::Fp, primitives::Tachygram,
+    radix8::fp_radix8_to_fq, value,
 };
 
 /// Note commitment trapdoor ($rcm$): randomness that blinds the note
@@ -79,7 +80,7 @@ impl Note {
     #[must_use]
     pub fn fee_blind(&self) -> value::Trapdoor {
         let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        radix8::fp_signed_digits_fq(blind).into()
+        fp_radix8_to_fq(blind).into()
     }
 
     /// Computes the note commitment `cm`.
