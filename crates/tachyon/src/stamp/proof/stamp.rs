@@ -121,9 +121,9 @@ impl Step for OutputAction {
         (cm, pad, cv): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // TODO: a real circuit squeezes alpha in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
+        // TODO: a real circuit squeezes alpha's digest in Fp and walks the
+        // signed radix-8 windows of its canonical bit decomposition; mock ragu
+        // reads it natively.
         let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
@@ -204,9 +204,9 @@ impl Step for SpendAction {
             "SpendAction: pak not related to note",
         )?;
 
-        // TODO: a real circuit squeezes alpha in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
+        // TODO: a real circuit squeezes alpha's digest in Fp and walks the
+        // signed radix-8 windows of its canonical bit decomposition; mock ragu
+        // reads it natively.
         let alpha = theta.randomizer::<effect::Spend>(cm);
 
         let rk = pak.ak.derive_action_public(&alpha);
