@@ -7,14 +7,12 @@ use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, effect, fee,
+    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
         ProofStamp,
         proof::{
-            PROOF_SYSTEM, output, scale,
-            stamp::{
-                Actions, FeeBind, FeeFuse, FeeReady, FeeSeed, FeeValueCommit, OutputAction, Stamp,
-            },
+            PROOF_SYSTEM, output,
+            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
         },
     },
     value, witness,
@@ -32,31 +30,17 @@ fn fee_less_output_bundle(
     max_fee_note: Note,
 ) -> Bundle<ProofStamp> {
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
-    let blind = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            output::OutputBind,
-            (output_plan.note,),
-            blind,
-            Proof::bootstrap().carry::<()>(()),
-        )
+        .seed(rng, output::OutputBind, (output_plan.note, rcv))
         .unwrap();
     let (cm, pad, _cv) = *bind_pcd.data();
-    let randomizer = scale::prove::<scale::G, _>(
-        rng,
-        theta
-            .randomizer::<effect::Output>(output_plan.note.commitment())
-            .into(),
-    )
-    .unwrap();
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             OutputAction,
-            witness::output_action((*bind_pcd.data(), *randomizer.data()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            randomizer,
+            Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
     let stamp = ProofStamp {
@@ -76,29 +60,6 @@ fn fee_less_output_bundle(
     )
     .unwrap()
     .stamp(stamp)
-}
-
-fn prepare_fee(rng: &mut StdRng, note: Note, fee: value::Positive) -> ragu::Pcd<FeeReady> {
-    let blind = scale::prove::<scale::R, _>(rng, note.fee_blind().into()).unwrap();
-    let (opening, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeValueCommit,
-            (note.value,),
-            blind,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeBind,
-            (note, fee),
-            opening,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap()
-        .0
 }
 
 #[test]
@@ -122,15 +83,17 @@ fn fee_fuse_binds_its_sets() {
         left.stamp.tachygram_set,
         anchor,
     );
-    let ready = prepare_fee(rng, max_fee_note, value::Positive::try_from(120).unwrap());
-    let other_ready = prepare_fee(rng, max_fee_note, value::Positive::try_from(50).unwrap());
     let valid = witness::fee_fuse(
-        (stamp_header, *ready.data()),
+        (stamp_header, ()),
+        max_fee_note,
+        value::Positive::try_from(120).unwrap(),
         &action_digests,
         &left.stamp.tachygrams,
     );
     let other = witness::fee_fuse(
-        (stamp_header, *other_ready.data()),
+        (stamp_header, ()),
+        max_fee_note,
+        value::Positive::try_from(50).unwrap(),
         &action_digests,
         &left.stamp.tachygrams,
     );
@@ -139,7 +102,15 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.0.0 = valid.1.0.clone();
+                corrupt.1 = value::Positive::try_from(301).unwrap();
+                corrupt
+            },
+            "FeeFuse: change is out of range",
+        ),
+        (
+            {
+                let mut corrupt = valid.clone();
+                corrupt.2.0 = valid.3.0.clone();
                 corrupt
             },
             "FeeFuse: left action accumulator must commit to header commit",
@@ -147,7 +118,7 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.0.1 = valid.1.1.clone();
+                corrupt.2.1 = valid.3.1.clone();
                 corrupt
             },
             "FeeFuse: left tachygram accumulator must commit to header commit",
@@ -155,18 +126,34 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.1.0 = other.1.0.clone();
+                corrupt.3.0 = other.3.0.clone();
                 corrupt
             },
-            "FeeFuse: output action set must extend the left set by the fee digest",
+            "FeeFuse: output action set must be the product of left and fee action sets",
+        ),
+        (
+            {
+                let mut corrupt = valid.clone();
+                corrupt.3.1 = other.3.1.clone();
+                corrupt
+            },
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
+        ),
+        (
+            {
+                let mut corrupt = valid.clone();
+                corrupt.4.0 = other.4.0.clone();
+                corrupt
+            },
+            "FeeFuse: fee action set does not commit to the fee digest",
         ),
         (
             {
                 let mut corrupt = valid;
-                corrupt.1.1 = other.1.1;
+                corrupt.4.1 = other.4.1;
                 corrupt
             },
-            "FeeFuse: output tachygram set must extend the left set by the change commitment",
+            "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
         assert_matches!(
@@ -176,7 +163,7 @@ fn fee_fuse_binds_its_sets() {
                     FeeFuse,
                     corrupt,
                     left.stamp.proof.clone().carry::<Actions>(stamp_header),
-                    ready.clone(),
+                    Proof::bootstrap().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -219,14 +206,19 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         once.stamp.tachygram_set,
         anchor,
     );
-    let ready = prepare_fee(rng, max_fee_note, value::Positive::ZERO);
     let (twice_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             FeeFuse,
-            witness::fee_fuse((header, *ready.data()), &digests, &once.stamp.tachygrams),
+            witness::fee_fuse(
+                (header, ()),
+                max_fee_note,
+                value::Positive::try_from(0).unwrap(),
+                &digests,
+                &once.stamp.tachygrams,
+            ),
             once.stamp.proof.clone().carry::<Actions>(header),
-            ready,
+            Proof::bootstrap().carry::<()>(()),
         )
         .unwrap();
     let mut twice_stamp = once.stamp.clone();
@@ -568,10 +560,8 @@ fn fee_seed_binds_its_singletons_and_header() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
     let other_anchor = Anchor::random(rng);
-    let note = wallet.random_note(0);
-    let blind = scale::prove::<scale::R, _>(rng, note.fee_blind().into()).unwrap();
-    let valid = witness::fee_seed((*blind.data(), ()), note, anchor);
-    let other = witness::fee_seed((*blind.data(), ()), wallet.random_note(0), anchor);
+    let valid = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
+    let other = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
 
     for (corrupt, expected) in [
         (
@@ -600,20 +590,12 @@ fn fee_seed_binds_its_singletons_and_header() {
         ),
     ] {
         assert_matches!(
-            PROOF_SYSTEM.fuse(rng, FeeSeed, corrupt, blind.clone(), Proof::bootstrap().carry::<()>(())).err(),
+            PROOF_SYSTEM.seed(rng, FeeSeed, corrupt).err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
         );
     }
 
-    let (seed_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeSeed,
-            valid.clone(),
-            blind,
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
+    let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),
         ((other.2.commit(), valid.3.commit(), anchor), false),

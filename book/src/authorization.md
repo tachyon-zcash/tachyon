@@ -177,7 +177,7 @@ Each path consumes the same action plans but produces a different component of t
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields `Actions` using private R and G certificates. Leaves merge into one `Actions` PCD. Private fee preparation produces `FeeReady`, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) consumes both to produce a stamp. A zero-action plan uses three R stages followed by $\mathsf{FeeSeed}$.
+- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
 ```mermaid
 flowchart LR
@@ -228,17 +228,11 @@ flowchart LR
             actions[Actions]
             fee_fuse((FeeFuse))
             fee_seed((FeeSeed))
-            fee_r["Scale R: Start → Middle → End"]
-            fee_value((FeeValueCommit))
-            fee_bind((FeeBind))
         end
     end
     action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- stamp
     zero_actions["0 actions"] -.- fee_seed -.- stamp
-    max_fee_note -.- fee_r
-    fee_r -.- fee_value -.- fee_bind -.- fee_fuse
-    max_fee_note -.- fee_value & fee_bind & fee_seed -.- fee
-    fee_r -.- fee_seed
+    max_fee_note -.- fee_fuse & fee_seed -.- fee
 
 
     sighash ~~~ binding
