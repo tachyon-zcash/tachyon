@@ -2,11 +2,6 @@
 
 <!-- todo: this is significantly outdated -->
 
-The implemented [proof tree](./proof-tree.md#private-arithmetic-certificates-and-cost)
-uses private G certificates for the full-width action randomizer.
-`SpendAction` binds `pak` to the note's payment key and adds `ak` to that
-certified product. Action signatures under `rk` establish spend authority.
-
 Tachyon simplifies the Zcash key hierarchy by removing key diversification, viewing keys, and payment addresses from the core protocol. These capabilities are handled by higher-level wallet software through out-of-band payment protocols.[^out-of-band]
 
 [^out-of-band]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the full design rationale behind out-of-band payments and the simplified key hierarchy.

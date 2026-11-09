@@ -441,7 +441,7 @@ impl Plan {
     /// Prove a single [`ProofStamp`] for this plan.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
-    /// **spend**, [`spend::SpendPrepare`] derives the live nullifier pair and
+    /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
     /// anchor. If that anchor differs from the plan's anchor, the spend comes
     /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
@@ -843,12 +843,12 @@ impl ProofStamp {
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability and the value commitment `cv` are read straight off the
-    /// bind header (`SpendPrepare` derives the pair and `SpendBind` derives
-    /// cv). [`SpendAction`] derives `alpha` from `theta` and the bound
-    /// `cm`, proves the action `(cv, rk)`, and enforces the stamp
-    /// accumulator over the pair. The spend's `anchor` is taken as the
-    /// stamp's anchor; chain validation lives inside the spendable lineage.
-    /// `digests` holds the proved action's digest.
+    /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
+    /// [`SpendAction`] derives `alpha` from `theta` and the bound `cm`, proves
+    /// the action `(cv, rk)`, and enforces the stamp accumulator over the
+    /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
+    /// validation lives inside the spendable lineage. `digests` holds the
+    /// proved action's digest.
     ///
     /// # Errors
     ///

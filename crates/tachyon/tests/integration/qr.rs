@@ -15,7 +15,7 @@ use zcash_tachyon::{
     stamp::proof::{
         PROOF_SYSTEM,
         pool::{UnspentFuse, UnspentLift},
-        qr, scale, spend, spendable, summary,
+        qr, spend, spendable, summary,
     },
     value, witness,
 };
@@ -1310,12 +1310,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
     let secret = user.secret_pcd(rng, note);
     let rcv = value::Trapdoor::random(rng);
-    let (prepared, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendPrepare, (), lifted, secret)
-        .unwrap();
-    let certificate = scale::prove::<scale::R, _>(rng, rcv.into()).unwrap();
     let (bind, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (), prepared, certificate)
+        .fuse(rng, spend::SpendBind, (rcv,), lifted, secret)
         .unwrap();
     let (bind_cm, nf_current, nf_next, ..) = *bind.data();
     assert_eq!(bind_cm, note.commitment());
