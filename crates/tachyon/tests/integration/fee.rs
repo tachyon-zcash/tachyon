@@ -3,14 +3,12 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::assert_matches;
 
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
-        ProofStamp, StampProof as _,
+        self, Proof as _, ProofStamp,
         proof::{
             PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
@@ -29,7 +27,7 @@ fn fee_less_output_bundle(
     wallet: &WalletSim,
     anchor: Anchor,
     max_fee_note: Note,
-) -> Bundle<ProofStamp<ragu::Proof<Pasta, ProductionRank>>> {
+) -> Bundle<ProofStamp<stamp::Uncompressed>> {
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(
@@ -454,7 +452,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
         .unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<ProofStamp<ragu::Proof<Pasta, ProductionRank>>>::read(&*bytes).unwrap();
+    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     decoded
         .verify(rng, &sighash, &mock_wtxid(&decoded).into(), &[])
@@ -561,11 +559,11 @@ fn fee_seed_binds_its_singletons_and_header() {
     let compressed = {
         let compressed = PROOF_SYSTEM.compress(&seed_pcd, rng).unwrap();
         let bytes = compressed.proof().to_bytes().unwrap();
-        ragu::CompressedProof::<Pasta>::from_bytes(&bytes).unwrap()
+        stamp::Compressed::from_bytes(&bytes).unwrap()
     };
     let proof = {
         let bytes = seed_pcd.proof().to_bytes().unwrap();
-        ragu::Proof::<Pasta, ProductionRank>::from_bytes(&bytes).unwrap()
+        stamp::Uncompressed::from_bytes(&bytes).unwrap()
     };
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),

@@ -232,13 +232,12 @@ impl PointerStamp {
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for ragu::Proof<super::Pasta, super::ProductionRank> {}
-    impl Sealed for ragu::CompressedProof<super::Pasta> {}
+    impl Sealed for super::Uncompressed {}
+    impl Sealed for super::Compressed {}
 }
 
-/// The Ragu proof a [`ProofStamp`] carries: a [`ragu::Proof`] or a
-/// [`ragu::CompressedProof`].
-pub trait StampProof: sealed::Sealed {
+/// The Ragu proof a [`ProofStamp`] carries: [`Uncompressed`] or [`Compressed`].
+pub trait Proof: sealed::Sealed {
     /// The exact length of the proof's Ragu encoding.
     fn encoded_len() -> usize;
 
@@ -271,7 +270,7 @@ pub trait StampProof: sealed::Sealed {
     ) -> Result<bool, ragu_core::Error>;
 }
 
-impl StampProof for ragu::Proof<Pasta, ProductionRank> {
+impl Proof for Uncompressed {
     fn encoded_len() -> usize {
         Self::encoded_len::<HEADER_SIZE>()
     }
@@ -307,7 +306,7 @@ impl StampProof for ragu::Proof<Pasta, ProductionRank> {
     }
 }
 
-impl StampProof for ragu::CompressedProof<Pasta> {
+impl Proof for Compressed {
     fn encoded_len() -> usize {
         Self::encoded_len::<ProductionRank, HEADER_SIZE>()
     }
@@ -339,7 +338,7 @@ impl StampProof for ragu::CompressedProof<Pasta> {
     }
 }
 
-impl<P: StampProof> StampState for ProofStamp<P> {
+impl<P: Proof> StampState for ProofStamp<P> {
     fn stamp_digest(&self) -> [u8; 72] {
         let stamp_data_digest: [u8; 32] = {
             #[expect(
@@ -389,7 +388,7 @@ impl<P: StampProof> StampState for ProofStamp<P> {
     }
 }
 
-impl<P: StampProof> ProofStamp<P> {
+impl<P: Proof> ProofStamp<P> {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
     ///
@@ -649,7 +648,7 @@ impl Plan {
                 AnchorSetPoly,
             )>,
         )>,
-    ) -> Result<ProofStamp<ragu::Proof<Pasta, ProductionRank>>, ProveError> {
+    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let fee_descriptor = fee::Descriptor {
             max_commitment: self
                 .max_fee_note
@@ -842,6 +841,12 @@ pub enum ProveError {
     ProofFailed(ragu_core::Error),
 }
 
+/// An uncompressed Ragu proof.
+pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+
+/// A compressed Ragu proof.
+pub type Compressed = ragu::CompressedProof<Pasta>;
+
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.
 ///
 /// The scalar header carries the tachygram bridge hash and anchor. Verification
@@ -852,7 +857,7 @@ pub enum ProveError {
 /// Only the uncompressed proof type supports lifting, merging and
 /// unmerging. Compressed stamps support reading, writing and verification.
 #[derive(Clone, Debug)]
-pub struct ProofStamp<P: StampProof> {
+pub struct ProofStamp<P: Proof> {
     /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
     /// action descriptors and fee descriptors from this stamp's bundle and
     /// all covered bundles.
@@ -879,7 +884,7 @@ pub struct ProofStamp<P: StampProof> {
     pub fee: value::Positive,
 }
 
-impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
+impl ProofStamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof)`. The proof is not rerandomized.
     ///
@@ -908,7 +913,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof<Pasta, ProductionRank>>,
+            Box<Uncompressed>,
         ),
         ProveError,
     > {
@@ -978,7 +983,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof<Pasta, ProductionRank>>,
+            Box<Uncompressed>,
         ),
         ProveError,
     > {
@@ -1034,20 +1039,20 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof<Pasta, ProductionRank>>,
+            Box<Uncompressed>,
         ),
         (right_digests, right_tachygrams, right_anchor, right_proof): (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof<Pasta, ProductionRank>>,
+            Box<Uncompressed>,
         ),
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof<Pasta, ProductionRank>>,
+            Box<Uncompressed>,
         ),
         ragu_core::Error,
     > {
@@ -1388,7 +1393,7 @@ impl ProofStamp<ragu::Proof<Pasta, ProductionRank>> {
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-    ) -> Result<ProofStamp<ragu::CompressedProof<Pasta>>, ProveError> {
+    ) -> Result<ProofStamp<Compressed>, ProveError> {
         let action_set = descriptors
             .iter()
             .map(action::Descriptor::digest)

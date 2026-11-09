@@ -4,7 +4,6 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 use core::assert_matches;
 
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly, action,
@@ -405,7 +404,7 @@ fn read_rejects_malformed_tachygram_lists() {
             listed.write(&mut buf).unwrap();
         }
         assert_eq!(
-            ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf)
+            ProofStamp::<stamp::Uncompressed>::read(&*buf)
                 .unwrap_err()
                 .to_string(),
             expected
@@ -422,7 +421,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded = ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*buf).unwrap();
+    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*buf).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);

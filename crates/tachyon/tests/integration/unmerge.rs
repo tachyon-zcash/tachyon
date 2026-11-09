@@ -3,8 +3,6 @@ extern crate alloc;
 use alloc::vec;
 use core::{assert_matches, iter};
 
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
@@ -65,7 +63,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let decoded_aggregate = {
         let mut bytes = Vec::new();
         all_three.write(&mut bytes).unwrap();
-        ProofStamp::<ragu::Proof<Pasta, ProductionRank>>::read(&*bytes).unwrap()
+        ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap()
     };
     for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
         (
