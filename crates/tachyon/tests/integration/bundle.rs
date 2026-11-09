@@ -166,14 +166,14 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
 #[test]
 fn zero_action_bundle_requires_a_zero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let max_fee = WalletSim::new(shared_sk()).random_note(0);
-    let plan = Plan::new(vec![], vec![], max_fee);
+    let max_fee_note = WalletSim::new(shared_sk()).random_note(0);
+    let plan = Plan::new(vec![], vec![], max_fee_note);
     let sighash = mock_sighash(plan.commitment().unwrap());
     for value_balance in [0i64, 1] {
         let bundle = Bundle {
             actions: vec![],
             value_balance: value::Balance::try_from(value_balance).unwrap(),
-            fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+            cv_feemax: max_fee_note.cv_feemax(),
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
             stamp: PointerStamp {
@@ -229,9 +229,9 @@ fn duplicated_spend_cannot_inflate() {
     });
     let descriptor = plan.descriptor();
     let secret = wallet.secret_pcd(rng, note);
-    let max_fee = wallet.random_note(0);
-    let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
-    let honest_stamp = Plan::new(vec![plan], vec![], max_fee)
+    let max_fee_note = wallet.random_note(0);
+    let cv_feemax = max_fee_note.cv_feemax();
+    let honest_stamp = Plan::new(vec![plan], vec![], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
@@ -242,7 +242,7 @@ fn duplicated_spend_cannot_inflate() {
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
-        &fee_max_commitment.into(),
+        &cv_feemax.into(),
         &blake2b::memo_digest(&[]),
     ));
     let alpha = theta.randomizer::<effect::Spend>(note.commitment());
@@ -252,21 +252,21 @@ fn duplicated_spend_cannot_inflate() {
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
     let action = Action::from((descriptor, sig));
-    let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee)
+    let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee_note)
         .derive_bsk_private()
         .sign(rng, &sighash);
     let bundle = Bundle {
         actions: vec![action, action],
         value_balance,
-        fee_max_commitment,
+        cv_feemax,
         binding_sig,
         memo: Vec::new(),
         stamp: ProofStamp {
             coverage: stamp_coverage(
                 [descriptor, descriptor],
                 &[fee::Descriptor {
-                    max_commitment: fee_max_commitment,
-                    value: value::Positive::ZERO,
+                    cv_feemax,
+                    v_fee: value::Positive::ZERO,
                 }],
             ),
             ..honest_stamp
@@ -498,12 +498,12 @@ fn read_preserves_action_order() {
 
     let value_balance = value::Balance::try_from(-500i64).unwrap();
     let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
-    let max_fee = wallet.random_note(0);
-    let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
+    let max_fee_note = wallet.random_note(0);
+    let cv_feemax = max_fee_note.cv_feemax();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&descriptors),
         value_balance.into(),
-        &fee_max_commitment.into(),
+        &cv_feemax.into(),
         &blake2b::memo_digest(&[]),
     ));
     let actions: Vec<Action> = items
@@ -515,14 +515,14 @@ fn read_preserves_action_order() {
             ))
         })
         .collect();
-    let binding_sig = Plan::new(vec![], vec![plan_a, plan_b], max_fee)
+    let binding_sig = Plan::new(vec![], vec![plan_a, plan_b], max_fee_note)
         .derive_bsk_private()
         .sign(rng, &sighash);
 
     let bundle = Bundle {
         actions,
         value_balance,
-        fee_max_commitment,
+        cv_feemax,
         binding_sig,
         memo: Vec::new(),
         stamp: PointerStamp {
@@ -767,9 +767,9 @@ fn verify_tachygrams_rejects_an_edited_list() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
-    let (stamp, output_plan, max_fee) =
+    let (stamp, output_plan, max_fee_note) =
         build_output_stamp_with_fee(rng, anchor, wallet.random_note(200));
-    let bundle_plan = Plan::new(vec![], vec![output_plan], max_fee);
+    let bundle_plan = Plan::new(vec![], vec![output_plan], max_fee_note);
     let signed = bundle_plan
         .sign(
             rng,
@@ -943,10 +943,10 @@ fn bundle_lift_over_an_aggregate() {
     let descriptors_b: BTreeSet<action::Descriptor> =
         autonome_b.actions.iter().map(Action::descriptor).collect();
 
-    let max_fee = wallet.random_note(0);
+    let max_fee_note = wallet.random_note(0);
     let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
     let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-    let innocent_plan = Plan::new(vec![], vec![], max_fee);
+    let innocent_plan = Plan::new(vec![], vec![], max_fee_note);
     let seed = innocent_plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, vec![])
@@ -965,7 +965,7 @@ fn bundle_lift_over_an_aggregate() {
     let innocent = Bundle {
         actions: vec![],
         value_balance: value::Balance::ZERO,
-        fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+        cv_feemax: max_fee_note.cv_feemax(),
         binding_sig: innocent_plan
             .derive_bsk_private()
             .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
@@ -976,8 +976,8 @@ fn bundle_lift_over_an_aggregate() {
                 (
                     BTreeSet::new(),
                     [fee::Descriptor {
-                        max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                        value: value::Positive::ZERO,
+                        cv_feemax: max_fee_note.cv_feemax(),
+                        v_fee: value::Positive::ZERO,
                     }]
                     .into(),
                 ),
