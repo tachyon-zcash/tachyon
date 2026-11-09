@@ -26,10 +26,22 @@ $\pk$ owns the fee change note. The bundle publishes only its value commitment
 $$
 \cv_\maxfee = [-\maxfee]\,\mathcal{V} + [r]\,\mathcal{R},
 \qquad
-r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\pk, \psi, \rcm),
+h = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\pk, \psi, \rcm).
 $$
 
-with $r$ embedded in the scalar field.
+The blind $r$ decodes the canonical little-endian bits of $h$ as 85 signed
+odd radix-8 digits. Window $i$ holds the bits $(s_i, m_i, n_i)$, sign lowest,
+and
+
+$$
+r = \sum_{i=0}^{84} (2 s_i - 1)(1 + 2 m_i + 4 n_i) \cdot 8^i \bmod q.
+$$
+
+The digests $h < 2^{254}$ decode one-to-one onto the odd integers in
+$(-2^{254}, 2^{254})$, and these stay distinct modulo $q$. For a uniform $h$,
+$r$ is therefore within $(p - 2^{254})/p + (q - 2^{254})/q \approx 2^{-127.9}$
+of uniform in the scalar field.
+
 The blind binds the fee change note's owner fields into $\cv_\maxfee$. Each
 max fee note takes a fresh secret $\rcm$, because reusing an opening reuses
 $r$.

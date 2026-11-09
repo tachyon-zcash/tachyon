@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{Header, Index, Step, Suffix};
-use udon::{curve::Affine as _, field::Field as _};
+use udon::curve::Affine as _;
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -582,16 +582,11 @@ impl Step for FeeFuse {
             Fp::from(max_fee_note.rcm),
         );
 
-        // TODO: a real circuit squeezes r in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
-        #[expect(
-            clippy::expect_used,
-            reason = "p < q, so every Fp repr is canonical in Fq"
-        )]
+        // TODO: a real circuit squeezes h in Fp and walks the signed radix-8
+        // windows of its canonical bit decomposition; mock ragu decodes it
+        // natively.
         let cv_max_fee =
-            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+            value::Trapdoor::from_scalar(poseidon::scalar(poseidon::fee_blind(pk, psi, rcm)))
                 .commit(-max_fee_note.value);
         let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
@@ -676,16 +671,11 @@ impl Step for FeeSeed {
             Fp::from(max_fee_note.rcm),
         );
 
-        // TODO: a real circuit squeezes r in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
-        #[expect(
-            clippy::expect_used,
-            reason = "p < q, so every Fp repr is canonical in Fq"
-        )]
+        // TODO: a real circuit squeezes h in Fp and walks the signed radix-8
+        // windows of its canonical bit decomposition; mock ragu decodes it
+        // natively.
         let cv_max_fee =
-            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+            value::Trapdoor::from_scalar(poseidon::scalar(poseidon::fee_blind(pk, psi, rcm)))
                 .commit(-max_fee_note.value);
         let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())

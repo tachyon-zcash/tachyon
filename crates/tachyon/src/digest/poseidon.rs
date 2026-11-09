@@ -24,7 +24,7 @@ use udon::{curve::Affine as _, field::Field as _};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     pasta,
-    pasta::{EqAffine, Fp},
+    pasta::{EqAffine, Fp, Fq},
 };
 
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
@@ -76,10 +76,38 @@ fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
     squeeze(&mut emulator, &mut sponge)
 }
 
+/// The scalar a digest $h$ denotes, read as a signed odd-digit radix-8 sum:
+///
+/// $$
+///   \sum_{i=0}^{84} (2 s_i - 1)(1 + 2 m_i + 4 n_i) \cdot 8^i \bmod q,
+/// $$
+///
+/// where $(s_i, m_i, n_i)$ are bits $3i$, $3i + 1$ and $3i + 2$ of the
+/// canonical little-endian encoding of $h$.
+///
+/// The digests $h < 2^{254}$ read one-to-one onto the odd integers in
+/// $(-2^{254}, 2^{254})$, which stay distinct mod $q$ because $2q > 2^{255}$.
+/// For a uniform $h$, the scalar is therefore within
+/// $\frac{p - 2^{254}}{p} + \frac{q - 2^{254}}{q} \approx 2^{-127.9}$ of
+/// uniform.
+pub(crate) fn scalar(digest: Fp) -> Fq {
+    let bits = digest
+        .to_bytes()
+        .map(|byte| array::from_fn::<u8, 8, _>(|shift| (byte >> shift) & 1));
+    let (windows, _) = bits.as_flattened().as_chunks::<3>();
+    windows
+        .iter()
+        .rev()
+        .fold(Fq::ZERO, |acc, &[sign, low, high]| {
+            let magnitude = Fq::from(u64::from(1 + 2 * low + 4 * high));
+            acc * Fq::from(8u64) + if sign == 1 { magnitude } else { -magnitude }
+        })
+}
+
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 
-/// A max fee note's value commitment blind,
-/// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
+/// The digest a max fee note's value commitment blind decodes from,
+/// $h = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 #[must_use]
 pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
@@ -283,3 +311,6 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     hash::<2>(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch])
 }
+
+#[cfg(test)]
+mod tests;
