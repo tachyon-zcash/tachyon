@@ -26,7 +26,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp, Fq},
-    primitives::{ActionDigest, Anchor, TachygramSetBridgeHash, TachygramSetCommit, effect},
+    primitives::{ActionDigest, Anchor, TachygramSetBridge, TachygramSetCommit, effect},
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
@@ -96,7 +96,7 @@ pub struct StampOutput<'dr, D: Driver<'dr>> {
 
 impl Header<Fp> for Stamp {
     /// `(stamp_tg_commit, anchor)`
-    type Data = (TachygramSetBridgeHash, Anchor);
+    type Data = (TachygramSetBridge, Anchor);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
@@ -137,7 +137,7 @@ impl Stamp {
     pub fn header(
         commitment: TachygramSetCommit,
         anchor: Anchor,
-    ) -> ragu_core::Result<(TachygramSetBridgeHash, Anchor)> {
+    ) -> ragu_core::Result<(TachygramSetBridge, Anchor)> {
         Ok((commitment.bridge()?, anchor))
     }
 

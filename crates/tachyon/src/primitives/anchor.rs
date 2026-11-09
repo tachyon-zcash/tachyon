@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use super::{EpochIndex, TachygramSetBridgeHash};
+use super::{EpochIndex, TachygramSetBridge};
 use crate::{digest::poseidon, pasta::Fp, serialization};
 
 lazy_static! {
@@ -56,8 +56,8 @@ impl Anchor {
     pub fn next_stamp(
         self,
         epoch: EpochIndex,
-        stamp_hash: TachygramSetBridgeHash,
-        empty_hash: TachygramSetBridgeHash,
+        stamp_hash: TachygramSetBridge,
+        empty_hash: TachygramSetBridge,
     ) -> Result<Self, AnchorError> {
         if stamp_hash == empty_hash {
             Err(AnchorError::NextStampEmpty)

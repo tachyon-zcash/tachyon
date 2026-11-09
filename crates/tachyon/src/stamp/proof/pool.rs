@@ -48,7 +48,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetBridgeHash, TachygramSetCommit,
+        TachygramSetBridge, TachygramSetCommit,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -260,7 +260,7 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Output = AnchorSpan;
     type Right = ();
     /// `(anchor_start, epoch, stamp_hash)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetBridgeHash);
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetBridge);
 
     const INDEX: Index = Index::new(31);
 

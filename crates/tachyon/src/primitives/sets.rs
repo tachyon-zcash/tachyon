@@ -21,7 +21,7 @@ pub struct TachygramSetCommit(Eq);
 
 /// Bridge hash of a tachygram-set commitment.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct TachygramSetBridgeHash([Fp; 2]);
+pub struct TachygramSetBridge([Fp; 2]);
 
 impl TachygramSetCommit {
     /// Hashes this commitment through the application's bridge-hash stage.
@@ -29,14 +29,14 @@ impl TachygramSetCommit {
     /// # Errors
     ///
     /// Fails if the commitment or its bridge hash is the identity.
-    pub fn bridge(self) -> ragu_core::Result<TachygramSetBridgeHash> {
+    pub fn bridge(self) -> ragu_core::Result<TachygramSetBridge> {
         let coordinates = PROOF_SYSTEM
             .bridge_hash(self.0.to_affine())?
             .coordinates()
             .ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("bridge hash is the identity".into())
             })?;
-        Ok(TachygramSetBridgeHash(coordinates.into()))
+        Ok(TachygramSetBridge(coordinates.into()))
     }
 
     /// Read as an affine point from the consensus wire format.

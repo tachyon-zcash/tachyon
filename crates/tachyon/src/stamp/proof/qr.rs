@@ -45,7 +45,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetBridgeHash, TachygramSetCommit, TachygramSetPoly,
+        QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
@@ -148,7 +148,7 @@ impl Header<Fp> for QrIntakeSides {
         Anchor,
         QrDiscriminant,
         QrProfile,
-        TachygramSetBridgeHash,
+        TachygramSetBridge,
     );
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
@@ -960,7 +960,7 @@ impl Header<Fp> for QrBucket {
         Anchor,
         QrDiscriminant,
         QrProfile,
-        TachygramSetBridgeHash,
+        TachygramSetBridge,
     );
     type Output = Kind![Fp; QrBucketOutput<'_, _>];
 
