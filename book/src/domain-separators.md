@@ -63,7 +63,7 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Anchor epoch step | `Tachyon-AnchorEp` |
 | evidence tree leaf | `Tachyon-QrBucket` |
 | evidence tree node | `Tachyon-EvidNode` |
-| Max fee note blind digest | `Tachyon-FeeBlind` |
+| Max fee note blind | `Tachyon-FeeBlind` |
 | Fee digest | `Tachyon-FeeDg` |
 
 Each domain sits in the sponge capacity.

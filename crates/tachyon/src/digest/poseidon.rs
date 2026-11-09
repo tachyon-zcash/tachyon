@@ -1,8 +1,7 @@
 //! Tachyon Poseidon digests.
 //!
 //! Each public function provides one protocol-defined hash or hash-derived
-//! scalar. Hash-derived scalars read the digest's canonical bits as signed
-//! odd-digit radix-8 windows.
+//! scalar.
 //!
 //! A tagged hash starts from a zero rate and the capacity element
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
@@ -86,12 +85,6 @@ fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
 ///
 /// where $(s_i, m_i, n_i)$ are bits $3i$, $3i + 1$ and $3i + 2$ of the
 /// canonical little-endian encoding of $h$.
-///
-/// The digests $h < 2^{254}$ read one-to-one onto the odd integers in
-/// $(-2^{254}, 2^{254})$, which stay distinct mod $q$ because $2q > 2^{255}$.
-/// For a uniform $h$, the scalar is therefore within
-/// $\frac{p - 2^{254}}{p} + \frac{q - 2^{254}}{q} \approx 2^{-127.9}$ of
-/// uniform.
 fn scalar(digest: Fp) -> Fq {
     let bits = digest
         .to_bytes()
