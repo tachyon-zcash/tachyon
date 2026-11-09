@@ -78,34 +78,6 @@ the integer interpretation; the real backend must enforce their premises.
 Hash consumers compare both canonical limbs (`hash_limb_match`), not a single
 circuit-field residue. Headers containing these limbs stay prover-private.
 
-`StepBudget.lean`, introduced with the group/value and spend-binding models,
-gives two-way accepted-relation refinements for `OutputBind`, `SpendBind`,
-`OutputAction`, `SpendAction`, `FeeFuse` and `FeeSeed`. The old relations retain
-their real finite-export requirements. In particular, SpendAction permits a
-zero alpha if adding ak gives a finite rk; OutputAction cannot export identity.
-The new relations consume `FixedBase.Accepted` derivations, and reuse
-`valueCommit` and the existing module/group algebra. The 17-window amount
-computation is read through `FixedBase.amount_product`.
-
-`PreparedAccepted` has only the SpendPrepare producer, joins a certified
-NoteSecret to its accepted spendable by cm, and preserves the nullifiers,
-anchor, pk and bounded value. NoteSecret's producer ties pk and mk to the same
-pak/nk and psi. `ReadyAccepted` requires FeeValueCommit followed by FeeBind,
-with exact maximum and scalar-limb linkage and both roots derived from the
-same opening. The nine private suffixes are distinct and above the old range.
-`FuseAt` takes its two roots from that authenticated right input;
-`fee_bad_challenges` specializes the existing polynomial-identity bound with
-those roots fixed. Actions retain staged-digest equality and FeeSeed retains
-the three staged-owner equalities.
-
-`accepted_refinement` erases or reconstructs the helper graph for each typed
-leaf witness. `stamp_refinement` lifts both directions through the whole
-trace. `published_through_refinement` and `bundle_through_refinement` recover
-the stamp publication and covered-fee conclusions using the erased trace.
-The abstract cm-to-nullifier interpretation is preserved by
-`prepare_header_eq`; as in the original `SpendBinding`, instantiating that
-interpretation requires the same note/master-key pairing assumptions.
-
 The merge and unmerge results follow the soundness argument for `StampUnmerge` in three parts. Every
 derivable header pairs its action set with its tachygram set through `R`. A verified bundle
 publishes exactly its covered leaves' tachygrams. Every covered digest traces back to a leaf that
