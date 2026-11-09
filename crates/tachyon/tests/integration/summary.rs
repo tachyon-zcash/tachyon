@@ -6,7 +6,7 @@ use core::{array, assert_matches};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    Anchor, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly,
+    Anchor, EpochIndex, Tachygram, TachygramSetPoly,
     pasta::Eq,
     stamp::proof::{PROOF_SYSTEM, summary},
     witness,
@@ -32,15 +32,9 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let hash_a = commit_a.bridge().unwrap();
-    let empty_hash = TachygramSetCommit::default().bridge().unwrap();
     assert_eq!(
         *seeded.data(),
-        (
-            epoch,
-            start,
-            start.next_stamp(epoch, hash_a, empty_hash).unwrap()
-        )
+        (epoch, start, start.next_stamp(epoch, &commit_a).unwrap())
     );
     assert_eq!(seeded.commitments()[0], Eq::from(commit_a).to_affine());
 
@@ -89,7 +83,6 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let hash_b = commit_b.bridge().unwrap();
     let union = stamp_a
         .iter()
         .chain(stamp_b.iter())
@@ -97,9 +90,9 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .collect::<TachygramSetPoly>()
         .commit();
     let expected_end = start
-        .next_stamp(epoch, hash_a, empty_hash)
+        .next_stamp(epoch, &commit_a)
         .unwrap()
-        .next_stamp(epoch, hash_b, empty_hash)
+        .next_stamp(epoch, &commit_b)
         .unwrap();
     assert_eq!(*advanced.data(), (epoch, start, expected_end));
     assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());

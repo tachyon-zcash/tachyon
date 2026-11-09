@@ -4,10 +4,14 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 
-use super::{EpochIndex, TachygramSetBridge};
-use crate::{digest::poseidon, pasta::Fp, serialization};
+use super::{EpochIndex, TachygramSetCommit};
+use crate::{
+    digest::poseidon,
+    pasta::{Eq, Fp},
+    serialization,
+};
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -16,6 +20,9 @@ lazy_static! {
 /// Errors that can occur when advancing an anchor.
 #[derive(Debug, Display, Error, PartialEq, TotalEq)]
 pub enum AnchorError {
+    /// The provided tachygram set is the identity point.
+    #[display("next stamp cannot be the identity point")]
+    NextStampZero,
     /// The provided tachygram set is empty.
     #[display("next stamp cannot be empty")]
     NextStampEmpty,
@@ -46,22 +53,28 @@ impl Anchor {
         Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// Advance the anchor with a stamp's bridge hash and containing epoch.
+    /// Advance the anchor by absorbing one stamp and the epoch of the block
+    /// that contains it.
     ///
     /// The containing epoch index may be zero, within the genesis epoch.
     ///
     /// # Errors
     ///
-    /// Fails if `stamp_hash` equals the empty set's bridge hash.
+    /// Fails if the commitment or its bridge hash is the identity, or if the
+    /// tachygram set is empty.
     pub fn next_stamp(
         self,
         epoch: EpochIndex,
-        stamp_hash: TachygramSetBridge,
-        empty_hash: TachygramSetBridge,
+        &stamp_commit: &TachygramSetCommit,
     ) -> Result<Self, AnchorError> {
-        if stamp_hash == empty_hash {
+        if *stamp_commit.as_ref() == Eq::identity() {
+            Err(AnchorError::NextStampZero)
+        } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
+            let stamp_hash = stamp_commit
+                .bridge()
+                .map_err(|_err| AnchorError::NextStampZero)?;
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
                 epoch.into(),

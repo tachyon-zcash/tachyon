@@ -9,7 +9,7 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetCommit, TachygramSetPoly, action,
+    TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,
@@ -205,13 +205,11 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
 
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (anchor_start, anchor_end) = *span.data();
-    let fork_hash = TachygramSetPoly::from_iter([Tachygram::random(rng)])
-        .commit()
-        .bridge()
-        .unwrap();
-    let empty_hash = TachygramSetCommit::default().bridge().unwrap();
     let fork = anchor_start
-        .next_stamp(BlockHeight(1).epoch(), fork_hash, empty_hash)
+        .next_stamp(
+            BlockHeight(1).epoch(),
+            &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
+        )
         .unwrap();
 
     for (stamp_anchor, expected) in [
@@ -248,15 +246,13 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
     let (left, left_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
     let (right, right_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(2)..=BlockHeight(2));
 
-    let fork_hash = TachygramSetPoly::from_iter([Tachygram::random(rng)])
-        .commit()
-        .bridge()
-        .unwrap();
-    let empty_hash = TachygramSetCommit::default().bridge().unwrap();
     let fork = left
         .data()
         .1
-        .next_stamp(BlockHeight(2).epoch(), fork_hash, empty_hash)
+        .next_stamp(
+            BlockHeight(2).epoch(),
+            &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
+        )
         .unwrap();
     for (fuse_witness, (first, second), expected) in [
         (

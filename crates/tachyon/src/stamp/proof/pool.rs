@@ -308,10 +308,16 @@ impl Step<Pasta> for AnchorSpanSeed {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let output = D::try_just(|| {
             let (anchor_start, epoch, stamp_hash) = witness.take();
-            let empty_hash = TachygramSetCommit::default().bridge()?;
-            let anchor_end = anchor_start
-                .next_stamp(epoch, stamp_hash, empty_hash)
-                .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+            if stamp_hash == TachygramSetCommit::default().bridge()? {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "invalid anchor step".into(),
+                ));
+            }
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_start),
+                Fp::from(epoch),
+                stamp_hash.into(),
+            ));
 
             Ok(((anchor_start, anchor_end), ()))
         })?;

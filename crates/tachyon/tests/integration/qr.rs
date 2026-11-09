@@ -122,20 +122,17 @@ fn qr_intake_split_partitions_the_contents_by_class() {
         .commit()
         .bridge()
         .unwrap();
-    let stamp_hash = members
+    let stamp_commit = members
         .iter()
         .copied()
         .collect::<TachygramSetPoly>()
-        .commit()
-        .bridge()
-        .unwrap();
-    let empty_hash = TachygramSetCommit::default().bridge().unwrap();
+        .commit();
     assert_eq!(
         *split.data(),
         (
             epoch,
             start,
-            start.next_stamp(epoch, stamp_hash, empty_hash,).unwrap(),
+            start.next_stamp(epoch, &stamp_commit).unwrap(),
             discriminant,
             QrProfile::ROOT,
             non_residue_hash,

@@ -341,15 +341,13 @@ pub struct PoolSimBlock {
 impl PoolSimBlock {
     pub fn new(prev: Anchor, height: BlockHeight, stamps: Vec<Vec<Tachygram>>) -> Self {
         let epoch = height.epoch();
-        let empty_hash = TachygramSetCommit::default().bridge().unwrap();
         let mut anchor = prev;
         let entries = stamps
             .into_iter()
             .map(|tgs| {
                 let stamp_prev = anchor;
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                let stamp_hash = commit.bridge().unwrap();
-                let stamp_after = anchor.next_stamp(epoch, stamp_hash, empty_hash).unwrap();
+                let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
                 anchor = stamp_after;
                 (stamp_prev, tgs, commit, stamp_after)
             })
@@ -1288,16 +1286,11 @@ impl WalletSim {
                 .position(|tgs| tgs.contains(&cm.into()))
                 .unwrap();
 
-            let empty_hash = TachygramSetCommit::default().bridge().unwrap();
-            let anchor_prev = pool.block(init_height).stamps[..cm_idx].iter().fold(
-                pool.block(init_height).prev,
-                |anchor, stamp| {
-                    let stamp_hash = stamp.2.bridge().unwrap();
-                    anchor
-                        .next_stamp(init_height.epoch(), stamp_hash, empty_hash)
-                        .unwrap()
-                },
-            );
+            let anchor_prev = pool.block(init_height).stamps[..cm_idx]
+                .iter()
+                .fold(pool.block(init_height).prev, |anchor, stamp| {
+                    anchor.next_stamp(init_height.epoch(), &stamp.2).unwrap()
+                });
 
             (anchor_prev, stamps[cm_idx].clone())
         };
