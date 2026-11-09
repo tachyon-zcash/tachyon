@@ -1,10 +1,10 @@
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
-use crate::{digest::poseidon, note, primitives::effect};
+use crate::{digest::poseidon, note, primitives::effect, radix8};
 
 #[test]
-fn randomizer_embeds_the_poseidon_output() {
+fn randomizer_reads_the_poseidon_output() {
     let rng = &mut StdRng::seed_from_u64(0);
     let theta = ActionEntropy::random(rng);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
@@ -14,12 +14,12 @@ fn randomizer_embeds_the_poseidon_output() {
 
     assert_ne!(spend, output);
     assert_eq!(
-        spend.to_bytes(),
-        poseidon::alpha_spend(theta.0, cm.into()).to_bytes()
+        spend,
+        radix8::read(poseidon::alpha_spend(theta.0, cm.into()))
     );
     assert_eq!(
-        output.to_bytes(),
-        poseidon::alpha_output(theta.0, cm.into()).to_bytes()
+        output,
+        radix8::read(poseidon::alpha_output(theta.0, cm.into()))
     );
 }
 

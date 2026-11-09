@@ -61,7 +61,7 @@ lazy_static! {
 /// The bundle's binding signing key is the scalar sum of trapdoors:
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
 /// ($\mathbb{F}_q$, Pallas scalar field).
-#[derive(Clone, Copy, Debug, Default, Into)]
+#[derive(Clone, Copy, Debug, Default, From, Into)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
 pub struct ValueTrapdoor(#[debug(skip)] Fq);
 
@@ -72,12 +72,6 @@ impl Trapdoor {
     /// Generate a random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
-    }
-
-    /// A trapdoor derived from other secret data, such as a max fee note's
-    /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
-        Self(scalar)
     }
 
     /// Commit to a given value with this trapdoor.

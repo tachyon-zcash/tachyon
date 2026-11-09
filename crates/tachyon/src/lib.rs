@@ -29,6 +29,7 @@ pub mod witness;
 mod arithmetic;
 mod collections;
 mod primitives;
+mod radix8;
 mod ragu_constraint;
 mod relations;
 mod serialization;
