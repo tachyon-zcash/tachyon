@@ -196,7 +196,7 @@ flowchart LR
         subgraph bundle_plan["bundle plan"]
             action_plan@{ shape: st-rect, label: "action plan" }
             max_fee_note["max fee note"]
-            value_balance
+            memo
         end
         other1@{ shape: st-doc, label: "other tx data" } 
     end
@@ -204,15 +204,17 @@ flowchart LR
     bundle_plan & other1 === sighash 
 
 
-    value_balance --> value_balance_2[value_balance]
+    action_plan & max_fee_note --> value_balance
     max_fee_note --> cv_maxfee
+    memo --> memo_2[memo]
 
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
-            value_balance_2[value_balance]
+            value_balance
             action@{ shape: st-rect }
             cv_maxfee
             binding_sig
+            memo_2[memo]
             fee
             stamp
         end
@@ -240,7 +242,7 @@ flowchart LR
         bsk 
         sign_binding_sig(("sign"))
     end
-    action_plan & max_fee_note & value_balance --- bsk --- sign_binding_sig ==> binding_sig
+    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> binding_sig
     sighash === sign_binding_sig
 
     sighash ~~~ authorization
