@@ -565,15 +565,42 @@ pub fn spend_action(
     )
 }
 
-/// Prepare the witness for [`FeeFuse`]: `(left_sets, output_sets)`.
+/// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
+/// (left_action_set, left_tachygram_set), (output_action_set,
+/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
+///
+/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
+/// singleton set contains one element: the fee digest or the fee change note's
+/// commitment. The output set polynomials represent the unions.
+///
+/// # Panics
+///
+/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
 #[must_use]
 pub fn fee_fuse(
-    (_left, right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
+    (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
+    max_fee_note: Note,
+    fee: value::Positive,
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, FeeFuse> {
-    let (_maximum, _fee, fee_digest, change_cm) = right;
-    let fee_change_commitment = Tachygram::from(change_cm);
+    #[expect(
+        clippy::expect_used,
+        reason = "a planned max fee commitment is never the identity"
+    )]
+    let fee_digest = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: fee,
+    }
+    .digest()
+    .expect("fee digest");
+    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    let fee_change_note = Note {
+        value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+            .expect("fee should not exceed max fee"),
+        ..max_fee_note
+    };
+    let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
 
     let mut output_action_digests = action_digests.clone();
     output_action_digests.insert(fee_digest);
@@ -581,6 +608,8 @@ pub fn fee_fuse(
     output_tachygrams.insert(fee_change_commitment);
 
     (
+        max_fee_note,
+        fee,
         (
             action_digests.iter().copied().collect(),
             tachygrams.iter().copied().collect(),
@@ -588,6 +617,10 @@ pub fn fee_fuse(
         (
             output_action_digests.into_iter().collect(),
             output_tachygrams.into_iter().collect(),
+        ),
+        (
+            ActionSetPoly::from_iter([fee_digest]),
+            TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
     )
 }
