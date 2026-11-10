@@ -21,6 +21,13 @@ and PCD witness extraction remain external implementation boundaries.
 The blinding and change hashes are computed from the same secret tuple, as
 in `FeeFuse`/`FeeSeed`. No raw free blind can absorb a changed maximum fee.
 This proves fee/fee pairing only, not spend/spend or mixed action pairing.
+
+Rust correspondence: `Model.cv` is `cv_feemax` on `fee::Descriptor` and
+`Bundle`; `DigestInput.commitment` and `DigestInput.fee` represent the Rust
+descriptor fields `cv_feemax` and `v_fee`. `blindHash` and its scalar embedding
+correspond to `poseidon::feemax_blind` and `Note::derive_feemax_blind`.
+`Note::cv_feemax` computes the same negative-maximum commitment as `Model.cv`.
+These API names leave the hash domains, inputs and value equations unchanged.
 -/
 
 namespace Tachyon.FeePairing

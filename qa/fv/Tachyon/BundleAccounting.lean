@@ -14,10 +14,15 @@ balance, with the fee at most the max fee; or the bundle yields a tagged digest 
 nontrivial relation among the value generators (`TracedBundle.accountingOrBreak`).
 
 The bundle's own fee descriptor is matched the same way to the fee leaf its digest covers: the
-descriptor's `cvMax` commits to `-maxFee` and the leaf's preimage carries the descriptor's fee, or
+descriptor's `cv_feemax` (`cvMax` in the model) commits to `-maxFee` and the leaf's preimage carries
+the descriptor's `v_fee`, or
 the preimages collide (`TracedBundle.feeOpensOrBreak`). The fee side then needs no hypotheses: the
 signed values of the action leaves and the fee leaf sum to the value balance, and the max fee
 covers the fee (`TracedBundle.balanceOrBreak`).
+
+The mathematical parameters `cvMax` and `fee` correspond to Rust's wire-format
+fields `cv_feemax` and `v_fee`. Renaming those Rust fields does not change the
+signed maximum value, the fee digest preimage or the binding-signature equation.
 -/
 
 namespace Tachyon
@@ -131,9 +136,10 @@ def TracedBundle.feeLeaf
 
 variable {cvMaxOf : Φ → G} {feeOf : Φ → ℕ}
 
-/-- The bundle's fee descriptor commits its `cvMax` to the signed value of the leaf its digest
-covers, and that leaf's preimage carries the descriptor's fee; or the descriptor's preimage and the
-leaf's opening collide. Consensus computes each fee digest from `(cvMaxOf φ, feeOf φ)`. -/
+/-- The bundle's fee descriptor commits its `cv_feemax` to the signed value of the leaf its digest
+covers, and that leaf's preimage carries the descriptor's `v_fee`; or the descriptor's preimage and
+the leaf's opening collide. The model selectors `cvMaxOf` and `feeOf` represent those Rust fields;
+consensus computes each fee digest from `(cvMaxOf φ, feeOf φ)`. -/
 def TracedBundle.feeOpensOrBreak
     (b : TracedBundle IsFee epoch R actionDigest feeDigest H (DigestOpening K Hd V W) Lift)
     (hfeeDigest : ∀ φ, feeDigest φ = Hd.fee (cvMaxOf φ) (feeOf φ)) :
