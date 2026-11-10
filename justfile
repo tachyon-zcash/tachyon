@@ -44,6 +44,6 @@ ci_local:
     cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
     cargo test --workspace --locked --features test-epoch-size --lib
     cargo test --workspace --locked --test epoch
-    cargo test --workspace --locked --doc
     cargo test --workspace --locked --release --features test-epoch-size --test integration
     RUSTDOCFLAGS="-D warnings {{_katex}}" cargo doc --no-deps --all --locked --document-private-items
+    cargo test --workspace --locked --doc
