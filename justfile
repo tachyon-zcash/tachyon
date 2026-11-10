@@ -43,7 +43,7 @@ ci_local:
     cargo +{{_nightly}} fmt --all -- --check
     cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
     cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
-    cargo test --workspace --locked --release --lib -- final_epoch
+    cargo test --workspace --locked --lib -- final_epoch
     cargo test --workspace --locked --features test-epoch-size --lib
     cargo test --workspace --locked --features test-epoch-size --doc
     cargo test --workspace --locked --release --features test-epoch-size --test integration

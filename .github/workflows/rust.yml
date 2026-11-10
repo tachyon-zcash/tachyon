@@ -108,7 +108,7 @@ jobs:
       # `EPOCH_MAX` boundary tests in `primitives::epoch`.
       - name: Run epoch boundary tests (production epoch size)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --workspace --locked --release --lib -- final_epoch
+        run: cargo test --workspace --locked --lib -- final_epoch
       - name: Run unit tests
         run: cargo test --workspace --locked --features test-epoch-size --lib
       - name: Run doctests
