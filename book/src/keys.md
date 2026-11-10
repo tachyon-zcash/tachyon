@@ -1,6 +1,8 @@
 # Key Hierarchy
 
-<!-- todo: this is significantly outdated -->
+<!-- todo: the per-note delegation bundle (ak, mk) in the tables below has no
+     implementation; delegation is header-based (NoteSecret -> NoteNullifiers in
+     stamp/proof/delegation.rs) and does not export ak to the delegate. -->
 
 Tachyon simplifies the Zcash key hierarchy by removing key diversification, viewing keys, and payment addresses from the core protocol. These capabilities are handled by higher-level wallet software through out-of-band payment protocols.[^out-of-band]
 

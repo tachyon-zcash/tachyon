@@ -110,7 +110,7 @@ pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
 const STAMP_FEES_PERSONALIZATION: &[u8; 12] = b"Tachyon-Fees";
 
 /// `hStampFeesTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
-/// $\mathsf{cv}_{\mathsf{maxfee},j} \Vert \mathsf{LE64}(\mathsf{fee}_j)$ in the
+/// $\mathsf{cv}_{\mathsf{feemax},j} \Vert \mathsf{LE64}(\mathsf{fee}_j)$ in the
 /// order given. The caller sorts the fee descriptors.
 #[must_use]
 pub fn stamp_fees_digest(fee_descriptors: &[[u8; 40]]) -> [u8; 32] {
@@ -175,13 +175,13 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 pub fn bundle_commitment(
     action_commit: &[u8; 32],
     value_balance: i64,
-    cv_max_fee: &[u8; 32],
+    cv_feemax: &[u8; 32],
     memo_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
         state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
-        state.update(cv_max_fee);
+        state.update(cv_feemax);
         state.update(memo_digest);
     })
 }

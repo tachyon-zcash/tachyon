@@ -559,17 +559,17 @@ impl Step for FeeFuse {
             "FeeFuse: left tachygram accumulator must commit to header commit",
         )?;
 
-        let max_fee = u64::from(max_fee_note.value);
-        if max_fee > MAX_MONEY {
+        let feemax = u64::from(max_fee_note.value);
+        if feemax > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(
                 "FeeFuse: maximum fee exceeds MAX_MONEY".into(),
             ));
         }
 
-        // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
+        // `feemax` and `fee` are below 2^64, far below the field modulus, so the
         // field difference lies in [0, MAX_MONEY] exactly when the integer
         // difference does.
-        let change = max_fee
+        let change = feemax
             .checked_sub(u64::from(fee))
             .filter(|&change| change <= MAX_MONEY)
             .ok_or_else(|| {
@@ -585,21 +585,21 @@ impl Step for FeeFuse {
         // TODO: a real circuit squeezes r in Fp and needs its bit
         // decomposition to use it as an Fq scalar (p < q, so no reduction);
         // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
+        let blind = poseidon::feemax_blind(pk, psi, rcm);
         #[expect(
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = EpAffine::from(
+        let cv_feemax = EpAffine::from(
             value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
                 .commit(-max_fee_note.value),
         );
-        if cv_max_fee.is_identity() {
+        if cv_feemax.is_identity() {
             return Err(ragu_core::Error::InvalidWitness(
                 "FeeFuse: fee commitment is the identity".into(),
             ));
         }
-        let fee_digest = poseidon::fee_digest(cv_max_fee, u64::from(fee));
+        let fee_digest = poseidon::fee_digest(cv_feemax, u64::from(fee));
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(
@@ -682,21 +682,21 @@ impl Step for FeeSeed {
         // TODO: a real circuit squeezes r in Fp and needs its bit
         // decomposition to use it as an Fq scalar (p < q, so no reduction);
         // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
+        let blind = poseidon::feemax_blind(pk, psi, rcm);
         #[expect(
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = EpAffine::from(
+        let cv_feemax = EpAffine::from(
             value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
                 .commit(-max_fee_note.value),
         );
-        if cv_max_fee.is_identity() {
+        if cv_feemax.is_identity() {
             return Err(ragu_core::Error::InvalidWitness(
                 "FeeSeed: fee commitment is the identity".into(),
             ));
         }
-        let fee_digest = poseidon::fee_digest(cv_max_fee, 0);
+        let fee_digest = poseidon::fee_digest(cv_feemax, 0);
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(

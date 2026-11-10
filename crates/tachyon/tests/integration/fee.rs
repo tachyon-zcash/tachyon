@@ -288,7 +288,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         .unwrap();
 
     let mut adjunct = fee_bearing.strip(mock_wtxid(&aggregate));
-    adjunct.fee_max_commitment = aggregate.fee_max_commitment;
+    adjunct.cv_feemax = aggregate.cv_feemax;
     adjunct.stamp.fee = aggregate.stamp.fee;
     assert_matches!(
         aggregate.verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct]),
@@ -367,8 +367,8 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .unwrap();
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: aggregate_stamp.fee,
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: aggregate_stamp.fee,
     }]);
 
     let merged_stamp = aggregate_stamp
