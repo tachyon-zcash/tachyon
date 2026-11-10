@@ -76,38 +76,44 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
 
-    let routed = build_qr_partition(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        2,
-    );
-    let sealed = routed
-        .into_iter()
-        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
-        .collect::<Vec<_>>();
-    let expected = sealed
-        .iter()
-        .map(|bucket| *bucket.pcd.data())
-        .collect::<Vec<_>>();
+    for depth in [2, 6] {
+        let routed = build_qr_partition(
+            rng,
+            &pool,
+            (Anchor::default(), final_anchor),
+            discriminant,
+            24,
+            depth,
+        );
+        let ragged = routed
+            .iter()
+            .any(|intake| intake.pcd.data().4.depth < depth);
+        assert_eq!(ragged, depth > 2);
+        let sealed = routed
+            .into_iter()
+            .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+            .collect::<Vec<_>>();
+        let expected = sealed
+            .iter()
+            .map(|bucket| *bucket.pcd.data())
+            .collect::<Vec<_>>();
 
-    let tree = build_evidence_tree(rng, sealed);
-    let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
-    assert_eq!(
-        (epoch, anchor_start, anchor_next, root_discriminant),
-        (
-            EpochIndex::new(0),
-            Anchor::default(),
-            final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
-            discriminant
-        )
-    );
+        let tree = build_evidence_tree(rng, sealed);
+        let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
+        assert_eq!(
+            (epoch, anchor_start, anchor_next, root_discriminant),
+            (
+                EpochIndex::new(0),
+                Anchor::default(),
+                final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
+                discriminant
+            )
+        );
 
-    for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
-        let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
-        assert_eq!(*replayed.pcd.data(), *bucket);
+        for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
+            let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
+            assert_eq!(*replayed.pcd.data(), *bucket);
+        }
     }
 }
 

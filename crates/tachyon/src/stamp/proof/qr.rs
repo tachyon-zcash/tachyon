@@ -584,6 +584,8 @@ impl Step<Pasta> for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
+/// An empty intake is not split.
+///
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents.
@@ -637,14 +639,28 @@ impl Step<Pasta> for QrIntakeSplit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        enforce_poly_product(
-            dr,
-            oracles,
-            &Slot::output(0),
-            &Slot::output(1),
-            &Slot::left(0),
-            "QrIntakeSplit: the sides do not partition the contents",
-        )?;
+        let z = oracles.zeta().clone();
+        let residue_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let non_residue_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let contents_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let product = residue_at_z.mul(dr, &non_residue_at_z)?;
+        contents_at_z
+            .enforce_equal(dr, &product)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrIntakeSplit: the sides do not partition the contents".into(),
+                )
+            })?;
+        // An empty intake's contents are the constant one.
+        let one = Element::constant(dr, Fp::ONE);
+        contents_at_z
+            .sub(dr, &one)
+            .enforce_nonzero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrIntakeSplit: an empty intake cannot be split".into(),
+                )
+            })?;
 
         let non_residue_hash = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
@@ -690,8 +706,9 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity.
+/// Both sides open once at $-R$; the two hint polynomials supply output
+/// commitments. [`QrSideDescend`] checks their class identity. A split whose
+/// two sides are the same set is rejected.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -741,11 +758,22 @@ impl Step<Pasta> for QrSideSelect {
         let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
         let exceptional_element = Element::alloc(dr, &mut (), exceptional)?;
         let value = oracles.query(dr, Slot::left(1), &exceptional_element)?;
-        value.enforce_nonzero(dr).map_err(|_err| {
+        value.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSideSelect: exceptional value claimed the non-residue class".into(),
             )
         })?;
+        // Equal sides agree at every point, so they agree at the exceptional
+        // value.
+        let residue_value = oracles.query(dr, Slot::left(0), &exceptional_element)?;
+        value
+            .sub(dr, &residue_value)
+            .enforce_nonzero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSideSelect: the two sides are the same set".into(),
+                )
+            })?;
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         Ok(((left_encoded, right_encoded, encoded), left, D::unit()))
     }
@@ -763,7 +791,7 @@ impl Step<Pasta> for QrSideSelect {
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
-/// child.
+/// child. A split whose two sides are the same set is rejected.
 ///
 /// # Soundness
 ///
@@ -934,6 +962,14 @@ impl Step<Pasta> for QrSideDescend {
         let z = oracles.zeta().clone();
         let residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let non_residue_at_z = oracles.query(dr, Slot::left(1), &z)?;
+        non_residue_at_z
+            .sub(dr, &residue_at_z)
+            .enforce_nonzero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSideDescend: the two sides are the same set".into(),
+                )
+            })?;
         let interpolant_at_z = oracles.query(dr, Slot::right(0), &z)?;
         let quotient_at_z = oracles.query(dr, Slot::right(1), &z)?;
         let bit_element = Element::alloc(

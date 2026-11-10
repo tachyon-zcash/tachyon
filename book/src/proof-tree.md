@@ -219,18 +219,21 @@ A profile is the string of sides on the path to a bucket.
 
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, `QrEmptyIntakeSeed` starts an empty one over an epoch that published no stamp, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
 `QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
+It rejects an empty intake, so an empty side stays a bucket at the depth it reaches.
 The split's discriminant at this depth is defined by the progression:
 
 $$R = R_0 + \mathsf{depth}$$
 
 Split puts the residue polynomial in O0 and the non-residue polynomial q0 in O1, and records O1's bridge hash in `QrIntakeSides`.
 `QrSideSelect` copies the split's scalar metadata and that hash, and fixes the interpolant and quotient in `QrSideSelection`'s O0/O1 slots.
+It opens both sides at $-R$ and rejects a split whose sides agree there, as the two sides of a split into the same set do.
 It checks its non-residue witness against the split's L1 slot and checks the exceptional-value assignment:
 
 $$q_0(-R) \neq 0$$
 
 `QrSideDescend` takes the split and selection as inputs and matches every copied source field.
 The matching bridge hashes bind the same q0.
+It also rejects a split whose two sides agree at $\zeta$, as the two sides of a split into the same set do.
 Its witness bit chooses the child, sibling and class multiplier.
 The multiplier is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
 It pins the sibling to the split and the hints to the selection, then checks the identity with $s$ for the sibling and $c$ for its multiplier:
