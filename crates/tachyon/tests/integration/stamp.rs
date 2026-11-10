@@ -524,6 +524,20 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     assert_eq!(lifted.tachygrams, stamp.tachygrams);
     assert!(lifted.verify_proof(rng, digests).unwrap());
 
+    let mut bytes = Vec::new();
+    stamp.write(&mut bytes).unwrap();
+    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
+    let lifted_decoded = decoded
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &fees,
+            vec![span.clone()],
+        )
+        .unwrap();
+    assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
+    assert!(lifted_decoded.verify_proof(rng, digests).unwrap());
+
     let foreign = BTreeSet::from([random_action(rng).descriptor()]);
     assert_matches!(
         stamp.lift(rng, &foreign, &fees, vec![span]),
