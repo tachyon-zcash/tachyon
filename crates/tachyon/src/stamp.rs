@@ -1152,9 +1152,6 @@ impl ProofStamp<Uncompressed> {
     /// The merged stamp stays with this stamp's bundle and keeps this stamp's
     /// fee, and the other stamp's bundle is stripped.
     ///
-    /// TODO: confirm desc list against stamp? it's forbidden by the proof
-    /// system, but we might want to fail early.
-    ///
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or a
