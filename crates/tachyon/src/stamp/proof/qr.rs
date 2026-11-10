@@ -371,6 +371,8 @@ impl Step for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
+/// An empty intake is not split.
+///
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents.
@@ -433,7 +435,8 @@ impl Step for QrIntakeSplit {
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
 /// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity.
+/// output commitments. [`QrSideDescend`] checks their class identity. A split
+/// whose two sides are the same set is rejected.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -492,7 +495,7 @@ impl Step for QrSideSelect {
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
-/// child.
+/// child. A split whose two sides are the same set is rejected.
 ///
 /// # Soundness
 ///
