@@ -122,6 +122,9 @@ jobs:
           cache-suffix: debug
       - name: Run epoch tests
         run: cargo test --workspace --locked --test epoch
+      # Doctests reuse the library build from the epoch tests.
+      - name: Run doctests
+        run: cargo test --workspace --locked --doc
 
   # Runs with `--release` for performance
   test-integration:
@@ -178,10 +181,6 @@ jobs:
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
           RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
-      # The doctests are `compile_fail` checks of the public API, so one
-      # platform is enough.
-      - name: Run doctests
-        run: cargo test --workspace --locked --features test-epoch-size --doc
 
   # Aggregate gate: a single, stable required status check. It always runs —
   # even on non-Rust PRs where every job below is skipped — and fails only if a
