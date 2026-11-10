@@ -11,6 +11,12 @@ rust-version = "1.97"
 [profile.dev.package."*"]
 opt-level = 3
 
+[profile.test-proof]
+inherits = "dev"
+opt-level = 3
+debug-assertions = true
+overflow-checks = true
+
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
 keyword_idents = { level = "forbid", priority = -1 }

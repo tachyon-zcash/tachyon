@@ -14,8 +14,16 @@ lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
     cargo clippy --workspace --all-targets --features test-epoch-size
 
-test *ARGS:
-    cargo test --workspace --features test-epoch-size {{ARGS}}
+test *ARGS: (test-native ARGS) (test-proof ARGS)
+
+# unit tests and doctests; ARGS go to libtest
+test-native *ARGS:
+    cargo test --workspace --features test-epoch-size --lib -- {{ARGS}}
+    cargo test --workspace --features test-epoch-size --doc -- {{ARGS}}
+
+# the proving integration tests, optimized with debug checks on; ARGS go to libtest
+test-proof *ARGS:
+    cargo test --workspace --profile test-proof --features test-epoch-size --test integration -- {{ARGS}}
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
@@ -39,6 +47,8 @@ ci_local:
     cargo +{{_nightly}} fmt --all -- --check
     cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
     cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
-    cargo test --release --all --locked --lib
-    cargo test --release --all --locked --features test-epoch-size
+    cargo test --workspace --locked --profile test-proof --lib -- final_epoch
+    cargo test --workspace --locked --features test-epoch-size --lib
+    cargo test --workspace --locked --features test-epoch-size --doc
+    cargo test --workspace --locked --profile test-proof --features test-epoch-size --test integration
     RUSTDOCFLAGS="-D warnings {{_katex}}" cargo doc --no-deps --all --locked --document-private-items
