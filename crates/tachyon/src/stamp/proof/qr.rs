@@ -1470,3 +1470,6 @@ impl Step<Pasta> for QrUnspentInit {
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }
+
+#[cfg(test)]
+mod tests;

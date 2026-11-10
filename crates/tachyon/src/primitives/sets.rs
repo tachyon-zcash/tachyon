@@ -122,6 +122,7 @@ impl AnchorSetCommit {
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
+#[cfg_attr(test, derive(From))]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
