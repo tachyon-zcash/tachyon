@@ -435,8 +435,8 @@ impl Step for QrIntakeSplit {
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
 /// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity. A split
-/// whose two sides are the same set is rejected.
+/// output commitments. [`QrSideDescend`] checks their class identity and
+/// rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -457,12 +457,7 @@ impl Step for QrSideSelect {
         left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let (_, _, _, sides_discriminant, sides_profile, sides_non_residue, sides_residue) = left;
-        if sides_non_residue == sides_residue {
-            return Err(ragu_core::Error::InvalidWitness(
-                "QrSideSelect: the two sides are the same set".into(),
-            ));
-        }
+        let (_, _, _, sides_discriminant, sides_profile, sides_non_residue, _) = left;
         enforce_equal_point(
             non_residue_contents.commit().into(),
             sides_non_residue.into(),

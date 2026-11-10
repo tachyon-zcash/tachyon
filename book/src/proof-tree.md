@@ -224,13 +224,12 @@ The split's discriminant at this depth is defined by the progression:
 $$R = R_0 + \mathsf{depth}$$
 
 `QrSideSelect` copies the entire split statement and fixes the interpolant and quotient commitments as `QrSideSelection`.
-It rejects a split whose two sides are the same set.
 It pins the non-residue polynomial to the split's commitment and checks the exceptional-value assignment:
 
 $$q_0(-R) \neq 0$$
 
 `QrSideDescend` takes the split and selection as inputs and matches every copied source field.
-It also rejects a split whose two sides are the same set.
+It rejects a split whose two sides are the same set.
 Its witness bit chooses the child, sibling and class multiplier.
 The multiplier is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
 It pins the sibling to the split and the hints to the selection, then checks the identity with $s$ for the sibling and $c$ for its multiplier:
