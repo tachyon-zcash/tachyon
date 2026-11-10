@@ -5,7 +5,8 @@ import Tachyon.Value
 # Paid creations
 
 Consensus computes each covered digest from its descriptor: an action digest hashes `(cv, rk)`
-(`Tachyon-ActionDg`) and a fee digest hashes `(cvMax, fee)` (`Tachyon-FeeDg`). `DigestInput` tags
+(`Tachyon-ActionDg`) and a fee digest hashes Rust's `(cv_feemax, v_fee)` (`Tachyon-FeeDg`),
+represented here by the mathematical parameters `(cvMax, fee)`. `DigestInput` tags
 each preimage with its domain. A leaf's value opening is a tagged preimage of its digest whose value
 commitment opens to the leaf's signed value (`DigestOpening`): `+v` for a spend, `-v` for an output,
 and `-maxFee` for a fee.
@@ -23,7 +24,8 @@ universe u v w x
 
 variable {K G Rk : Type*} {F : Type u} {A : Type v}
 
-/-- Domain-tagged digest preimages: an action's `(cv, rk)`, or a fee's `(cvMax, fee)`. -/
+/-- Domain-tagged digest preimages: an action's `(cv, rk)`, or a fee's
+`(cv_feemax, v_fee)`, represented by the model parameters `(cvMax, fee)`. -/
 inductive DigestInput (G Rk : Type*)
   | action (cv : G) (rk : Rk)
   | fee (cvMax : G) (fee : ℕ)

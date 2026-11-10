@@ -12,6 +12,10 @@ note value, or the two preimages collide. Under the binding signature, the actio
 note values (`+v` per spent note, `-v` per output note) sum to the change, the fee and the value
 balance, with the fee at most the max fee; or the bundle yields a tagged digest collision or a
 nontrivial relation among the value generators (`TracedBundle.accountingOrBreak`).
+
+The mathematical parameters `cvMax` and `fee` correspond to Rust's wire-format
+fields `cv_feemax` and `v_fee`. Renaming those Rust fields does not change the
+signed maximum value, the fee digest preimage or the binding-signature equation.
 -/
 
 namespace Tachyon

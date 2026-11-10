@@ -223,6 +223,13 @@ carries or about the leaf step's constraints on it.
 
 ### Authorization and fee pairing
 
+Rust's fee descriptor fields are `cv_feemax` and `v_fee`, and the bundle carries
+`cv_feemax`. The models' mathematical names `cvMax`, `maximum` and `fee` keep
+their existing meanings. `FeePairing.Model.cv` corresponds to
+`Note::cv_feemax`, with its blind derived by `Note::derive_feemax_blind` from
+`poseidon::feemax_blind`. The field/API rename changes no modeled equation or
+hash domain; the module comments spell out the correspondence.
+
 - A claimed note with the owner's commitment gives the owner's randomized action key, or a collision
   in the note or payment-key hash (`ownerKeyOrCollision`). The authorizing message is consented to,
   or the reduction returns a hash break or a valid unconsented signature under a randomized owner
