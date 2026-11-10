@@ -3,10 +3,10 @@
 //! A bundle is parameterized by bundle state `S: BundleState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - `Bundle<ProofStamp>`: self-contained bundle with a proof stamp
+//! - `Bundle<ProofStamp<P>>`: self-contained bundle with a proof stamp
 //! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
 //!   covering aggregate
-//! - [`TachyonBundle`]: enum of the on-wire forms for mixed contexts
+//! - [`TachyonBundle`]: enum of the on-wire forms for block items
 //!
 //! # Consensus wire format
 //!
@@ -60,19 +60,24 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                    | Format               | Description                                |
-//! | ----------------------- | -------------------- | ------------------------------------------ |
-//! | `vFeeTachyon`           | LE64                 | fee, at most `MAX_MONEY`                   |
-//! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of covered actions and fees |
-//! | `anchorTachyon`         | 32 bytes             | pool state reference                       |
-//! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
-//! | `nTachygrams`           | compactsize          | number of tachygrams                       |
-//! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
-//! | `proofTachyon`          | PROOF_SIZE blob      | serialized proof of fixed size             |
+//! | Name                    | Format                   | Description                                |
+//! | ----------------------- | ------------------------ | ------------------------------------------ |
+//! | `vFeeTachyon`           | LE64                     | fee, at most `MAX_MONEY`                   |
+//! | `hStampCoverageTachyon` | 32 bytes                 | BLAKE2b digest of covered actions and fees |
+//! | `anchorTachyon`         | 32 bytes                 | pool state reference                       |
+//! | `cTachygrams`           | 32 bytes                 | commitment to the tachygrams below         |
+//! | `nTachygrams`           | compactSize              | number of tachygrams                       |
+//! | `vTachygrams`           | 32 * nTachygrams         | tachygrams for this proof                  |
+//! | `sizeProofTachyon`      | compactSize              | length of `proofTachyon` in bytes          |
+//! | `proofTachyon`          | `byte[sizeProofTachyon]` | the Ragu stamp proof                       |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
+//!
+//! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
+//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
+//! uncompressed length while stamps are merged and lifted outside consensus.
 //!
 //! ## Pointer stamp
 //!
@@ -96,6 +101,8 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::curve::Affine as _;
 
@@ -158,7 +165,7 @@ impl StateByte {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
-    impl Sealed for super::ProofStamp {}
+    impl<P: super::stamp::Proof> Sealed for super::ProofStamp<P> {}
     impl Sealed for super::PointerStamp {}
 }
 
@@ -586,7 +593,10 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a proof stamp, producing a `Bundle<ProofStamp>`.
     #[must_use]
-    pub fn stamp(self, stamp: ProofStamp) -> Bundle<ProofStamp> {
+    pub fn stamp(
+        self,
+        stamp: ProofStamp<stamp::Uncompressed>,
+    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -598,7 +608,7 @@ impl Bundle<Unproven> {
     }
 }
 
-impl Bundle<ProofStamp> {
+impl Bundle<ProofStamp<stamp::Uncompressed>> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
     pub fn strip(self, wtxid: AggregateId) -> Bundle<PointerStamp> {
@@ -629,7 +639,10 @@ impl Bundle<ProofStamp> {
         self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
@@ -645,7 +658,9 @@ impl Bundle<ProofStamp> {
 
         Ok(Self { stamp, ..self })
     }
+}
 
+impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// Confirm `hStampCoverageTachyon` represents the combined actions and
     /// fee descriptors of this bundle and the given bundles.
     #[must_use]
@@ -1042,7 +1057,7 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own proof (autonome or aggregate).
-    Proven(Bundle<ProofStamp>),
+    Proven(Bundle<ProofStamp<stamp::Compressed>>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<PointerStamp>),
 }

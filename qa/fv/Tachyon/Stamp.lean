@@ -3,10 +3,14 @@ import Tachyon.SetPoly
 /-!
 # Idealized stamp headers
 
-The `Stamp` header is `(action_commit, stamp_tg_commit, anchor)`. This model replaces each Pedersen
-commitment with the polynomial it commits to, which idealizes commitment binding, and replaces each
-`enforce_poly_product` with the polynomial identity it pins, which idealizes Schwartz-Zippel at the
-product challenge.
+The Rust `Stamp` header data is `(stamp_tg_commit, anchor)`, where `stamp_tg_commit` is the bridge
+hash of output slot O1. The proof carries exactly two output polynomials: O0 is the action set and
+O1 is the tachygram set. `Actions` has only `anchor` as header data, with the same two slots.
+This model's `Stamp` is the enriched semantic state of those slots and the anchor, not the encoded
+Rust header. It replaces committed polynomials with their openings, idealizing commitment/bridge
+binding, and reads `enforce_poly_product` at the framework's shared `zeta` as the polynomial
+identity it pins, idealizing Schwartz-Zippel. Merge checks L0 * R0 = O0 and L1 * R1 = O1;
+unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
 
 Leaf digests and tachygrams are both field elements. `R e d` is the tachygram multiset that a leaf
 with digest `d` derives at epoch `e`: a spend's nullifier pair, an output's `cm` and pad, or a fee's
@@ -18,7 +22,7 @@ namespace Tachyon
 
 open Polynomial
 
-/-- A `Stamp` header with each set commitment replaced by its polynomial. -/
+/-- Semantic proof state: output slots O0/O1 followed by the header's anchor. -/
 structure Stamp (F A : Type*) [Field F] where
   actions : F[X]
   tachygrams : F[X]
