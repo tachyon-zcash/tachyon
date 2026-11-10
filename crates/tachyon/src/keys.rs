@@ -209,9 +209,7 @@ mod note {
             #[expect(clippy::expect_used, reason = "a validating key is a curve point")]
             let point =
                 EpAffine::from_bytes(ak_bytes).expect("ak bytes should be a valid curve point");
-            #[expect(clippy::expect_used, reason = "a validating key is not the identity")]
-            let coords = point.coordinates().expect("ak must not be the identity");
-            Self(poseidon::payment_key(coords, nk.0))
+            Self(poseidon::payment_key(point, nk.0))
         }
     }
 }
