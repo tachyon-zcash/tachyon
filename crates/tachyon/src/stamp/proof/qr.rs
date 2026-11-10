@@ -644,13 +644,11 @@ impl Step<Pasta> for QrIntakeSplit {
         let non_residue_at_z = oracles.query(dr, Slot::output(1), &z)?;
         let contents_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let product = residue_at_z.mul(dr, &non_residue_at_z)?;
-        contents_at_z
-            .enforce_equal(dr, &product)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrIntakeSplit: the sides do not partition the contents".into(),
-                )
-            })?;
+        contents_at_z.enforce_equal(dr, &product).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrIntakeSplit: the sides do not partition the contents".into(),
+            )
+        })?;
         // An empty intake's contents are the constant one.
         let one = Element::constant(dr, Fp::ONE);
         contents_at_z
