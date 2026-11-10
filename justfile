@@ -7,13 +7,13 @@ _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
 
-# keep in step with .github/workflows/coverage.yml, which fails when lcov.info
-# differs from the committed one. `--remap-path-prefix` makes its paths
+# keep in step with .github/workflows/coverage.yml, which fails when either
+# lcov report differs from the committed one. `--remap-path-prefix` makes its paths
 # workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
-# outside the default cargo-llvm-cov excludes. lcov.info takes
-# `--skip-functions`: its function records are keyed by mangled symbols, whose
+# outside the default cargo-llvm-cov excludes. The lcov reports take
+# `--skip-functions`: their function records are keyed by mangled symbols, whose
 # crate hashes change with the toolchain and target.
-_cov := "--release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
+_cov := "--remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
 
 fmt:
     cargo +{{_nightly}} fmt --all
@@ -28,14 +28,27 @@ test *ARGS:
     cargo test --workspace --release --features test-epoch-size --test integration -- {{ARGS}}
     cargo test --workspace --release --features test-epoch-size --doc -- {{ARGS}}
 
-# line coverage of the test suite
+# line coverage with the same profiles as the unit and integration CI jobs
 coverage *ARGS:
-    cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size {{ARGS}}
-    cargo llvm-cov report {{_cov}} --lcov --skip-functions --output-path lcov.info
+    just coverage-lib {{ARGS}}
+    just coverage-integration {{ARGS}}
+
+# unit-test coverage in debug mode, including overflow and debug assertions
+coverage-lib *ARGS:
+    cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size --lib {{ARGS}}
+    cargo llvm-cov report {{_cov}} --lcov --skip-functions --output-path lcov-lib.info
+
+# integration-test coverage in release mode
+coverage-integration *ARGS:
+    cargo llvm-cov {{_cov}} --release --workspace --locked --features test-epoch-size --test integration {{ARGS}}
+    cargo llvm-cov report {{_cov}} --release --lcov --skip-functions --output-path lcov-integration.info
 
 # line coverage of the test suite, as an HTML report
-coverage-html *ARGS: (coverage ARGS)
-    cargo llvm-cov report {{_cov}} --html
+coverage-html *ARGS:
+    just coverage-lib {{ARGS}}
+    cargo llvm-cov report {{_cov}} --html --output-dir target/llvm-cov/html/lib
+    just coverage-integration {{ARGS}}
+    cargo llvm-cov report {{_cov}} --release --html --output-dir target/llvm-cov/html/integration
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
