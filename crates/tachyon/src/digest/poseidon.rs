@@ -78,22 +78,22 @@ fn hash<const L: usize>(domain: &[u8; 16], input: [Fp; L]) -> Fp {
 
 const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 
-/// A max fee note's value commitment blind,
+/// The feemax blind, the trapdoor of $\mathsf{cv}_\mathsf{feemax}$,
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 #[must_use]
-pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
+pub fn feemax_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     hash::<3>(FEE_BLIND_DOMAIN, [pk, psi, rcm])
 }
 
 const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 
 /// A fee digest, $d_\mathsf{fee} = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}(
-/// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
+/// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee})$.
 #[must_use]
-pub fn fee_digest(cv_max_fee: (Fp, Fp), fee: u64) -> Fp {
-    let (x, y) = cv_max_fee;
+pub fn fee_digest(cv_feemax: (Fp, Fp), fee: u64) -> Fp {
+    let (x, y) = cv_feemax;
     hash::<3>(FEE_DIGEST_DOMAIN, [x, y, Fp::from(fee)])
 }
 
