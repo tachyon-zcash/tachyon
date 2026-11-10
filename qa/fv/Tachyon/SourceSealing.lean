@@ -75,7 +75,9 @@ theorem Run.of_publications (start : A) (publications : List (List F)) :
       simpa using Run.append (setPoly (ts : Multiset F)) (Run.empty start)
     simpa [epochEnd, Chain.foldBlock, sourcePoly] using hfirst.concat (ih _)
 
-/-- The common root-header data of summaries and depth-zero QR intakes. -/
+/-- Common semantic projection of summaries and depth-zero QR intakes: epoch and anchor bounds
+from header data, and the accumulated contents from output slot O0. QR discriminant/profile
+metadata is supplied by routing rather than this source-only projection. -/
 structure RootIntake (F A : Type*) [Field F] where
   epoch : ℕ
   start : A

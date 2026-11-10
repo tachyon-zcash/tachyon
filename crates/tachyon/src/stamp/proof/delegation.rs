@@ -9,10 +9,20 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
-use ragu::{Header, Index, Step, Suffix};
-use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
+use ragu_core::{
+    PoseidonPermutation as _,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe as _,
+    pasta::{Pasta, PoseidonFp},
+};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
 use crate::{
@@ -21,9 +31,9 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::{Ep, Eq, Fp, Fq},
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    pasta::Fp,
+    primitives::{EpochIndex, NfSeqPoly},
+    ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_product,
     value,
 };
@@ -38,35 +48,65 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
-impl Header for NoteSecret {
+#[derive(Gadget, Write)]
+pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
+    pub cm: Element<'dr, D>,
+    pub rcm: Element<'dr, D>,
+    pub pk: Element<'dr, D>,
+    pub value: Element<'dr, D>,
+    pub psi: Element<'dr, D>,
+    pub mk: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
+    type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(8);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, note, mk) = *data;
-        (
-            vec![
-                Fp::from(cm),
-                Fp::from(note.rcm),
-                Fp::from(note.pk),
-                Fp::from(u64::from(note.value)),
-                Fp::from(note.psi),
-                mk.0,
-            ],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteSecretOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            rcm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
+            )?,
+            value: Element::alloc(
+                dr,
+                allocator,
+                witness
+                    .as_ref()
+                    .map(|fields| Fp::from(u64::from(fields.1.value))),
+            )?,
+            psi: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1.psi)),
+            )?,
+            mk: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
+        })
     }
 }
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
-/// `[epoch_start, epoch_end]`; `nf_commit` commits the range's nullifier
-/// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
+/// Covers epochs `[epoch_start, epoch_end]`. The output polynomial is an
+/// [`NfSeqPoly`] with exactly one member per covered epoch. That
 /// invariant is established at [`NullifierDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
 /// lean on for per-epoch completeness. `cm` binds the range to the real
@@ -81,20 +121,42 @@ impl Header for NoteSecret {
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
-impl Header for NoteNullifiers {
-    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
-    type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
+#[derive(Gadget, Write)]
+pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
+    pub cm: Element<'dr, D>,
+    pub epoch_start: Element<'dr, D>,
+    pub epoch_end: Element<'dr, D>,
+}
+
+impl Header<Fp> for NoteNullifiers {
+    /// `(cm, epoch_start, epoch_end)`
+    type Data = (note::Commitment, EpochIndex, EpochIndex);
+    type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, epoch_start, nf_commit, epoch_end) = *data;
-        (
-            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
-            Vec::new(),
-            Vec::new(),
-            vec![Eq::from(nf_commit)],
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(NoteNullifiersOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            epoch_start: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            epoch_end: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+        })
     }
 }
 
@@ -115,7 +177,7 @@ impl Header for NoteNullifiers {
 #[derive(Debug)]
 pub struct NoteSeed;
 
-impl Step for NoteSeed {
+impl Step<Pasta> for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = NoteSecret;
@@ -130,22 +192,43 @@ impl Step for NoteSeed {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (value, psi, rcm, pak): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let note = Note {
-            pk: pak.derive_payment_key(),
-            value,
-            psi,
-            rcm,
-        };
-        let mk = pak.nk.derive_note_private(note.psi);
-        let cm = note.commitment();
-        Ok(((cm, note, mk), ()))
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (value, psi, rcm, pak) = witness.take();
+            let note = Note {
+                pk: pak.derive_payment_key(),
+                value,
+                psi,
+                rcm,
+            };
+            let mk = pak.nk.derive_note_private(note.psi);
+            let cm = note.commitment();
+            Ok(((cm, note, mk), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
@@ -173,14 +256,16 @@ impl Step for NoteSeed {
 /// circuit needs a low-bit decomposition of the witnessed epoch, since
 /// $4q = e$ is always solvable in the field.)
 ///
-/// The epoch indices need no absorbing into $z$, each being `epoch_start`
-/// plus a circuit constant. The nullifier scalars are sponge outputs of the
+/// `epoch_start` is fixed before $z$. Each epoch index is that start plus a
+/// circuit constant. The nullifier scalars are sponge outputs of the
 /// threaded `mk`, pinned in-circuit, so the product identity alone forces
 /// every member.
+///
+/// Opens the derived sequence once.
 #[derive(Debug)]
 pub struct NullifierDerive;
 
-impl Step for NullifierDerive {
+impl Step<Pasta> for NullifierDerive {
     type Aux<'source> = ();
     type Left = NoteSecret;
     type Output = NoteNullifiers;
@@ -189,72 +274,130 @@ impl Step for NullifierDerive {
     type Witness<'source> = (EpochIndex, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
+    const NUM_STAGED: usize = 1;
 
-    fn witness<'source>(
+    fn staged(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (epoch_start, seq): Self::Witness<'source>,
-        (cm, _note, mk): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Vec<Fp>> {
+        Ok(alloc::vec![Fp::from(witness.0)])
+    }
+
+    fn polynomials(
+        &self,
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([
+            witness.1.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         #[expect(
             clippy::as_conversions,
             clippy::integer_division_remainder_used,
             reason = "the group width is a small constant"
         )]
-        enforce_zero(
-            Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
-            "NullifierDerive: epoch_start is not group-aligned",
+        let native = D::try_just(|| {
+            let (epoch_start, seq) = witness.take();
+            let (cm, _note, mk) = left.take();
+            let () = right.take();
+            enforce_zero(
+                Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
+                "NullifierDerive: epoch_start is not group-aligned",
+            )?;
+
+            // The whole window must land inside the epoch range: an index past
+            // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
+            // through `EpochIndex`, which cannot hold such an index; a real
+            // circuit sees a raw field element and needs the check.
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                reason = "the window width is a small constant"
+            )]
+            let epoch_end = u32::from(epoch_start)
+                .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
+                .filter(|last| *last <= EPOCH_MAX)
+                .map(EpochIndex::new)
+                .ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "NullifierDerive: window exceeds the epoch range".into(),
+                    )
+                })?;
+
+            // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
+            let nullifiers = mk.derive_window(epoch_start);
+            let output = (cm, epoch_start, epoch_end);
+            Ok((seq, output, nullifiers))
+        })?;
+        let epoch_start = Element::alloc(
+            dr,
+            &mut (),
+            native.as_ref().map(|result| Fp::from(result.1.1)),
         )?;
-
-        // The whole window must land inside the epoch range: an index past
-        // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
-        // through `EpochIndex`, which cannot hold such an index; a real
-        // circuit sees a raw field element and needs the check.
         #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            reason = "the window width is a small constant"
+            clippy::indexing_slicing,
+            reason = "the framework enforces NUM_STAGED = 1"
         )]
-        let epoch_end = u32::from(epoch_start)
-            .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
-            .filter(|last| *last <= EPOCH_MAX)
-            .map(EpochIndex::new)
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "NullifierDerive: window exceeds the epoch range".into(),
-                )
-            })?;
-
-        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
-        let nullifiers = mk.derive_window(epoch_start);
-
-        // `z`: a fresh transcript challenge over the sequence commitment. The
-        // polynomial is fixed before it exists, so the single opening below
-        // is not vacuous.
-        let z = ctx.derive_challenge(&[seq.commit().into()])?;
-        let seq_at_z = seq.eval(z);
-        ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
-
+        epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
+        let z = oracles.zeta().clone();
+        let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let output = native.as_ref().map(|result| result.1);
+        let z_value = z.value().map(|challenge| *challenge);
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.
-        let window_at_z =
-            indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
-
-        enforce_zero(
-            seq_at_z - window_at_z,
-            "NullifierDerive: sequence does not match the derived window",
-        )?;
-
-        Ok(((cm, epoch_start, seq.commit(), epoch_end), ()))
+        let window_at_z = D::try_just(|| {
+            let challenge = z_value.take();
+            let (_, output_data, nullifiers) = native.take();
+            Ok(indexed_multiset::direct_eval(
+                (output_data.1.into()..).zip(nullifiers.map(Fp::from)),
+                challenge,
+            ))
+        })?;
+        let window_assignment = Element::alloc(dr, &mut (), window_at_z)?;
+        seq_at_z
+            .enforce_equal(dr, &window_assignment)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "NullifierDerive: sequence does not match the derived window".into(),
+                )
+            })?;
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end + 1`). Witnesses the two range polynomials and their
-/// concatenation, binds each by commit-equality, and proves the concat as the
+/// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
 /// product
 ///
 /// $$
@@ -270,55 +413,78 @@ impl Step for NullifierDerive {
 /// halves'. The contiguity check preserves the header invariant established
 /// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
+///
+/// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]
 pub struct NullifierFuse;
 
-impl Step for NullifierFuse {
+impl Step<Pasta> for NullifierFuse {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `(left_seq, merged_seq, right_seq)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    /// `(merged_seq,)`
+    type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(12);
 
-    fn witness<'source>(
+    fn polynomials(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (left_seq, merged_seq, right_seq): Self::Witness<'source>,
-        (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
-        (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(left_cm) - Fp::from(right_cm),
-            "NullifierFuse: note commitments differ",
-        )?;
-        enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
-            "NullifierFuse: ranges not contiguous",
-        )?;
-        enforce_equal_point(
-            Eq::from(left_seq.commit()),
-            Eq::from(left_nf_commit),
-            "NullifierFuse: left polynomial does not match header",
-        )?;
-        enforce_equal_point(
-            Eq::from(right_seq.commit()),
-            Eq::from(right_nf_commit),
-            "NullifierFuse: right polynomial does not match header",
-        )?;
-        let merged_nf_commit = merged_seq.commit();
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            alloc::vec![Fp::ONE],
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (left_cm, left_epoch_start, left_epoch_end) = left.take();
+            let (right_cm, right_epoch_start, right_epoch_end) = right.take();
+            enforce_zero(
+                Fp::from(left_cm) - Fp::from(right_cm),
+                "NullifierFuse: note commitments differ",
+            )?;
+            enforce_zero(
+                Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
+                "NullifierFuse: ranges not contiguous",
+            )?;
+            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
+        })?;
         enforce_poly_product(
-            ctx,
-            left_seq.as_ref(),
-            right_seq.as_ref(),
-            merged_seq.as_ref(),
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::right(0),
+            &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        Ok((
-            (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
-            (),
-        ))
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
