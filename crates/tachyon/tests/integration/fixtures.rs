@@ -696,13 +696,19 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     for _ in 0..depth {
         let mut residue = Vec::new();
         let mut non_residue = Vec::new();
+        let mut empty = Vec::new();
         for intake in layer {
+            if intake.members.is_empty() {
+                empty.push(intake);
+                continue;
+            }
             let (nqr_side, qr_side) = split_qr_intake(rng, intake);
             non_residue.push(nqr_side);
             residue.push(qr_side);
         }
         layer = merge_qr_run(rng, residue, capacity);
         layer.extend(merge_qr_run(rng, non_residue, capacity));
+        layer.extend(empty);
     }
     layer
 }

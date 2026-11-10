@@ -371,6 +371,8 @@ impl Step for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
+/// An empty intake is not split.
+///
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents.
@@ -397,6 +399,11 @@ impl Step for QrIntakeSplit {
         (epoch, anchor_prev, anchor_end, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        if contents_commit == TachygramSetCommit::default() {
+            return Err(ragu_core::Error::InvalidWitness(
+                "QrIntakeSplit: an empty intake cannot be split".into(),
+            ));
+        }
         enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
@@ -428,7 +435,8 @@ impl Step for QrIntakeSplit {
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
 /// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity.
+/// output commitments. [`QrSideDescend`] checks their class identity and
+/// rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -482,7 +490,7 @@ impl Step for QrSideSelect {
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
-/// child.
+/// child. A split whose two sides are the same set is rejected.
 ///
 /// # Soundness
 ///
@@ -538,6 +546,11 @@ impl Step for QrSideDescend {
             selection_quotient,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        if sides_non_residue == sides_residue {
+            return Err(ragu_core::Error::InvalidWitness(
+                "QrSideDescend: the two sides are the same set".into(),
+            ));
+        }
         enforce_zero(
             Fp::from(sides_epoch) - Fp::from(selection_epoch),
             "QrSideDescend: selection epoch does not match sides",
@@ -583,8 +596,8 @@ impl Step for QrSideDescend {
         // TODO: a real circuit must constrain `bit` boolean; the type carries it
         // under mock ragu.
         // TODO: select point coordinates in the real circuit. These native group
-        // selectors produce identity intermediates when the commitments agree or
-        // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
+        // selectors produce identity intermediates when `bit` is false, which
+        // Ragu's nonidentity point gadgets cannot represent.
         let sibling = Eq::from(sides_residue)
             + ((Eq::from(sides_non_residue) - Eq::from(sides_residue)) * Fp::from(u64::from(bit)));
         enforce_equal_point(
