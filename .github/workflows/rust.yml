@@ -85,7 +85,8 @@ jobs:
       - name: Run clippy (all features)
         run: cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
 
-  unit-tests:
+  # Runs per item in the platform matrix
+  test-unit:
     name: unit tests (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
@@ -105,7 +106,8 @@ jobs:
       - name: Run unit tests
         run: cargo test --workspace --locked --features test-epoch-size --lib
 
-  epoch-tests:
+  # Runs without `test-epoch-size` to use large epochs
+  test-epoch:
     name: epoch tests
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
@@ -118,14 +120,11 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: debug
-      # Runs without `test-epoch-size`, so the epoch constants are the shipped
-      # ones.
       - name: Run epoch tests
         run: cargo test --workspace --locked --test epoch
 
-  # The integration tests build with `--release`, so they get their own job and
-  # cache. They run on Linux.
-  integration-tests:
+  # Runs with `--release` for performance
+  test-integration:
     name: integration tests
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
@@ -188,7 +187,7 @@ jobs:
   # even on non-Rust PRs where every job below is skipped — and fails only if a
   # needed job actually failed or was cancelled (skipped counts as success).
   # Require THIS in the ruleset instead of the individual job names: a skipped
-  # matrix job (`unit-tests`) reports the un-expanded name
+  # matrix job (`test-unit`) reports the un-expanded name
   # `unit tests (${{ matrix.os }})`, so `unit tests (ubuntu-latest)` etc. never
   # report and block non-Rust PRs. The book has its own always-running workflow
   # and is not gated here.
@@ -199,9 +198,9 @@ jobs:
       - changes
       - fmt
       - clippy
-      - unit-tests
-      - epoch-tests
-      - integration-tests
+      - test-unit
+      - test-epoch
+      - test-integration
       - build-nostd
       - docs
     runs-on: ubuntu-latest
