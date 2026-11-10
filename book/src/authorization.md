@@ -129,7 +129,7 @@ The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived 
 
 [^generator-todo]: The binding signature scheme uses `reddsa::orchard::Binding` which hardcodes $\mathcal{R}$ as its basepoint. We should consider defining a unique personalization.
 
-### Binding signature
+### Binding signature {#binding-signature}
 
 The sum of value commitments preserves the algebraic structure:
 
@@ -162,11 +162,11 @@ If the values don't balance, the $\mathcal{V}$ term survives. So,
 - If the sum of committed values doesn't truly equal the public balance, the signer cannot produce a valid signature.
 - If a valid signature was produced and then the committed values or the public balance were modified, the validator can't confirm the valid signature.
 
-Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\maxfee = [-\mathsf{maxfee}]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The binding signer adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\maxfee$ to $\mathsf{bvk}$:
+Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\feemax = [-\feemax]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The binding signer adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\feemax$ to $\mathsf{bvk}$:
 
 $$\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$$
 
-$$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\maxfee - [\mathsf{value\_balance}]\,\mathcal{V}$$
+$$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\feemax - [\mathsf{value\_balance}]\,\mathcal{V}$$
 
 The fee does not enter $\mathsf{bvk}$. The binding signature is made once, before the fee is chosen.
 
@@ -196,7 +196,7 @@ flowchart LR
         subgraph bundle_plan["bundle plan"]
             action_plan@{ shape: st-rect, label: "action plan" }
             max_fee_note["max fee note"]
-            value_balance
+            memo
         end
         other1@{ shape: st-doc, label: "other tx data" } 
     end
@@ -204,15 +204,17 @@ flowchart LR
     bundle_plan & other1 === sighash 
 
 
-    value_balance --> value_balance_2[value_balance]
-    max_fee_note --> cv_maxfee
+    action_plan & max_fee_note --> value_balance
+    max_fee_note --> cv_feemax
+    memo --> memo_2[memo]
 
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
-            value_balance_2[value_balance]
+            value_balance
             action@{ shape: st-rect }
-            cv_maxfee
+            cv_feemax
             binding_sig
+            memo_2[memo]
             fee
             stamp
         end
@@ -240,7 +242,7 @@ flowchart LR
         bsk 
         sign_binding_sig(("sign"))
     end
-    action_plan & max_fee_note & value_balance --- bsk --- sign_binding_sig ==> binding_sig
+    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> binding_sig
     sighash === sign_binding_sig
 
     sighash ~~~ authorization
@@ -265,7 +267,7 @@ A modified action breaks both checks.
 
 A partially created transaction (PCZT) carries a Tachyon bundle between devices before it is complete. Each field a role writes is optional, and a role fills absent fields without overwriting present ones.
 
-- **Effects.** The planner or the custody device fixes each action's `theta` and `rcv`, and derives `cv`, `rk` and $\cv_\maxfee$. Every later signer and prover uses those values.
+- **Effects.** The planner or the custody device fixes each action's `theta` and `rcv`, and derives `cv`, `rk` and $\cv_\feemax$. Every later signer and prover uses those values.
 - **Signing.** Custody signs the spends it owns and every unsigned output. A spend owned by another key carries that key's `ak`, so every custody derives the same `rk`. An output or max fee note owned by custody takes custody's own payment key.
 - **Binding.** Whoever holds every `rcv` and the max fee note signs `binding_sig`.
 - **Proving.** Each spend is proved by a holder of its `pak`, and each output by anyone holding its note, `theta` and `rcv`. `Actions` proofs over disjoint sets of actions at one anchor merge with [`ActionMerge`](./proof-tree.md#spending), and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee once. A bundle with no actions uses $\mathsf{FeeSeed}$.
@@ -274,14 +276,23 @@ A partially created transaction (PCZT) carries a Tachyon bundle between devices 
 
 ## Detailed Sequence
 
+The sequence follows `pczt::Bundle` through effects and authorization, `ActionsPlan::prove` through partial proving, and `Bundle::verify` through consensus.
+Custody uses `authorize` to derive the bundle commitment from note openings and passes it to a transaction-layer callback that computes the sighash. The librustzcash adapter for that callback is not implemented yet.
+The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
+Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
+
+The tachygram set commitment and stamp trailer fields below describe the current design; [#226](https://github.com/tachyon-zcash/tachyon/issues/226) may redesign them.
+
 ```mermaid
 sequenceDiagram
 
 actor User
 
-    note over User: select/create notes { pk, psi, rcm, v }
-    note over User: max_fee_note { pk, psi, rcm, maxfee }
-    note over User: value_balance = Sum v_spend - Sum v_output - maxfee
+activate User
+
+    note over User: select/create notes { pk, v, psi, rcm }
+    note over User: max_fee_note { pk, feemax, psi, rcm }
+    note over User: value_balance = Sum v_spend - Sum v_output - feemax
 
 opt planner fixes effects
     loop per action
@@ -292,112 +303,155 @@ end
 
 rect rgb(255, 165, 0, 0.1)
 
-    create participant Custody@{ type: "boundary" }
+    create participant Custody
 
     User ->> Custody: notes, theta and rcv if chosen, max_fee_note, memo, tx effects
 
     loop per action
         note over Custody: random theta and rcv if absent
-        note over Custody: cm = Poseidon(pk, psi, rcm, v)
+        note over Custody: cm = Poseidon_CmDerive(rcm, pk, v, psi)
         alt spend
-            note over Custody: alpha = Poseidon(theta, cm)
+            note over Custody: alpha = Poseidon_Spend(theta, cm)
             note over Custody: rk = ak + [alpha]G
             note over Custody: cv = Pedersen(v, rcv)
         else output
-            note over Custody: alpha = Poseidon(theta, cm)
+            note over Custody: alpha = Poseidon_Output(theta, cm)
             note over Custody: rk = [alpha]G
             note over Custody: cv = Pedersen(-v, rcv)
         end
     end
-    note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
-    note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
-    note over Custody: compute sighash
+    note over Custody: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
+    note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i) over the sorted descriptor set, which is the wire order
+    note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
+    note over Custody: transaction-layer callback computes sighash from derived bundle commitment
 
-    loop per owned spend action
+    loop per unsigned owned spend action
         note over Custody: rsk = ask + alpha
         note over Custody: sig = Sign(rsk, sighash)
     end
-    loop per output action
+    loop per unsigned output action
         note over Custody: sig = Sign(alpha, sighash)
     end
     destroy Custody
-    Custody -->> User: theta, rcv, cv, rk, action_sigs, tx sigs
+    Custody -->> User: theta, rcv, cv, rk, cv_feemax, action_sigs, sighash
 end
 
 par Binding
+    note over User: r = Poseidon_FeeBlind(pk, psi, rcm)
     note over User: bsk = Sum rcv_i + r
+    note over User: check [bsk]R == Sum cv_i + cv_feemax - [value_balance]V
     note over User: binding_sig = Sign(bsk, sighash)
 
 and Proving
     rect rgb(138, 43, 226, 0.1)
         note over User: select anchor
-
-        loop per action
-        critical anchor, note, theta, rcv, pak { ak, nk }
-                alt spend
-                    note over User: rk = ak + [alpha]G
-                    note over User: mk = Poseidon(psi, nk)
-                    note over User: nf_e0 = PRF^nfTachyon(mk, e)
-                    note over User: nf_e1 = PRF^nfTachyon(mk, e+1)
-                    note over User: tg_roots = nf_e0, nf_e1
-                else output
-                    note over User: rk = [alpha]G
-                    note over User: cm = Poseidon(pk, psi, rcm, v)
-                    note over User: tg_root = cm
-                end
-                note over User: action_root = Poseidon(cv || rk)
-                note over User: action_poly = (X - action_root)
-                note over User: tg_poly = product over tg_roots of (X - tg_root)
-                note over User: pcd: actions(Commit(action_poly), Commit(tg_poly), anchor)
-            end
-        end
+        note over User: actions_plan { spends (desc, theta, rcv), outputs (desc, theta, note, rcv), anchor }
 
         create participant Stamper
-        User ->> Stamper: leaf actions, tachygrams
+        User ->> Stamper: actions_plan, pak { ak, nk }, per spend (NoteSecret, NoteSpendable, anchor spans), max_fee_note, fee
 
-
-        loop while actions > 1
-            critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
-                note over Stamper: assert left.anchor == right.anchor
-                note over Stamper: merged_action = left.action_poly * right.action_poly
-                note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: pcd: actions(Commit(merged_action), Commit(merged_tg), anchor)
+        loop per spend action
+            note over Stamper: checked first, with spans the last must end at actions_plan.anchor, without spans the spendable anchor must already equal it
+            critical SpendBind(NoteSpendable, NoteSecret), witness rcv
+                note over Stamper: spendable.cm == secret.cm
+                note over Stamper: mk = Poseidon_NfMaster(psi, nk), carried by NoteSecret
+                note over Stamper: nf_e = PRF(mk, e), nf_next = PRF(mk, e + 1)
+                note over Stamper: cv = Pedersen(v, rcv)
+                note over Stamper: SpendHeader (cm, nf_e, nf_next, anchor, pk, cv)
+            end
+            critical SpendAction(SpendHeader), witness theta, pak
+                note over Stamper: pk == Poseidon_PkDerive(x(ak), y(ak), nk)
+                note over Stamper: alpha = Poseidon_Spend(theta, cm)
+                note over Stamper: rk = ak + [alpha]G
+                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
+                note over Stamper: Actions (Commit(X - d), Commit((X - nf_e)(X - nf_next)), anchor)
+            end
+            loop per supplied anchor span, possibly none
+                note over Stamper: ActionLift, anchor is the span start or a member, becomes the span end
             end
         end
-        critical actions(action_poly, tg_poly, anchor), max_fee_note, fee
-            note over Stamper: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
-            note over Stamper: fee_digest = Poseidon(x(cv_maxfee), y(cv_maxfee), fee)
-            note over Stamper: cm_chg = Poseidon(rcm, pk, maxfee - fee, psi)
-            note over Stamper: fee_action = action_poly * (X - fee_digest)
-            note over Stamper: fee_tg = tg_poly * (X - cm_chg)
-            note over Stamper: pcd: stamp(Commit(fee_action), Commit(fee_tg), anchor)
+
+        loop per output action
+            critical OutputBind, witness note, rcv
+                note over Stamper: cm = Poseidon_CmDerive(rcm, pk, v, psi)
+                note over Stamper: pad = Poseidon_CmOutPad(rcm, pk, v, psi)
+                note over Stamper: cv = Pedersen(-v, rcv)
+                note over Stamper: OutputHeader (cm, pad, cv)
+            end
+            critical OutputAction(OutputHeader), witness theta, anchor
+                note over Stamper: alpha = Poseidon_Output(theta, cm)
+                note over Stamper: rk = [alpha]G
+                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
+                note over Stamper: Actions (Commit(X - d), Commit((X - cm)(X - pad)), anchor)
+            end
         end
+
+        loop while Actions > 1
+            critical ActionMerge(left, right)
+                note over Stamper: left.anchor == right.anchor
+                note over Stamper: merged_action = left.action_poly * right.action_poly
+                note over Stamper: merged_tg = left.tg_poly * right.tg_poly
+                note over Stamper: Actions (Commit(merged_action), Commit(merged_tg), anchor)
+            end
+        end
+
+        note over Stamper: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
+        alt no actions
+            critical FeeSeed, witness max_fee_note, anchor
+                note over Stamper: feemax == 0, so fee == 0
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0)
+                note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
+                note over Stamper: Stamp (Commit(X - d_fee), Commit(X - cm_chg), anchor)
+            end
+        else
+            critical FeeFuse(Actions), witness max_fee_note, fee
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee)
+                note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, feemax - fee, psi)
+                note over Stamper: fee_action = action_poly * (X - d_fee)
+                note over Stamper: fee_tg = tg_poly * (X - cm_chg)
+                note over Stamper: Stamp (Commit(fee_action), Commit(fee_tg), anchor)
+            end
+        end
+        note over Stamper: rerandomize proof
+        note over Stamper: hStampCoverageTachyon = Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
         destroy Stamper
-        Stamper ->> User: stamp(tachygrams, anchor, proof), fee
+        Stamper ->> User: ProofStamp { fee, coverage, anchor, tachygram_set, tachygrams, proof }
 
         break
-            note over User: reconstruct polynomials from roots, commit, verify
+            note over User: rebuild header from own descriptors, fee descriptor and tachygrams, verify proof
         end
     end
 end
 
-
-
 create participant Consensus
-note over User: transaction { actions[], value_balance, cv_maxfee, binding_sig, fee, stamp } 
+note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, stamp { fee, coverage, anchor, tachygram_set, tachygrams, proof } }
+deactivate User
 destroy User
 User ->> Consensus: transaction
-break
-    note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
-    note over Consensus: fee_digest_j = Poseidon(x(cv_maxfee_j), y(cv_maxfee_j), fee_j)
+break verify_signatures
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
     note over Consensus: compute sighash
-    note over Consensus: check action sigs against sighash
-    note over Consensus: check binding sig against sighash
-    note over Consensus: action_acc = Commit(poly from action and fee digest roots)
-    note over Consensus: tachygram_acc = Commit(poly from tachygram roots)
-    note over Consensus: verify stamp(action_acc, tachygram_acc, anchor)
+    note over Consensus: bvk = Sum cv_i + cv_feemax - [value_balance]V
+    note over Consensus: check binding_sig against sighash under bvk
+    note over Consensus: check each action sig against sighash under rk
+end
+break verify_pointers
+    note over Consensus: the adjuncts come from the block, not the wallet
+    note over Consensus: wtxid is nonzero and every adjunct points at it
+end
+break verify_coverage
+    note over Consensus: no duplicate action descriptor, no duplicate fee descriptor across covered bundles
+    note over Consensus: hStampCoverageTachyon == Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
+end
+break verify_tachygrams
+    note over Consensus: nTachygrams == 2N + B
+    note over Consensus: cTachygrams == Commit(product over tachygrams of (X - tg))
+end
+break verify_proof
+    note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i))
+    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j)
+    note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
+    note over Consensus: verify proof against Stamp (action_acc, cTachygrams, anchor)
 end
 ```
