@@ -185,6 +185,152 @@ fn qr_intake_split_rejects_a_forged_partition() {
 }
 
 #[test]
+fn qr_intake_split_rejects_an_empty_intake() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let start = Anchor::random(rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let intake = seed_qr_empty_intake(rng, start, EpochIndex::new(3), discriminant);
+
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                witness::qr_intake_split((*intake.pcd.data(), ()), &[]),
+                intake.pcd,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrIntakeSplit: an empty intake cannot be split"
+    );
+}
+
+#[test]
+fn qr_side_select_rejects_a_split_into_the_same_set() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex::new(3);
+    let start = Anchor::random(rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let member = Tachygram::random(rng);
+    let side = qr::classify(Fp::from(member), discriminant.at(0)).0;
+
+    let (root, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &[member, member]),
+        )
+        .unwrap();
+    let half = TachygramSetPoly::from_iter([member]);
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            (
+                TachygramSetPoly::from_iter([member, member]),
+                half.clone(),
+                half,
+            ),
+            root,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideSelect,
+                witness::qr_side_select((*sides.data(), ()), &[member, member], side),
+                sides,
+                Proof::bootstrap().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideSelect: the two sides are the same set"
+    );
+}
+
+#[test]
+fn qr_side_descend_rejects_a_split_into_the_same_set() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex::new(3);
+    let start = Anchor::random(rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let member = Tachygram::random(rng);
+    let side = qr::classify(Fp::from(member), discriminant.at(0)).0;
+
+    let (root, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &[member, member]),
+        )
+        .unwrap();
+    let half = TachygramSetPoly::from_iter([member]);
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            (
+                TachygramSetPoly::from_iter([member, member]),
+                half.clone(),
+                half,
+            ),
+            root,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+
+    let (single_root, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &[member]),
+        )
+        .unwrap();
+    let (single_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            witness::qr_intake_split((*single_root.data(), ()), &[member]),
+            single_root,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+    let (selection, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSideSelect,
+            witness::qr_side_select((*single_sides.data(), ()), &[member], side),
+            single_sides,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .unwrap();
+    let (_, interpolant, quotient) = *selection.data();
+    let forged = selection.proof().clone().carry::<qr::QrSideSelection>((
+        *sides.data(),
+        interpolant,
+        quotient,
+    ));
+
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                witness::qr_side_descend((*sides.data(), *forged.data()), &[member, member], side),
+                sides,
+                forged,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideDescend: the two sides are the same set"
+    );
+}
+
+#[test]
 fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
     for depth in [0, 1, 31] {
@@ -274,24 +420,18 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     let start = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
     for members in [
-        vec![],
         vec![Tachygram::from(-Fp::from(discriminant))],
         iter::repeat_with(|| Tachygram::random(rng))
             .take(12)
             .collect(),
     ] {
-        let root = if members.is_empty() {
-            seed_qr_empty_intake(rng, start, epoch, discriminant).pcd
-        } else {
-            PROOF_SYSTEM
-                .seed(
-                    rng,
-                    qr::QrStampIntakeSeed,
-                    witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
-                )
-                .unwrap()
-                .0
-        };
+        let (root, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                qr::QrStampIntakeSeed,
+                witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
+            )
+            .unwrap();
         let (_, _, anchor_end, ..) = *root.data();
         let (split, ()) = PROOF_SYSTEM
             .fuse(
@@ -916,18 +1056,17 @@ fn qr_side_descend_refuses_a_full_register() {
         pcd: root,
         members: members.to_vec(),
     };
-    for _ in 0..QrProfile::MAX_DEPTH {
-        let (_non_residue, residue) = split_qr_intake(rng, intake);
-        intake = residue;
+    let followed = Fp::from(members[0]);
+    for level in 0..u32::BITS {
+        let (non_residue, residue) = split_qr_intake(rng, intake);
+        intake = if qr::classify(followed, discriminant.at(level)).0 {
+            residue
+        } else {
+            non_residue
+        };
     }
     let (.., profile, _contents) = *intake.pcd.data();
-    assert_eq!(
-        profile,
-        QrProfile {
-            depth: u32::BITS,
-            bits: u32::MAX
-        }
-    );
+    assert_eq!(profile, qr_profile_of(followed, discriminant, u32::BITS));
 
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = PROOF_SYSTEM
