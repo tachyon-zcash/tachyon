@@ -74,7 +74,6 @@ fn derive_window_rejects_a_window_past_the_final_epoch() {
 }
 
 #[test]
-#[cfg(debug_assertions)]
 #[should_panic(expected = "epoch_start must be group-aligned")]
 fn derive_window_rejects_an_unaligned_start() {
     let rng = &mut StdRng::seed_from_u64(0);
