@@ -111,9 +111,9 @@ jobs:
 
   # The integration tests create and verify proofs and build with `--release`,
   # so they share no target directory with `test` and run as their own job.
-  # `test` covers the platforms; the proving suite runs on Linux.
-  proof:
-    name: proof
+  # `test` covers the platforms; the integration tests run on Linux.
+  integration:
+    name: integration
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -125,7 +125,7 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: release
-      - name: Run proof tests
+      - name: Run integration tests
         run: cargo test --workspace --release --locked --features test-epoch-size --test integration
 
   # The `no_std` build has to be checked against a target that genuinely has no
@@ -182,7 +182,7 @@ jobs:
       - fmt
       - clippy
       - test
-      - proof
+      - integration
       - build-nostd
       - docs
     runs-on: ubuntu-latest

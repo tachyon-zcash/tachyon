@@ -14,7 +14,7 @@ lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
     cargo clippy --workspace --all-targets --features test-epoch-size
 
-# unit tests and doctests at the default test profile, then the proving
+# unit tests and doctests at the default test profile, then the
 # integration tests in release mode; ARGS go to libtest
 test *ARGS:
     cargo test --workspace --features test-epoch-size --lib -- {{ARGS}}
