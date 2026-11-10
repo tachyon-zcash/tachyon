@@ -13,9 +13,11 @@ use crate::{
 /// The tachyon accumulator evolves as tachygrams are included. Each
 /// epoch identifies a specific pool accumulator state.
 ///
-/// Indexes nullifier derivation: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf_e = F_{mk}(e)$. Different epochs produce different nullifiers for
-/// the same note, enabling range-restricted delegation via the GGM tree PRF.
+/// Indexes nullifier derivation. A note's nullifier for an epoch is a squeeze
+/// of the Poseidon sponge keyed on the note's master key $\mathsf{mk}$ and the
+/// epoch's group start. Different epochs produce different nullifiers for the
+/// same note. A wallet delegates a window of epochs by handing out that
+/// window's nullifiers.
 ///
 /// Always in `0..=EPOCH_MAX`: every index maps to a block height in the
 /// protocol's range.
