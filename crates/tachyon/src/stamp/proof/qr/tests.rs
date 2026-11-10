@@ -1,9 +1,18 @@
-//! A set polynomial is pinned only up to its roots wherever a product relation
-//! alone constrains it, so a split may scale one side by a nonzero constant
-//! and the other by its inverse. These tests characterize what the QR steps do
-//! with such splits: the empty-intake and same-set rules test opened values
-//! against the canonical monic form, and every bucket consumer reads only
-//! where the contents vanish.
+//! Scaled QR splits. [`QrIntakeSplit`] is the only step that witnesses both
+//! factors of a pinned polynomial, and its product fixes each side only up to
+//! a nonzero constant, so a prover may scale one side by $k$ and the other by
+//! $1/k$. Roots survive: the contents are nonzero, so the product keeps their
+//! root multiset, and the class identity in [`QrSideDescend`] constrains the
+//! sibling's roots and takes any constant into its quotient. [`QrUnspentInit`]
+//! and [`UnspentLift`](super::super::pool::UnspentLift) open a bucket for
+//! nonzero at the tested value, [`QrSpendableInit`] for zero at `cm`, and
+//! [`EvidenceTreeOpen`] replays only the polynomial its leaf hashes, so no
+//! consumer reads more than the roots.
+//!
+//! These tests pin current behaviour: the empty-intake and same-set rules
+//! test opened values against the canonical form and admit scaled forms. A
+//! change that binds the rules to every scaling flips
+//! `qr_split_rules_test_canonical_form_only`, as intended.
 
 #![allow(clippy::too_many_lines, reason = "test module")]
 
@@ -290,7 +299,7 @@ fn qr_split_rules_test_canonical_form_only() {
     let honest_sides = split(rng, &intake, monic.clone(), monic.clone()).unwrap();
     rejects(
         descend(rng, &honest_sides, bit, &[member], Fp::ONE),
-        "QrSideDescend: the two sides are the same set",
+        "QrSideDescend: the two sides agree at the challenge",
     );
 
     let scaled_non_residue = scaled(&monic, scale);
@@ -357,7 +366,7 @@ fn qr_split_rules_test_canonical_form_only() {
     let honest_empty_child = descend(rng, &honest, bit, &single, Fp::ONE).unwrap();
     rejects(
         split(rng, &honest_empty_child, empty.clone(), empty.clone()),
-        "QrIntakeSplit: an empty intake cannot be split",
+        "QrIntakeSplit: contents are one",
     );
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
@@ -373,7 +382,7 @@ fn qr_split_rules_test_canonical_form_only() {
         .unwrap();
     rejects(
         split(rng, &seeded, empty.clone(), empty),
-        "QrIntakeSplit: an empty intake cannot be split",
+        "QrIntakeSplit: contents are one",
     );
 }
 

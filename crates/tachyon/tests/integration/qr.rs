@@ -212,7 +212,7 @@ fn qr_intake_split_rejects_an_empty_intake() {
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrIntakeSplit: an empty intake cannot be split"
+            if err.to_string() == "QrIntakeSplit: contents are one"
     );
 }
 
@@ -264,7 +264,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrSideDescend: the two sides are the same set"
+            if err.to_string() == "QrSideDescend: the two sides agree at the challenge"
     );
 }
 
