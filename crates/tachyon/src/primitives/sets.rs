@@ -10,15 +10,31 @@ use super::{ActionDigest, Anchor, Tachygram};
 use crate::{
     collections::multiset,
     pasta,
-    pasta::{Eq, Fp},
+    pasta::{EpAffine, Eq, Fp},
     serialization,
+    stamp::proof::PROOF_SYSTEM,
 };
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
+/// Bridge hash of a tachygram-set commitment: a Pallas point.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct TachygramSetBridge(EpAffine);
+
 impl TachygramSetCommit {
+    /// Hashes this commitment through the application's bridge-hash stage.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the commitment is the identity.
+    pub fn bridge(self) -> ragu_core::Result<TachygramSetBridge> {
+        Ok(TachygramSetBridge(
+            PROOF_SYSTEM.bridge_hash(self.0.to_affine())?,
+        ))
+    }
+
     /// Read as an affine point from the consensus wire format.
     ///
     /// # Errors

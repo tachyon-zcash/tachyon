@@ -5,9 +5,10 @@ import Tachyon.Foundation.DiscreteLogRelation
 /-!
 # Set-commitment binding
 
-A `Stamp` header carries Pedersen commitments to its action-set and tachygram-set polynomials, each
-over the first `n` coefficients (`ProductionRank`, `n = 8192`). The proof-tree model reads each
-header as the polynomials it opens to. That reading is well-defined up to a computed break: two
+A `Stamp` proof's O0/O1 slots commit to its action-set and tachygram-set polynomials, each
+over the first `n` coefficients (`ProductionRank`, `n = 8192`). Its header carries O1's bridge hash
+and the anchor. The proof-tree model reads the slots as their polynomial openings. This module
+addresses Pedersen binding only, not binding of the bridge hash: two
 distinct openings of one commitment, both of degree below `n`, yield a nontrivial discrete-log
 relation among the commitment generators (`NontrivialDLRelation.ofPolyCollision`).
 -/
