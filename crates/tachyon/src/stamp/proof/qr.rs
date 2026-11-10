@@ -704,9 +704,9 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// Both sides open once at $-R$; the two hint polynomials supply output
-/// commitments. [`QrSideDescend`] checks their class identity. A split whose
-/// two sides are the same set is rejected.
+/// The non-residue contents open once at $-R$; the two hint polynomials supply
+/// output commitments. [`QrSideDescend`] checks their class identity and
+/// rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -756,22 +756,11 @@ impl Step<Pasta> for QrSideSelect {
         let exceptional = left.as_ref().map(|data| -data.3.at(data.4.depth));
         let exceptional_element = Element::alloc(dr, &mut (), exceptional)?;
         let value = oracles.query(dr, Slot::left(1), &exceptional_element)?;
-        value.clone().enforce_nonzero(dr).map_err(|_err| {
+        value.enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSideSelect: exceptional value claimed the non-residue class".into(),
             )
         })?;
-        // Equal sides agree at every point, so they agree at the exceptional
-        // value.
-        let residue_value = oracles.query(dr, Slot::left(0), &exceptional_element)?;
-        value
-            .sub(dr, &residue_value)
-            .enforce_nonzero(dr)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSideSelect: the two sides are the same set".into(),
-                )
-            })?;
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         Ok(((left_encoded, right_encoded, encoded), left, D::unit()))
     }
