@@ -1,11 +1,11 @@
 # Overview
 
-Without Tachyon, the ZCash transaction lifecycle is similar to other blockchains:
+Without Tachyon, the Zcash transaction lifecycle is similar to other blockchains:
 
 ```mermaid
 sequenceDiagram
     participant Wallet
-    box ZCash Network
+    box Zcash Network
         participant Mempool
         participant Miner
     end
@@ -23,7 +23,7 @@ Tachyon introduces shielded transaction aggregates, which introduce a new networ
 ```mermaid
 sequenceDiagram
     participant Wallet
-    box ZCash Network
+    box Zcash Network
         participant Mempool
         participant Aggregator
         participant Miner
