@@ -3,6 +3,8 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, vec, vec::Vec};
 
 use ragu::Pcd;
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, Note,
@@ -18,7 +20,10 @@ fn spendables(
     rng: &mut StdRng,
     notes: &[(&WalletSim, Note)],
 ) -> (
-    Vec<(Pcd<delegation::NoteSecret>, Pcd<spendable::NoteSpendable>)>,
+    Vec<(
+        Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+        Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+    )>,
     Anchor,
 ) {
     let mut pool = PoolSim::genesis_with(vec![]);

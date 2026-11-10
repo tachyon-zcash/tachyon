@@ -4,6 +4,8 @@ use alloc::{collections::BTreeSet, vec::Vec};
 use core::mem;
 
 use derive_more::{Display, Error, From};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 
 use super::{Bundle, Partial, Slot};
@@ -81,9 +83,12 @@ impl Bundle {
         pak: Option<&ProofAuthorizingKey>,
         spends: Vec<(
             usize,
-            ragu::Pcd<delegation::NoteSecret>,
-            ragu::Pcd<spendable::NoteSpendable>,
-            Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<(
+                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+                AnchorSetPoly,
+            )>,
         )>,
         outputs: BTreeSet<usize>,
     ) -> Result<(), ProverError> {

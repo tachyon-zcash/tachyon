@@ -202,5 +202,8 @@ fn same_proof(left: &Partial, right: &Partial) -> bool {
         && left.proof.digests == right.proof.digests
         && left.proof.tachygrams == right.proof.tachygrams
         && left.proof.anchor == right.proof.anchor
-        && left.proof.proof.serialize().as_ref() == right.proof.proof.serialize().as_ref()
+        && matches!(
+            (left.proof.proof.to_bytes(), right.proof.proof.to_bytes()),
+            (Ok(left_bytes), Ok(right_bytes)) if left_bytes == right_bytes
+        )
 }

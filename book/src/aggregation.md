@@ -40,8 +40,8 @@ It retains its fee descriptor and binding signature.
 
 ### Merge to produce Aggregate
 
-A proof's wire format is compressed for bandwidth efficiency.
-Aggregators must decompress proofs to a mutable format in order to merge proofs, and then re-compress to broadcast.
+Before the block, a stamp's wire format carries the full proof, so aggregators can lift and merge decoded stamps directly.
+A block carries each aggregate with its proof compressed, which is smaller but can no longer be lifted or merged.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -52,7 +52,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
    - Merge tachygrams (exclusive sets)
    - Merge proofs
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
-6. Serialize and compress the merged stamp
+6. Compress the merged stamp for the block
 7. Publish aggregate transaction
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.

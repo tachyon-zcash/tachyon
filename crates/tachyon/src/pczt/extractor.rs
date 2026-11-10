@@ -9,7 +9,7 @@ use super::{Bundle, Slot};
 use crate::{
     action::Action,
     bundle::{self, VerificationError},
-    stamp::ProofStamp,
+    stamp::{ProofStamp, Uncompressed},
 };
 
 /// Errors from the transaction extractor role.
@@ -38,7 +38,7 @@ pub enum ExtractError {
 
 #[expect(clippy::multiple_inherent_impl, reason = "one impl block per role")]
 impl Bundle {
-    /// Extract the consensus bundle, with its actions in sorted descriptor
+    /// Extract a verified uncompressed bundle, with actions in sorted descriptor
     /// order.
     ///
     /// When every note value is present, they must sum to the value balance.
@@ -54,7 +54,7 @@ impl Bundle {
         self,
         rng: &mut RNG,
         sighash: &[u8; 32],
-    ) -> Result<bundle::Bundle<ProofStamp>, ExtractError> {
+    ) -> Result<bundle::Bundle<ProofStamp<Uncompressed>>, ExtractError> {
         let values = self
             .spends
             .iter()

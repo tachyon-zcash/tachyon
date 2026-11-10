@@ -259,7 +259,7 @@ flowchart LR
     pczt ~~~ sighash
 ```
 
-Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
+Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the proof's action-set output commitment).
 
 A modified action breaks both checks.
 
@@ -280,6 +280,7 @@ The sequence follows `pczt::Bundle` through effects and authorization, `ActionsP
 Custody uses `authorize` to derive the bundle commitment from note openings and passes it to a transaction-layer callback that computes the sighash. The librustzcash adapter for that callback is not implemented yet.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
 Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
+Point inputs to Poseidon use their `EpAffine` representation. `Actions` carries only the anchor in its header; the action and tachygram set commitments occupy the proof's two output slots. `Stamp` additionally carries the tachygram commitment's bridge hash in its header.
 
 The tachygram set commitment and stamp trailer fields below describe the current design; [#226](https://github.com/tachyon-zcash/tachyon/issues/226) may redesign them.
 
@@ -360,11 +361,11 @@ and Proving
                 note over Stamper: SpendHeader (cm, nf_e, nf_next, anchor, pk, cv)
             end
             critical SpendAction(SpendHeader), witness theta, pak
-                note over Stamper: pk == Poseidon_PkDerive(x(ak), y(ak), nk)
+                note over Stamper: pk == Poseidon_PkDerive(ak, nk)
                 note over Stamper: alpha = Poseidon_Spend(theta, cm)
                 note over Stamper: rk = ak + [alpha]G
-                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
-                note over Stamper: Actions (Commit(X - d), Commit((X - nf_e)(X - nf_next)), anchor)
+                note over Stamper: d = Poseidon_ActionDg(cv, rk)
+                note over Stamper: Actions header anchor, output slots Commit(X - d), Commit((X - nf_e)(X - nf_next))
             end
             loop per supplied anchor span, possibly none
                 note over Stamper: ActionLift, anchor is the span start or a member, becomes the span end
@@ -381,8 +382,8 @@ and Proving
             critical OutputAction(OutputHeader), witness theta, anchor
                 note over Stamper: alpha = Poseidon_Output(theta, cm)
                 note over Stamper: rk = [alpha]G
-                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
-                note over Stamper: Actions (Commit(X - d), Commit((X - cm)(X - pad)), anchor)
+                note over Stamper: d = Poseidon_ActionDg(cv, rk)
+                note over Stamper: Actions header anchor, output slots Commit(X - d), Commit((X - cm)(X - pad))
             end
         end
 
@@ -391,7 +392,7 @@ and Proving
                 note over Stamper: left.anchor == right.anchor
                 note over Stamper: merged_action = left.action_poly * right.action_poly
                 note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: Actions (Commit(merged_action), Commit(merged_tg), anchor)
+                note over Stamper: Actions header anchor, output slots Commit(merged_action), Commit(merged_tg)
             end
         end
 
@@ -399,17 +400,17 @@ and Proving
         alt no actions
             critical FeeSeed, witness max_fee_note, anchor
                 note over Stamper: feemax == 0, so fee == 0
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0)
+                note over Stamper: d_fee = Poseidon_FeeDg(cv_feemax, 0)
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
-                note over Stamper: Stamp (Commit(X - d_fee), Commit(X - cm_chg), anchor)
+                note over Stamper: Stamp header (bridge(Commit(X - cm_chg)), anchor), output slots Commit(X - d_fee), Commit(X - cm_chg)
             end
         else
             critical FeeFuse(Actions), witness max_fee_note, fee
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee)
+                note over Stamper: d_fee = Poseidon_FeeDg(cv_feemax, fee)
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, feemax - fee, psi)
                 note over Stamper: fee_action = action_poly * (X - d_fee)
                 note over Stamper: fee_tg = tg_poly * (X - cm_chg)
-                note over Stamper: Stamp (Commit(fee_action), Commit(fee_tg), anchor)
+                note over Stamper: Stamp header (bridge(Commit(fee_tg)), anchor), output slots Commit(fee_action), Commit(fee_tg)
             end
         end
         note over Stamper: rerandomize proof
@@ -418,7 +419,7 @@ and Proving
         Stamper ->> User: ProofStamp { fee, coverage, anchor, tachygram_set, tachygrams, proof }
 
         break
-            note over User: rebuild header from own descriptors, fee descriptor and tachygrams, verify proof
+            note over User: rebuild header from tachygram commitment and anchor, check output slots against own descriptors, fee descriptor and tachygrams, verify proof
         end
     end
 end
@@ -449,9 +450,10 @@ break verify_tachygrams
     note over Consensus: cTachygrams == Commit(product over tachygrams of (X - tg))
 end
 break verify_proof
-    note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i))
-    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j)
+    note over Consensus: d_i = Poseidon_ActionDg(cv_i, rk_i)
+    note over Consensus: d_fee_j = Poseidon_FeeDg(cv_feemax_j, fee_j)
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
-    note over Consensus: verify proof against Stamp (action_acc, cTachygrams, anchor)
+    note over Consensus: check proof output slots against action_acc and cTachygrams
+    note over Consensus: verify proof against Stamp header (bridge(cTachygrams), anchor)
 end
 ```
