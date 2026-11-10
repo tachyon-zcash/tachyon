@@ -9,7 +9,6 @@ use alloc::{
 use core::{assert_matches, cmp::Reverse};
 
 use corez::io;
-use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
@@ -20,7 +19,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     keys::private,
     pasta::Fp,
-    stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
+    stamp::{self, AggregateId, PointerStamp, ProofStamp, ProveError},
     value, *,
 };
 
@@ -275,7 +274,7 @@ fn duplicated_spend_cannot_inflate() {
 
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
-    let decoded = Bundle::<ProofStamp>::read(&*buf).unwrap();
+    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap();
 
     decoded
         .verify_signatures(&mock_sighash(decoded.commitment()))
@@ -459,24 +458,48 @@ fn stamped_bundle_round_trips() {
     let stamped = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
     stamped.write(&mut buf).unwrap();
-    let mut erased_buf = Vec::new();
-    TachyonBundle::from(stamped.clone())
-        .write(&mut erased_buf)
+    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap();
+    assert_eq!(
+        TachyonBundle::read(&*buf).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert_eq!(decoded.actions, stamped.actions);
+    assert_eq!(decoded.value_balance, stamped.value_balance);
+    assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
+    assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
+    decoded
+        .verify(
+            rng,
+            &mock_sighash(decoded.commitment()),
+            &mock_wtxid(&decoded).into(),
+            &[],
+        )
         .unwrap();
-    assert_eq!(erased_buf, buf);
-
-    for decoded in [
-        Bundle::<ProofStamp>::read(&*buf).unwrap(),
-        Bundle::<ProofStamp>::try_from(TachyonBundle::read(&*buf).unwrap()).unwrap(),
-    ] {
-        assert_eq!(decoded.actions, stamped.actions);
-        assert_eq!(decoded.value_balance, stamped.value_balance);
-        assert_eq!(decoded.stamp.tachygrams, stamped.stamp.tachygrams);
-        assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
-        decoded
-            .verify_signatures(&mock_sighash(decoded.commitment()))
-            .unwrap();
-    }
+    let compressed = Bundle {
+        stamp: stamped.stamp.compress(rng).unwrap(),
+        actions: stamped.actions,
+        value_balance: stamped.value_balance,
+        cv_feemax: stamped.cv_feemax,
+        binding_sig: stamped.binding_sig,
+        memo: stamped.memo,
+    };
+    let mut bytes = Vec::new();
+    compressed.write(&mut bytes).unwrap();
+    let mut erased_buf = Vec::new();
+    let erased = TachyonBundle::from(compressed);
+    erased.write(&mut erased_buf).unwrap();
+    assert_eq!(erased_buf, bytes);
+    let mut block = Bundle::<ProofStamp<stamp::Compressed>>::read(&*bytes).unwrap();
+    assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
+    Bundle::<PointerStamp>::try_from(erased).unwrap_err();
+    let sighash = mock_sighash(block.commitment());
+    let wtxid = mock_wtxid(&block).into();
+    block.verify(rng, &sighash, &wtxid, &[]).unwrap();
+    block.stamp.anchor = Anchor::random(rng);
+    assert_matches!(
+        block.verify(rng, &sighash, &wtxid, &[]),
+        Err(VerificationError::Disproved)
+    );
 }
 
 #[test]
@@ -587,7 +610,7 @@ fn bundle_state_mismatches_are_rejected() {
 
     let buf: &[u8] = &[0x03];
     for err in [
-        Bundle::<ProofStamp>::read(buf).unwrap_err(),
+        Bundle::<ProofStamp<stamp::Uncompressed>>::read(buf).unwrap_err(),
         Bundle::<PointerStamp>::read(buf).unwrap_err(),
         TachyonBundle::read(buf).unwrap_err(),
     ] {
@@ -612,13 +635,12 @@ fn bundle_state_mismatches_are_rejected() {
         "unexpected tachyonBundleState"
     );
     assert_eq!(
-        Bundle::<ProofStamp>::read(&*adjunct_buf)
+        Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*adjunct_buf)
             .unwrap_err()
             .to_string(),
         "unexpected tachyonBundleState"
     );
-    Bundle::<PointerStamp>::try_from(TachyonBundle::from(stamped)).unwrap_err();
-    Bundle::<ProofStamp>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
+    Bundle::<ProofStamp<stamp::Compressed>>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
 }
 
 #[test]
@@ -627,9 +649,6 @@ fn auth_digest_invariants() {
     let wallet = WalletSim::new(shared_sk());
     let stamped = build_autonome(rng, &wallet, 1000, 700);
     let (commitment, auth_digest) = (stamped.commitment(), stamped.auth_digest());
-    let erased: TachyonBundle = stamped.clone().into();
-    assert_eq!(erased.auth_digest(), auth_digest);
-
     let pointer = stamped.clone().strip(mock_wtxid(&stamped));
     let repointed = stamped
         .clone()
@@ -668,13 +687,19 @@ fn read_rejects_noncanonical_tachygrams() {
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
 
-    let end = buf.len() - PROOF_SIZE_COMPRESSED;
+    let proof_len = bundle.stamp.proof.to_bytes().unwrap().len();
+    let mut proof_size_prefix = Vec::new();
+    CompactSize::try_from(proof_len)
+        .unwrap()
+        .write(&mut proof_size_prefix)
+        .unwrap();
+    let end = buf.len() - proof_len - proof_size_prefix.len();
     let first = end - n * 32;
     let last = end - 32;
     let (head, tail) = buf.split_at_mut(last);
     head[first..first + 32].swap_with_slice(&mut tail[..32]);
 
-    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
+    let err = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
 }
@@ -744,7 +769,7 @@ fn read_bounds_the_value_balance() {
 
     for value_balance in [max_money, -max_money] {
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
-        let decoded: i64 = Bundle::<ProofStamp>::read(&*buf)
+        let decoded: i64 = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf)
             .unwrap()
             .value_balance
             .into();
@@ -753,7 +778,7 @@ fn read_bounds_the_value_balance() {
     for value_balance in [max_money + 1, -max_money - 1, i64::MAX, i64::MIN] {
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
         for err in [
-            Bundle::<ProofStamp>::read(&*buf).unwrap_err(),
+            Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap_err(),
             TachyonBundle::read(&*buf).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -841,14 +866,19 @@ fn memo_round_trips_and_rejects_truncation() {
         bundle.memo = memo.clone();
         let mut buf = Vec::new();
         bundle.write(&mut buf).unwrap();
-        assert_eq!(Bundle::<ProofStamp>::read(&*buf).unwrap().memo, memo);
+        assert_eq!(
+            Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf)
+                .unwrap()
+                .memo,
+            memo
+        );
     }
 
     bundle.memo = vec![0x33u8; 8192];
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
     buf.truncate(1024);
-    let err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
+    let err = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
@@ -1018,9 +1048,19 @@ fn bundle_lift_over_an_aggregate() {
         .map(|desc| desc.digest().unwrap())
         .chain(
             covered_fee_descriptors
-                .into_iter()
+                .iter()
                 .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect();
     assert!(lifted.verify_proof(rng, &digests).unwrap());
+
+    let mut bytes = Vec::new();
+    lifted.write(&mut bytes).unwrap();
+    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
+    assert!(decoded.verify_proof(rng, &digests).unwrap());
+    let compressed = decoded.stamp.compress(rng).unwrap();
+    bytes.clear();
+    compressed.write(&mut bytes).unwrap();
+    let decoded_stamp = ProofStamp::<stamp::Compressed>::read(&*bytes).unwrap();
+    assert!(decoded_stamp.verify_proof(rng, digests).unwrap());
 }

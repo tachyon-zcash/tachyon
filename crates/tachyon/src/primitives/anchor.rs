@@ -60,8 +60,8 @@ impl Anchor {
     ///
     /// # Errors
     ///
-    /// Fails if `stamp_commit` is the identity point or a commitment to an
-    /// empty set.
+    /// Fails if the commitment is the identity, or if the tachygram set is
+    /// empty.
     pub fn next_stamp(
         self,
         epoch: EpochIndex,
@@ -72,10 +72,13 @@ impl Anchor {
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
+            let stamp_hash = stamp_commit
+                .bridge()
+                .map_err(|_err| AnchorError::NextStampZero)?;
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
                 epoch.into(),
-                stamp_commit.as_ref().to_affine(),
+                stamp_hash.into(),
             )))
         }
     }

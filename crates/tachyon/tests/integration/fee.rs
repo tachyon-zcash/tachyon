@@ -3,13 +3,12 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::assert_matches;
 
-use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
+    ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
+    VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
     stamp::{
-        ProofStamp,
+        self, Proof as _, ProofStamp,
         proof::{
             PROOF_SYSTEM, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
@@ -28,10 +27,14 @@ fn fee_less_output_bundle(
     wallet: &WalletSim,
     anchor: Anchor,
     max_fee_note: Note,
-) -> Bundle<ProofStamp> {
+) -> Bundle<ProofStamp<stamp::Uncompressed>> {
     let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (output_plan.note, rcv))
+        .seed(
+            rng,
+            output::OutputBind,
+            witness::output_bind(((), ()), output_plan.note, rcv),
+        )
         .unwrap();
     let (cm, pad, _cv) = *bind_pcd.data();
     let (pcd, ()) = PROOF_SYSTEM
@@ -40,13 +43,13 @@ fn fee_less_output_bundle(
             OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
-            Proof::bootstrap().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     let stamp = ProofStamp {
         coverage: stamp_coverage([output_plan.descriptor()], &[]),
         anchor,
-        tachygram_set: pcd.data().1,
+        tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
         tachygrams: BTreeSet::from([cm, pad]),
         proof: Box::new(pcd.proof().clone()),
         fee: value::Positive::ZERO,
@@ -74,24 +77,15 @@ fn fee_fuse_binds_its_sets() {
         .descriptors()
         .map(|desc| desc.digest().unwrap())
         .collect();
-    let stamp_header = (
-        action_digests
-            .iter()
-            .copied()
-            .collect::<ActionSetPoly>()
-            .commit(),
-        left.stamp.tachygram_set,
-        anchor,
-    );
     let valid = witness::fee_fuse(
-        (stamp_header, ()),
+        (anchor, ()),
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
         &left.stamp.tachygrams,
     );
     let other = witness::fee_fuse(
-        (stamp_header, ()),
+        (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
@@ -110,50 +104,18 @@ fn fee_fuse_binds_its_sets() {
         (
             {
                 let mut corrupt = valid.clone();
-                corrupt.2.0 = valid.3.0.clone();
-                corrupt
-            },
-            "FeeFuse: left action accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2.1 = valid.3.1.clone();
-                corrupt
-            },
-            "FeeFuse: left tachygram accumulator must commit to header commit",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.3.0 = other.3.0.clone();
+                corrupt.2.0 = other.2.0.clone();
                 corrupt
             },
             "FeeFuse: output action set must be the product of left and fee action sets",
         ),
         (
             {
-                let mut corrupt = valid.clone();
-                corrupt.3.1 = other.3.1.clone();
+                let mut corrupt = valid;
+                corrupt.2.1 = other.2.1;
                 corrupt
             },
             "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.4.0 = other.4.0.clone();
-                corrupt
-            },
-            "FeeFuse: fee action set does not commit to the fee digest",
-        ),
-        (
-            {
-                let mut corrupt = valid;
-                corrupt.4.1 = other.4.1;
-                corrupt
-            },
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
         assert_matches!(
@@ -162,8 +124,8 @@ fn fee_fuse_binds_its_sets() {
                     rng,
                     FeeFuse,
                     corrupt,
-                    left.stamp.proof.clone().carry::<Actions>(stamp_header),
-                    Proof::bootstrap().carry::<()>(()),
+                    left.stamp.proof.clone().carry::<Actions>(anchor),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -201,29 +163,27 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         .map(|desc| desc.digest().unwrap())
         .chain([once.fee_descriptor().digest().unwrap()])
         .collect();
-    let header = (
-        ActionSetPoly::from_iter(digests.iter().copied()).commit(),
-        once.stamp.tachygram_set,
-        anchor,
+    let repeated_witness = witness::fee_fuse(
+        (anchor, ()),
+        max_fee_note,
+        value::Positive::try_from(0).unwrap(),
+        &digests,
+        &once.stamp.tachygrams,
     );
-    let (twice_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            FeeFuse,
-            witness::fee_fuse(
-                (header, ()),
-                max_fee_note,
-                value::Positive::try_from(0).unwrap(),
-                &digests,
-                &once.stamp.tachygrams,
-            ),
-            once.stamp.proof.clone().carry::<Actions>(header),
-            Proof::bootstrap().carry::<()>(()),
-        )
-        .unwrap();
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                FeeFuse,
+                repeated_witness.clone(),
+                once.stamp.proof.clone().carry::<Actions>(anchor),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(_))
+    );
     let mut twice_stamp = once.stamp.clone();
-    twice_stamp.proof = Box::new(twice_pcd.proof().clone());
-    twice_stamp.tachygram_set = twice_pcd.data().1;
+    twice_stamp.tachygram_set = repeated_witness.2.1.commit();
     twice_stamp
         .tachygrams
         .insert(max_fee_note.commitment().into());
@@ -492,7 +452,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
         .unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<ProofStamp>::read(&*bytes).unwrap();
+    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     decoded
         .verify(rng, &sighash, &mock_wtxid(&decoded).into(), &[])
@@ -596,13 +556,27 @@ fn fee_seed_binds_its_singletons_and_header() {
     }
 
     let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
+    let compressed = {
+        let compressed = PROOF_SYSTEM.compress(&seed_pcd, rng).unwrap();
+        let bytes = compressed.proof().to_bytes().unwrap();
+        stamp::Compressed::from_bytes(&bytes).unwrap()
+    };
+    let proof = {
+        let bytes = seed_pcd.proof().to_bytes().unwrap();
+        stamp::Uncompressed::from_bytes(&bytes).unwrap()
+    };
     for (header, expected) in [
         ((valid.2.commit(), valid.3.commit(), anchor), true),
         ((other.2.commit(), valid.3.commit(), anchor), false),
         ((valid.2.commit(), other.3.commit(), anchor), false),
         ((valid.2.commit(), valid.3.commit(), other_anchor), false),
     ] {
-        let pcd = seed_pcd.proof().clone().carry::<Stamp>(header);
-        assert_eq!(PROOF_SYSTEM.verify(&pcd, &mut *rng).unwrap(), expected);
+        assert_eq!(proof.verify(rng, header).unwrap(), expected);
+        assert_eq!(compressed.verify(rng, header).unwrap(), expected);
     }
+    let pcd = seed_pcd
+        .proof()
+        .clone()
+        .carry::<Stamp>(Stamp::header(valid.3.commit(), anchor).unwrap());
+    assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
 }
