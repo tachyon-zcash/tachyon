@@ -590,13 +590,16 @@ impl Step for FeeFuse {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee =
+        let cv_max_fee = EpAffine::from(
             value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
-        })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
+                .commit(-max_fee_note.value),
+        );
+        if cv_max_fee.is_identity() {
+            return Err(ragu_core::Error::InvalidWitness(
+                "FeeFuse: fee commitment is the identity".into(),
+            ));
+        }
+        let fee_digest = poseidon::fee_digest(cv_max_fee, u64::from(fee));
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(
@@ -684,13 +687,16 @@ impl Step for FeeSeed {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee =
+        let cv_max_fee = EpAffine::from(
             value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
-        })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
+                .commit(-max_fee_note.value),
+        );
+        if cv_max_fee.is_identity() {
+            return Err(ragu_core::Error::InvalidWitness(
+                "FeeSeed: fee commitment is the identity".into(),
+            ));
+        }
+        let fee_digest = poseidon::fee_digest(cv_max_fee, 0);
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(

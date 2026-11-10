@@ -29,9 +29,10 @@ impl Descriptor {
     ///
     /// Returns [`ActionDigestError`] if the commitment is the identity.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        let cv_max_fee = EpAffine::from(self.max_commitment)
-            .coordinates()
-            .ok_or(ActionDigestError::IdentityCv)?;
+        let cv_max_fee = EpAffine::from(self.max_commitment);
+        if cv_max_fee.is_identity() {
+            return Err(ActionDigestError::IdentityCv);
+        }
         Ok(ActionDigest::from(poseidon::fee_digest(
             cv_max_fee,
             u64::from(self.value),
