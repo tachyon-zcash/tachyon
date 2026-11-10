@@ -44,11 +44,12 @@ coverage-integration *ARGS:
     cargo llvm-cov report {{_cov}} --release --lcov --skip-functions --output-path lcov-integration.info
 
 # line coverage of the test suite, as an HTML report
+# keep HTML outside target/llvm-cov, which the next coverage pass clears
 coverage-html *ARGS:
     just coverage-lib {{ARGS}}
-    cargo llvm-cov report {{_cov}} --html --output-dir target/llvm-cov/html/lib
+    cargo llvm-cov report {{_cov}} --html --output-dir target/coverage-html/lib
     just coverage-integration {{ARGS}}
-    cargo llvm-cov report {{_cov}} --release --html --output-dir target/llvm-cov/html/integration
+    cargo llvm-cov report {{_cov}} --release --html --output-dir target/coverage-html/integration
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}

@@ -58,7 +58,8 @@ jobs:
         run: cargo llvm-cov report --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --lcov --skip-functions --output-path lcov-lib.info
 
       - name: Generate unit HTML report
-        run: cargo llvm-cov report --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html --output-dir target/llvm-cov/html/lib
+        # The integration run clears target/llvm-cov, so keep HTML outside it.
+        run: cargo llvm-cov report --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html --output-dir target/coverage-html/lib
 
       - name: Write unit summary to the job summary
         run: |
@@ -74,7 +75,7 @@ jobs:
         run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --lcov --skip-functions --output-path lcov-integration.info
 
       - name: Generate integration HTML report
-        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html --output-dir target/llvm-cov/html/integration
+        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html --output-dir target/coverage-html/integration
 
       - name: Write integration summary to the job summary
         run: |
@@ -87,7 +88,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-html
-          path: target/llvm-cov/html
+          path: target/coverage-html
           retention-days: 30
 
       - name: Check lcov reports match the committed reports
