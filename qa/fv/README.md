@@ -10,9 +10,12 @@ compares a Lean step with the circuit it models. Read
 
 ## The model
 
-`Stamp.lean` and `ProofTree.lean` model the stamp headers and the steps that produce them. Each
-Pedersen commitment is read as the polynomial it commits to. Each `enforce_poly_product` is read as
-the identity it checks. An accepted header is one that a registered step derives from accepted
+`Stamp.lean` and `ProofTree.lean` model semantic proof states and the steps that produce them.
+Rust carries two output slots, O0 (actions) and O1 (tachygrams); `Actions` header data is the anchor,
+and `Stamp` header data is `(O1 bridge hash, anchor)`. The Lean `Stamp` packages both slots and the
+anchor. Each Pedersen commitment and its bridge binding is idealized by its polynomial opening.
+Each `enforce_poly_product` at the framework's shared `zeta` is read as the identity it checks.
+An accepted state is one that a registered step derives from accepted
 inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
@@ -121,8 +124,9 @@ choices that no theorem here discharges.
 
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
   from registered steps on accepted inputs.
-- **Commitment binding and the random challenge.** The model reads commitments as polynomials and
-  checks as identities.
+- **Commitment/bridge binding and the random challenge.** The model reads committed output slots
+  as polynomials, abstracts the O1 bridge hash by its bound opening, and reads checks as identities.
+  Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
 
@@ -134,7 +138,8 @@ choices that no theorem here discharges.
   proved.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
   domain-separated (`Node.epoch_unique`, `SpanDerivable.node_epoch`). This is a global law over the
-  fold inputs.
+  fold inputs. The stamp fold includes commitment and bridge hashing before Poseidon absorbs
+  the bridge point's affine coordinates; the law abstracts that whole composition.
 
 ### Consensus rules
 

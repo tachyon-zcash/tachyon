@@ -96,7 +96,9 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 
 ### Fee states and flows
 
-`Actions` and `Stamp` both carry `(ActionSetCommit, TachygramSetCommit, Anchor)`, with distinct suffixes, so the pre-fee and post-fee states are proof-enforced.
+`Actions` and `Stamp` each have two polynomial output slots: O0 carries the action set and O1 the tachygram set.
+Their header data differs: `Actions` carries the anchor, while `Stamp` carries `(tachygram bridge hash, anchor)`, with distinct suffixes, so the pre-fee and post-fee states are proof-enforced.
+Merge checks `L0 * R0 = O0` and `L1 * R1 = O1` at the framework's shared challenge $\zeta$; unmerge checks `R0 * O0 = L0` and `R1 * O1 = L1`.
 Verification always rebuilds `Pcd<Stamp>`.
 
 ## Roles

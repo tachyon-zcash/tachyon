@@ -9,7 +9,8 @@ This module models the chain-level consensus rules alongside the stamp proof tre
 1. **Anchor chain (`book/src/anchor.md`, `crates/tachyon/src/primitives/anchor.rs`)**:
    The pool anchor evolves by two domain-separated Poseidon folds:
    - `nextStamp` (`Tachyon-AnchorSt`), absorbing the current anchor, the containing block's epoch,
-     and a non-empty stamp tachygram-set polynomial.
+      and the affine coordinates of the bridge hash of a non-empty stamp's tachygram-set commitment.
+      Here `nextStamp` abstracts that composition as a function of its polynomial opening.
    - `nextEpoch` (`Tachyon-AnchorEp`), absorbing the previous epoch's final anchor and the new
      epoch index.
    Under collision resistance and domain separation (`HashLaw`), every reachable chain node has a
@@ -165,8 +166,8 @@ theorem BlockAnchor.toNode {e : E} {a : A}
 
 /-! ## Anchor spans and `StampLift` epoch invariance -/
 
-/-- An `AnchorSpan` header `(anchor_start, members, anchor_end)`, with `members` idealized as its
-committed polynomial in `F[X]`. -/
+/-- Semantic `AnchorSpan` state: Rust header data is `(anchor_start, anchor_end)`;
+`members` is output slot O0, idealized as its committed polynomial in `F[X]`. -/
 structure AnchorSpan (F : Type*) [Field F] where
   anchor_start : F
   members : F[X]
