@@ -834,8 +834,8 @@ impl ProofStamp {
         fee: value::Positive,
     ) -> Result<Self, ProveError> {
         let fee_descriptor = fee::Descriptor {
-            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-            value: fee,
+            cv_feemax: max_fee_note.cv_feemax(),
+            v_fee: fee,
         };
         let (proof, (_, tachygram_set, anchor)) = PROOF_SYSTEM
             .rerandomize(pcd, rng)

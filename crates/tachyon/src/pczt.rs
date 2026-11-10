@@ -9,7 +9,7 @@
 //!   [`Bundle::add_output`].
 //! - Effects: [`Bundle::finalize_effects`] by a planner, or
 //!   [`Bundle::authorize`] by custody, fixes `theta` and `rcv` and derives
-//!   `cv`, `rk` and `cv_fee_max`.
+//!   `cv`, `rk` and `cv_feemax`.
 //! - Signer: [`Bundle::authorize`], [`Bundle::sign_outputs`],
 //!   [`Bundle::sign_binding`].
 //! - Prover: [`Bundle::prove_partial`], [`Bundle::merge_partials`],
@@ -204,7 +204,7 @@ pub struct Bundle {
     pub max_fee_owner: Option<SpendValidatingKey>,
 
     /// The max fee note's value commitment.
-    pub cv_fee_max: Option<value::Commitment>,
+    pub cv_feemax: Option<value::Commitment>,
 
     /// Opaque recipient-directed payload, empty when absent.
     pub memo: Vec<u8>,
@@ -242,7 +242,7 @@ impl Bundle {
             value_balance: value::Balance::from(-max_fee),
             max_fee_note,
             max_fee_owner,
-            cv_fee_max: None,
+            cv_feemax: None,
             memo,
             binding_sig: None,
             partials: Vec::new(),

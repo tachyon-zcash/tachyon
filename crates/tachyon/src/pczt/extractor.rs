@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum ExtractError {
-    /// An action has no `cv` or `rk`, or the max fee note no `cv_fee_max`.
+    /// An action has no `cv` or `rk`, or the max fee note no `cv_feemax`.
     #[display("{_0} has no value commitment or verification key")]
     MissingEffect(#[error(not(source))] Slot),
     /// An action has no signature.
@@ -95,8 +95,8 @@ impl Bundle {
         let extracted = bundle::Bundle {
             value_balance: self.value_balance,
             actions,
-            fee_max_commitment: self
-                .cv_fee_max
+            cv_feemax: self
+                .cv_feemax
                 .ok_or(ExtractError::MissingEffect(Slot::MaxFee))?,
             binding_sig: self
                 .binding_sig

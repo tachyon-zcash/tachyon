@@ -25,7 +25,7 @@ pub enum SignerError {
     /// An action has no `theta` or `rcv`.
     #[display("{_0} has no theta or rcv")]
     MissingEntropy(#[error(not(source))] Slot),
-    /// An action has no `cv` or `rk`, or the max fee note no `cv_fee_max`.
+    /// An action has no `cv` or `rk`, or the max fee note no `cv_feemax`.
     #[display("{_0} has no value commitment or verification key")]
     MissingEffect(#[error(not(source))] Slot),
     /// Two actions have the same descriptor.
@@ -53,7 +53,7 @@ impl Bundle {
     /// bundle commitment.
     ///
     /// Fills every absent `theta` and `rcv`, and derives each action's `cv`
-    /// and `rk` and the max fee note's `cv_fee_max`. A spend's `rk` uses its
+    /// and `rk` and the max fee note's `cv_feemax`. A spend's `rk` uses its
     /// owner's key, or `pak`'s when it has none. An output or max fee note
     /// owned by `pak`'s key takes `pak`'s payment key.
     ///
@@ -75,7 +75,7 @@ impl Bundle {
     /// Custody fixes the effects as [`Self::finalize_effects`] does, under its
     /// own keys. It fills absent fields and never overwrites present ones, and
     /// it computes the bundle commitment and sighash from its own derivation,
-    /// not from stored `cv`, `rk` or `cv_fee_max`. It signs every unsigned
+    /// not from stored `cv`, `rk` or `cv_feemax`. It signs every unsigned
     /// spend it owns and every unsigned output.
     ///
     /// # Errors
@@ -140,7 +140,7 @@ impl Bundle {
     /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$, where $r$ is the
     /// max fee note's blind. Before signing, checks that
     /// $[\mathsf{bsk}]\mathcal{R}$ equals the binding verification key of the
-    /// stored `cv`, `cv_fee_max` and value balance.
+    /// stored `cv`, `cv_feemax` and value balance.
     ///
     /// # Errors
     ///
@@ -173,9 +173,9 @@ impl Bundle {
             trapdoors.push(rcv.ok_or(SignerError::MissingEntropy(slot))?);
             cvs.push(cv.ok_or(SignerError::MissingEffect(slot))?);
         }
-        trapdoors.push(max_fee_note.fee_blind());
+        trapdoors.push(max_fee_note.derive_feemax_blind());
         cvs.push(
-            self.cv_fee_max
+            self.cv_feemax
                 .ok_or(SignerError::MissingEffect(Slot::MaxFee))?,
         );
 
@@ -197,7 +197,7 @@ impl Bundle {
     /// # Errors
     ///
     /// Returns [`SignerError::MissingEffect`] if an action has no `cv` or `rk`,
-    /// or the max fee note no `cv_fee_max`.
+    /// or the max fee note no `cv_feemax`.
     pub fn commitment(&self) -> Result<[u8; 32], SignerError> {
         let mut descriptors = Vec::with_capacity(self.spends.len() + self.outputs.len());
         for (slot, cv, rk) in self
@@ -219,14 +219,14 @@ impl Bundle {
         }
         descriptors.sort();
 
-        let cv_fee_max = self
-            .cv_fee_max
+        let cv_feemax = self
+            .cv_feemax
             .ok_or(SignerError::MissingEffect(Slot::MaxFee))?;
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
             self.value_balance.into(),
-            &cv_fee_max.into(),
+            &cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         ))
     }
@@ -294,8 +294,8 @@ impl Bundle {
 
         let max_fee_note = owned_note(&mut self.max_fee_note, self.max_fee_owner, ak, pk)
             .ok_or(SignerError::MissingNote(Slot::MaxFee))?;
-        let cv_fee_max = max_fee_note.fee_blind().commit(-max_fee_note.value);
-        self.cv_fee_max.get_or_insert(cv_fee_max);
+        let cv_feemax = max_fee_note.cv_feemax();
+        self.cv_feemax.get_or_insert(cv_feemax);
         balance -= i128::from(max_fee_note.value);
 
         let value_balance =
@@ -304,7 +304,7 @@ impl Bundle {
         let commitment = blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
             value_balance.into(),
-            &cv_fee_max.into(),
+            &cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         );
 

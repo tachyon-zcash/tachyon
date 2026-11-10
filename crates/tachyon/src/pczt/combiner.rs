@@ -83,9 +83,9 @@ impl Bundle {
                 PartialEq::eq,
                 max_fee_conflict,
             )?,
-            cv_fee_max: merge(
-                self.cv_fee_max,
-                other.cv_fee_max,
+            cv_feemax: merge(
+                self.cv_feemax,
+                other.cv_feemax,
                 PartialEq::eq,
                 max_fee_conflict,
             )?,
