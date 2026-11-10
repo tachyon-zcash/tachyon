@@ -666,8 +666,9 @@ impl Step<Pasta> for StampLift {
 
     const INDEX: Index = Index::new(11);
 
-    // O0 carries the stated action set, checked equal to L0; O1 preserves L1;
-    // R0 supplies the span membership opening.
+    // O0 is the action set the caller states, where other pass-through steps
+    // copy their input's polynomial; the L0 = O0 opening holds it to the input.
+    // O1 copies L1. R0 supplies the span membership opening.
     fn polynomials(
         &self,
         witness: &Self::Witness<'_>,

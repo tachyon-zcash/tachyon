@@ -446,7 +446,6 @@ flowchart TB
   subgraph spendable [spendable advance]
     bucket_in((QrBucket))
     creation_in((NoteUnspent))
-    w_init[/contents/]
     s_init[QrSpendableInit]
     unspent_in((ArbitraryUnspent))
     s_unspentbind[UnspentBind]
@@ -459,14 +458,14 @@ flowchart TB
   end
 
   subgraph merge [transaction assembly]
-    w_stamp[/theta, pak/]
+    w_stamp[/theta, pak, action_set, tachygram_set/]
     s_spendstamp[SpendAction]
     w_outbind[/note, rcv/]
     s_outbind[OutputBind]
-    w_output[/theta, anchor/]
+    w_output[/theta, anchor, action_set, tachygram_set/]
     s_output[OutputAction]
     s_merge[ActionMerge]
-    w_fee[/max fee note, fee, fee sets/]
+    w_fee[/max_fee_note, fee, output_action_set, output_tachygram_set/]
     s_fee[FeeFuse]
   end
 
@@ -480,7 +479,6 @@ flowchart TB
 
   creation_in --> s_init
   bucket_in --> s_init
-  w_init --> s_init
   nf_range --> s_unspentbind
   unspent_in --> s_unspentbind
   s_init -->|NoteSpendable| s_lift
@@ -537,15 +535,15 @@ flowchart LR
 ```mermaid
 flowchart LR
   bucket_e((QrBucket))
-  w_init[/value, classes, mask, sequence, contents/]
+  w_init[/value, classes, mask, sequence/]
   s_init[QrUnspentInit]
   bucket_next((QrBucket))
-  w_next[/value, classes, mask, sequence, contents/]
+  w_next[/value, classes, mask, sequence/]
   s_next[QrUnspentInit]
-  w_ufuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
+  w_ufuse[/combined_elapsed_seq/]
   s_ufuse[UnspentFuse]
   bucket_after((QrBucket))
-  w_ulift[/value, classes, mask, elapsed_seq, extended_seq, contents/]
+  w_ulift[/value, classes, mask, extended_seq/]
   s_ulift[UnspentLift]
   unspent_out((ArbitraryUnspent))
 
@@ -590,11 +588,11 @@ flowchart LR
 | ---- | ---- | ----- | ------- | ------ |
 | AnchorSpanSeed | — | — | anchor_start, epoch, stamp_hash | AnchorSpan |
 | AnchorSpanFuse | AnchorSpan | AnchorSpan | combined | AnchorSpan |
-| SummarySeed | — | — | anchor_prev, epoch, stamp_set | Summary |
+| SummarySeed | — | — | anchor_prev, epoch, stamp | Summary |
 | SummaryAdvance | Summary | — | extended, stamp | Summary |
 | QrSpendableInit | NoteUnspent | QrBucket | — | NoteSpendable |
 | QrSummaryIntake | Summary | — | discriminant | QrIntake |
-| QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp_set | QrIntake |
+| QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp | QrIntake |
 | QrEmptyIntakeSeed | — | — | anchor, epoch, discriminant | QrIntake |
 | QrIntakeMerge | QrIntake | QrIntake | merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | non_residue, residue | QrIntakeSides |
@@ -602,7 +600,7 @@ flowchart LR
 | QrSideDescend | QrIntakeSides | QrSideSelection | bit | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence | ArbitraryUnspent |
-| EvidenceTreeLeafPair | QrBucket | QrBucket | left_contents, right_contents | EvidenceTreePair |
+| EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |
 | EvidenceTreePairFuse | EvidenceTree | EvidenceTree | — | EvidenceTreePair |
 | EvidenceTreeFuse | EvidenceTreePair | EvidenceTreePair | — | EvidenceTree |
 | EvidenceTreeCap | EvidenceTree | — | — | EvidenceTree |
