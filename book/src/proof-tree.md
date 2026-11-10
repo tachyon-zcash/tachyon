@@ -162,18 +162,18 @@ The subsections below walk each subtree bottom-up.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
 
 An `AnchorSpan` covers `[anchor_start, anchor_end]`.
-Its header also carries `members`, a commitment to the polynomial whose roots are the anchors in `(anchor_start, anchor_end]`.
+Its proof carries `members`, the polynomial whose roots are the anchors in `(anchor_start, anchor_end]`.
 Each stamp folded into the span adds one member.
 `anchor_end` is a member and `anchor_start` is not.
-`AnchorSpanSeed` folds one stamp and commits to the anchor it produces, using the fixed generators.
+`AnchorSpanSeed` folds one stamp's bridge hash into `anchor_start`, and the resulting anchor is the only root of its members polynomial.
 `AnchorSpanFuse` requires the left span's `anchor_end` to equal the right span's `anchor_start`, and proves that the combined members polynomial is the product of the two halves' polynomials.
 
 `StampLift` moves a stamp from `anchor_start` or from any member to `anchor_end`.
 It checks $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, where $M$ is the members polynomial and $\mathsf{anchor}$ is the stamp's anchor.
 The members polynomial records which anchors are in the span and not their order.
 `StampLift` therefore always moves the stamp to `anchor_end`.
-`StampLift` evaluates $M$ at the stamp's anchor without a random challenge.
-It checks that the witnessed polynomial's commitment equals the header's `members`.
+`StampLift` opens $M$ at the stamp's anchor, a point the left input fixes, not a random challenge.
+The right input proof binds $M$.
 Its witness is the caller's stated action set, which becomes the output action set and must equal the input stamp's.
 
 ### ArbitraryUnspent composition
@@ -511,13 +511,13 @@ The single `SpendableLift` consumes one composed `NoteUnspent` (potentially cros
 ```mermaid
 flowchart LR
   sh_in((Stamp))
-  w_span[/anchor_start, epoch, stamp_commit/]
+  w_span[/anchor_start, epoch, stamp_hash/]
   s_span[AnchorSpanSeed]
-  w_next[/anchor_start, epoch, stamp_commit/]
+  w_next[/anchor_start, epoch, stamp_hash/]
   s_next[AnchorSpanSeed]
-  w_spanfuse[/left_members, combined, right_members/]
+  w_spanfuse[/combined/]
   s_spanfuse[AnchorSpanFuse]
-  w_lift[/members/]
+  w_lift[/action_set/]
   s_lift[StampLift]
   sh_out((Stamp))
 
@@ -588,7 +588,7 @@ flowchart LR
 
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
-| AnchorSpanSeed | — | — | anchor_start, epoch, stamp_commit | AnchorSpan |
+| AnchorSpanSeed | — | — | anchor_start, epoch, stamp_hash | AnchorSpan |
 | AnchorSpanFuse | AnchorSpan | AnchorSpan | combined | AnchorSpan |
 | SummarySeed | — | — | anchor_prev, epoch, stamp_set | Summary |
 | SummaryAdvance | Summary | — | extended, stamp | Summary |
@@ -624,9 +624,9 @@ flowchart LR
 | ActionLift | Actions | AnchorSpan | — | Actions |
 | FeeFuse | Actions | — | max fee note opening, fee, output action_set, output tachygram_set | Stamp |
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
-| StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
+| StampMerge | Stamp | Stamp | merged action_set, merged tachygram_set | Stamp |
 | StampLift | Stamp | AnchorSpan | action_set | Stamp |
-| StampUnmerge | Stamp | Stamp | (action_set, tachygram_set) × dividend, quotient, divisor | Stamp |
+| StampUnmerge | Stamp | Stamp | quotient action_set, quotient tachygram_set | Stamp |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.
