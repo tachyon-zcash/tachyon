@@ -4,7 +4,8 @@ import Tachyon.Unmerge
 /-!
 # The stamp proof tree
 
-Two header kinds share one data shape. `Actions` carries proven action content with no fee in its
+Two proof kinds share this model's enriched slot/anchor state, although their Rust header data
+differs (`Actions`: anchor; `Stamp`: O1 bridge hash and anchor). `Actions` carries proven action content with no fee in its
 lineage. `Stamp` carries fee-bearing content and is the kind consensus verifies. `ActionsDerivable`
 and `StampDerivable` are the headers an idealized PCD verifier accepts at each kind: every accepted
 header is the output of a registered step on accepted inputs, which idealizes PCD knowledge
