@@ -43,8 +43,9 @@ variable {F A : Type*} [Field F]
 
 /-! ## Epoch buckets (`QrBucket`) -/
 
-/-- An epoch's `QrBucket` header `(epoch, anchor_start, anchor_next, contents)`, with `contents`
-idealized as its committed polynomial in `F[X]`. -/
+/-- Semantic projection of an epoch's `QrBucket`: epoch and anchor bounds from the header,
+plus contents from output slot O0. Rust also carries discriminant/profile/contents-bridge
+metadata, abstracted by the admissible-bucket and profile-aware query interfaces. -/
 structure QrBucket (F A : Type*) [Field F] where
   epoch : ℕ
   anchor_start : A
@@ -79,7 +80,8 @@ theorem CompleteBucket.not_published {chain : List (Chain.Stamp F A)} {b : QrBuc
 
 /-! ## Nullifier derivation windows (`NoteNullifiers`) -/
 
-/-- A `NoteNullifiers` header `(cm, epoch_start, seq, epoch_end)`. The `NfSeqCommit` polynomial over
+/-- Semantic `NoteNullifiers` state: header `(cm, epoch_start, epoch_end)` plus sequence slot O0.
+The `NfSeqCommit` polynomial over
 irreducible factors `(v + (x + 1)X)^3 - 2` (`crates/tachyon/src/collections/indexed_multiset.rs`) is
 idealized by its multiset of `(epoch, nullifier)` pairs `seq : Multiset (ℕ × F)`. -/
 structure NoteNullifiers (F : Type*) where
@@ -128,7 +130,8 @@ theorem NullifiersDerivable.mem_seq {nf : F → ℕ → F} {n : NoteNullifiers F
 
 /-! ## Delegated unspent segments (`ArbitraryUnspent`) -/
 
-/-- An `ArbitraryUnspent` header `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`. -/
+/-- Semantic `ArbitraryUnspent` state: header `(anchor_start, epoch_start, epoch_next, anchor_next)`
+plus the indexed elapsed sequence in output slot O0. -/
 structure ArbitraryUnspent (F A : Type*) where
   anchor_start : A
   epoch_start : ℕ
@@ -225,7 +228,7 @@ structure NoteUnspent (F A : Type*) where
   epoch_next : ℕ
   anchor_next : A
 
-/-- `UnspentBind` (`crates/tachyon/src/stamp/proof/pool.rs:495-561`): binds an `ArbitraryUnspent`
+/-- `UnspentBind` (`crates/tachyon/src/stamp/proof/pool.rs`): binds an `ArbitraryUnspent`
 to a `NoteNullifiers` by witnessing `complement` such that `n.seq = u.elapsed + complement`. -/
 inductive NoteUnspentDerivable (ValidBucket : QrBucket F A → Prop) (nf : F → ℕ → F) :
     NoteUnspent F A → Prop
