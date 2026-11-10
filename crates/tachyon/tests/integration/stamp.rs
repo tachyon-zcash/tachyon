@@ -50,8 +50,8 @@ fn plan_prove_rejects_invalid_inputs() {
     });
     let max_fee_note = user.random_note(0);
     let fee_digest = fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: value::Positive::ZERO,
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
     }
     .digest()
     .unwrap();
@@ -164,8 +164,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
         spend.digest().unwrap(),
         output.digest().unwrap(),
         fee::Descriptor {
-            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-            value: value::Positive::ZERO,
+            cv_feemax: max_fee_note.cv_feemax(),
+            v_fee: value::Positive::ZERO,
         }
         .digest()
         .unwrap(),

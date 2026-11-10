@@ -80,16 +80,24 @@ pub struct Note {
 }
 
 impl Note {
-    /// Derive a max fee blind $r$ from note fields.
+    /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
+    /// fields.
     #[must_use]
     #[expect(
         clippy::expect_used,
         clippy::missing_panics_doc,
         reason = "p < q, so every Fp repr is canonical in Fq"
     )]
-    pub fn fee_blind(&self) -> value::Trapdoor {
-        let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
+    pub fn derive_feemax_blind(&self) -> value::Trapdoor {
+        let blind =
+            poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
         value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+    }
+
+    /// The max fee commitment, `cv_feemax`.
+    #[must_use]
+    pub fn cv_feemax(&self) -> value::Commitment {
+        self.derive_feemax_blind().commit(-self.value)
     }
 
     /// Computes the note commitment `cm`.

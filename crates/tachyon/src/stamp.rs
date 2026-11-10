@@ -666,11 +666,8 @@ impl Plan {
         )>,
     ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let fee_descriptor = fee::Descriptor {
-            max_commitment: self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value),
-            value: self.fee,
+            cv_feemax: self.max_fee_note.cv_feemax(),
+            v_fee: self.fee,
         };
         let change = Tachygram::from(self.fee_change_note.commitment());
 

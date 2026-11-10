@@ -562,8 +562,8 @@ pub fn fee_fuse(
         reason = "a planned max fee commitment is never the identity"
     )]
     let fee_digest = fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee,
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: fee,
     }
     .digest()
     .expect("fee digest");
@@ -612,8 +612,8 @@ pub fn fee_seed(
         reason = "a planned max fee commitment is never the identity"
     )]
     let fee_digest = fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: value::Positive::ZERO,
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
     }
     .digest()
     .expect("fee digest");

@@ -185,7 +185,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub actions: Vec<Action>,
 
     /// The max fee note's value commitment.
-    pub fee_max_commitment: value::Commitment,
+    pub cv_feemax: value::Commitment,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -221,8 +221,8 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         S: StampState,
     {
         fee::Descriptor {
-            max_commitment: self.fee_max_commitment,
-            value: self.stamp.fee(),
+            cv_feemax: self.cv_feemax,
+            v_fee: self.stamp.fee(),
         }
     }
 
@@ -243,7 +243,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
-            &self.fee_max_commitment.into(),
+            &self.cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         )
     }
@@ -260,7 +260,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
             self.actions
                 .iter()
                 .map(|action| action.cv)
-                .chain([self.fee_max_commitment]),
+                .chain([self.cv_feemax]),
             self.value_balance,
         );
 
@@ -442,7 +442,7 @@ impl Plan {
     /// $$
     ///   (\sum_i v_{\text{spend},i}) -
     ///   (\sum_j v_{\text{output},j}) -
-    ///   v_\text{maxfee}
+    ///   v_\text{feemax}
     /// $$
     ///
     /// # Errors
@@ -471,11 +471,7 @@ impl Plan {
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?.into(),
-            &self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value)
-                .into(),
+            &self.max_fee_note.cv_feemax().into(),
             &blake2b::memo_digest(&self.memo),
         ))
     }
@@ -514,7 +510,7 @@ impl Plan {
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
         private::BindingSigningKey::from(
             self.iter_actions(|plan| plan.rcv, |plan| plan.rcv)
-                .chain([self.max_fee_note.fee_blind()]),
+                .chain([self.max_fee_note.derive_feemax_blind()]),
         )
     }
 
@@ -586,10 +582,7 @@ impl Plan {
         Ok(Bundle {
             actions,
             value_balance,
-            fee_max_commitment: self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value),
+            cv_feemax: self.max_fee_note.cv_feemax(),
             binding_sig,
             memo: self.memo.clone(),
             stamp: Unproven,
@@ -607,7 +600,7 @@ impl Bundle<Unproven> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
+            cv_feemax: self.cv_feemax,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp,
@@ -622,7 +615,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
+            cv_feemax: self.cv_feemax,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp: PointerStamp {
@@ -940,7 +933,7 @@ impl<S: StampState> Bundle<S> {
             descriptors.push(action::Descriptor::read(&mut reader)?);
         }
 
-        let fee_max_commitment = {
+        let cv_feemax = {
             let point = serialization::read_ep_affine(&mut reader)?;
             if point.is_identity() {
                 return Err(io::Error::new(
@@ -985,7 +978,7 @@ impl<S: StampState> Bundle<S> {
         Ok(Self {
             value_balance,
             actions,
-            fee_max_commitment,
+            cv_feemax,
             binding_sig,
             memo,
             stamp,
@@ -1016,7 +1009,7 @@ impl<S: StampState> Bundle<S> {
             action.descriptor().write(&mut writer)?;
         }
 
-        serialization::write_ep_affine(&mut writer, &self.fee_max_commitment.into())?;
+        serialization::write_ep_affine(&mut writer, &self.cv_feemax.into())?;
 
         for action in &self.actions {
             action.sig.write(&mut writer)?;

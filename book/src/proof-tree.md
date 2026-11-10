@@ -198,7 +198,7 @@ A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one
 `SummaryAdvance` binds the witnessed accumulator to the header by commit-equality, checks `extended = acc * stamp` at a challenge, and advances `anchor_end` by the same `stamp.commit()`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
-A consumer joins two summaries when the first summary's `anchor_end` equals the second summary's `anchor_prev`.
+No step joins two summaries directly: each enters through `QrSummaryIntake`, and `QrIntakeMerge` joins the intakes when the first's `anchor_end` meets the second's `anchor_prev`.
 The joined chain contains every stamp absorption of both summaries.
 
 Summaries root unbound like every seed. The QR evidence built on them closes through the bucket seal's crossing, where consensus anchor membership forces every stamp absorption.
@@ -382,9 +382,9 @@ The note rides only on the wallet-private `NoteSecret`, so it never reaches a pu
 
 The two complementary `cm` checks pin value two independent ways. `NoteSeed`'s `cm = note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
-The note's age never becomes public. The lineage carries only a single current nullifier, not a polynomial with a consumed offset, and the published pair sits at the constant epochs of the live range, so no step reads a position that would leak how long the note has existed.
+The note's age never becomes public. The lineage carries only its current epoch, with no nullifier and no polynomial with a consumed offset, and the published pair sits at the constant epochs of the live range, so no step reads a position that would leak how long the note has existed.
 
-### Stamp construction
+### Stamp construction {#stamp-construction}
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
@@ -392,7 +392,7 @@ Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} +
 `OutputAction` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
 `SpendAction` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, then the action verification key and action digest, and emits `Actions` whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
 
-Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step, and a scalar multiplication about a quarter.
+Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step ([ragu#720](https://github.com/tachyon-zcash/ragu/pull/720)), and a scalar multiplication about a quarter.
 The work splits as follows, each stamp step also opening its action-set and tachygram-set polynomials:
 
 | Step | Permutations | Scalar multiplications |
@@ -460,9 +460,9 @@ flowchart TB
   subgraph merge [transaction assembly]
     w_stamp[/theta, pak/]
     s_spendstamp[SpendAction]
-    w_outbind[/note/]
+    w_outbind[/note, rcv/]
     s_outbind[OutputBind]
-    w_output[/rcv, theta, anchor/]
+    w_output[/theta, anchor/]
     s_output[OutputAction]
     s_merge[ActionMerge]
     w_fee[/max fee note, fee, fee sets/]
