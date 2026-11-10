@@ -1,4 +1,4 @@
-//! Tests that run at the shipped epoch size and hold at any epoch size.
+//! Tests run at the shipped epoch size.
 #![cfg(test)]
 
 use zcash_tachyon::{

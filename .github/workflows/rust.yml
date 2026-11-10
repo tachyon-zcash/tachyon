@@ -105,9 +105,8 @@ jobs:
       - name: Run unit tests
         run: cargo test --workspace --locked --features test-epoch-size --lib
 
-  # The epoch target holds at any epoch size and runs at the shipped one.
   epoch-tests:
-    name: epoch tests at the shipped epoch size
+    name: epoch tests
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -119,12 +118,13 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: debug
-      - name: Run epoch boundary tests (production epoch size)
+      # Runs without `test-epoch-size`, so the epoch constants are the shipped
+      # ones.
+      - name: Run epoch tests
         run: cargo test --workspace --locked --test epoch
 
-  # The integration tests create and verify proofs and build with `--release`,
-  # so they share no target directory with `unit-tests` and run as their own
-  # job. `unit-tests` covers the platforms; the integration tests run on Linux.
+  # The integration tests build with `--release`, so they get their own job and
+  # cache. They run on Linux.
   integration-tests:
     name: integration tests
     needs: changes
@@ -139,7 +139,7 @@ jobs:
         with:
           cache-suffix: release
       - name: Run integration tests
-        run: cargo test --workspace --release --locked --features test-epoch-size --test integration
+        run: cargo test --workspace --locked --release --features test-epoch-size --test integration
 
   # The `no_std` build has to be checked against a target that genuinely has no
   # `std`, not just `--no-default-features` on a host triple, which links `std`
@@ -179,7 +179,8 @@ jobs:
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
           RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
-      # The doctests are `compile_fail` checks.
+      # The doctests are `compile_fail` checks of the public API, so one
+      # platform is enough.
       - name: Run doctests
         run: cargo test --workspace --locked --features test-epoch-size --doc
 
@@ -188,8 +189,9 @@ jobs:
   # needed job actually failed or was cancelled (skipped counts as success).
   # Require THIS in the ruleset instead of the individual job names: a skipped
   # matrix job (`unit-tests`) reports the un-expanded name
-  # `unit tests (${{ matrix.os }})`, so `unit tests (ubuntu-latest)` etc. never report and block non-Rust PRs. The book
-  # has its own always-running workflow and is not gated here.
+  # `unit tests (${{ matrix.os }})`, so `unit tests (ubuntu-latest)` etc. never
+  # report and block non-Rust PRs. The book has its own always-running workflow
+  # and is not gated here.
   ci-required:
     name: ci-required
     if: always()
