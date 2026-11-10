@@ -113,13 +113,13 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     anchor: Anchor,
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>, fee::Descriptor) {
-    let (stamp, plan, max_fee) = build_output_stamp_with_fee(rng, anchor, note);
+    let (stamp, plan, max_fee_note) = build_output_stamp_with_fee(rng, anchor, note);
     (
         stamp,
         plan,
         fee::Descriptor {
-            max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            value: value::Positive::ZERO,
+            cv_feemax: max_fee_note.cv_feemax(),
+            v_fee: value::Positive::ZERO,
         },
     )
 }
@@ -1415,7 +1415,7 @@ impl WalletSim {
         rng: &mut RNG,
         spend_value: u64,
         output_value: u64,
-        max_fee: u64,
+        feemax: u64,
     ) -> (
         bundle::Plan,
         Bundle<Unproven>,
@@ -1429,7 +1429,7 @@ impl WalletSim {
     ) {
         let spend_note = self.random_note(spend_value);
         let output_note = self.random_note(output_value);
-        let max_fee_note = self.random_note(max_fee);
+        let max_fee_note = self.random_note(feemax);
 
         let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
         pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
