@@ -60,8 +60,8 @@ impl Anchor {
     ///
     /// # Errors
     ///
-    /// Fails if the commitment or its bridge hash is the identity, or if the
-    /// tachygram set is empty.
+    /// Fails if the commitment is the identity, or if the tachygram set is
+    /// empty.
     pub fn next_stamp(
         self,
         epoch: EpochIndex,

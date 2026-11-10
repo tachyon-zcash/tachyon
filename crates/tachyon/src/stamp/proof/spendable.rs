@@ -23,14 +23,14 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::field::Field as _;
+use udon::{curve::Affine as _, field::Field as _};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     digest::poseidon,
     note,
-    pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetBridge, TachygramSetPoly},
+    pasta::{EpAffine, Fp},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
     ragu_constraint::enforce_zero,
 };
 
@@ -151,11 +151,22 @@ impl Step<Pasta> for SpendableInit {
             let (anchor_prev, _, creation_epoch) = witness.take();
             let (cm, ..) = left.take();
             let () = right.take();
+            let creation_hash =
+                EpAffine::from_xy(*hash_x.take(), *hash_y.take()).ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "SpendableInit: bridge hash is not on the curve".into(),
+                    )
+                })?;
+            if creation_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SpendableInit: bridge hash is the identity".into(),
+                ));
+            }
             // O1's bridge hash binds the creation set absorbed into the anchor.
             let anchor = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(creation_epoch),
-                TachygramSetBridge::from_xy(*hash_x.take(), *hash_y.take())?.into(),
+                creation_hash,
             ));
             Ok((cm, (cm, creation_epoch, anchor)))
         })?;

@@ -106,6 +106,15 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        #[expect(
+            clippy::expect_used,
+            reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
+        )]
+        let stamp_tg_commit = witness.as_ref().map(|fields| {
+            EpAffine::from(fields.0)
+                .coordinates()
+                .expect("bridge hash is not the identity")
+        });
         Ok(StampOutput {
             anchor: Element::alloc(
                 dr,
@@ -116,12 +125,12 @@ impl Header<Fp> for Stamp {
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.0.coordinates().0),
+                    stamp_tg_commit.as_ref().map(|coordinates| coordinates.0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|fields| fields.0.coordinates().1),
+                    stamp_tg_commit.as_ref().map(|coordinates| coordinates.1),
                 )?,
             ],
         })
@@ -133,7 +142,7 @@ impl Stamp {
     ///
     /// # Errors
     ///
-    /// Fails if the commitment or its bridge hash is the identity.
+    /// Fails if the commitment is the identity.
     pub fn header(
         commitment: TachygramSetCommit,
         anchor: Anchor,
@@ -155,8 +164,16 @@ impl Stamp {
     )> {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let data = D::try_just(|| {
+            let stamp_tg_commit = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("Stamp: bridge hash is not on the curve".into())
+            })?;
+            if stamp_tg_commit.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "Stamp: bridge hash is the identity".into(),
+                ));
+            }
             Ok((
-                TachygramSetBridge::from_xy(*x.take(), *y.take())?,
+                TachygramSetBridge::from(stamp_tg_commit),
                 anchor.clone().take(),
             ))
         })?;

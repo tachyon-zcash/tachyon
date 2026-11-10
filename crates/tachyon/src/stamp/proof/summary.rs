@@ -22,11 +22,12 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
-    pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetBridge, TachygramSetCommit, TachygramSetPoly},
+    pasta::{EpAffine, Fp},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
@@ -135,8 +136,17 @@ impl Step<Pasta> for SummarySeed {
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_prev, epoch, _) = witness.take();
-            let stamp_hash = TachygramSetBridge::from_xy(*x.take(), *y.take())?;
-            if stamp_hash == TachygramSetCommit::default().bridge()? {
+            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SummarySeed: bridge hash is not on the curve".into(),
+                )
+            })?;
+            if stamp_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummarySeed: bridge hash is the identity".into(),
+                ));
+            }
+            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
                 return Err(ragu_core::Error::InvalidWitness(
                     "invalid anchor step".into(),
                 ));
@@ -144,7 +154,7 @@ impl Step<Pasta> for SummarySeed {
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(anchor_prev),
                 Fp::from(epoch),
-                stamp_hash.into(),
+                stamp_hash,
             ));
             Ok(((epoch, anchor_prev, anchor_end), ()))
         })?;
@@ -216,8 +226,17 @@ impl Step<Pasta> for SummaryAdvance {
         let output = D::try_just(|| {
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             right.take();
-            let stamp_hash = TachygramSetBridge::from_xy(*x.take(), *y.take())?;
-            if stamp_hash == TachygramSetCommit::default().bridge()? {
+            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: bridge hash is not on the curve".into(),
+                )
+            })?;
+            if stamp_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: bridge hash is the identity".into(),
+                ));
+            }
+            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
                 return Err(ragu_core::Error::InvalidWitness(
                     "invalid anchor step".into(),
                 ));
@@ -225,7 +244,7 @@ impl Step<Pasta> for SummaryAdvance {
             let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
                 Fp::from(summary_anchor_end),
                 Fp::from(summary_epoch),
-                stamp_hash.into(),
+                stamp_hash,
             ));
             Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
         })?;

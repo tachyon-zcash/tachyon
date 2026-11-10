@@ -82,7 +82,7 @@ impl Step<Pasta> for OutputBind {
     type Left = ();
     type Output = OutputHeader;
     type Right = ();
-    /// `(note, rcv)`
+    /// `(note, rcv)`.
     type Witness<'source> = (Note, value::Trapdoor);
 
     const INDEX: Index = Index::new(6);

@@ -27,12 +27,13 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::curve::Affine as _;
 
 use super::qr::QrBucket;
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
-    pasta::Fp,
+    pasta::{EpAffine, Fp},
     primitives::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
         TachygramSetPoly,
@@ -601,7 +602,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
-    /// `(path,)`
+    /// `(path)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
     const INDEX: Index = Index::new(28);
@@ -742,7 +743,17 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (profile, _) = witness.take();
-            let contents_hash = TachygramSetBridge::from_xy(*hash_x.take(), *hash_y.take())?;
+            let contents_hash =
+                EpAffine::from_xy(*hash_x.take(), *hash_y.take()).ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "EvidenceTreeOpen: bridge hash is not on the curve".into(),
+                    )
+                })?;
+            if contents_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "EvidenceTreeOpen: bridge hash is the identity".into(),
+                ));
+            }
             let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
             let () = right.take();
             enforce_zero(
@@ -754,7 +765,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                         Fp::from(discriminant),
                         Fp::from(u64::from(profile.depth)),
                         Fp::from(u64::from(profile.bits)),
-                        contents_hash.into(),
+                        contents_hash,
                     ),
                 "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
             )?;
@@ -766,7 +777,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                     anchor_next,
                     discriminant,
                     profile,
-                    contents_hash,
+                    TachygramSetBridge::from(contents_hash),
                 ),
                 (),
             ))

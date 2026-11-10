@@ -19,55 +19,20 @@ use crate::{
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
-/// Bridge hash of a tachygram-set commitment: a non-identity Pallas point.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
+/// Bridge hash of a tachygram-set commitment: a Pallas point.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetBridge(EpAffine);
-
-impl TachygramSetBridge {
-    /// Builds the bridge hash from its affine coordinates.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `(x, y)` is not on the curve or encodes the identity.
-    pub fn from_xy(x: Fp, y: Fp) -> ragu_core::Result<Self> {
-        EpAffine::from_xy(x, y)
-            .filter(|point| !point.is_identity())
-            .map(Self)
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "bridge hash is not a non-identity curve point".into(),
-                )
-            })
-    }
-
-    /// The point's affine coordinates $(x, y)$.
-    ///
-    /// # Panics
-    ///
-    /// Never: every constructor rejects the identity.
-    #[must_use]
-    #[expect(clippy::expect_used, reason = "the bridge hash is never the identity")]
-    pub fn coordinates(&self) -> (Fp, Fp) {
-        self.0
-            .coordinates()
-            .expect("bridge hash is a non-identity point")
-    }
-}
 
 impl TachygramSetCommit {
     /// Hashes this commitment through the application's bridge-hash stage.
     ///
     /// # Errors
     ///
-    /// Fails if the commitment or its bridge hash is the identity.
+    /// Fails if the commitment is the identity.
     pub fn bridge(self) -> ragu_core::Result<TachygramSetBridge> {
-        let point = PROOF_SYSTEM.bridge_hash(self.0.to_affine())?;
-        if point.is_identity() {
-            return Err(ragu_core::Error::InvalidWitness(
-                "bridge hash is the identity".into(),
-            ));
-        }
-        Ok(TachygramSetBridge(point))
+        Ok(TachygramSetBridge(
+            PROOF_SYSTEM.bridge_hash(self.0.to_affine())?,
+        ))
     }
 
     /// Read as an affine point from the consensus wire format.
