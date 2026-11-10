@@ -36,7 +36,8 @@ use crate::{
         spend::SpendBind,
         spendable::SpendableInit,
         stamp::{
-            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampMerge, StampUnmerge,
+            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift, StampMerge,
+            StampUnmerge,
         },
         summary::{SummaryAdvance, SummarySeed},
     },
@@ -517,6 +518,15 @@ pub const fn stamp_merge(
     tachygram_set: TachygramSetPoly,
 ) -> StepWitness<'static, StampMerge> {
     (action_set, tachygram_set)
+}
+
+/// Prepare the witness for [`StampLift`]: `(action_set,)`.
+#[must_use]
+pub const fn stamp_lift(
+    (_left, _right): (StepLeft<StampLift>, StepRight<StampLift>),
+    action_set: ActionSetPoly,
+) -> StepWitness<'static, StampLift> {
+    (action_set,)
 }
 
 /// Prepare the witness for [`ActionMerge`]: `(action_set, tachygram_set)`.

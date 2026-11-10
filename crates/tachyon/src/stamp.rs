@@ -1067,7 +1067,8 @@ impl ProofStamp<Uncompressed> {
     /// # Errors
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including
+    ///   when `action_digests` are not the stamp's action set.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1083,19 +1084,19 @@ impl ProofStamp<Uncompressed> {
             ));
         }
 
-        let header =
-            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?;
-        let mut stamp_pcd = self.proof.carry::<Stamp>(header);
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let [action_slot, _] = stamp_pcd.commitments();
-        if action_slot != Eq::from(action_set.commit()).to_affine() {
-            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
-                "StampLift: action set does not match the stamp".into(),
-            )));
-        }
+        let mut stamp_pcd = self.proof.carry::<Stamp>(
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
+        );
         for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(rng, StampLift, (), stamp_pcd, span)
+                .fuse(
+                    rng,
+                    StampLift,
+                    witness::stamp_lift((*stamp_pcd.data(), *span.data()), action_set.clone()),
+                    stamp_pcd,
+                    span,
+                )
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
@@ -1122,7 +1123,8 @@ impl ProofStamp<Uncompressed> {
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed, no span
-    /// is provided, or a proof-system step fails.
+    /// is provided, or a proof-system step fails. `StampLift` fails when the
+    /// descriptors are not the stamp's covered actions.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1345,36 +1347,18 @@ impl ProofStamp<Uncompressed> {
         })
     }
 
-    /// Compresses the proof against the covered action and fee descriptors.
+    /// Compresses the stamp's proof.
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if an action digest cannot be computed or the
-    /// proof-system compression fails.
+    /// Returns [`ProveError::ProofFailed`] if the proof system fails.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
-        descriptors: &BTreeSet<action::Descriptor>,
-        fee_descriptors: &BTreeSet<fee::Descriptor>,
     ) -> Result<ProofStamp<Compressed>, ProveError> {
-        let action_set = descriptors
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(fee_descriptors.iter().map(fee::Descriptor::digest))
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
-
         let pcd = self.proof.carry::<Stamp>(
             Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
         );
-        let [action_slot, tachygram_slot] = pcd.commitments();
-        if action_slot != Eq::from(action_set.commit()).to_affine()
-            || tachygram_slot != Eq::from(self.tachygram_set).to_affine()
-        {
-            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
-                "stamp output sets do not match the public sets".into(),
-            )));
-        }
         let (compressed, _) = PROOF_SYSTEM
             .compress(&pcd, rng)
             .map_err(ProveError::ProofFailed)?

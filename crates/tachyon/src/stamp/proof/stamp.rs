@@ -661,18 +661,23 @@ impl Step<Pasta> for StampLift {
     type Left = Stamp;
     type Output = Stamp;
     type Right = AnchorSpan;
-    type Witness<'source> = ();
+    /// `(action_set,)`
+    type Witness<'source> = (ActionSetPoly,);
 
     const INDEX: Index = Index::new(11);
 
-    // Preserve L0/L1 in O0/O1; R0 supplies the span membership opening.
+    // O0 carries the stated action set, checked equal to L0; O1 preserves L1;
+    // R0 supplies the span membership opening.
     fn polynomials(
         &self,
-        &(): &Self::Witness<'_>,
+        witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([left.polynomials[0].clone(), left.polynomials[1].clone()])
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            left.polynomials[1].clone(),
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

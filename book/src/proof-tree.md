@@ -174,6 +174,7 @@ The members polynomial records which anchors are in the span and not their order
 `StampLift` therefore always moves the stamp to `anchor_end`.
 `StampLift` evaluates $M$ at the stamp's anchor without a random challenge.
 It checks that the witnessed polynomial's commitment equals the header's `members`.
+Its witness is the caller's stated action set, which becomes the output action set and must equal the input stamp's.
 
 ### ArbitraryUnspent composition
 
@@ -624,7 +625,7 @@ flowchart LR
 | FeeFuse | Actions | — | max fee note opening, fee, output action_set, output tachygram_set | Stamp |
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
-| StampLift | Stamp | AnchorSpan | — | Stamp |
+| StampLift | Stamp | AnchorSpan | action_set | Stamp |
 | StampUnmerge | Stamp | Stamp | (action_set, tachygram_set) × dividend, quotient, divisor | Stamp |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.

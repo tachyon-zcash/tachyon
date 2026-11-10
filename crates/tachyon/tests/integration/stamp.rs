@@ -418,7 +418,7 @@ fn read_rejects_wrong_proof_size() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, anchor, wallet.random_note(200));
+    let (stamp, ..) = build_output_stamp(rng, anchor, wallet.random_note(200));
     let compressed_size = <stamp::Compressed as stamp::Proof>::encoded_len();
     let uncompressed_size = <stamp::Uncompressed as stamp::Proof>::encoded_len();
 
@@ -443,13 +443,7 @@ fn read_rejects_wrong_proof_size() {
         assert_eq!(reader.len(), proof.len() - compressed_size);
     }
 
-    let compressed = stamp
-        .compress(
-            rng,
-            &BTreeSet::from([plan.descriptor()]),
-            &BTreeSet::from([fee_descriptor]),
-        )
-        .unwrap();
+    let compressed = stamp.compress(rng).unwrap();
     {
         let proof = compressed.proof.to_bytes().unwrap();
         let mut bytes = Vec::new();
