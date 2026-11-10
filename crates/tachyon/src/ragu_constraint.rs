@@ -6,10 +6,9 @@
 //! satisfaction, so it cannot reject an invalid witness.
 
 use ragu_core::{Error, Result};
-use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
-use udon::curve::Projective as _;
+use ragu_primitives::{Element, Simulator};
 
-use crate::pasta::{Eq, EqAffine, Fp, Fq};
+use crate::pasta::Fp;
 
 /// Enforces `value == 0`.
 pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
@@ -29,20 +28,5 @@ pub(crate) fn enforce_nonzero(value: Fp, err: &'static str) -> Result<Fp> {
     element
         .enforce_nonzero(&mut driver)
         .map(|_nonzero| value)
-        .map_err(|_e| Error::InvalidWitness(err.into()))
-}
-
-/// Enforces `left == right` for two Vesta points.
-///
-/// A Vesta point's coordinates live in $\mathbb{F}_q$, so this drives the
-/// nested-curve view of the comparison. An identity input fails ahead of the
-/// equality check, since ragu cannot witness it as a [`Point`].
-pub(crate) fn enforce_equal_point(left: Eq, right: Eq, err: &'static str) -> Result<()> {
-    let mut driver = Simulator::<Fq>::new();
-    let left_point = Point::<'_, _, EqAffine>::constant(&mut driver, left.to_affine())?;
-    let right_point = Point::<'_, _, EqAffine>::constant(&mut driver, right.to_affine())?;
-
-    left_point
-        .enforce_equal(&mut driver, &right_point)
         .map_err(|_e| Error::InvalidWitness(err.into()))
 }

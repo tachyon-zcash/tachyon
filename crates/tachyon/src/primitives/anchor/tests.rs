@@ -3,7 +3,7 @@ use core::assert_matches;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
-use crate::{Tachygram, TachygramSetPoly, pasta::Eq};
+use crate::{Tachygram, TachygramSetCommit, TachygramSetPoly, pasta::Eq};
 
 #[test]
 fn next_stamp_binds_the_order_and_the_epoch() {
@@ -33,10 +33,16 @@ fn next_stamp_binds_the_order_and_the_epoch() {
 #[test]
 fn anchor_steps_reject_degenerate_inputs() {
     let anchor = Anchor::random(&mut StdRng::seed_from_u64(0));
-    let zero_set = TachygramSetCommit::from(Eq::identity());
     assert_matches!(
-        anchor.next_stamp(EpochIndex::new(7), &zero_set),
+        anchor.next_stamp(
+            EpochIndex::new(7),
+            &TachygramSetCommit::from(Eq::identity())
+        ),
         Err(AnchorError::NextStampZero)
+    );
+    assert_matches!(
+        anchor.next_stamp(EpochIndex::new(7), &TachygramSetCommit::default()),
+        Err(AnchorError::NextStampEmpty)
     );
     assert_matches!(
         anchor.next_epoch(EpochIndex::new(0)),
