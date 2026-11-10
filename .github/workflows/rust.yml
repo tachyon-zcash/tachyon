@@ -85,8 +85,8 @@ jobs:
       - name: Run clippy (all features)
         run: cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
 
-  test:
-    name: test (${{ matrix.os }})
+  unit-tests:
+    name: unit tests (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
@@ -104,20 +104,29 @@ jobs:
           cache-suffix: debug
       - name: Run unit tests
         run: cargo test --workspace --locked --features test-epoch-size --lib
-      # The doctests are `compile_fail` checks, which no platform changes.
-      - name: Run doctests
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test --workspace --locked --features test-epoch-size --doc
-      # The epoch target holds at any epoch size and runs at the shipped one.
+
+  # The epoch target holds at any epoch size and runs at the shipped one.
+  epoch-tests:
+    name: epoch tests at the shipped epoch size
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: debug
       - name: Run epoch boundary tests (production epoch size)
-        if: matrix.os == 'ubuntu-latest'
         run: cargo test --workspace --locked --test epoch
 
   # The integration tests create and verify proofs and build with `--release`,
-  # so they share no target directory with `test` and run as their own job.
-  # `test` covers the platforms; the integration tests run on Linux.
-  integration:
-    name: integration
+  # so they share no target directory with `unit-tests` and run as their own
+  # job. `unit-tests` covers the platforms; the integration tests run on Linux.
+  integration-tests:
+    name: integration tests
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -170,13 +179,16 @@ jobs:
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
           RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
+      # The doctests are `compile_fail` checks.
+      - name: Run doctests
+        run: cargo test --workspace --locked --features test-epoch-size --doc
 
   # Aggregate gate: a single, stable required status check. It always runs —
   # even on non-Rust PRs where every job below is skipped — and fails only if a
   # needed job actually failed or was cancelled (skipped counts as success).
   # Require THIS in the ruleset instead of the individual job names: a skipped
-  # matrix job (`test`) reports the un-expanded name `test (${{ matrix.os }})`,
-  # so `test (ubuntu-latest)` etc. never report and block non-Rust PRs. The book
+  # matrix job (`unit-tests`) reports the un-expanded name
+  # `unit tests (${{ matrix.os }})`, so `unit tests (ubuntu-latest)` etc. never report and block non-Rust PRs. The book
   # has its own always-running workflow and is not gated here.
   ci-required:
     name: ci-required
@@ -185,8 +197,9 @@ jobs:
       - changes
       - fmt
       - clippy
-      - test
-      - integration
+      - unit-tests
+      - epoch-tests
+      - integration-tests
       - build-nostd
       - docs
     runs-on: ubuntu-latest
