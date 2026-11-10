@@ -2,9 +2,18 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
-
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, Index, Oracles, Step},
+};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe as _,
+    pasta::Pasta,
+};
+use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
@@ -12,7 +21,7 @@ use crate::{
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::{EpAffine, Fp},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
@@ -29,11 +38,18 @@ use crate::{
 #[derive(Debug)]
 pub struct SpendHeader;
 
-impl Header for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
-    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
-    /// one epoch on; `anchor` threads the spendable lineage's pool position;
-    /// `pk` and `cv` come from the certified note.
+#[derive(Gadget, Write)]
+pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
+    pub cm: Element<'dr, D>,
+    pub nf_current: Element<'dr, D>,
+    pub nf_next: Element<'dr, D>,
+    pub anchor: Element<'dr, D>,
+    pub pk: Element<'dr, D>,
+    pub cv: Point<'dr, D, C>,
+}
+
+impl Header<Fp> for SpendHeader {
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`
     type Data = (
         note::Commitment,
         Nullifier,
@@ -42,23 +58,43 @@ impl Header for SpendHeader {
         PaymentKey,
         value::Commitment,
     );
+    type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(5);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
-        (
-            vec![
-                Fp::from(cm),
-                Fp::from(nf_current),
-                Fp::from(nf_next),
-                Fp::from(anchor),
-                Fp::from(pk),
-            ],
-            Vec::new(),
-            vec![Ep::from(cv)],
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(SpendHeaderOutput {
+            cm: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            nf_current: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            nf_next: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+            anchor: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
+            )?,
+            cv: Point::alloc(dr, witness.as_ref().map(|fields| EpAffine::from(fields.5)))?,
+        })
     }
 }
 
@@ -86,7 +122,7 @@ impl Header for SpendHeader {
 #[derive(Debug)]
 pub struct SpendBind;
 
-impl Step for SpendBind {
+impl Step<Pasta> for SpendBind {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = SpendHeader;
@@ -96,50 +132,75 @@ impl Step for SpendBind {
 
     const INDEX: Index = Index::new(8);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (rcv,): Self::Witness<'source>,
-        (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
-        (secret_cm, note, mk): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(secret_cm) - Fp::from(spendable_cm),
-            "SpendBind: secret does not match note",
-        )?;
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "SpendBind: note value exceeds maximum".into(),
-            ));
-        }
+        dr: &mut D,
+        _oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (rcv,) = witness.take();
+            let (spendable_cm, spendable_epoch_current, anchor) = left.take();
+            let (secret_cm, note, mk) = right.take();
+            enforce_zero(
+                Fp::from(secret_cm) - Fp::from(spendable_cm),
+                "SpendBind: secret does not match note",
+            )?;
+            if u64::from(note.value) > MAX_MONEY {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SpendBind: note value exceeds maximum".into(),
+                ));
+            }
 
-        // The pair needs a following epoch; the final epoch has none.
-        let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
+            // The pair needs a following epoch; the final epoch has none.
+            let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendBind: no epoch follows the spend epoch".into(),
+                )
+            })?;
+
+            // TODO: a real circuit needs a low-bit decomposition of each epoch for
+            // its group start and position; mock ragu computes both natively.
+            let nf_current = mk.derive_nullifier(spendable_epoch_current);
+            let nf_next = mk.derive_nullifier(epoch_next);
+
+            // A zero nullifier would collide with the note's own cm tachygram.
+            enforce_nonzero(
+                Fp::from(nf_current),
+                "SpendBind: current-epoch nullifier is zero",
+            )?;
+            enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
+
+            Ok((
+                (
+                    spendable_cm,
+                    nf_current,
+                    nf_next,
+                    anchor,
+                    note.pk,
+                    rcv.commit(note.value),
+                ),
+                (),
+            ))
         })?;
-
-        // TODO: a real circuit needs a low-bit decomposition of each epoch for
-        // its group start and position; mock ragu computes both natively.
-        let nf_current = mk.derive_nullifier(spendable_epoch_current);
-        let nf_next = mk.derive_nullifier(epoch_next);
-
-        // A zero nullifier would collide with the note's own cm tachygram.
-        enforce_nonzero(
-            Fp::from(nf_current),
-            "SpendBind: current-epoch nullifier is zero",
-        )?;
-        enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
-
-        Ok((
-            (
-                spendable_cm,
-                nf_current,
-                nf_next,
-                anchor,
-                note.pk,
-                rcv.commit(note.value),
-            ),
-            (),
-        ))
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

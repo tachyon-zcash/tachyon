@@ -4,7 +4,7 @@ import Mathlib.Algebra.Polynomial.Roots
 # Set polynomials
 
 A set polynomial is the monic product $\prod_{r \in s} (X - r)$ over a multiset of roots `s`.
-The `Stamp` header commits to two of them: the action set over action digests and the
+The `Stamp` proof's two output slots commit to them: the action set over action digests and the
 tachygram set over tachygrams. Multiplication of set polynomials is multiset sum of roots,
 which is what `StampMerge` enforces. Exact division is multiset difference, which is what
 `StampUnmerge` relies on.
