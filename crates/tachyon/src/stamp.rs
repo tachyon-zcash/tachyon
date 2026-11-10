@@ -11,20 +11,21 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::{boxed::Box, collections::BTreeSet, format, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeSet, format, string::ToString as _, vec, vec::Vec};
 use core::error;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use proof::{
-    PROOF_SYSTEM, output,
+    HEADER_SIZE, PROOF_SYSTEM, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::PROOF_SIZE_COMPRESSED;
+use ragu::wire;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -41,7 +42,8 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{Eq, Fp},
     primitives::{
-        ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
+        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, AnchorSetPoly, Tachygram,
+        TachygramSetCommit,
     },
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -228,10 +230,122 @@ impl PointerStamp {
     }
 }
 
-impl StampState for ProofStamp {
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::Uncompressed {}
+    impl Sealed for super::Compressed {}
+}
+
+/// The Ragu proof a [`ProofStamp`] carries: [`Uncompressed`] or [`Compressed`].
+pub trait Proof: sealed::Sealed {
+    /// The proof-encoding transport bound for this application.
+    fn encoded_len() -> usize;
+
+    /// The proof's Ragu encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wire::Error`] if the proof has no encoding.
+    fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>>;
+
+    /// Decode a proof from its Ragu encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wire::Error`] if the bytes do not encode this proof type.
+    fn from_bytes(bytes: &[u8]) -> Result<Self, wire::Error<'_>>
+    where
+        Self: Sized;
+
+    /// Verify both output sets and the stamp's anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
+    fn verify<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+    ) -> Result<bool, ragu_core::Error>;
+}
+
+impl Proof for Uncompressed {
+    fn encoded_len() -> usize {
+        Self::encoded_len::<HEADER_SIZE>()
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, wire::Error<'_>> {
+        Self::from_bytes(bytes)
+    }
+
+    fn verify<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+    ) -> Result<bool, ragu_core::Error> {
+        let pcd = self
+            .clone()
+            .carry::<Stamp>(Stamp::header(header.1, header.2)?);
+        let [action_slot, tachygram_slot] = pcd.commitments();
+        if action_slot != Eq::from(header.0).to_affine()
+            || tachygram_slot != Eq::from(header.1).to_affine()
+        {
+            return Ok(false);
+        }
+        let compressed = match PROOF_SYSTEM.compress(&pcd, rng) {
+            Ok(compressed) => compressed,
+            Err(ragu_core::Error::InvalidWitness(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        PROOF_SYSTEM.verify_compressed(&compressed)
+    }
+}
+
+impl Proof for Compressed {
+    fn encoded_len() -> usize {
+        Self::encoded_len::<ProductionRank, HEADER_SIZE>()
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, wire::Error<'_>> {
+        Self::from_bytes(bytes)
+    }
+
+    fn verify<RNG: CryptoRng>(
+        &self,
+        _rng: &mut RNG,
+        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+    ) -> Result<bool, ragu_core::Error> {
+        let [action_slot, tachygram_slot] = self.online_commitments();
+        if action_slot != Eq::from(header.0).to_affine()
+            || tachygram_slot != Eq::from(header.1).to_affine()
+        {
+            return Ok(false);
+        }
+        PROOF_SYSTEM.verify_compressed(
+            &self
+                .clone()
+                .carry::<Stamp>(Stamp::header(header.1, header.2)?),
+        )
+    }
+}
+
+impl<P: Proof> StampState for ProofStamp<P> {
     fn stamp_digest(&self) -> [u8; 72] {
         let stamp_data_digest: [u8; 32] = {
-            let proof = self.proof.serialize();
+            #[expect(
+                clippy::expect_used,
+                reason = "a proved or decoded stamp proof is encodable"
+            )]
+            let proof = self.proof.to_bytes().expect("stamp proof is encodable");
             let anchor: [u8; 32] = self.anchor.0.to_bytes();
 
             // Do NOT sort here: a constructed stamp should already be canonical.
@@ -274,9 +388,9 @@ impl StampState for ProofStamp {
     }
 }
 
-impl ProofStamp {
+impl<P: Proof> ProofStamp<P> {
     /// Read a stamp from the consensus wire format. The proof blob has a
-    /// known constant size.
+    /// compactSize prefix and is bounded by the proof type's encoded length.
     ///
     /// # Errors
     ///
@@ -336,17 +450,18 @@ impl ProofStamp {
         }
 
         let proof = {
-            let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
+            let proof_len = usize::try_from(serialization::read_compactsize(&mut reader)?)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            if proof_len > P::encoded_len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "proof size exceeds transport bound",
+                ));
+            }
+            let mut bytes = vec![0u8; proof_len];
             reader.read_exact(&mut bytes)?;
-
-            let proof_bytes: &[u8; PROOF_SIZE_COMPRESSED] =
-                bytes.as_slice().try_into().map_err(|_err| {
-                    io::Error::new(io::ErrorKind::InvalidData, "failed to read proof")
-                })?;
-
-            ragu::Proof::try_from(proof_bytes).map_err(|_err| {
-                io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
-            })?
+            P::from_bytes(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
         };
 
         Ok(Self {
@@ -360,11 +475,11 @@ impl ProofStamp {
     }
 
     /// Write a stamp to the consensus wire format. The proof blob has a
-    /// known constant size.
+    /// compactSize prefix.
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails.
+    /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_all(&u64::from(self.fee).to_le_bytes())?;
         writer.write_all(&self.coverage)?;
@@ -382,7 +497,20 @@ impl ProofStamp {
         for &tg in &self.tachygrams {
             serialization::write_fp(&mut writer, &Fp::from(tg))?;
         }
-        writer.write_all(self.proof.serialize().as_ref())
+        let proof = self
+            .proof
+            .to_bytes()
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        serialization::write_compactsize(
+            &mut writer,
+            u64::try_from(proof.len()).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "proof encoding length exceeds u64",
+                )
+            })?,
+        )?;
+        writer.write_all(&proof)
     }
 }
 
@@ -480,11 +608,14 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NoteSecret>,
-            ragu::Pcd<spendable::NoteSpendable>,
-            Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<(
+                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+                AnchorSetPoly,
+            )>,
         )>,
-    ) -> Result<ProofStamp, ProveError> {
+    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let fee_descriptor = fee::Descriptor {
             cv_feemax: self.max_fee_note.cv_feemax(),
             v_fee: self.fee,
@@ -512,7 +643,7 @@ impl Plan {
         {
             let reached = spans
                 .last()
-                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().2);
+                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().1);
             if reached != self.anchor {
                 return Err(ProveError::MissingPcd(
                     format!("spend {index} does not reach the plan's anchor").into(),
@@ -522,28 +653,26 @@ impl Plan {
             // SpendBind: derive the live pair from the note's master key and
             // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
+                .fuse(
+                    rng,
+                    spend::SpendBind,
+                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
+                    spendable_pcd,
+                    secret_pcd,
+                )
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
-            let mut stamp_pcd = spend_proof.carry::<Actions>((
-                digests.iter().copied().collect::<ActionSetPoly>().commit(),
-                tachygrams
-                    .iter()
-                    .copied()
-                    .collect::<TachygramSetPoly>()
-                    .commit(),
-                spend_anchor,
-            ));
-            for (span, members) in spans {
+            let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
+            for (span, _members) in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(rng, ActionLift, (members,), stamp_pcd, span)
+                    .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
 
-            let (proof, (_, _, anchor)) = stamp_pcd.into_parts();
+            let (proof, anchor) = stamp_pcd.into_parts();
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -573,31 +702,8 @@ impl Plan {
                 let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
                     next?;
 
-                let (left_acts_poly, left_tg_poly) = (
-                    left_digests.iter().copied().collect::<ActionSetPoly>(),
-                    left_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
-                let (right_acts_poly, right_tg_poly) = (
-                    right_digests.iter().copied().collect::<ActionSetPoly>(),
-                    right_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
-
-                let left_pcd = left_proof.carry::<Actions>((
-                    left_acts_poly.commit(),
-                    left_tg_poly.commit(),
-                    left_anchor,
-                ));
-                let right_pcd = right_proof.carry::<Actions>((
-                    right_acts_poly.commit(),
-                    right_tg_poly.commit(),
-                    right_anchor,
-                ));
+                let left_pcd = left_proof.carry::<Actions>(left_anchor);
+                let right_pcd = right_proof.carry::<Actions>(right_anchor);
 
                 let merged_digests: BTreeSet<ActionDigest> =
                     left_digests.union(&right_digests).copied().collect();
@@ -608,13 +714,10 @@ impl Plan {
                     .fuse(
                         rng,
                         ActionMerge,
-                        (
-                            (left_acts_poly, left_tg_poly),
-                            (
-                                ActionSetPoly::from_iter(merged_digests.clone()),
-                                TachygramSetPoly::from_iter(merged_tachygrams.clone()),
-                            ),
-                            (right_acts_poly, right_tg_poly),
+                        witness::action_merge(
+                            (*left_pcd.data(), *right_pcd.data()),
+                            ActionSetPoly::from_iter(merged_digests.clone()),
+                            TachygramSetPoly::from_iter(merged_tachygrams.clone()),
                         ),
                         left_pcd,
                         right_pcd,
@@ -627,7 +730,7 @@ impl Plan {
                     merged_descs,
                     merged_digests,
                     merged_tachygrams,
-                    pcd.data().2,
+                    *pcd.data(),
                     Box::new(pcd.proof().clone()),
                 ))
             })
@@ -644,39 +747,35 @@ impl Plan {
                 (pcd, BTreeSet::new(), BTreeSet::new())
             },
             Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
-                let stamp_header = (
-                    digests.iter().copied().collect::<ActionSetPoly>().commit(),
-                    tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>()
-                        .commit(),
-                    anchor,
-                );
                 let (pcd, ()) = PROOF_SYSTEM
                     .fuse(
                         rng,
                         FeeFuse,
                         witness::fee_fuse(
-                            (stamp_header, ()),
+                            (anchor, ()),
                             self.max_fee_note,
                             self.fee,
                             &digests,
                             &tachygrams,
                         ),
-                        merged_proof.carry::<Actions>(stamp_header),
-                        ragu::Proof::bootstrap().carry::<()>(()),
+                        merged_proof.carry::<Actions>(anchor),
+                        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, descriptors, tachygrams)
             },
         };
 
-        let (proof, (_, tachygram_set, anchor)) = PROOF_SYSTEM
+        let (proof, (_, anchor)) = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         tachygrams.insert(change);
+        let tachygram_set = tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit();
         Ok(ProofStamp {
             coverage: blake2b::stamp_coverage_digest(
                 &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
@@ -706,13 +805,23 @@ pub enum ProveError {
     ProofFailed(ragu_core::Error),
 }
 
+/// An uncompressed Ragu proof.
+pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+
+/// A compressed Ragu proof.
+pub type Compressed = ragu::CompressedProof<Pasta>;
+
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.
 ///
-/// The PCD header `(action_acc, tachygram_acc, anchor)` is entirely not stored
+/// The PCD header `(tachygram_bridge, anchor)` is entirely not stored
 /// here.  The covered actions are present only as reference. A verifier must
-/// reconstruct the header from public data.
+/// reconstruct the header from public data and check the proof's output slots
+/// against the covered actions and [`Self::tachygram_set`].
+///
+/// Only the uncompressed proof type supports lifting, merging and
+/// unmerging. Compressed stamps support reading, writing and verification.
 #[derive(Clone, Debug)]
-pub struct ProofStamp {
+pub struct ProofStamp<P: Proof> {
     /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
     /// action descriptors and fee descriptors from this stamp's bundle and
     /// all covered bundles.
@@ -731,15 +840,15 @@ pub struct ProofStamp {
     /// with [`Self::tachygram_set`].
     pub tachygrams: BTreeSet<Tachygram>,
 
-    /// The Ragu proof bytes.
+    /// The full or compressed Ragu proof.
     #[debug(skip)]
-    pub proof: Box<ragu::Proof>,
+    pub proof: Box<P>,
 
     /// The fee of the bundle that carries this stamp.
     pub fee: value::Positive,
 }
 
-impl ProofStamp {
+impl ProofStamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof)`. The proof is not rerandomized.
     ///
@@ -768,7 +877,7 @@ impl ProofStamp {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<Uncompressed>,
         ),
         ProveError,
     > {
@@ -780,7 +889,11 @@ impl ProofStamp {
         .map_err(ProveError::ActionDigest)?;
 
         let (bind_pcd, ()) = PROOF_SYSTEM
-            .seed(rng, output::OutputBind, (note, rcv))
+            .seed(
+                rng,
+                output::OutputBind,
+                witness::output_bind(((), ()), note, rcv),
+            )
             .map_err(ProveError::ProofFailed)?;
         let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
@@ -791,7 +904,7 @@ impl ProofStamp {
                 OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
-                ragu::Proof::bootstrap().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -827,14 +940,14 @@ impl ProofStamp {
     fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<spend::SpendHeader>,
+        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<Uncompressed>,
         ),
         ProveError,
     > {
@@ -852,7 +965,7 @@ impl ProofStamp {
                 SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, pak),
                 bind_pcd,
-                ragu::Proof::bootstrap().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -890,49 +1003,37 @@ impl ProofStamp {
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<Uncompressed>,
         ),
         (right_digests, right_tachygrams, right_anchor, right_proof): (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<Uncompressed>,
         ),
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
             BTreeSet<Tachygram>,
             Anchor,
-            Box<ragu::Proof>,
+            Box<Uncompressed>,
         ),
         ragu_core::Error,
     > {
-        let (left_acts_poly, left_tg_poly) = (
-            left_digests.iter().copied().collect::<ActionSetPoly>(),
-            left_tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
+        let left_tg_poly = left_tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
 
-        let (right_acts_poly, right_tg_poly) = (
-            right_digests.iter().copied().collect::<ActionSetPoly>(),
-            right_tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
+        let right_tg_poly = right_tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
 
-        let left_pcd = left_proof.carry::<Stamp>((
-            left_acts_poly.commit(),
-            left_tg_poly.commit(),
-            left_anchor,
-        ));
-        let right_pcd = right_proof.carry::<Stamp>((
-            right_acts_poly.commit(),
-            right_tg_poly.commit(),
-            right_anchor,
-        ));
+        let left_pcd =
+            left_proof.carry::<Stamp>(Stamp::header(left_tg_poly.commit(), left_anchor)?);
+        let right_pcd =
+            right_proof.carry::<Stamp>(Stamp::header(right_tg_poly.commit(), right_anchor)?);
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
@@ -942,13 +1043,10 @@ impl ProofStamp {
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             StampMerge,
-            (
-                (left_acts_poly, left_tg_poly),
-                (
-                    ActionSetPoly::from_iter(merged_digests.clone()),
-                    TachygramSetPoly::from_iter(tachygrams.clone()),
-                ),
-                (right_acts_poly, right_tg_poly),
+            witness::stamp_merge(
+                (*left_pcd.data(), *right_pcd.data()),
+                ActionSetPoly::from_iter(merged_digests.clone()),
+                TachygramSetPoly::from_iter(tachygrams.clone()),
             ),
             left_pcd,
             right_pcd,
@@ -957,7 +1055,7 @@ impl ProofStamp {
         Ok((
             merged_digests,
             tachygrams,
-            pcd.data().2,
+            pcd.data().1,
             Box::new(pcd.proof().clone()),
         ))
     }
@@ -969,12 +1067,16 @@ impl ProofStamp {
     /// # Errors
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including
+    ///   when `action_digests` are not the stamp's action set.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -983,16 +1085,22 @@ impl ProofStamp {
         }
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let mut stamp_pcd =
-            self.proof
-                .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
-        for (span, members) in spans {
+        let mut stamp_pcd = self.proof.carry::<Stamp>(
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
+        );
+        for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
-                .fuse(rng, StampLift, (members,), stamp_pcd, span)
+                .fuse(
+                    rng,
+                    StampLift,
+                    witness::stamp_lift((*stamp_pcd.data(), *span.data()), action_set.clone()),
+                    stamp_pcd,
+                    span,
+                )
                 .map_err(ProveError::ProofFailed)?
                 .0;
         }
-        let anchor = stamp_pcd.data().2;
+        let anchor = stamp_pcd.data().1;
         let proof = PROOF_SYSTEM
             .rerandomize(stamp_pcd, rng)
             .map_err(ProveError::ProofFailed)?
@@ -1015,13 +1123,17 @@ impl ProofStamp {
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed, no span
-    /// is provided, or a proof-system step fails.
+    /// is provided, or a proof-system step fails. `StampLift` fails when the
+    /// descriptors are not the stamp's covered actions.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()
@@ -1041,9 +1153,6 @@ impl ProofStamp {
     ///
     /// The merged stamp stays with this stamp's bundle and keeps this stamp's
     /// fee, and the other stamp's bundle is stripped.
-    ///
-    /// TODO: confirm desc list against stamp? it's forbidden by the proof
-    /// system, but we might want to fail early.
     ///
     /// # Errors
     ///
@@ -1072,7 +1181,7 @@ impl ProofStamp {
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let (merged_digests, tachygrams, anchor, merged_proof) = Self::prove_merge(
+        let (_, tachygrams, anchor, merged_proof) = Self::prove_merge(
             rng,
             (
                 left_actions_digest,
@@ -1110,13 +1219,11 @@ impl ProofStamp {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        let action_set = merged_digests
-            .into_iter()
-            .collect::<ActionSetPoly>()
-            .commit();
         let proof = PROOF_SYSTEM
             .rerandomize(
-                merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
+                merged_proof.carry::<Stamp>(
+                    Stamp::header(tachygram_set, anchor).map_err(ProveError::ProofFailed)?,
+                ),
                 rng,
             )
             .map_err(ProveError::ProofFailed)?
@@ -1168,22 +1275,10 @@ impl ProofStamp {
             .copied()
             .collect();
 
-        let dividend_action_set = desc
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(fees.iter().map(fee::Descriptor::digest))
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
         let quotient_action_set = quotient_desc
             .iter()
             .map(action::Descriptor::digest)
             .chain(quotient_fees.iter().map(fee::Descriptor::digest))
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
-        let divisor_action_set = divisor_desc
-            .iter()
-            .map(action::Descriptor::digest)
-            .chain(divisor_fees.iter().map(fee::Descriptor::digest))
             .collect::<Result<ActionSetPoly, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
@@ -1193,31 +1288,30 @@ impl ProofStamp {
             .copied()
             .collect::<TachygramSetPoly>();
         let quotient_tachygram_set = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+        let tachygram_set = quotient_tachygram_set.commit();
         let divisor_tachygram_set = divisor_stamp
             .tachygrams
             .iter()
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_pcd = self.proof.carry::<Stamp>((
-            dividend_action_set.commit(),
-            dividend_tachygram_set.commit(),
-            self.anchor,
-        ));
-        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>((
-            divisor_action_set.commit(),
-            divisor_tachygram_set.commit(),
-            divisor_stamp.anchor,
-        ));
+        let dividend_pcd = self.proof.carry::<Stamp>(
+            Stamp::header(dividend_tachygram_set.commit(), self.anchor)
+                .map_err(ProveError::ProofFailed)?,
+        );
+        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>(
+            Stamp::header(divisor_tachygram_set.commit(), divisor_stamp.anchor)
+                .map_err(ProveError::ProofFailed)?,
+        );
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 StampUnmerge,
-                (
-                    (dividend_action_set, dividend_tachygram_set),
-                    (quotient_action_set, quotient_tachygram_set),
-                    (divisor_action_set, divisor_tachygram_set),
+                witness::stamp_unmerge(
+                    (*dividend_pcd.data(), *divisor_pcd.data()),
+                    quotient_action_set,
+                    quotient_tachygram_set,
                 ),
                 dividend_pcd,
                 divisor_pcd,
@@ -1236,7 +1330,7 @@ impl ProofStamp {
             ),
         );
 
-        let (_, tachygram_set, anchor) = *pcd.data();
+        let anchor = pcd.data().1;
         let proof = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
@@ -1253,6 +1347,34 @@ impl ProofStamp {
         })
     }
 
+    /// Compresses the stamp's proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError::ProofFailed`] if the proof system fails.
+    pub fn compress<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+    ) -> Result<ProofStamp<Compressed>, ProveError> {
+        let pcd = self.proof.carry::<Stamp>(
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
+        );
+        let (compressed, _) = PROOF_SYSTEM
+            .compress(&pcd, rng)
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
+        Ok(ProofStamp {
+            coverage: self.coverage,
+            anchor: self.anchor,
+            tachygram_set: self.tachygram_set,
+            tachygrams: self.tachygrams,
+            proof: Box::new(compressed),
+            fee: self.fee,
+        })
+    }
+}
+
+impl<P: Proof> ProofStamp<P> {
     /// Confirm `hStampCoverageTachyon` represents the given descriptors.
     ///
     /// # Soundness
@@ -1299,12 +1421,7 @@ impl ProofStamp {
     ) -> Result<bool, ragu_core::Error> {
         let action_set = ActionSetPoly::from_iter(action_digests);
 
-        let pcd = self.proof.clone().carry::<Stamp>((
-            action_set.commit(),
-            self.tachygram_set,
-            self.anchor,
-        ));
-
-        PROOF_SYSTEM.verify(&pcd, rng)
+        self.proof
+            .verify(rng, (action_set.commit(), self.tachygram_set, self.anchor))
     }
 }

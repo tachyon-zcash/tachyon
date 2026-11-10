@@ -10,11 +10,14 @@ compares a Lean step with the circuit it models. Read
 
 ## The model
 
-`Stamp.lean` and `ProofTree.lean` model the stamp headers and the steps that produce them. Each
-Pedersen commitment is read as the polynomial it commits to. Each `enforce_poly_product` and
-`enforce_poly_roots` is read as the identity it checks. An accepted header is one that a registered
-step derives from accepted inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD
-knowledge soundness.
+`Stamp.lean` and `ProofTree.lean` model semantic proof states and the steps that produce them.
+Rust carries two output slots, O0 (actions) and O1 (tachygrams); `Actions` header data is the anchor,
+and `Stamp` header data is `(O1 bridge hash, anchor)`. The Lean `Stamp` packages both slots and the
+anchor. Each Pedersen commitment and its bridge binding is idealized by its polynomial opening.
+Each `enforce_poly_product` and `enforce_poly_roots` at the framework's shared `zeta` is read as
+the identity it checks.
+An accepted state is one that a registered step derives from accepted
+inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
 stated on these root multisets. A product of set polynomials is the sum of their multisets.
@@ -225,10 +228,11 @@ choices that no theorem here discharges.
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
   from registered steps on accepted inputs. The reductions take their traces and certificates as
   inputs. A knowledge extractor for the real proof system must supply them, and none is modelled.
-- **Commitment binding and the random challenge.** The model reads commitments as polynomials and
-  checks as identities. `Idealization.lean` counts the challenges that fixed violating operands
-  pass. Dividing by the field size bounds the probability for a uniform challenge drawn after the
-  operands are fixed.
+- **Commitment/bridge binding and the random challenge.** The model reads committed output slots
+  as polynomials, abstracts the O1 bridge hash by its bound opening, and reads checks as identities.
+  Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
+  `Idealization.lean` counts the challenges that fixed violating operands pass. Dividing by the
+  field size bounds the probability for a uniform challenge drawn after the operands are fixed.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
 - **Typed circuit inputs.** The profile checks take genuine booleans, a canonical depth and explicit
@@ -249,8 +253,12 @@ choices that no theorem here discharges.
   proved.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
   domain-separated (`Node.epoch_unique`, `SpanDerivable.node_epoch`). This is a global law over the
-  fold inputs. No finite hash satisfies it, so results that assume it are symbolic. The trace
-  reductions above replace it with execution-local collision freedom.
+  fold inputs. The stamp fold includes commitment and bridge hashing before Poseidon absorbs
+  the bridge point's affine coordinates; the law abstracts that whole composition.
+  No finite hash satisfies it, so results that assume it are symbolic. The trace reductions
+  above replace it with execution-local collision freedom in their supplied abstract model;
+  identifying a break in that composition with a concrete Pedersen or bridge-hash break remains
+  a correspondence boundary.
 
 ### Consensus rules
 

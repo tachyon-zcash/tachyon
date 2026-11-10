@@ -9,12 +9,18 @@ The polynomial checks in `QrIntakeSplit`, `QrSideSelect` and `QrSideDescend`
 contains only its own class. They require that it loses no root in that class.
 An extra root makes a later nonzero opening harder, never easier.
 
-`Split` models only the product check. `SideSelection` models the separate
+`Split` models only the product check. In Rust its residue polynomial is O0 and its non-residue
+polynomial is O1; the header carries the source metadata and O1's bridge hash.
+`SideSelection` models the separate
 `QrSideSelect` output: its source split, its arbitrary committed hints and the
 exceptional-value guard. `SideCheck` matches the selection's source and hints
 before checking the sibling's interpolant/quotient identity, with multiplier `1`
 when selecting the non-residue side and `c` when selecting the residue side. The discriminants
-advance by one, as in the Rust code. `Route.retains` composes root retention along
+advance by one, as in the Rust code. Selection's interpolant/quotient are its O0/O1, and descent
+copies the chosen split slot into O0. Rust additionally rejects contents evaluating to one at
+`zeta` at split, and equal side evaluations at descent. Those rejection predicates are not
+represented here: this is an over-approximation for retention, not an exact acceptance relation.
+`Route.retains` composes root retention along
 any finite profile, including the empty profile.
 
 `Route.not_published` proves sound exclusion when the source polynomial contains

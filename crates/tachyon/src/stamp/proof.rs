@@ -15,7 +15,7 @@
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
 
-extern crate alloc;
+#![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
 pub mod delegation;
 pub mod evidence;
@@ -28,11 +28,25 @@ pub mod stamp;
 pub mod summary;
 
 use lazy_static::lazy_static;
-pub use ragu::Proof;
-use ragu::{Application, ApplicationBuilder};
+use ragu::{Application, ApplicationBuilder, RegistryTags};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 
-fn make_app() -> Result<Application, ragu_core::Error> {
-    ApplicationBuilder::new()
+use crate::pasta;
+
+/// Eight payload elements for QR split/selection and bucket headers and one
+/// suffix element.
+pub const HEADER_SIZE: usize = 9;
+
+fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
+{
+    // Registry tags use the fixed Tachyon beacon and configuration digest.
+    let manifest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .hash(b"Tachyon PCD: Pasta, R13, H9, steps 0..38, ragu a73db816");
+    let tags = RegistryTags::<Pasta>::from_beacon(b"Tachyon registry beacon", manifest.as_bytes());
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        .with_registry_tags(tags, manifest.as_bytes())?
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?
@@ -72,12 +86,12 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
-        .finalize()
+        .finalize(pasta::baked())
 }
 
 lazy_static! {
     /// A static ref to the mock ragu application.
-    pub static ref PROOF_SYSTEM: Application = {
+    pub static ref PROOF_SYSTEM: Application<'static, Pasta, ProductionRank, HEADER_SIZE> = {
         #[expect(
             clippy::expect_used,
             reason = "hardcoded step ordering must register cleanly"
