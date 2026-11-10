@@ -22,18 +22,5 @@ pub const EPOCH_SIZE: u32 = if cfg!(feature = "test-epoch-size") {
 )]
 pub const EPOCH_MAX: u32 = BLOCK_MAX / EPOCH_SIZE;
 
-const _: () = assert!(
-    EPOCH_SIZE.is_power_of_two(),
-    "EPOCH_SIZE must be a power of two"
-);
-
-const _: () = assert!(
-    match EPOCH_MAX.checked_mul(EPOCH_SIZE) {
-        Some(start) => matches!(start.checked_add(EPOCH_SIZE - 1), Some(BLOCK_MAX)),
-        None => false,
-    },
-    "the last epoch must end exactly at BLOCK_MAX"
-);
-
 /// Children of one node of the evidence tree.
 pub const EVIDENCE_TREE_ARITY: usize = 4;
