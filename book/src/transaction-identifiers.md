@@ -51,4 +51,4 @@ A stripped bundle's summary is the fee and the 64-byte `wtxid` of the covering a
 
 An adjunct's reference to the aggregate that covers it is a `wtxid`, not a `txid` — the 64-byte `wtxid` pins a specific physical aggregate, whereas a `txid` only pins the effecting data.
 
-Miners assign the reference during block assembly. The covering aggregate must itself be top-level in the block — never stripped, never further aggregated — so the `wtxid` pointed to is stable. See [Aggregation → Block Layout](./aggregation.md#block-layout) for how references are resolved in a block.
+Miners assign the reference during block assembly. The covering aggregate must itself be top-level in the block — never stripped, never further aggregated — so the `wtxid` pointed to is stable. See [Aggregation → Strip to produce Adjuncts](./aggregation.md#strip-to-produce-adjuncts) for how references are assigned.
