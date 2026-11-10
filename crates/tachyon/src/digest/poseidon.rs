@@ -91,27 +91,49 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// A fee digest, $d_\mathsf{fee} = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}(
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee})$.
+///
+/// # Panics
+///
+/// Panics if `cv_feemax` is the identity.
 #[must_use]
-pub fn fee_digest(cv_feemax: (Fp, Fp), fee: u64) -> Fp {
-    let (x, y) = cv_feemax;
+pub fn fee_digest(cv_feemax: EpAffine, fee: u64) -> Fp {
+    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    let (x, y) = cv_feemax
+        .coordinates()
+        .expect("cv_feemax must not be the identity");
     hash::<3>(FEE_DIGEST_DOMAIN, [x, y, Fp::from(fee)])
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from action fields.
+///
+/// # Panics
+///
+/// Panics if `cv` or `rk` is the identity.
 #[must_use]
-pub fn action_digest(cv: (Fp, Fp), rk: (Fp, Fp)) -> Fp {
-    let ((cv_x, cv_y), (rk_x, rk_y)) = (cv, rk);
+pub fn action_digest(cv: EpAffine, rk: EpAffine) -> Fp {
+    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    let (cv_x, cv_y) = cv.coordinates().expect("cv must not be the identity");
+    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    let (rk_x, rk_y) = rk.coordinates().expect("rk must not be the identity");
     hash::<4>(ACTION_DIGEST_DOMAIN, [cv_x, cv_y, rk_x, rk_y])
 }
 
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
+///
+/// # Panics
+///
+/// Panics if `ak` is the identity.
 #[must_use]
-pub fn payment_key(ak: (Fp, Fp), nk: Fp) -> Fp {
-    let (x, y) = ak;
+pub fn payment_key(ak: EpAffine, nk: Fp) -> Fp {
+    #[expect(
+        clippy::expect_used,
+        reason = "ak = [ask]G for a PRF-derived ask is not the identity"
+    )]
+    let (x, y) = ak.coordinates().expect("ak must not be the identity");
     hash::<3>(PAYMENT_KEY_DOMAIN, [x, y, nk])
 }
 

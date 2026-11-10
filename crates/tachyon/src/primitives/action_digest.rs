@@ -53,13 +53,15 @@ impl ActionDigest {
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
     ) -> Result<Self, ActionDigestError> {
-        let cv_coords = EpAffine::from(cv)
-            .coordinates()
-            .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(rk)
-            .coordinates()
-            .ok_or(ActionDigestError::IdentityRk)?;
-        Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
+        let cv_point = EpAffine::from(cv);
+        if cv_point.is_identity() {
+            return Err(ActionDigestError::IdentityCv);
+        }
+        let rk_point = EpAffine::from(rk);
+        if rk_point.is_identity() {
+            return Err(ActionDigestError::IdentityRk);
+        }
+        Ok(Self(poseidon::action_digest(cv_point, rk_point)))
     }
 }
 

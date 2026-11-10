@@ -871,13 +871,16 @@ impl Step<Pasta> for FeeFuse {
                 clippy::expect_used,
                 reason = "p < q, so every Fp repr is canonical in Fq"
             )]
-            let cv_feemax =
+            let cv_feemax = EpAffine::from(
                 value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                    .commit(-max_fee_note.value);
-            let cv_feemax_coords = EpAffine::from(cv_feemax).coordinates().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
-            })?;
-            let fee_digest = poseidon::fee_digest(cv_feemax_coords, u64::from(fee));
+                    .commit(-max_fee_note.value),
+            );
+            if cv_feemax.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeFuse: fee commitment is the identity".into(),
+                ));
+            }
+            let fee_digest = poseidon::fee_digest(cv_feemax, u64::from(fee));
             // A zero root leaves the set polynomial factor `(X - tg)` trivial.
             let fee_change_commitment = enforce_nonzero(
                 poseidon::note_commitment(rcm, pk, change, psi),
@@ -1018,13 +1021,16 @@ impl Step<Pasta> for FeeSeed {
                 clippy::expect_used,
                 reason = "p < q, so every Fp repr is canonical in Fq"
             )]
-            let cv_feemax =
+            let cv_feemax = EpAffine::from(
                 value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-                    .commit(-max_fee_note.value);
-            let cv_feemax_coords = EpAffine::from(cv_feemax).coordinates().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
-            })?;
-            let fee_digest = poseidon::fee_digest(cv_feemax_coords, 0);
+                    .commit(-max_fee_note.value),
+            );
+            if cv_feemax.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "FeeSeed: fee commitment is the identity".into(),
+                ));
+            }
+            let fee_digest = poseidon::fee_digest(cv_feemax, 0);
             // A zero root leaves the set polynomial factor `(X - tg)` trivial.
             let fee_change_commitment = enforce_nonzero(
                 poseidon::note_commitment(rcm, pk, 0, psi),
