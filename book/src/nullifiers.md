@@ -17,7 +17,7 @@ $$
 
 Because $\mathsf{nf}_e$ is the output of a pseudo-random function of master key $\mathsf{mk}$ and epoch $e$, distinct epochs have unrelated nullifiers.
 
-Epochs are grouped at sponge rate $r$ for proof efficiency.
+Epochs are grouped at sponge rate $r = 4$ for proof efficiency.
 One sponge squeezes $r$ consecutive nullifiers starting at base epoch $w = e - (e \bmod r)$
 
 $$
@@ -28,9 +28,15 @@ $$
 
 So $\mathsf{nf}_e$ is the member at position $e - w$ in its group.
 
+In the circuit, [`NullifierDerive`](./proof-tree.md) derives 16 consecutive nullifiers (four groups of $r$) from a group-aligned start epoch, and `NullifierFuse` chains windows for longer ranges.
+
 ## Binding
 
-The master key $\mathsf{mk}$ is derived from the note trapdoor $\psi$ and nullifier key $\mathsf{nk}$.
+The master key $\mathsf{mk}$ is derived from the note trapdoor $\psi$ and nullifier key $\mathsf{nk}$:
+
+$$
+  \mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}\!(\psi, \mathsf{nk})
+$$
 
 The note commitment $\mathsf{cm}$ digests $\psi$ and the payment key $\mathsf{pk}$, which transitively binds $\mathsf{nk}$ via its own derivation, closing the circle with $\mathsf{mk}$.
 
