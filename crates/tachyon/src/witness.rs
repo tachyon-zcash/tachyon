@@ -120,12 +120,12 @@ pub fn unspent_fuse(
     reason = "the derivation header's range covers the window"
 )]
 pub fn unspent_bind(
-    (unspent, deriv): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
+    (left, right): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, epoch_next, _) = unspent;
-    let (_, nullifiers_epoch_start, ..) = deriv;
+    let (_, epoch_start, epoch_next, _) = left;
+    let (_, nullifiers_epoch_start, ..) = right;
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
@@ -282,10 +282,10 @@ pub fn qr_intake_merge(
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
 #[must_use]
 pub fn qr_intake_split(
-    (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
+    (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = intake;
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
         discriminant.at(profile.depth),
@@ -310,11 +310,11 @@ pub fn qr_intake_split(
 /// members.
 #[must_use]
 pub fn qr_side_select(
-    (sides, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
+    (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
     members: &[Tachygram],
     side: bool,
 ) -> StepWitness<'static, QrSideSelect> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = sides;
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
         discriminant.at(profile.depth),
@@ -360,10 +360,10 @@ pub const fn qr_bucket_seal(
 /// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH).
 #[must_use]
 pub fn qr_unspent_init(
-    (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
+    (left, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = left;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),
@@ -377,7 +377,7 @@ pub fn qr_unspent_init(
 /// `path` runs outermost level first, one `(sides, children)` per level.
 #[must_use]
 pub const fn evidence_tree_descend(
-    (_tree, _right): (
+    (_left, _right): (
         StepLeft<EvidenceTreeDescend>,
         StepRight<EvidenceTreeDescend>,
     ),
@@ -391,7 +391,7 @@ pub const fn evidence_tree_descend(
 /// The pair is the preimage of the leaf the tree has descended to.
 #[must_use]
 pub const fn evidence_tree_open(
-    (_tree, _right): (StepLeft<EvidenceTreeOpen>, StepRight<EvidenceTreeOpen>),
+    (_left, _right): (StepLeft<EvidenceTreeOpen>, StepRight<EvidenceTreeOpen>),
     profile: QrProfile,
     contents: TachygramSetPoly,
 ) -> StepWitness<'static, EvidenceTreeOpen> {
@@ -405,12 +405,12 @@ pub const fn evidence_tree_open(
 /// becomes the member at the bucket's epoch.
 #[must_use]
 pub fn unspent_lift(
-    (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
+    (left, right): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
     value: Tachygram,
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentLift> {
-    let (_, epoch_start, ..) = unspent;
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = bucket;
+    let (_, epoch_start, ..) = left;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,
