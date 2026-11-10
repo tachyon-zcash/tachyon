@@ -14,15 +14,11 @@ lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
     cargo clippy --workspace --all-targets --features test-epoch-size
 
-test *ARGS: (test-native ARGS) (test-proof ARGS)
-
-# unit tests and doctests; ARGS go to libtest
-test-native *ARGS:
+# unit tests and doctests, then the proving integration tests under the
+# optimized test-proof profile; ARGS go to libtest
+test *ARGS:
     cargo test --workspace --features test-epoch-size --lib -- {{ARGS}}
     cargo test --workspace --features test-epoch-size --doc -- {{ARGS}}
-
-# the proving integration tests, optimized with debug checks on; ARGS go to libtest
-test-proof *ARGS:
     cargo test --workspace --profile test-proof --features test-epoch-size --test integration -- {{ARGS}}
 
 doc *ARGS:
