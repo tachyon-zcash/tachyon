@@ -108,6 +108,10 @@ jobs:
       - name: Run doctests
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --workspace --locked --features test-epoch-size --doc
+      # These unit tests exercise the epoch boundary at the shipped constants.
+      - name: Run epoch boundary tests (production epoch size)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --locked --lib -- final_epoch
 
   # The integration tests create and verify proofs and build with `--release`,
   # so they share no target directory with `test` and run as their own job.
