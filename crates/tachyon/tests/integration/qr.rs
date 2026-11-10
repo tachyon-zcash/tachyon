@@ -1976,22 +1976,36 @@ fn qr_unspent_init_rejects_a_twin_value() {
 #[test]
 fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (pool, final_anchor) = small_epoch(rng);
+    let (mut pool, _) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
     let discriminant = QrDiscriminant::random(rng);
+
+    // An element `n - discriminant` takes the quadratic character of `n + level`
+    // at each level, and the 32 consecutive characters from 40621 match those
+    // from 126676, so the member shares the absent value's whole profile.
+    let value = Fp::from(40_621u64) - Fp::from(discriminant);
+    let member = Fp::from(126_676u64) - Fp::from(discriminant);
+    assert_ne!(value, member);
+    assert_eq!(
+        qr_profile_of(value, discriminant, u32::BITS),
+        qr_profile_of(member, discriminant, u32::BITS)
+    );
+    pool.mine(vec![vec![Tachygram::from(member)]]);
+    let final_anchor = pool.block(pool.height()).anchor();
+
     for depth in [0, 1, 31, u32::BITS] {
-        let value = Fp::random(|bytes| rng.fill_bytes(bytes));
         let bucket = qr_bucket_at(
             rng,
             &pool,
             (Anchor::default(), final_anchor),
             discriminant,
-            24,
+            32,
             depth,
             value,
             Anchor::from(Fp::ZERO),
         );
+        assert!(bucket.members.contains(&Tachygram::from(member)));
         let nf = Nullifier::from(value);
         let segment = qr_bucket_segment(rng, &bucket, |_| nf);
         assert_eq!(
