@@ -397,6 +397,11 @@ impl Step for QrIntakeSplit {
         (epoch, anchor_prev, anchor_end, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        if contents_commit == TachygramSetCommit::default() {
+            return Err(ragu_core::Error::InvalidWitness(
+                "QrIntakeSplit: an empty intake cannot be split".into(),
+            ));
+        }
         enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
@@ -449,7 +454,12 @@ impl Step for QrSideSelect {
         left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let (_, _, _, sides_discriminant, sides_profile, sides_non_residue, _) = left;
+        let (_, _, _, sides_discriminant, sides_profile, sides_non_residue, sides_residue) = left;
+        if sides_non_residue == sides_residue {
+            return Err(ragu_core::Error::InvalidWitness(
+                "QrSideSelect: the two sides are the same set".into(),
+            ));
+        }
         enforce_equal_point(
             non_residue_contents.commit().into(),
             sides_non_residue.into(),
@@ -538,6 +548,11 @@ impl Step for QrSideDescend {
             selection_quotient,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        if sides_non_residue == sides_residue {
+            return Err(ragu_core::Error::InvalidWitness(
+                "QrSideDescend: the two sides are the same set".into(),
+            ));
+        }
         enforce_zero(
             Fp::from(sides_epoch) - Fp::from(selection_epoch),
             "QrSideDescend: selection epoch does not match sides",
@@ -583,8 +598,8 @@ impl Step for QrSideDescend {
         // TODO: a real circuit must constrain `bit` boolean; the type carries it
         // under mock ragu.
         // TODO: select point coordinates in the real circuit. These native group
-        // selectors produce identity intermediates when the commitments agree or
-        // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
+        // selectors produce identity intermediates when `bit` is false, which
+        // Ragu's nonidentity point gadgets cannot represent.
         let sibling = Eq::from(sides_residue)
             + ((Eq::from(sides_non_residue) - Eq::from(sides_residue)) * Fp::from(u64::from(bit)));
         enforce_equal_point(
