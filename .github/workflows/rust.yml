@@ -101,20 +101,20 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
-          cache-suffix: test-proof
+          cache-suffix: release
       # `--features test-epoch-size` shrinks `EPOCH_SIZE` from 4096 to 64, so
       # the other runs never see the shipped epoch size. The `final_epoch`
       # filter selects the unit tests whose assertions depend on it, the
       # `EPOCH_MAX` boundary tests in `primitives::epoch`.
       - name: Run epoch boundary tests (production epoch size)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --workspace --locked --profile test-proof --lib -- final_epoch
+        run: cargo test --workspace --locked --release --lib -- final_epoch
       - name: Run unit tests
         run: cargo test --workspace --locked --features test-epoch-size --lib
       - name: Run doctests
         run: cargo test --workspace --locked --features test-epoch-size --doc
       - name: Run proof tests
-        run: cargo test --workspace --locked --profile test-proof --features test-epoch-size --test integration
+        run: cargo test --workspace --locked --release --features test-epoch-size --test integration
 
   # The `no_std` build has to be checked against a target that genuinely has no
   # `std`, not just `--no-default-features` on a host triple, which links `std`

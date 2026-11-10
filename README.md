@@ -58,7 +58,7 @@ Stubbed (pending Ragu PCD and Poseidon integration):
 Requires Rust stable (1.85+) and nightly for formatting/linting.
 
 ```sh
-just test    # unit and doc tests, then integration tests (test-proof profile)
+just test    # unit and doc tests, then integration tests (release mode)
 just lint    # cargo +nightly clippy --workspace --all-targets --features test-epoch-size
 just fmt     # cargo +nightly fmt --all
 just doc     # cargo doc --workspace --no-deps
