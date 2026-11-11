@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Compressed stamps can be decompressed with their covered descriptors and
+  aggregated by decompressing, merging, and recompressing under mock Ragu.
+
 ## [0.0.0] - 2026-02-16
 
 ### Added

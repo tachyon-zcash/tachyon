@@ -818,8 +818,9 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// reconstruct the header from public data and check the proof's output slots
 /// against the covered actions and [`Self::tachygram_set`].
 ///
-/// Only the uncompressed proof type supports lifting, merging and
-/// unmerging. Compressed stamps support reading, writing and verification.
+/// Uncompressed proofs support lifting, merging and unmerging. Compressed
+/// stamps can be decompressed with their covered descriptors, or merged by
+/// decompressing both inputs and recompressing the result.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
     /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
@@ -1371,6 +1372,123 @@ impl ProofStamp<Uncompressed> {
             proof: Box::new(compressed),
             fee: self.fee,
         })
+    }
+}
+
+impl ProofStamp<Compressed> {
+    /// Restores a compressed stamp for further proof operations under mock
+    /// Ragu.
+    ///
+    /// The covered action and fee descriptors and the published tachygrams
+    /// reconstruct the two online polynomials omitted by compression. Ragu
+    /// checks them against the compressed proof's commitments before returning
+    /// a recursive proof; no wallet secrets or original uncompressed proof
+    /// are needed. This mock does not implement the real aggregator profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if descriptors, coverage, tachygrams, the anchor,
+    /// or the compressed proof disagree, or the proof system fails.
+    pub fn decompress<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        descriptors: &BTreeSet<action::Descriptor>,
+        fee_descriptors: &BTreeSet<fee::Descriptor>,
+    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
+        Self::check_polynomial_capacity(
+            descriptors.len().saturating_add(fee_descriptors.len()),
+            self.tachygrams.len(),
+        )?;
+        if !self.is_covering(descriptors.iter().copied(), fee_descriptors.iter().copied()) {
+            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                "decompression descriptors do not match stamp coverage".into(),
+            )));
+        }
+        let action_set = descriptors
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+        let tachygram_poly = self
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        if tachygram_poly.commit() != self.tachygram_set {
+            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                "decompression tachygrams do not match stamp commitment".into(),
+            )));
+        }
+        let pcd = self.proof.carry::<Stamp>(
+            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
+        );
+        let (restored, _) = PROOF_SYSTEM
+            .decompress(
+                rng,
+                &pcd,
+                [
+                    action_set.as_ref().iter_coeffs().collect(),
+                    tachygram_poly.as_ref().iter_coeffs().collect(),
+                ],
+            )
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
+        Ok(ProofStamp {
+            coverage: self.coverage,
+            anchor: self.anchor,
+            tachygram_set: self.tachygram_set,
+            tachygrams: self.tachygrams,
+            proof: Box::new(restored),
+            fee: self.fee,
+        })
+    }
+
+    /// Decompresses two stamps, merges them, and recompresses the result.
+    ///
+    /// Both stamps must share an anchor. The result keeps this stamp's fee
+    /// and covers both inputs, including inputs that are already aggregates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if decompression, merging, or compression fails.
+    /// Overlapping action or tachygram sets are rejected by the merge proof.
+    pub fn merge<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        (left_desc, left_fees): (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>),
+        (right_stamp, right_desc, right_fees): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<fee::Descriptor>,
+        ),
+    ) -> Result<Self, ProveError> {
+        // Disjoint sets gain one coefficient per root, plus a constant term.
+        Self::check_polynomial_capacity(
+            left_desc
+                .len()
+                .saturating_add(left_fees.len())
+                .saturating_add(right_desc.len())
+                .saturating_add(right_fees.len()),
+            self.tachygrams
+                .len()
+                .saturating_add(right_stamp.tachygrams.len()),
+        )?;
+        let left = self.decompress(rng, &left_desc, &left_fees)?;
+        let right = right_stamp.decompress(rng, &right_desc, &right_fees)?;
+        left.merge(rng, (left_desc, left_fees), (right, right_desc, right_fees))?
+            .compress(rng)
+    }
+
+    /// Rejects sets that would overflow the fixed-rank polynomial
+    /// representation.
+    fn check_polynomial_capacity(actions: usize, tachygrams: usize) -> Result<(), ProveError> {
+        if actions >= ProductionRank::num_coeffs() || tachygrams >= ProductionRank::num_coeffs() {
+            return Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(
+                "stamp polynomials exceed rank capacity".into(),
+            )));
+        }
+        Ok(())
     }
 }
 
