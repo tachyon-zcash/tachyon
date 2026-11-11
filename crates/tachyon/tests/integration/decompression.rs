@@ -93,8 +93,12 @@ fn compressed_aggregates_roundtrip_and_merge_again() {
                 rng,
                 all_desc
                     .iter()
-                    .map(|d| d.digest().unwrap())
-                    .chain(all_fees.iter().map(|d| d.digest().unwrap()))
+                    .map(|descriptor| descriptor.digest().unwrap())
+                    .chain(
+                        all_fees
+                            .iter()
+                            .map(|descriptor| descriptor.digest().unwrap())
+                    )
             )
             .unwrap()
     );
@@ -119,8 +123,12 @@ fn compressed_aggregates_roundtrip_and_merge_again() {
                 rng,
                 all_desc
                     .iter()
-                    .map(|d| d.digest().unwrap())
-                    .chain(all_fees.iter().map(|d| d.digest().unwrap()))
+                    .map(|descriptor| descriptor.digest().unwrap())
+                    .chain(
+                        all_fees
+                            .iter()
+                            .map(|descriptor| descriptor.digest().unwrap())
+                    )
             )
             .unwrap()
     );
@@ -156,7 +164,7 @@ fn decompression_rejects_mismatched_public_data() {
         wrong_commitment,
         substituted_proof,
     ] {
-        assert!(altered.decompress(rng, &descriptors, &fees).is_err());
+        altered.decompress(rng, &descriptors, &fees).unwrap_err();
     }
     // Matching a forged coverage digest must not bypass the proof's online
     // commitments.
@@ -165,18 +173,18 @@ fn decompression_rejects_mismatched_public_data() {
         other_desc.iter().copied(),
         &fees.iter().copied().collect::<Vec<_>>(),
     );
-    assert!(wrong_actions.decompress(rng, &other_desc, &fees).is_err());
+    wrong_actions
+        .decompress(rng, &other_desc, &fees)
+        .unwrap_err();
     let mut wrong_fees = stamp.clone();
     wrong_fees.coverage = stamp_coverage(
         descriptors.iter().copied(),
         &other_fees.iter().copied().collect::<Vec<_>>(),
     );
-    assert!(
-        wrong_fees
-            .decompress(rng, &descriptors, &other_fees)
-            .is_err()
-    );
-    assert!(stamp.decompress(rng, &descriptors, &fees).is_ok());
+    wrong_fees
+        .decompress(rng, &descriptors, &other_fees)
+        .unwrap_err();
+    stamp.decompress(rng, &descriptors, &fees).unwrap();
 }
 
 #[test]
@@ -184,18 +192,16 @@ fn compressed_merge_rejects_overlap_and_different_anchors() {
     let rng = &mut StdRng::seed_from_u64(948);
     let anchor = Anchor::random(rng);
     let (left, descriptors, fees) = payment(rng, anchor, 200, 10);
-    assert!(
-        left.clone()
-            .merge(
-                rng,
-                (descriptors.clone(), fees.clone()),
-                (left.clone(), descriptors.clone(), fees.clone())
-            )
-            .is_err()
-    );
+    left.clone()
+        .merge(
+            rng,
+            (descriptors.clone(), fees.clone()),
+            (left.clone(), descriptors.clone(), fees.clone()),
+        )
+        .unwrap_err();
     let other_anchor = Anchor::random(rng);
     let right = payment(rng, other_anchor, 300, 20);
-    assert!(left.merge(rng, (descriptors, fees), right).is_err());
+    left.merge(rng, (descriptors, fees), right).unwrap_err();
 }
 
 #[test]
@@ -210,11 +216,11 @@ fn oversized_descriptor_sets_are_rejected_before_polynomial_construction() {
             ..fee_template
         })
         .collect::<BTreeSet<_>>();
-    let error = stamp
+    let decompression_error = stamp
         .clone()
         .decompress(rng, &descriptors, &oversized)
         .unwrap_err();
-    assert!(error.to_string().contains("rank capacity"));
+    assert!(decompression_error.to_string().contains("rank capacity"));
     // Each half fits separately, but the merged polynomial does not.
     let left_fees = oversized
         .iter()
@@ -226,7 +232,7 @@ fn oversized_descriptor_sets_are_rejected_before_polynomial_construction() {
         .skip(oversized.len() / 2)
         .copied()
         .collect();
-    let error = stamp
+    let merge_error = stamp
         .clone()
         .merge(
             rng,
@@ -234,5 +240,5 @@ fn oversized_descriptor_sets_are_rejected_before_polynomial_construction() {
             (stamp, descriptors, right_fees),
         )
         .unwrap_err();
-    assert!(error.to_string().contains("rank capacity"));
+    assert!(merge_error.to_string().contains("rank capacity"));
 }
