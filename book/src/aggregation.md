@@ -3,7 +3,7 @@
 Instead of verifying each transaction individually, transaction proofs may be recursively merged into a single proof that covers many transactions.
 This is how Tachyon seeks to reduce chain costs.
 
-The act of merging proofs is **aggregation**, and **aggregators** are nodes enganged in this activity creating **aggregate** transactions.
+The act of merging proofs is **aggregation**, and **aggregators** are nodes engaged in this activity creating **aggregate** transactions.
 
 Miners are likely to vertically integrate aggregation.
 
@@ -11,7 +11,7 @@ Miners are likely to vertically integrate aggregation.
 
 Transactions with no Tachyon bundle[^bundle-format] are not covered here.
 
-Aggregation creation of a new transaction with a proof that can replace the proof in a selection of other transactions.
+Aggregation is the creation of a new transaction with a proof that can replace the proof in a selection of other transactions.
 To create a valid block with a given aggregate, a miner must include all of those other transactions, sans their now-redundant proofs.
 
 So Tachyon bundles have two main states: **stamped** or **stripped**.
@@ -31,7 +31,7 @@ Aggregates may be further named:
 - *based* aggregate proving its own Tachyon actions.  
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
-When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that absorbed its stamp, never the all-zero `wtxid`.
+When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that merged its stamp, never the all-zero `wtxid`.
 It retains its fee descriptor and binding signature.
 
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
@@ -40,8 +40,8 @@ It retains its fee descriptor and binding signature.
 
 ### Merge to produce Aggregate
 
-A proof's wire format is compressed for bandwidth efficiency.
-Aggregators must decompress proofs to a mutable format in order to merge proofs, and then re-compress to broadcast.
+Before the block, a stamp's wire format carries the full proof, so aggregators can lift and merge decoded stamps directly.
+A block carries each aggregate with its proof compressed, which is smaller but can no longer be lifted or merged.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -52,17 +52,21 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
    - Merge tachygrams (exclusive sets)
    - Merge proofs
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
-6. Serialize and compress the merged stamp
+6. Compress the merged stamp for the block
 7. Publish aggregate transaction
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
-<!-- TODO
-- Explain tachygram set union validation algorithm
-- Define aggregation limits
--->
+Tachygrams in a stamp must be distinct.
+Parsing and [bundle validation](./bundle.md#stamp-trailer) fix the list and its commitment.
+[`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
+Validation recomputes `cTachygrams` from the distinct `vTachygrams`, so such a stamp fails verification.
+An honest aggregator never merges stamps whose tachygram sets overlap.
 
-### Strip to produce Adjuncts
+The tachygram cap in the [stamp trailer](./bundle.md#stamp-trailer) bounds a stamp at $2N + B \le 2^{13} - 1$, so one aggregate covers at most 4,095 actions.
+This follows from Ragu's production rank and is not a policy limit.
+
+### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
 
 Miners obtain the broadcast aggregates, or by vertically integrating as aggregators.
 
@@ -143,7 +147,7 @@ flowchart LR
 
 An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header: a verifier reconstructs the header from the covered actions. Within a block that material is all at hand, since each adjunct points to its aggregate by `wtxid`. Before block inclusion it is not: aggregators publish only their merged transactions, and the ambiguity between actions and tachygrams makes a nearly-complete collection of adjuncts hard to recognize without falling back on full proof verification.
 
-To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_maxfee || LE64(fee)` of every [fee descriptor](./fee.md) it covers. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the proof. The proof binds the same actions and fee descriptors as a Pedersen commitment to their Poseidon digests; recomputing the trailer digest is the cheap check, and it is a separate construction over the same set rather than a copy of the one the proof carries.
+To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_feemax || LE64(fee)` of every [fee descriptor](./fee.md) it covers. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the proof. The proof binds the same actions and fee descriptors as a Pedersen commitment to their Poseidon digests; recomputing the trailer digest is the cheap check, and it is a separate construction over the same set rather than a copy of the one the proof carries.
 
 A stripped adjunct keeps its fee descriptor: `cvFeeMaxTachyon` in the bundle body and `vFeeTachyon` in the stripped trailer. The covering verifier collects every covered fee descriptor from the published bundles.
 
@@ -154,7 +158,6 @@ Coverage verification uses it as the first of two fast-fail gates. It recomputes
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.
 
-- aggregate size is limited by commitment size before block size (on the order of thousands of actions)
 - desirable to reduce the number of stamps in tx, for size, bandwidth, and validation cost
 - merging to one aggregate cannot be parallelized, but multiple aggregates may be built in parallel
 - serialization/deserialization is expensive and stamps are only mutable when 'decompressed'

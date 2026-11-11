@@ -9,124 +9,247 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe as _,
+    pasta::Pasta,
+};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use udon::curve::Affine as _;
 
 use crate::{
-    pasta::{Ep, Eq, Fp, Fq},
+    digest::poseidon,
+    pasta::{EpAffine, Fp},
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    ragu_constraint::enforce_equal_point,
-    relations::enforce::enforce_poly_product,
+    relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
 /// One summarized run of an epoch's stamps.
 ///
-/// `acc_commit` commits the root polynomial of every tachygram in the run,
-/// which is exactly the set of stamps folded over the coverage extent
-/// `(anchor_prev, anchor_end]`.
+/// The first output polynomial contains every tachygram from the stamps folded
+/// over `(anchor_prev, anchor_end]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-impl Header for Summary {
-    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is a free
-    /// witness of the seed step, as `anchor_start` is for
-    /// [`AnchorSpan`](super::pool::AnchorSpan).
-    type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
+#[derive(Gadget, Write)]
+pub struct SummaryOutput<'dr, D: Driver<'dr>> {
+    pub epoch: Element<'dr, D>,
+    pub anchor_prev: Element<'dr, D>,
+    pub anchor_end: Element<'dr, D>,
+}
+
+impl Header<Fp> for Summary {
+    /// `(epoch, anchor_prev, anchor_end)`
+    type Data = (EpochIndex, Anchor, Anchor);
+    type Output = Kind![Fp; SummaryOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
-        (
-            vec![Fp::from(epoch), Fp::from(anchor_prev), Fp::from(anchor_end)],
-            Vec::new(),
-            Vec::new(),
-            vec![Eq::from(acc_commit)],
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+        Ok(SummaryOutput {
+            epoch: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
+            )?,
+            anchor_prev: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            anchor_end: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
+            )?,
+        })
     }
 }
 
 /// Start a summary from one stamp. The step performs the same fold as
-/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and puts the stamp's
-/// commitment on the header.
+/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
 ///
 /// # Soundness
 ///
-/// `epoch` is a free witness. Consensus computes each fold with the epoch of
-/// the block that contains the stamp.
+/// `anchor_prev` and `epoch` are free witnesses. Consensus computes each fold
+/// with the epoch of the block that contains the stamp.
+/// O0/O1 carry the same stamp set and open once each at the challenge.
 #[derive(Debug)]
 pub struct SummarySeed;
 
-impl Step for SummarySeed {
+impl Step<Pasta> for SummarySeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp_commit)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
+    /// `(anchor_prev, epoch, stamp)`
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
 
-    fn witness<'source>(
+    fn polynomials(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, epoch, stamp_commit): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let anchor_end = anchor_prev
-            .next_stamp(epoch, &stamp_commit)
-            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([
+            witness.2.as_ref().iter_coeffs().collect(),
+            witness.2.as_ref().iter_coeffs().collect(),
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let output = D::try_just(|| {
+            let (anchor_prev, epoch, _) = witness.take();
+            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SummarySeed: bridge hash is not on the curve".into(),
+                )
+            })?;
+            if stamp_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummarySeed: bridge hash is the identity".into(),
+                ));
+            }
+            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "invalid anchor step".into(),
+                ));
+            }
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(anchor_prev),
+                Fp::from(epoch),
+                stamp_hash,
+            ));
+            Ok(((epoch, anchor_prev, anchor_end), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
 
 /// Fold the next stamp into the accumulator while the anchor absorbs the same
 /// commitment.
+/// L0/O0 hold the accumulated sets; O1 holds the stamp, each opened once.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
-impl Step for SummaryAdvance {
+impl Step<Pasta> for SummaryAdvance {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    /// `(acc, extended, stamp)`
-    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
+    /// `(extended, stamp)`
+    type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(14);
 
-    fn witness<'source>(
+    fn polynomials(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (acc, extended, stamp): Self::Witness<'source>,
-        (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(acc.commit()),
-            Eq::from(summary_acc_commit),
-            "SummaryAdvance: accumulator does not match header",
-        )?;
+        witness: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+        Ok([
+            witness.0.as_ref().iter_coeffs().collect(),
+            witness.1.as_ref().iter_coeffs().collect(),
+        ])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_product(
-            ctx,
-            acc.as_ref(),
-            stamp.as_ref(),
-            extended.as_ref(),
+            dr,
+            oracles,
+            &Slot::left(0),
+            &Slot::output(1),
+            &Slot::output(0),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let anchor_end = summary_anchor_end
-            .next_stamp(summary_epoch, &stamp.commit())
-            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        Ok((
-            (
-                summary_epoch,
-                summary_anchor_prev,
-                anchor_end,
-                extended.commit(),
-            ),
-            (),
-        ))
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let output = D::try_just(|| {
+            let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
+            right.take();
+            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: bridge hash is not on the curve".into(),
+                )
+            })?;
+            if stamp_hash.is_identity() {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "SummaryAdvance: bridge hash is the identity".into(),
+                ));
+            }
+            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
+                return Err(ragu_core::Error::InvalidWitness(
+                    "invalid anchor step".into(),
+                ));
+            }
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                Fp::from(summary_anchor_end),
+                Fp::from(summary_epoch),
+                stamp_hash,
+            ));
+            Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

@@ -1,10 +1,10 @@
-use core::assert_matches;
+use core::{assert_matches, iter};
 
-use ragu::Proof;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
+    TachygramSetPoly,
     constants::{EPOCH_SIZE, EVIDENCE_TREE_ARITY},
     pasta::Fp,
     stamp::proof::{PROOF_SYSTEM, evidence, qr},
@@ -12,9 +12,63 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrIntakeEntry, build_evidence_tree, build_qr_partition, open_evidence_tree,
-    qr_bucket_at, random_block, seal_qr_intake, small_epoch,
+    PoolSim, QrIntakeEntry, WithPolynomials, build_evidence_tree, build_qr_partition,
+    open_evidence_tree, qr_bucket_at, random_block, seal_qr_intake, small_epoch,
 };
+
+#[test]
+fn evidence_tree_admission_rejects_substituted_contents() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, final_anchor) = small_epoch(rng);
+    let discriminant = QrDiscriminant::random(rng);
+    let intake = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), final_anchor),
+        discriminant,
+        24,
+        0,
+    )
+    .pop()
+    .unwrap();
+    let intake_pcd = intake.pcd.clone();
+    let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
+    let honest = intake_pcd.polynomials()[0].clone();
+    let mut substituted = honest.clone();
+    substituted[0] += Fp::ONE;
+    for polynomials in [
+        [substituted.clone(), honest.clone()],
+        [honest, substituted.clone()],
+        [substituted.clone(), substituted],
+    ] {
+        assert!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    WithPolynomials(qr::QrBucketSeal, polynomials),
+                    witness::qr_bucket_seal((*intake_pcd.data(), ()), Anchor::from(Fp::ZERO)),
+                    intake_pcd.clone(),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .is_err()
+        );
+    }
+    let replacement: TachygramSetPoly = iter::once(Tachygram::random(rng)).collect();
+    let mut forged_header = *bucket.pcd.data();
+    forged_header.5 = replacement.commit().bridge().unwrap();
+    let forged = bucket
+        .pcd
+        .proof()
+        .clone()
+        .carry::<qr::QrBucket>(forged_header);
+    for (left, right) in [(forged.clone(), bucket.pcd.clone()), (bucket.pcd, forged)] {
+        assert_matches!(
+            PROOF_SYSTEM.fuse(rng, evidence::EvidenceTreeLeafPair, (), left, right).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "child proof or carried header is not accepted by this application"
+        );
+    }
+}
 
 #[test]
 fn evidence_tree_replays_the_bucket_each_leaf_holds() {
@@ -22,38 +76,44 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
 
-    let routed = build_qr_partition(
-        rng,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        2,
-    );
-    let sealed = routed
-        .into_iter()
-        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
-        .collect::<Vec<_>>();
-    let expected = sealed
-        .iter()
-        .map(|bucket| *bucket.pcd.data())
-        .collect::<Vec<_>>();
+    for depth in [2, 6] {
+        let routed = build_qr_partition(
+            rng,
+            &pool,
+            (Anchor::default(), final_anchor),
+            discriminant,
+            24,
+            depth,
+        );
+        let ragged = routed
+            .iter()
+            .any(|intake| intake.pcd.data().4.depth < depth);
+        assert_eq!(ragged, depth > 2);
+        let sealed = routed
+            .into_iter()
+            .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+            .collect::<Vec<_>>();
+        let expected = sealed
+            .iter()
+            .map(|bucket| *bucket.pcd.data())
+            .collect::<Vec<_>>();
 
-    let tree = build_evidence_tree(rng, sealed);
-    let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
-    assert_eq!(
-        (epoch, anchor_start, anchor_next, root_discriminant),
-        (
-            EpochIndex::new(0),
-            Anchor::default(),
-            final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
-            discriminant
-        )
-    );
+        let tree = build_evidence_tree(rng, sealed);
+        let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
+        assert_eq!(
+            (epoch, anchor_start, anchor_next, root_discriminant),
+            (
+                EpochIndex::new(0),
+                Anchor::default(),
+                final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
+                discriminant
+            )
+        );
 
-    for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
-        let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
-        assert_eq!(*replayed.pcd.data(), *bucket);
+        for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
+            let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
+            assert_eq!(*replayed.pcd.data(), *bucket);
+        }
     }
 }
 
@@ -258,7 +318,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
     .into_iter()
     .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
     .collect::<Vec<_>>();
-    let other_contents = sealed[1].pcd.data().5;
+    let other_contents: TachygramSetPoly = sealed[1].members.iter().copied().collect();
     let tree = build_evidence_tree(rng, sealed);
     let leaf = tree.leaves.first().unwrap();
 
@@ -276,7 +336,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
                 evidence::EvidenceTreeDescend,
                 witness::evidence_tree_descend((*tree.pcd.data(), ()), path),
                 tree.pcd.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
@@ -294,21 +354,21 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
                     <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap(),
                 ),
                 node,
-                Proof::bootstrap().carry::<()>(()),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap()
             .0;
     }
     let QrProfile { depth, bits } = leaf.profile;
     for (opened, profile, contents) in [
-        (tree.pcd, leaf.profile, leaf.contents),
+        (tree.pcd, leaf.profile, leaf.contents.clone()),
         (
             node.clone(),
             QrProfile {
                 depth: depth + 1,
                 bits,
             },
-            leaf.contents,
+            leaf.contents.clone(),
         ),
         (
             node.clone(),
@@ -316,9 +376,9 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
                 depth,
                 bits: bits ^ 1,
             },
-            leaf.contents,
+            leaf.contents.clone(),
         ),
-        (node, leaf.profile, other_contents),
+        (node.clone(), leaf.profile, other_contents),
     ] {
         assert_matches!(
             PROOF_SYSTEM
@@ -327,11 +387,38 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
                     evidence::EvidenceTreeOpen,
                     witness::evidence_tree_open((*opened.data(), ()), profile, contents),
                     opened,
-                    Proof::bootstrap().carry::<()>(()),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
+        );
+    }
+
+    let honest: Vec<_> = leaf.contents.as_ref().iter_coeffs().collect();
+    let mut substituted = honest.clone();
+    substituted[0] += Fp::ONE;
+    for (polynomials, accepted) in [
+        ([honest.clone(), honest.clone()], true),
+        ([substituted.clone(), honest.clone()], false),
+        ([honest, substituted.clone()], false),
+        ([substituted.clone(), substituted], false),
+    ] {
+        assert_eq!(
+            PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    WithPolynomials(evidence::EvidenceTreeOpen, polynomials),
+                    witness::evidence_tree_open(
+                        (*node.data(), ()),
+                        leaf.profile,
+                        leaf.contents.clone()
+                    ),
+                    node.clone(),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .is_ok(),
+            accepted,
         );
     }
 }

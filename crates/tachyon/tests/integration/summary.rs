@@ -3,10 +3,11 @@ extern crate alloc;
 use alloc::string::ToString as _;
 use core::{array, assert_matches};
 
-use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::curve::Projective as _;
 use zcash_tachyon::{
     Anchor, EpochIndex, Tachygram, TachygramSetPoly,
+    pasta::Eq,
     stamp::proof::{PROOF_SYSTEM, summary},
     witness,
 };
@@ -33,24 +34,23 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .commit();
     assert_eq!(
         *seeded.data(),
-        (
-            epoch,
-            start,
-            start.next_stamp(epoch, &commit_a).unwrap(),
-            commit_a
-        )
+        (epoch, start, start.next_stamp(epoch, &commit_a).unwrap())
     );
+    assert_eq!(seeded.commitments()[0], Eq::from(commit_a).to_affine());
 
     let foreign: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
-    let (acc, _extended, stamp) =
-        witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            "SummaryAdvance: accumulator does not match header",
+            "SummaryAdvance: extended accumulator must fold the stamp",
         ),
         (
-            (acc, stamp_a.iter().copied().collect(), stamp),
+            {
+                let mut witness =
+                    witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
+                witness.0 = stamp_a.iter().copied().collect();
+                witness
+            },
             "SummaryAdvance: extended accumulator must fold the stamp",
         ),
     ] {
@@ -61,7 +61,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
                     summary::SummaryAdvance,
                     advance_witness,
                     seeded.clone(),
-                    Proof::bootstrap().carry::<()>(()),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -74,7 +74,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
             seeded,
-            Proof::bootstrap().carry::<()>(()),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
@@ -94,7 +94,8 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap()
         .next_stamp(epoch, &commit_b)
         .unwrap();
-    assert_eq!(*advanced.data(), (epoch, start, expected_end, union));
+    assert_eq!(*advanced.data(), (epoch, start, expected_end));
+    assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());
 }
 
 #[test]

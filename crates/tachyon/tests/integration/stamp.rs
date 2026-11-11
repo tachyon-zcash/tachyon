@@ -3,6 +3,7 @@ extern crate alloc;
 use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
 use core::assert_matches;
 
+use corez::io;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -49,8 +50,8 @@ fn plan_prove_rejects_invalid_inputs() {
     });
     let max_fee_note = user.random_note(0);
     let fee_digest = fee::Descriptor {
-        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: value::Positive::ZERO,
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
     }
     .digest()
     .unwrap();
@@ -163,8 +164,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
         spend.digest().unwrap(),
         output.digest().unwrap(),
         fee::Descriptor {
-            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-            value: value::Positive::ZERO,
+            cv_feemax: max_fee_note.cv_feemax(),
+            v_fee: value::Positive::ZERO,
         }
         .digest()
         .unwrap(),
@@ -319,7 +320,7 @@ fn overlapping_stamps_cannot_aggregate() {
             left.tachygrams.union(&right.tachygrams).copied().collect();
         let stamp = ProofStamp {
             coverage: stamp_coverage(descriptors.iter().copied(), &fees),
-            anchor: forged.data().2,
+            anchor: forged.data().1,
             tachygram_set: tachygrams
                 .iter()
                 .copied()
@@ -403,7 +404,63 @@ fn read_rejects_malformed_tachygram_lists() {
         for listed in tachygrams {
             listed.write(&mut buf).unwrap();
         }
-        assert_eq!(ProofStamp::read(&*buf).unwrap_err().to_string(), expected);
+        assert_eq!(
+            ProofStamp::<stamp::Uncompressed>::read(&*buf)
+                .unwrap_err()
+                .to_string(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn read_rejects_wrong_proof_size() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let anchor = Anchor::random(rng);
+    let (stamp, ..) = build_output_stamp(rng, anchor, wallet.random_note(200));
+    let compressed_size = <stamp::Compressed as stamp::Proof>::encoded_len();
+    let uncompressed_size = <stamp::Uncompressed as stamp::Proof>::encoded_len();
+
+    {
+        let proof = stamp.proof.to_bytes().unwrap();
+        let mut bytes = Vec::new();
+        stamp.write(&mut bytes).unwrap();
+        let mut prefix = Vec::new();
+        CompactSize::try_from(proof.len())
+            .unwrap()
+            .write(&mut prefix)
+            .unwrap();
+        bytes.truncate(bytes.len() - proof.len() - prefix.len());
+        CompactSize::try_from(compressed_size)
+            .unwrap()
+            .write(&mut bytes)
+            .unwrap();
+        bytes.extend_from_slice(&proof);
+        let mut reader = bytes.as_slice();
+        let err = ProofStamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.len(), proof.len() - compressed_size);
+    }
+
+    let compressed = stamp.compress(rng).unwrap();
+    {
+        let proof = compressed.proof.to_bytes().unwrap();
+        let mut bytes = Vec::new();
+        compressed.write(&mut bytes).unwrap();
+        let mut prefix = Vec::new();
+        CompactSize::try_from(proof.len())
+            .unwrap()
+            .write(&mut prefix)
+            .unwrap();
+        bytes.truncate(bytes.len() - proof.len() - prefix.len());
+        CompactSize::try_from(uncompressed_size)
+            .unwrap()
+            .write(&mut bytes)
+            .unwrap();
+        let err = ProofStamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "proof size exceeds transport bound");
     }
 }
 
@@ -416,7 +473,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded = ProofStamp::read(&*buf).unwrap();
+    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*buf).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
@@ -467,9 +524,25 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     assert_eq!(lifted.tachygrams, stamp.tachygrams);
     assert!(lifted.verify_proof(rng, digests).unwrap());
 
+    let mut bytes = Vec::new();
+    stamp.write(&mut bytes).unwrap();
+    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
+    let lifted_decoded = decoded
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &fees,
+            vec![span.clone()],
+        )
+        .unwrap();
+    assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
+    assert!(lifted_decoded.verify_proof(rng, digests).unwrap());
+
     let foreign = BTreeSet::from([random_action(rng).descriptor()]);
-    let misdescribed = stamp.lift(rng, &foreign, &fees, vec![span]).unwrap();
-    assert!(!misdescribed.verify_proof(rng, digests).unwrap());
+    assert_matches!(
+        stamp.lift(rng, &foreign, &fees, vec![span]),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    );
 }
 
 #[test]
@@ -540,10 +613,8 @@ fn mismatched_merge_descriptors_fail_verification() {
         )
         .collect();
 
-    let merged = bundle_a
-        .stamp
-        .clone()
-        .merge(
+    assert_matches!(
+        bundle_a.stamp.clone().merge(
             rng,
             (descriptors_a.clone(), fees_a.clone()),
             (
@@ -551,10 +622,9 @@ fn mismatched_merge_descriptors_fail_verification() {
                 BTreeSet::from([foreign]),
                 fees_b.clone(),
             ),
-        )
-        .unwrap();
-
-    assert!(!merged.verify_proof(rng, digests.clone()).unwrap());
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    );
 
     let honest = bundle_a
         .stamp

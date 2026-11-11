@@ -43,7 +43,7 @@ $$
 \bigr)
 $$
 
-with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. Hashing the proof separately keeps the tachygram vector as the only variable-length input.
+with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$, over the Ragu-encoded proof bytes including their envelope. These bytes determine [`sizeProofTachyon`](./bundle.md#stamp-trailer). Hashing the proof separately keeps the tachygram vector as the only variable-length input to the stamp-data digest.
 
 A stripped bundle's summary is the fee and the 64-byte `wtxid` of the covering aggregate. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 
@@ -51,4 +51,4 @@ A stripped bundle's summary is the fee and the 64-byte `wtxid` of the covering a
 
 An adjunct's reference to the aggregate that covers it is a `wtxid`, not a `txid` — the 64-byte `wtxid` pins a specific physical aggregate, whereas a `txid` only pins the effecting data.
 
-Miners assign the reference during block assembly. The covering aggregate must itself be top-level in the block — never stripped, never further aggregated — so the `wtxid` pointed to is stable. See [Aggregation → Block Layout](./aggregation.md#block-layout) for how references are resolved in a block.
+Miners assign the reference during block assembly. The covering aggregate must itself be top-level in the block — never stripped, never further aggregated — so the `wtxid` pointed to is stable. See [Aggregation → Strip to produce Adjuncts](./aggregation.md#strip-to-produce-adjuncts) for how references are assigned.

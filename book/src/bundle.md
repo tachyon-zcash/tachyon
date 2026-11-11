@@ -40,15 +40,21 @@ The **tachystamp** is a recursive zero-knowledge proof that all related tachyact
 
 It contains:
 
+- `fee` - the fee the carrying bundle pays, chosen at or below its signed maximum
+- `coverage` - a digest of the action and fee descriptors the proof covers
 - `anchor` - a chain [anchor](./anchor.md)
+- `tachygram_set` - a commitment to the tachygrams below
+- `tachygrams` - two per action (a spend's two nullifiers, or an output's commitment and padding), plus one fee change note commitment per covered bundle
 - `proof` - the recursive proof (which may be aggregated)
-- `tachygrams` - nullifiers and commitments for each action
 
 The proof establishes:
 
 - tachygrams either create a new note or destroy an existing note
 - tachygrams are correctly bound to action keys
-- action balance effect matches pool balance effect
+- each `cv` commits to the value of the note its tachygrams belong to
+- the fee change note commits to $\feemax - \fee$, with the fee at most the signed maximum
+
+Pool balance is not a statement of the proof. The value balance never enters a circuit; the [binding signature](./authorization.md#binding-signature) enforces it over the published `cv` values.
 
 The nullifier for epoch $e$ is a pseudo-random function of the note's master key and the epoch:
 
@@ -67,9 +73,11 @@ where
 A Tachyon bundle collects tachyactions with authorization data:
 
 - `tachyactions` - the tachyactions
-- `value_balance` - integer net pool effect
+- `value_balance` - integer net pool effect, with the max fee note counted as an output
+- `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
-- `tachystamp` - anchor, proof, tachygrams (may be aggregated)
+- `memo` - opaque recipient-directed payload, empty when absent
+- `tachystamp` - fee, coverage, anchor, tachygram set, tachygrams, proof (may be aggregated or replaced by a pointer)
 
 ```mermaid
 ---
@@ -90,7 +98,7 @@ style anchor fill:#f0fff040
 
 style tachystamp fill:#7fff0040
 
-subgraph shielded_data["tachyon::ShieldedData"]
+subgraph shielded_data["Bundle"]
 
     subgraph tachyaction_vec[" "]
 
@@ -114,6 +122,9 @@ subgraph shielded_data["tachyon::ShieldedData"]
     end
 
     subgraph tachystamp
+        fee
+        coverage
+        tachygram_set
         anchor@{shape: odd}
         proof@{shape: notch-rect}
         tachygram_vec@{shape: procs, label: "tachygram"}
@@ -127,10 +138,14 @@ subgraph shielded_data["tachyon::ShieldedData"]
 
     sig_binding:::signature@{shape: hex, label: "binding_sig"}
     v_balance["value_balance"]
+    cv_feemax["cv_feemax"]
+    memo
 
-    v_balance ---> proof
+    cv_feemax ---> proof
 
     v_balance ===> sig_binding
+    cv_feemax ===> sig_binding
+    memo ===> sig_binding
     tachyaction_vec ===> sig_binding
 end
 ```
@@ -148,8 +163,8 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped | bundle with `hStampCoverageTachyon`, anchor, tachygrams, proof |
-| `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
+| `0b0000_0001` | stamped (`ProofStamp`) | bundle with fee, `hStampCoverageTachyon`, anchor, tachygram set commitment, tachygrams, proof |
+| `0b0000_0010` | stripped (`PointerStamp`) | bundle with fee and the covering aggregate's `wtxid` |
 
 ### Bundle body
 
@@ -172,7 +187,7 @@ The memo is effecting data, so the transaction sighash covers it and `auth_diges
 
 `nMemoTachyon` is public, and `0` reveals that no payload is present. The field is variable-length because Tachyon has no per-action ciphertext to hide a memo inside: an action is `(cv, rk)`, 64 bytes. The payload is also bimodal, carrying key-exchange ciphertexts on first contact and ordinary memo text otherwise, at sizes differing by more than an order of magnitude. A fixed field would have to be sized for the first-contact case and charged on every transaction.
 
-### Stamp trailer
+### Stamp trailer {#stamp-trailer}
 
 When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp trailer:
 
@@ -182,9 +197,14 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `hStampCoverageTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors and fee descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
-| `nTachygrams` | compactsize | number of tachygrams |
+| `nTachygrams` | compactSize | number of tachygrams |
 | `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
-| `proofTachyon` | PROOF_SIZE blob | serialized proof of fixed size |
+| `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
+| `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
+
+`vTachygrams` must be non-empty and strictly ascending by bytewise comparison of each 32-byte little-endian encoding, the order the stamp digest commits to.
+It holds at most $2^{13} - 1$ entries, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$.
+Parsing rejects any other list.
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
@@ -202,11 +222,17 @@ $$
 \begin{aligned}
 \mathsf{hStampCoverageTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Coverage}\bigl(\mathsf{hStampActionsTachyon} \,\|\, \mathsf{hStampFeesTachyon}\bigr) \\
 \mathsf{hStampActionsTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Actions}\bigl(a_1 \,\|\, \cdots \,\|\, a_N\bigr), & a_i &= \mathsf{cv}_i \,\|\, \mathsf{rk}_i \\
-\mathsf{hStampFeesTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Fees}\bigl(f_1 \,\|\, \cdots \,\|\, f_B\bigr), & f_j &= \cv_{\maxfee,j} \,\|\, \mathsf{LE64}(\fee_j)
+\mathsf{hStampFeesTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Fees}\bigl(f_1 \,\|\, \cdots \,\|\, f_B\bigr), & f_j &= \cv_{\feemax,j} \,\|\, \mathsf{LE64}(\fee_j)
 \end{aligned}
 $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+
+The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
+
+Consensus carries `Compressed` proofs in [block items](./aggregation.md), and `Uncompressed` proofs use the same `tachyonBundleState == 0x01` layout while stamps are [merged](./aggregation.md#merge-to-produce-aggregate) and [lifted](./proof-tree.md#stamp-anchor) outside consensus.
+
+The [stamp digest](./transaction-identifiers.md) hashes the Ragu-encoded proof bytes, including the envelope. Its definition is the same for both proof forms.
 
 ### Stripped trailer
 

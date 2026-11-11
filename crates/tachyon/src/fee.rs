@@ -16,10 +16,10 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
     /// The max fee commitment.
-    pub max_commitment: value::Commitment,
+    pub cv_feemax: value::Commitment,
 
-    /// The fee.
-    pub value: value::Positive,
+    /// The fee, `vFeeTachyon`.
+    pub v_fee: value::Positive,
 }
 
 impl Descriptor {
@@ -29,12 +29,13 @@ impl Descriptor {
     ///
     /// Returns [`ActionDigestError`] if the commitment is the identity.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        let cv_max_fee = EpAffine::from(self.max_commitment)
-            .coordinates()
-            .ok_or(ActionDigestError::IdentityCv)?;
+        let cv_feemax = EpAffine::from(self.cv_feemax);
+        if cv_feemax.is_identity() {
+            return Err(ActionDigestError::IdentityCv);
+        }
         Ok(ActionDigest::from(poseidon::fee_digest(
-            cv_max_fee,
-            u64::from(self.value),
+            cv_feemax,
+            u64::from(self.v_fee),
         )))
     }
 }
@@ -53,11 +54,11 @@ impl Ord for Descriptor {
 }
 
 impl From<Descriptor> for [u8; 40] {
-    /// The fee descriptor's coverage entry, `cv_maxfee || LE64(fee)`.
+    /// The fee descriptor's coverage entry, `cv_feemax || LE64(fee)`.
     fn from(descriptor: Descriptor) -> Self {
         let mut entry = [0u8; 40];
-        entry[..32].copy_from_slice(&EpAffine::from(descriptor.max_commitment).to_bytes());
-        entry[32..].copy_from_slice(&u64::from(descriptor.value).to_le_bytes());
+        entry[..32].copy_from_slice(&EpAffine::from(descriptor.cv_feemax).to_bytes());
+        entry[32..].copy_from_slice(&u64::from(descriptor.v_fee).to_le_bytes());
         entry
     }
 }

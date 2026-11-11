@@ -3,10 +3,10 @@
 //! A bundle is parameterized by bundle state `S: BundleState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - `Bundle<ProofStamp>`: self-contained bundle with a proof stamp
+//! - `Bundle<ProofStamp<P>>`: self-contained bundle with a proof stamp
 //! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
 //!   covering aggregate
-//! - [`TachyonBundle`]: enum of the on-wire forms for mixed contexts
+//! - [`TachyonBundle`]: enum of the on-wire forms for block items
 //!
 //! # Consensus wire format
 //!
@@ -60,19 +60,24 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                    | Format               | Description                                |
-//! | ----------------------- | -------------------- | ------------------------------------------ |
-//! | `vFeeTachyon`           | LE64                 | fee, at most `MAX_MONEY`                   |
-//! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of covered actions and fees |
-//! | `anchorTachyon`         | 32 bytes             | pool state reference                       |
-//! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
-//! | `nTachygrams`           | compactsize          | number of tachygrams                       |
-//! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
-//! | `proofTachyon`          | PROOF_SIZE blob      | serialized proof of fixed size             |
+//! | Name                    | Format                   | Description                                |
+//! | ----------------------- | ------------------------ | ------------------------------------------ |
+//! | `vFeeTachyon`           | LE64                     | fee, at most `MAX_MONEY`                   |
+//! | `hStampCoverageTachyon` | 32 bytes                 | BLAKE2b digest of covered actions and fees |
+//! | `anchorTachyon`         | 32 bytes                 | pool state reference                       |
+//! | `cTachygrams`           | 32 bytes                 | commitment to the tachygrams below         |
+//! | `nTachygrams`           | compactSize              | number of tachygrams                       |
+//! | `vTachygrams`           | 32 * nTachygrams         | tachygrams for this proof                  |
+//! | `sizeProofTachyon`      | compactSize              | length of `proofTachyon` in bytes          |
+//! | `proofTachyon`          | `byte[sizeProofTachyon]` | the Ragu stamp proof                       |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
 //! instead of rebuilding it.
+//!
+//! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
+//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
+//! uncompressed length while stamps are merged and lifted outside consensus.
 //!
 //! ## Pointer stamp
 //!
@@ -96,6 +101,8 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::curve::Affine as _;
 
@@ -158,7 +165,7 @@ impl StateByte {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
-    impl Sealed for super::ProofStamp {}
+    impl<P: super::stamp::Proof> Sealed for super::ProofStamp<P> {}
     impl Sealed for super::PointerStamp {}
 }
 
@@ -178,7 +185,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub actions: Vec<Action>,
 
     /// The max fee note's value commitment.
-    pub fee_max_commitment: value::Commitment,
+    pub cv_feemax: value::Commitment,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -214,8 +221,8 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         S: StampState,
     {
         fee::Descriptor {
-            max_commitment: self.fee_max_commitment,
-            value: self.stamp.fee(),
+            cv_feemax: self.cv_feemax,
+            v_fee: self.stamp.fee(),
         }
     }
 
@@ -236,7 +243,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
-            &self.fee_max_commitment.into(),
+            &self.cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         )
     }
@@ -253,7 +260,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
             self.actions
                 .iter()
                 .map(|action| action.cv)
-                .chain([self.fee_max_commitment]),
+                .chain([self.cv_feemax]),
             self.value_balance,
         );
 
@@ -435,7 +442,7 @@ impl Plan {
     /// $$
     ///   (\sum_i v_{\text{spend},i}) -
     ///   (\sum_j v_{\text{output},j}) -
-    ///   v_\text{maxfee}
+    ///   v_\text{feemax}
     /// $$
     ///
     /// # Errors
@@ -464,11 +471,7 @@ impl Plan {
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?.into(),
-            &self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value)
-                .into(),
+            &self.max_fee_note.cv_feemax().into(),
             &blake2b::memo_digest(&self.memo),
         ))
     }
@@ -507,7 +510,7 @@ impl Plan {
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
         private::BindingSigningKey::from(
             self.iter_actions(|plan| plan.rcv, |plan| plan.rcv)
-                .chain([self.max_fee_note.fee_blind()]),
+                .chain([self.max_fee_note.derive_feemax_blind()]),
         )
     }
 
@@ -579,10 +582,7 @@ impl Plan {
         Ok(Bundle {
             actions,
             value_balance,
-            fee_max_commitment: self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value),
+            cv_feemax: self.max_fee_note.cv_feemax(),
             binding_sig,
             memo: self.memo.clone(),
             stamp: Unproven,
@@ -593,11 +593,14 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a proof stamp, producing a `Bundle<ProofStamp>`.
     #[must_use]
-    pub fn stamp(self, stamp: ProofStamp) -> Bundle<ProofStamp> {
+    pub fn stamp(
+        self,
+        stamp: ProofStamp<stamp::Uncompressed>,
+    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
+            cv_feemax: self.cv_feemax,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp,
@@ -605,14 +608,14 @@ impl Bundle<Unproven> {
     }
 }
 
-impl Bundle<ProofStamp> {
+impl Bundle<ProofStamp<stamp::Uncompressed>> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
     pub fn strip(self, wtxid: AggregateId) -> Bundle<PointerStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
-            fee_max_commitment: self.fee_max_commitment,
+            cv_feemax: self.cv_feemax,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp: PointerStamp {
@@ -636,7 +639,10 @@ impl Bundle<ProofStamp> {
         self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        spans: Vec<(
+            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
+            AnchorSetPoly,
+        )>,
     ) -> Result<Self, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
@@ -652,7 +658,9 @@ impl Bundle<ProofStamp> {
 
         Ok(Self { stamp, ..self })
     }
+}
 
+impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// Confirm `hStampCoverageTachyon` represents the combined actions and
     /// fee descriptors of this bundle and the given bundles.
     #[must_use]
@@ -925,7 +933,7 @@ impl<S: StampState> Bundle<S> {
             descriptors.push(action::Descriptor::read(&mut reader)?);
         }
 
-        let fee_max_commitment = {
+        let cv_feemax = {
             let point = serialization::read_ep_affine(&mut reader)?;
             if point.is_identity() {
                 return Err(io::Error::new(
@@ -970,7 +978,7 @@ impl<S: StampState> Bundle<S> {
         Ok(Self {
             value_balance,
             actions,
-            fee_max_commitment,
+            cv_feemax,
             binding_sig,
             memo,
             stamp,
@@ -1001,7 +1009,7 @@ impl<S: StampState> Bundle<S> {
             action.descriptor().write(&mut writer)?;
         }
 
-        serialization::write_ep_affine(&mut writer, &self.fee_max_commitment.into())?;
+        serialization::write_ep_affine(&mut writer, &self.cv_feemax.into())?;
 
         for action in &self.actions {
             action.sig.write(&mut writer)?;
@@ -1049,7 +1057,7 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own proof (autonome or aggregate).
-    Proven(Bundle<ProofStamp>),
+    Proven(Bundle<ProofStamp<stamp::Compressed>>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<PointerStamp>),
 }
