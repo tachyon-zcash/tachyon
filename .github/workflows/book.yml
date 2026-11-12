@@ -25,6 +25,9 @@ jobs:
       - name: Build book
         run: mdbook build book/
 
+      - name: Build study guide
+        run: mdbook build study-guide/
+
   notify-website:
     name: Notify website to deploy
     needs: build
