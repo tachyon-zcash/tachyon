@@ -19,9 +19,9 @@ use crate::{
     Tachygram,
     constants::MAX_MONEY,
     digest::poseidon,
+    gadgets::{self, fixed_base},
     note::Note,
-    pasta::{EpAffine, Fp},
-    ragu_constraint::enforce_nonzero,
+    pasta::{EpAffine, Fp, Fq},
     value,
 };
 
@@ -38,6 +38,7 @@ pub struct OutputHeader;
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub cm: Element<'dr, D>,
     pub pad: Element<'dr, D>,
+    #[ragu(gadget)]
     pub cv: Point<'dr, D, C>,
 }
 
@@ -106,39 +107,60 @@ impl Step<Pasta> for OutputBind {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (note, rcv) = witness.take();
-            if u64::from(note.value) > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "OutputBind: note value exceeds maximum".into(),
-                ));
-            }
-
-            let (cm, pad) = {
-                let (rcm, pk, value, psi) = (
-                    Fp::from(note.rcm),
-                    Fp::from(note.pk),
-                    u64::from(note.value),
-                    Fp::from(note.psi),
-                );
-                (
-                    Tachygram::from(poseidon::note_commitment(rcm, pk, value, psi)),
-                    Tachygram::from(poseidon::pad_tachygram(rcm, pk, value, psi)),
-                )
-            };
-
-            // Two zero tachygrams collide whatever they were meant to be, and a
-            // zero root leaves the accumulator factor `(X - tg)` trivial.
-            enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
-            enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
-
-            Ok(((cm, pad, rcv.commit(-note.value)), ()))
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let amount = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|data| Fp::from(u64::from(data.0.value))),
+        )?;
+        // With the 51-bit decomposition `mul_bounded` makes of the amount, this
+        // bounds the amount by MAX_MONEY.
+        let bound = Element::constant(dr, Fp::from(MAX_MONEY));
+        let slack = bound.sub(dr, &amount);
+        gadgets::range::enforce_width::<D, 51>(dr, &slack)?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.rcm)),
+        )?;
+        let pk = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.pk)),
+        )?;
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0.psi)),
+        )?;
+        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
+        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
+        // Two zero tachygrams collide whatever they were meant to be, and a
+        // zero root leaves the set polynomial factor `(X - tg)` trivial.
+        cm.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("OutputBind: note commitment is zero".into())
         })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        pad.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
+        })?;
+        let blind_point =
+            fixed_base::R_TABLE.mul_free(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
+        let cv = fixed_base::NEG_V_TABLE.mul_bounded(dr, &amount, &blind_point)?;
+        let output = D::just(|| {
+            (
+                Tachygram::from(*cm.value().take()),
+                Tachygram::from(*pad.value().take()),
+                value::Commitment::from(cv.value().take()),
+            )
+        });
+        let fields = OutputHeaderOutput { cm, pad, cv };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

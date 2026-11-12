@@ -22,16 +22,15 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     digest::poseidon,
-    note,
-    pasta::{EpAffine, Fp},
+    gadgets, note,
+    pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
-    ragu_constraint::enforce_zero,
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -144,41 +143,56 @@ impl Step<Pasta> for SpendableInit {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let native = D::try_just(|| {
-            let (anchor_prev, _, creation_epoch) = witness.take();
-            let (cm, ..) = left.take();
-            let () = right.take();
-            let creation_hash =
-                EpAffine::from_xy(*hash_x.take(), *hash_y.take()).ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "SpendableInit: bridge hash is not on the curve".into(),
-                    )
-                })?;
-            if creation_hash.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SpendableInit: bridge hash is the identity".into(),
-                ));
-            }
-            // O1's bridge hash binds the creation set absorbed into the anchor.
-            let anchor = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(creation_epoch),
-                creation_hash,
-            ));
-            Ok((cm, (cm, creation_epoch, anchor)))
-        })?;
-        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, _)| Fp::from(cm)))?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
+        let [empty_x, empty_y] =
+            super::EMPTY_STAMP_BRIDGE_HASH.map(|coordinate| Element::constant(dr, coordinate));
+        let equal_x = oracles.bridge_hash()[0].is_equal(dr, &mut (), &empty_x)?;
+        let equal_y = oracles.bridge_hash()[1].is_equal(dr, &mut (), &empty_y)?;
+        equal_x
+            .and(dr, &equal_y)?
+            .element()
+            .enforce_zero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableInit: the stamp's tachygram set is empty".into(),
+                )
+            })?;
+        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        // The anchor immediately after the creation stamp, computed in-circuit
+        // so the proof certifies the fold of the epoch and the stamp's bridge hash;
+        // consensus membership of the eventual spend anchor binds the rest
+        // (see the step doc).
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let evaluation = oracles.query(dr, Slot::output(1), &x)?;
+        let evaluation = oracles.query(dr, Slot::output(1), &left_encoded.as_gadget().cm)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
         })?;
-        let data = native.map(|(_, output)| output);
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
+        let output = D::just(|| {
+            (
+                left.take().0,
+                witness.take().2,
+                Anchor::from(*anchor.value().take()),
+            )
+        });
+        let fields = NoteSpendableOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_current: epoch_element,
+            anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -235,47 +249,65 @@ impl Step<Pasta> for QrSpendableInit {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let native = D::try_just(|| {
-            let (
-                cm,
-                unspent_anchor_start,
-                unspent_epoch_start,
-                unspent_epoch_next,
-                unspent_anchor_next,
-            ) = left.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = right.take();
-            enforce_zero(
-                Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
-                "QrSpendableInit: segment does not start in the bucket's epoch",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
-                "QrSpendableInit: segment does not open where the bucket does",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
-                "QrSpendableInit: segment does not close where the bucket does",
-            )?;
-            let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let bucket_epoch = right_encoded.as_gadget().network.epoch.clone();
+        let unspent_epoch = left_encoded.as_gadget().epoch_start.clone();
+        bucket_epoch
+            .enforce_equal(dr, &unspent_epoch)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSpendableInit: segment does not start in the bucket's epoch".into(),
+                )
             })?;
-            // Defensive: the anchor equality already rejects a wrong epoch label.
-            enforce_zero(
-                Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
-                "QrSpendableInit: segment does not end in the epoch after the bucket's",
-            )?;
-            Ok((cm, bucket_epoch_next, unspent_anchor_next))
+        let bucket_start = right_encoded.as_gadget().network.anchor_start.clone();
+        let unspent_start = left_encoded.as_gadget().anchor_start.clone();
+        bucket_start
+            .enforce_equal(dr, &unspent_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSpendableInit: segment does not open where the bucket does".into(),
+                )
+            })?;
+        let bucket_end = right_encoded.as_gadget().network.anchor_next.clone();
+        let unspent_end = left_encoded.as_gadget().anchor_next.clone();
+        bucket_end.enforce_equal(dr, &unspent_end).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrSpendableInit: segment does not close where the bucket does".into(),
+            )
         })?;
-        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, ..)| Fp::from(cm)))?;
+        let next = gadgets::epoch::EpochIndex::successor(dr, &bucket_epoch)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+            })?
+            .into_element();
+        let unspent_next = left_encoded.as_gadget().epoch_next.clone();
+        // The anchor equality rejects a wrong epoch label only through the
+        // crossing digest's collision resistance; this ties `epoch_next` to the
+        // bucket directly.
+        next.enforce_equal(dr, &unspent_next).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "QrSpendableInit: segment does not end in the epoch after the bucket's".into(),
+            )
+        })?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.query(dr, Slot::right(0), &x)?;
+        let evaluation = oracles.query(dr, Slot::right(0), &left_encoded.as_gadget().cm)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
         })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), native.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), native, D::unit()))
+        let output = D::just(|| {
+            let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();
+            (unspent_cm, unspent_epoch_next, unspent_anchor_next)
+        });
+        let fields = NoteSpendableOutput {
+            cm: left_encoded.as_gadget().cm.clone(),
+            epoch_current: next,
+            anchor: unspent_end,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -316,7 +348,7 @@ impl Step<Pasta> for SpendableLift {
         &self,
         dr: &mut D,
         _oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -334,32 +366,47 @@ impl Step<Pasta> for SpendableLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let () = witness.take();
-            let (spendable_cm, spendable_epoch_current, spendable_anchor) = left.take();
-            let (
-                unspent_cm,
-                unspent_anchor_start,
-                unspent_epoch_start,
-                unspent_epoch_next,
-                unspent_anchor_next,
-            ) = right.take();
-            enforce_zero(
-                Fp::from(unspent_cm) - Fp::from(spendable_cm),
-                "SpendableLift: unspent cm does not match spendable",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
-                "SpendableLift: segment does not start at the lineage epoch",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
-                "SpendableLift: unspent not adjacent to spendable",
-            )?;
-            Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let spendable_cm = left_encoded.as_gadget().cm.clone();
+        let unspent_cm = right_encoded.as_gadget().cm.clone();
+        spendable_cm
+            .enforce_equal(dr, &unspent_cm)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: unspent cm does not match spendable".into(),
+                )
+            })?;
+        let spendable_epoch = left_encoded.as_gadget().epoch_current.clone();
+        let unspent_epoch = right_encoded.as_gadget().epoch_start.clone();
+        spendable_epoch
+            .enforce_equal(dr, &unspent_epoch)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: segment does not start at the lineage epoch".into(),
+                )
+            })?;
+        let spendable_anchor = left_encoded.as_gadget().anchor.clone();
+        let unspent_anchor = right_encoded.as_gadget().anchor_start.clone();
+        spendable_anchor
+            .enforce_equal(dr, &unspent_anchor)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: unspent not adjacent to spendable".into(),
+                )
+            })?;
+        let output = D::just(|| {
+            let (output_cm, ..) = left.take();
+            let (_, _, _, unspent_epoch_next, unspent_anchor_next) = right.take();
+            (output_cm, unspent_epoch_next, unspent_anchor_next)
+        });
+        let fields = NoteSpendableOutput {
+            cm: spendable_cm,
+            epoch_current: right_encoded.as_gadget().epoch_next.clone(),
+            anchor: right_encoded.as_gadget().anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

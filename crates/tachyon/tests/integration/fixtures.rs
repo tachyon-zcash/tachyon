@@ -17,12 +17,12 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
+    Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
-    digest::{blake2b, poseidon},
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     fee,
@@ -258,11 +258,11 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let left_pcd = stamp_a
         .proof
         .clone()
-        .carry::<Stamp>(Stamp::header(left_tg.commit(), stamp_a.anchor).unwrap());
+        .carry::<Stamp>((left_tg.commit().bridge().unwrap(), stamp_a.anchor));
     let right_pcd = stamp_b
         .proof
         .clone()
-        .carry::<Stamp>(Stamp::header(right_tg.commit(), stamp_b.anchor).unwrap());
+        .carry::<Stamp>((right_tg.commit().bridge().unwrap(), stamp_b.anchor));
 
     let merged_acts = descriptors_a
         .iter()
@@ -486,11 +486,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
             .collect::<Vec<_>>()
         {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(state),
-                Fp::from(witness.1),
-                witness.2.into(),
-            ));
+            let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .unwrap();
@@ -524,12 +520,8 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (
-    ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-    AnchorSetPoly,
-) {
-    let (span, members) = build_anchor_span_pcd(rng, pool, range);
-    (span, AnchorSetPoly::from_iter(members))
+) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
+    build_anchor_span_pcd(rng, pool, range).0
 }
 
 pub(crate) struct QrIntakeEntry {
@@ -1439,10 +1431,7 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) {
         let ask = self.sk.derive_auth_private();
@@ -1487,10 +1476,7 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
         Anchor,
         Note,

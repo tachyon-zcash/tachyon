@@ -193,7 +193,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "EvidenceTreeLeafPair: inputs cover different epochs"
+            if err.to_string() == "EvidenceTreeLeafPair: inputs belong to different networks"
     );
     let tree0 = build_evidence_tree(rng, vec![bucket0]).pcd;
     let tree1 = build_evidence_tree(rng, vec![bucket1]).pcd;
@@ -243,27 +243,11 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         fake_anchor_final_prev,
     );
 
-    for (left, right, complaint) in [
-        (
-            tree0.clone(),
-            tree1.clone(),
-            "inputs cover different epochs",
-        ),
-        (
-            tree0.clone(),
-            build_evidence_tree(rng, vec![foreign]).pcd,
-            "inputs derive from different discriminants",
-        ),
-        (
-            tree0,
-            build_evidence_tree(rng, vec![short]).pcd,
-            "inputs close at different anchors",
-        ),
-        (
-            tree1,
-            build_evidence_tree(rng, vec![elsewhere]).pcd,
-            "inputs open at different anchors",
-        ),
+    for (left, right) in [
+        (tree0.clone(), tree1.clone()),
+        (tree0.clone(), build_evidence_tree(rng, vec![foreign]).pcd),
+        (tree0, build_evidence_tree(rng, vec![short]).pcd),
+        (tree1, build_evidence_tree(rng, vec![elsewhere]).pcd),
     ] {
         let left_pair = PROOF_SYSTEM
             .fuse(
@@ -290,14 +274,14 @@ fn evidence_tree_joins_reject_mismatched_trees() {
                 .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == format!("EvidenceTreePairFuse: {complaint}")
+                if err.to_string() == "EvidenceTreePairFuse: inputs belong to different networks"
         );
         assert_matches!(
             PROOF_SYSTEM
                 .fuse(rng, evidence::EvidenceTreeFuse, (), left_pair, right_pair)
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == format!("EvidenceTreeFuse: {complaint}")
+                if err.to_string() == "EvidenceTreeFuse: inputs belong to different networks"
         );
     }
 }
