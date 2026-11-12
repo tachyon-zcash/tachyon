@@ -15,14 +15,16 @@ Multiple parties execute the proof tree.
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
 `NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteSecret` carrying `(cm, note, mk)`. `nk` never leaves the step.
-`NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four $\texttt{Tachyon-NfDerive}$ sponges over $(\mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
+`NullifierDerive` consumes that seed. It witnesses the window's start epoch, staged and required group-aligned with the window's last epoch at most `EPOCH_MAX`, and the window's sequence in O0.
+It runs four $\texttt{Tachyon-NfDerive}$ sponges, one per group, to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at $\zeta$ (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
 
 ### Bootstrapping a spendable
 
 A spendable starts when `SpendableInit` consumes a `NoteNullifiers`.
-It witnesses `(anchor_prev, creation_set, creation_epoch)`. It takes `cm` from the range header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, creation_epoch, anchor)` with `anchor = anchor_prev.next_stamp(creation_epoch, creation_commit)`, the position immediately after the creation stamp, advanced by each lift.
+It witnesses `(anchor_prev, creation_set, creation_epoch)` with the creation set in O1. It takes `cm` from the range header, opens O1 at `cm` for zero, so `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, creation_epoch, anchor)`.
+Its anchor, the position immediately after the creation stamp, is $\mathsf{Poseidon}_\texttt{Tachyon-AnchorSt}(\mathsf{anchor\_prev}, \mathsf{creation\_epoch}, x(B), y(B))$ for $B$ the bridge hash of O1.
 `anchor_prev` is a free witness, so the anchor binds only downstream: lift adjacency threads it to the eventual spend anchor, which consensus checks for chain membership, and a chain node's preimage fixes the real predecessor, the real creation epoch, and the real cm-stamp.
 
 ### Maintaining a spendable
@@ -96,7 +98,9 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 
 ### Fee states and flows
 
-`Actions` and `Stamp` both carry `(ActionSetCommit, TachygramSetCommit, Anchor)`, with distinct suffixes, so the pre-fee and post-fee states are proof-enforced.
+`Actions` and `Stamp` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
+`Actions` carries only its anchor. `Stamp` carries `(tachygram_set_bridge, anchor)`, where `tachygram_set_bridge` is the bridge hash of O1.
+Both hold the action set in O0 and the tachygram set in O1.
 Verification always rebuilds `Pcd<Stamp>`.
 
 ## Roles
@@ -152,6 +156,19 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 | StampLift | yes | possible | yes |
 | StampUnmerge | no | no | yes |
 
+## Proof framework
+
+Every step is one Ragu PCD step: it reads two input PCDs, left and right, and emits one output PCD. A step with fewer inputs takes the unit header in the unused position.
+A header carries only field elements, with a point given as its two affine coordinates.
+No header carries a polynomial commitment.
+Each PCD also carries two online polynomials in slots O0 and O1, and a step reads its inputs' slots as L0/L1 and R0/R1.
+The framework derives one challenge $\zeta$ per step, bound to both input headers, all six slot commitments, and the step's staged values.
+A step stages a witnessed scalar to fix it before $\zeta$.
+The challenge is not bound to the output header.
+A step checks a relation between slots by opening them at $\zeta$, or at a scalar fixed before $\zeta$: an input header field or a staged value.
+The bridge hash, written $x(B), y(B)$ by coordinates, is a Pallas point derived from O1's commitment.
+A slot a step does not fill holds the constant 1, the default of `Step::polynomials`. No constraint holds an unfilled slot to 1 at this ragu revision, so a consumer relies only on slots the producing step constrains.
+
 ## Soundness
 
 The subsections below walk each subtree bottom-up.
@@ -181,7 +198,7 @@ Its witness is the caller's stated action set, which becomes the output action s
 An `ArbitraryUnspent` covers `[anchor_start, anchor_next)`, from the entry anchor of `epoch_start` up to the entry anchor of `epoch_next`, plus `elapsed`: the product of one indexed cubic factor per epoch in `[epoch_start, epoch_next)`[^nullifiers].
 Each (anchor, epoch) pair names one boundary. The excluded bound belongs to the next epoch, whose nullifier the segment does not test.
 Each factor carries its own epoch, so the product is a multiset of `(epoch, nullifier)` pairs and needs no degree pin. Every producer holds the two properties that `UnspentBind` relies on: each factor's epoch lies in `[epoch_start, epoch_next)`, and each such epoch has exactly one factor.
-`QrUnspentInit` is the only seed. It pins its one-factor product against the value it tests, at a challenge absorbing the sequence commitment and a scalar-binding point of the value.
+`QrUnspentInit` is the only seed. It pins its one-factor product against the value it tests, at $\zeta$, with the value staged before $\zeta$.
 `UnspentFuse` composes two segments on one boundary (`left.anchor_next == right.anchor_start`, `left.epoch_next == right.epoch_start`), confirming
 
 $$C(X) = L(X) \cdot R(X)$$
@@ -190,13 +207,13 @@ for the witnessed `combined` $C$, left $L$, and right $R$. The halves hold disjo
 
 `UnspentLift` appends one epoch in one step. Its bucket starts on the segment's excluded bound (`unspent.anchor_next == bucket.anchor_start`, `unspent.epoch_next == bucket.epoch`), it tests a value against the bucket exactly as `QrUnspentInit` does, and it confirms
 $$E(X) = P(X) \cdot F_{(\mathsf{epoch\_next},\, x)}(X)$$
-for the witnessed `extended` $E$, the header-bound `elapsed` $P$, and the one factor of the tested pair, at a challenge absorbing both sequences and the value's scalar-binding point. The new factor's epoch is `epoch_next`, which the step advances by one, so both properties hold.
+for the witnessed `extended` $E$, the input's `elapsed` $P$ in L0, and the one factor of the tested pair, at $\zeta$, after both sequences are committed and the value is staged. The new factor's epoch is `epoch_next`, which the step advances by one, so both properties hold.
 
 ### Summaries
 
-A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs the same commitments.
-`SummarySeed` performs the same fold as `AnchorSpanSeed`, and also puts the stamp's tachygram-set commitment on its header.
-`SummaryAdvance` binds the witnessed accumulator to the header by commit-equality, checks `extended = acc * stamp` at a challenge, and advances `anchor_end` by the same `stamp.commit()`.
+A `Summary` carries `(epoch, anchor_prev, anchor_end)` with the accumulator in O0: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
+`SummarySeed` places one stamp's tachygram set in O0 and O1 and checks them equal at $\zeta$. It folds O1's bridge hash into `anchor_end` with the same $\texttt{Tachyon-AnchorSt}$ fold `AnchorSpanSeed` applies to its own O1's bridge hash.
+`SummaryAdvance` takes the next stamp's set in O1, checks at $\zeta$ that O0 is the input accumulator L0 times O1, and advances `anchor_end` by O1's bridge hash.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
 No step joins two summaries directly: each enters through `QrSummaryIntake`, and `QrIntakeMerge` joins the intakes when the first's `anchor_end` meets the second's `anchor_prev`.
@@ -226,7 +243,7 @@ $$R = R_0 + \mathsf{depth}$$
 
 Split puts the residue polynomial in O0 and the non-residue polynomial q0 in O1, and records O1's bridge hash in `QrIntakeSides`.
 `QrSideSelect` copies the split's scalar metadata and that hash, and fixes the interpolant and quotient in `QrSideSelection`'s O0/O1 slots.
-It checks its non-residue witness against the split's L1 slot and checks the exceptional-value assignment:
+It opens the split's L1 slot at $-R$ and requires the opening to be nonzero, which is the exceptional-value assignment:
 
 $$q_0(-R) \neq 0$$
 
@@ -282,7 +299,7 @@ $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m
 since among boolean vectors of weight $d$ only the leading positions attain the minimum index sum; positions past $d$ are tested but compared to nothing.
 A bucket matching $x$'s profile contains every occurrence of $x$ in its span, so opening its contents nonzero at $x$ proves absence over that span.
 The emitted segment takes the bucket's extent, with epochs $[\mathsf{epoch}, \mathsf{epoch} + 1)$, and its one member is $(\mathsf{epoch}, x)$. Consecutive epochs' segments meet on the entry anchor of $\mathsf{epoch} + 1$ and `UnspentFuse` composes them directly.
-The sequence's one member is checked at a challenge absorbing $G_0 \cdot x$; the sequence and the contents are the step's two oracles.
+The sequence's one member is checked at $\zeta$, with $x$ staged; the sequence and the contents are the step's two oracles.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable on the segment's `(epoch_next, anchor_next)`, the next epoch's entry anchor.
@@ -293,9 +310,9 @@ Membership needs no profile: every bucket divides the epoch's stamp polynomials,
 A bucket is complete evidence on its own, so a builder needs every bucket's proof only until it has something that vouches for them all at once.
 `EvidenceTreeLeafPair` admits two sealed buckets at once, hashing each bucket header into a leaf digest,
 
-$$\mathsf{root} = H_\mathsf{bkt}(e, \mathsf{anchor_{start}}, \mathsf{anchor_{next}}, R_0, \mathsf{depth}, \mathsf{bits}, \mathsf{contents}),$$
+$$\mathsf{root} = H_\mathsf{bkt}(e, \mathsf{anchor_{start}}, \mathsf{anchor_{next}}, R_0, \mathsf{depth}, \mathsf{bits}, x(D), y(D)),$$
 
-and emitting the two under one half-assembled node.
+for $D$ the bridge hash of the bucket's contents (`contents_hash`), and emitting the two under one half-assembled node.
 Admitting two at a time is what holds a tree over `n` buckets to `n - 1` steps: every step reads at most two proofs and emits one, so `n` proofs reach one root in at least `n - 1`, and only a step that consumes two moves toward that bound.
 A tree therefore starts at four leaves. A builder short of four repeats a bucket, which is a bucket the tree holds twice and no step forbids. A builder holding one bucket needs no tree: it serves that bucket's own proof, and a consumer cannot tell a sealed bucket from a replayed one.
 
@@ -316,7 +333,8 @@ Binding the profile into the leaf is what makes the replay safe: a real bucket's
 Leaf and node digests use different domains, $\texttt{Tachyon-QrBucket}$ and $\texttt{Tachyon-EvidNode}$, so no path can stop one level short and present a node as a bucket.
 
 A leaf digest absorbs eight elements, two permutations at rate four. A node absorbs four, one permutation.
-No evidence step multiplies a point or opens a polynomial:
+No evidence step multiplies a point. Only `EvidenceTreeOpen` opens polynomials, to check its two output slots are equal at $\zeta$.
+Permutations per step:
 
 | Step | Permutations |
 | ---- | ------------ |
@@ -334,17 +352,17 @@ Two builders, or one builder at two times, may therefore publish different trees
 ### Derivation window
 
 `NoteSeed` is the only seed. It binds the master key to the note: deriving `pk` from `pak` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
-`NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at a fresh challenge $z$:
+`NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at $\zeta$:
 
-$$g(z) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(z)$$
+$$g(\zeta) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(\zeta)$$
 
-for $K$ the window width. The sequence is committed before $z$ exists, and every factor's scalars are pinned in-circuit: each epoch index is `epoch_start` plus a constant, and each nullifier is a sponge output of the threaded `mk`. `epoch_start` is a free witness constrained group-aligned in-step, pinned by the header it produces because it is emitted on the header directly.
-`NullifierFuse` binds both sequences and their product by commit-equality and confirms $M(X) = L(X) \cdot R(X)$, requiring the same `cm` and contiguity, which keeps the product squarefree.
+for $K$ the window width. The sequence is committed before $\zeta$ exists, and every factor's scalars are pinned in-circuit: each epoch index is `epoch_start` plus a constant, and each nullifier is a sponge output of the threaded `mk`. `epoch_start` is a free witness required group-aligned in-step and staged before $\zeta$, and it is pinned by the header it produces because it is emitted on the header directly.
+`NullifierFuse` checks at $\zeta$ that its output slot is the product of the two input slots, $M(X) = L(X) \cdot R(X)$, requiring the same `cm` and contiguity, which keeps the product squarefree.
 
 ### Binding unspent to derivation
 
 `UnspentBind` consumes the sync's `ArbitraryUnspent` and any `NoteNullifiers`, comparing no bounds against the unspent span.
-It binds `elapsed` and the derivation's sequence $g$ to their headers by commit-equality, then confirms the divisibility
+It reads `elapsed` from L0 and the derivation's sequence $g$ from R0, witnesses the complement in O0, and confirms at $\zeta$ the divisibility
 
 $$g(X) = \texttt{elapsed}(X) \cdot \texttt{complement}(X)$$
 
@@ -376,6 +394,7 @@ Spending a note publishes two nullifiers, one for the current epoch and one for 
 It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
 `SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
+It rejects a value above `MAX_MONEY` and a spend in the final epoch, which has no next epoch for the second nullifier.
 The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with the note's `pk` and `cv`.
 
 `NoteSeed` computed the secret's `cm` from its note, so `secret.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
@@ -511,9 +530,9 @@ The single `SpendableLift` consumes one composed `NoteUnspent` (potentially cros
 ```mermaid
 flowchart LR
   sh_in((Stamp))
-  w_span[/anchor_start, epoch, stamp_hash/]
+  w_span[/anchor_start, epoch, stamp/]
   s_span[AnchorSpanSeed]
-  w_next[/anchor_start, epoch, stamp_hash/]
+  w_next[/anchor_start, epoch, stamp/]
   s_next[AnchorSpanSeed]
   w_spanfuse[/combined/]
   s_spanfuse[AnchorSpanFuse]
@@ -564,31 +583,35 @@ flowchart LR
 
 ## Headers
 
-| Header | Fields |
-| ------ | ------ |
-| AnchorSpan | (anchor_start, members, anchor_end) |
-| Summary | (epoch, anchor_prev, anchor_end, acc_commit) |
-| QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
-| QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash); slots: residue, non_residue |
-| QrSideSelection | copied QrIntakeSides scalar fields; slots: interpolant, quotient |
-| QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
-| EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) |
-| EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
-| ArbitraryUnspent | (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) |
-| NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) |
-| NoteSecret | (cm, note, mk) |
-| NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
-| NoteSpendable | (cm, epoch_current, anchor) |
-| OutputHeader | (cm, pad, cv) |
-| SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) |
-| Actions | (action_commit, tachygram_set_bridge, anchor) |
-| Stamp | (action_commit, tachygram_set_bridge, anchor) |
+| Header | Fields | Slots |
+| ------ | ------ | ----- |
+| AnchorSpan | (anchor_start, anchor_end) | O0: members |
+| Summary | (epoch, anchor_prev, anchor_end) | O0: accumulator |
+| QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | O0: contents |
+| QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | O0: residue; O1: non_residue |
+| QrSideSelection | QrIntakeSides fields, including non_residue_hash | O0: interpolant; O1: quotient |
+| QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents_hash) | O0, O1: contents |
+| EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) | — |
+| EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) | — |
+| ArbitraryUnspent | (anchor_start, epoch_start, epoch_next, anchor_next) | O0: elapsed |
+| NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) | — |
+| NoteSecret | (cm, note, mk) | — |
+| NoteNullifiers | (cm, epoch_start, epoch_end) | O0: nullifier sequence |
+| NoteSpendable | (cm, epoch_current, anchor) | — |
+| OutputHeader | (cm, pad, cv) | — |
+| SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) | — |
+| Actions | (anchor) | O0: action set; O1: tachygram set |
+| Stamp | (tachygram_set_bridge, anchor) | O0: action set; O1: tachygram set |
+
+Slots lists the polynomials consumers read; — marks a header whose slots no consumer reads. A producer may still put a polynomial in a slot not listed: `AnchorSpanSeed` and `QrStampIntakeSeed` keep the stamp's tachygram set in O1, `SpendableInit` keeps the creation set in O1 of its `NoteSpendable`, `UnspentBind` keeps the complement in O0 of its `NoteUnspent`, and a `Summary` keeps the last folded stamp's set in O1.
+
+`contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's O1. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's O1, not of the selection's own.
 
 ## Steps
 
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
-| AnchorSpanSeed | — | — | anchor_start, epoch, stamp_hash | AnchorSpan |
+| AnchorSpanSeed | — | — | anchor_start, epoch, stamp | AnchorSpan |
 | AnchorSpanFuse | AnchorSpan | AnchorSpan | combined | AnchorSpan |
 | SummarySeed | — | — | anchor_prev, epoch, stamp | Summary |
 | SummaryAdvance | Summary | — | extended, stamp | Summary |
