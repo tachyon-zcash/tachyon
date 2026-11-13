@@ -826,7 +826,11 @@ impl Step<Pasta> for UnspentBind {
             &Slot::right(0),
             "UnspentBind: sequence does not match the derivation",
         )?;
-        let output = D::try_just(|| {
+        // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
+        // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
+        // of a range-checked epoch, and `UnspentFuse` joins halves at an equal
+        // epoch.
+        let data = D::just(|| {
             let (
                 unspent_anchor_start,
                 unspent_epoch_start,
@@ -834,29 +838,14 @@ impl Step<Pasta> for UnspentBind {
                 unspent_anchor_next,
             ) = left.take();
             let (nullifiers_cm, ..) = right.take();
-            // Defensive. `QrUnspentInit` emits `epoch_next = epoch_start + 1`, and
-            // every other producer only raises `epoch_next`, so every
-            // `ArbitraryUnspent` covers at least one epoch.
-            // TODO: a real circuit needs a range decomposition of
-            // `epoch_next - epoch_start`; mock ragu accepts the native comparison.
-            if unspent_epoch_next <= unspent_epoch_start {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "UnspentBind: segment covers no epoch".into(),
-                ));
-            }
-
-            Ok((
-                (
-                    nullifiers_cm,
-                    unspent_anchor_start,
-                    unspent_epoch_start,
-                    unspent_epoch_next,
-                    unspent_anchor_next,
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
+            (
+                nullifiers_cm,
+                unspent_anchor_start,
+                unspent_epoch_start,
+                unspent_epoch_next,
+                unspent_anchor_next,
+            )
+        });
         let fields = NoteUnspentOutput {
             cm: right_encoded.as_gadget().cm.clone(),
             anchor_start,
@@ -867,7 +856,7 @@ impl Step<Pasta> for UnspentBind {
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
-            aux,
+            D::unit(),
         ))
     }
 }
