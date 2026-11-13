@@ -22,16 +22,17 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     collections::indexed_multiset,
     constants::EPOCH_MAX,
-    keys::{NoteMasterKey, ProofAuthorizingKey},
+    digest::poseidon,
+    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::Fp,
+    pasta::{EpAffine, Fp},
     primitives::{EpochIndex, NfSeqPoly},
     ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_product,
@@ -214,20 +215,57 @@ impl Step<Pasta> for NoteSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let value = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(u64::from(data.0))),
+        )?;
+        let psi = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let rcm = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
+        rcm.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("NoteSeed: commitment trapdoor is zero".into())
+        })?;
+        let nk = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.3.nk)),
+        )?;
+        let ak_assignment = D::try_just(|| {
+            let bytes: [u8; 32] = witness.as_ref().take().3.ak.0.into();
+            EpAffine::from_bytes(bytes).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("NoteSeed: invalid ak encoding".into())
+            })
+        })?;
+        let ak = Point::alloc(dr, ak_assignment)?;
+        let pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
+        let mk = poseidon::circuit::nf_master(dr, &psi, &nk)?;
+        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &value, &psi)?;
         let output = D::try_just(|| {
-            let (value, psi, rcm, pak) = witness.take();
+            let (note_value, note_psi, note_rcm, _) = witness.take();
             let note = Note {
-                pk: pak.derive_payment_key(),
-                value,
-                psi,
-                rcm,
+                pk: PaymentKey::from(*pk.value().take()),
+                value: note_value,
+                psi: note_psi,
+                rcm: note_rcm,
             };
-            let mk = pak.nk.derive_note_private(note.psi);
-            let cm = note.commitment();
-            Ok(((cm, note, mk), ()))
+            Ok((
+                (
+                    note::Commitment::from(*cm.value().take()),
+                    note,
+                    NoteMasterKey(*mk.value().take()),
+                ),
+                (),
+            ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let encoded = Encoded::from_gadget(NoteSecretOutput {
+            cm,
+            rcm,
+            pk,
+            value,
+            psi,
+            mk,
+        });
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -326,7 +364,7 @@ impl Step<Pasta> for NullifierDerive {
         )]
         let native = D::try_just(|| {
             let (epoch_start, seq) = witness.take();
-            let (cm, _note, mk) = left.take();
+            let (cm, _note, _mk) = left.take();
             let () = right.take();
             enforce_zero(
                 Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
@@ -352,10 +390,8 @@ impl Step<Pasta> for NullifierDerive {
                     )
                 })?;
 
-            // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
-            let nullifiers = mk.derive_window(epoch_start);
             let output = (cm, epoch_start, epoch_end);
-            Ok((seq, output, nullifiers))
+            Ok((seq, output))
         })?;
         let epoch_start = Element::alloc(
             dr,
@@ -367,6 +403,20 @@ impl Step<Pasta> for NullifierDerive {
             reason = "the framework enforces NUM_STAGED = 1"
         )]
         epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
+        let mut nullifiers = Vec::with_capacity(NF_DERIVATION_WIDTH);
+        #[expect(
+            clippy::integer_division,
+            clippy::integer_division_remainder_used,
+            clippy::as_conversions,
+            reason = "fixed window and sponge rate"
+        )]
+        for group in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
+            let offset = Element::constant(dr, Fp::from((group * PoseidonFp::RATE) as u64));
+            let group_start = epoch_start.add(dr, &offset);
+            let outputs =
+                poseidon::circuit::nullifier_group(dr, &left_encoded.as_gadget().mk, &group_start)?;
+            nullifiers.extend(outputs);
+        }
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let output = native.as_ref().map(|result| result.1);
@@ -375,9 +425,10 @@ impl Step<Pasta> for NullifierDerive {
         // sponge-derived nullifiers and their epochs.
         let window_at_z = D::try_just(|| {
             let challenge = z_value.take();
-            let (_, output_data, nullifiers) = native.take();
+            let (_, output_data) = native.take();
             Ok(indexed_multiset::direct_eval(
-                (output_data.1.into()..).zip(nullifiers.map(Fp::from)),
+                (output_data.1.into()..)
+                    .zip(nullifiers.into_iter().map(|item| *item.value().take())),
                 challenge,
             ))
         })?;
@@ -390,6 +441,10 @@ impl Step<Pasta> for NullifierDerive {
                 )
             })?;
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
+        encoded
+            .as_gadget()
+            .epoch_start
+            .enforce_equal(dr, &epoch_start)?;
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
 }

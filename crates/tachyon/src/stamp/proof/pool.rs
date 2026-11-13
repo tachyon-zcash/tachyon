@@ -48,7 +48,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetBridge, TachygramSetCommit,
+        TachygramSetPoly,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -259,8 +259,8 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Left = ();
     type Output = AnchorSpan;
     type Right = ();
-    /// `(anchor_start, epoch, stamp_hash)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetBridge);
+    /// `(anchor_start, epoch, stamp)`
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(31);
 
@@ -270,17 +270,16 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-            Fp::from(witness.0),
-            Fp::from(witness.1),
-            witness.2.into(),
-        ));
+        let anchor_end = witness
+            .0
+            .next_stamp(witness.1, &witness.2.commit())
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok([
             AnchorSetPoly::from_iter([anchor_end])
                 .as_ref()
                 .iter_coeffs()
                 .collect(),
-            alloc::vec![Fp::ONE],
+            witness.2.as_ref().iter_coeffs().collect(),
         ])
     }
 
@@ -306,32 +305,48 @@ impl Step<Pasta> for AnchorSpanSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (anchor_start, epoch, stamp_hash) = witness.take();
-            if stamp_hash == TachygramSetCommit::default().bridge()? {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "invalid anchor step".into(),
-                ));
-            }
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_start),
-                Fp::from(epoch),
-                stamp_hash.into(),
-            ));
-
-            Ok(((anchor_start, anchor_end), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let header = encoded.as_gadget();
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let [empty_x, empty_y] =
+            super::EMPTY_STAMP_BRIDGE_HASH.map(|coordinate| Element::constant(dr, coordinate));
+        let equal_x = oracles.bridge_hash()[0].is_equal(dr, &mut (), &empty_x)?;
+        let equal_y = oracles.bridge_hash()[1].is_equal(dr, &mut (), &empty_y)?;
+        equal_x
+            .and(dr, &equal_y)?
+            .element()
+            .enforce_zero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "AnchorSpanSeed: the stamp's tachygram set is empty".into(),
+                )
+            })?;
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         enforce_poly_roots(
             dr,
             oracles,
             &Slot::output(0),
-            array::from_ref(&header.anchor_end),
+            array::from_ref(&anchor),
             "AnchorSpanSeed: members must contain the resulting anchor",
         )?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let data = D::just(|| {
+            let (anchor_start, ..) = witness.take();
+            (anchor_start, Anchor::from(*anchor.value().take()))
+        });
+        let fields = AnchorSpanOutput {
+            anchor_start: previous,
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
 
