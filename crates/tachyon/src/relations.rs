@@ -1,7 +1,6 @@
 //! The relations the proof system enforces.
 //!
-//! [`enforce`] is the in-circuit constraint side. Every relation takes a
-//! driver and `Oracles`, and opens fixed slots at the framework's challenge
-//! to check the identity point-wise.
+//! [`enforce`] checks polynomial identities by opening fixed slots at the
+//! framework's challenge through a driver and `Oracles`.
 
 pub(crate) mod enforce;

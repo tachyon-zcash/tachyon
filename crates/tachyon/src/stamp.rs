@@ -41,9 +41,7 @@ use crate::{
     fee,
     keys::{ProofAuthorizingKey, private},
     pasta::{Eq, Fp},
-    primitives::{
-        ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
-    },
+    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, TachygramSetCommit},
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
@@ -575,10 +573,7 @@ impl Plan {
         spend_pcds: Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         if self.actions.spends.is_empty() && self.actions.outputs.is_empty() {
@@ -661,10 +656,7 @@ impl ActionsPlan {
         spend_pcds: Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ActionsProof, ProveError> {
         let mut entries: Vec<ActionsProof> =
@@ -686,7 +678,7 @@ impl ActionsPlan {
         {
             let reached = spans
                 .last()
-                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().1);
+                .map_or_else(|| spendable_pcd.data().2, |last| last.data().1);
             if reached != self.anchor {
                 return Err(ProveError::MissingPcd(
                     format!("spend {index} does not reach the plan's anchor").into(),
@@ -708,7 +700,7 @@ impl ActionsPlan {
             let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak.ok_or(ProveError::MissingKey)?)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
-            for (span, _members) in spans {
+            for span in spans {
                 stamp_pcd = PROOF_SYSTEM
                     .fuse(rng, ActionLift, (), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
@@ -1242,9 +1234,9 @@ impl ProofStamp<Uncompressed> {
         ))
     }
 
-    /// Advances the stamp's anchor along `spans`, each paired with its members
-    /// polynomial. The first span must contain the stamp's anchor, and each
-    /// later span must contain the previous span's `anchor_end`.
+    /// Advances the stamp's anchor along `spans`. The first span must contain
+    /// the stamp's anchor, and each later span must contain the previous span's
+    /// `anchor_end`.
     ///
     /// # Errors
     ///
@@ -1255,10 +1247,7 @@ impl ProofStamp<Uncompressed> {
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -1273,7 +1262,7 @@ impl ProofStamp<Uncompressed> {
                 .map_err(ProveError::ProofFailed)?,
             self.anchor,
         ));
-        for (span, _members) in spans {
+        for span in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -1315,10 +1304,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-            AnchorSetPoly,
-        )>,
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()
