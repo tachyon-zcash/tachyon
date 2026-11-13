@@ -15,7 +15,7 @@ Multiple parties execute the proof tree.
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
 `NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteSecret` carrying `(cm, note, mk)`. `nk` never leaves the step.
-`NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four $\texttt{Tachyon-NfDerive}$ sponges over $(\mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
+`NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four $\texttt{Tachyon-NfDerive}$ circuit sponges over $(\mathsf{mk}, w)$ to squeeze the window's 16 nullifiers, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
 
@@ -336,11 +336,12 @@ Two builders, or one builder at two times, may therefore publish different trees
 ### Derivation window
 
 `NoteSeed` is the only seed. It binds the master key to the note: deriving `pk` from `pak` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
-`NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at a fresh challenge $z$:
+`NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers in-circuit, and binds the witnessed sequence to them at a fresh challenge $z$:
 
 $$g(z) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(z)$$
 
 for $K$ the window width, with $z = \zeta$ and the sequence in O0. Each epoch index is `epoch_start` plus a constant, and each nullifier is a sponge output of the threaded `mk`. The free `epoch_start` is staged before $\zeta$, checked against that staged value and constrained group-aligned in-step, and emitted on the header.
+The circuit evaluates each factor as $F_{i,m}(z) = (m + (i+1)z)^3 - c$ using the indexed encoding's non-residue $c$, and multiplies those evaluations. `QrUnspentInit` and `UnspentLift` use the same circuit member evaluator for their bucket epoch and staged tested value; none of these steps accepts a freely witnessed expected evaluation.
 `NullifierFuse` checks `L0 * R0 = O0` at $\zeta$, requiring the same `cm` and contiguity, which keeps the product squarefree.
 
 ### Binding unspent to derivation
@@ -353,6 +354,7 @@ $$g(X) = \texttt{elapsed}(X) \cdot \texttt{complement}(X)$$
 where the witnessed complement holds the derivation's factors outside the lineage. Every factor is irreducible, so divisibility is multiset containment: each `elapsed` factor, its epoch included, is a genuine derived pair, and an epoch the derivation lacks has no factor to divide out.
 With the provenance properties above, every epoch of the span was therefore tested with its own genuine nullifier.
 The derivation's `cm` is stamped onto the `NoteUnspent`.
+There is no separate native nonempty-span recheck: `QrUnspentInit` establishes a segment ending at its range-checked epoch's successor, `UnspentLift` extends to another such successor, and `UnspentFuse` joins segments at equal epochs.
 
 ### Spendable lineage
 
@@ -376,6 +378,7 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
 `SpendBind` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
 It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
+The circuit range-checks $e$ and its successor. For each epoch it constrains the two low bits, clears them to obtain the group start, runs the master-key sponge, and selects the group's corresponding nullifier with those bits.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
 `SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
 The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with the note's `pk` and `cv`.
