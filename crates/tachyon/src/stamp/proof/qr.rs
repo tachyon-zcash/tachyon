@@ -43,7 +43,7 @@ use super::{
 };
 pub use crate::collections::qr::classify;
 use crate::{
-    collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
+    collections::qr::QUADRATIC_NON_RESIDUE,
     digest::poseidon,
     gadgets,
     pasta::{EpAffine, Fp},
@@ -1403,16 +1403,11 @@ impl Step<Pasta> for QrUnspentInit {
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let challenge = z.value().map(|value| *value);
-        let expected = D::try_just(|| {
-            let &(value, ..) = witness.as_ref().take();
-            let &(bucket_epoch, ..) = left.as_ref().take();
-            Ok(indexed_multiset::direct_eval(
-                [(u64::from(bucket_epoch), Fp::from(value))],
-                challenge.take(),
-            ))
-        })?;
-        let expected_sequence = Element::alloc(dr, &mut (), expected)?;
+        let expected_sequence = gadgets::indexed_multiset::Member {
+            index: (*bucket.epoch).clone(),
+            value: value_element.clone(),
+        }
+        .eval(dr, &z)?;
         sequence_at_z
             .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {
