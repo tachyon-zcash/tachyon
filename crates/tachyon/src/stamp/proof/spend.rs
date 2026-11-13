@@ -17,7 +17,6 @@ use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    constants::MAX_MONEY,
     gadgets::fixed_base,
     keys::PaymentKey,
     note,
@@ -180,24 +179,18 @@ impl Step<Pasta> for SpendBind {
             .value
             .to_bits(dr)
             .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
-            if u64::from(note.value) > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SpendBind: note value exceeds maximum".into(),
-                ));
-            }
-
-            Ok((
+            (
                 spendable_cm,
                 Nullifier::from(*nf_current.value().take()),
                 Nullifier::from(*nf_next.value().take()),
                 anchor,
                 note.pk,
                 value::Commitment::from(cv.value().take()),
-            ))
-        })?;
+            )
+        });
         let fields = SpendHeaderOutput {
             cm: spendable.cm.clone(),
             nf_current,
