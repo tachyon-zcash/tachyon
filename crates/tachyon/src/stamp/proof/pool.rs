@@ -794,7 +794,12 @@ impl Step<Pasta> for UnspentBind {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let unspent = left_encoded.as_gadget();
+        let ArbitraryUnspentOutput {
+            anchor_start,
+            epoch_start,
+            epoch_next,
+            anchor_next,
+        } = left_encoded.as_gadget().clone();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
@@ -829,10 +834,10 @@ impl Step<Pasta> for UnspentBind {
         });
         let fields = NoteUnspentOutput {
             cm: right_encoded.as_gadget().cm.clone(),
-            anchor_start: unspent.anchor_start.clone(),
-            epoch_start: unspent.epoch_start.clone(),
-            epoch_next: unspent.epoch_next.clone(),
-            anchor_next: unspent.anchor_next.clone(),
+            anchor_start,
+            epoch_start,
+            epoch_next,
+            anchor_next,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

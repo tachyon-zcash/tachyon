@@ -17,7 +17,11 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};
 
-use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
+use super::{
+    output::OutputHeader,
+    pool::{AnchorSpan, AnchorSpanOutput},
+    spend::{SpendHeader, SpendHeaderOutput},
+};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     digest::poseidon,
@@ -356,7 +360,14 @@ impl Step<Pasta> for SpendAction {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let spend = left_encoded.as_gadget();
+        let SpendHeaderOutput {
+            cm,
+            nf_current,
+            nf_next,
+            pk,
+            cv,
+            ..
+        } = left_encoded.as_gadget().clone();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let ak_assignment = D::try_just(|| {
             let &(_, pak, ..) = witness.as_ref().take();
@@ -372,13 +383,13 @@ impl Step<Pasta> for SpendAction {
             witness.as_ref().map(|&(_, pak, ..)| Fp::from(pak.nk)),
         )?;
         let derived_pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
-        spend.pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
+        pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
         })?;
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
-        let alpha = poseidon::circuit::alpha_spend(dr, &theta, &spend.cm)?;
+        let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
-        let action_root = poseidon::circuit::action_digest(dr, &spend.cv, &rk)?;
+        let action_root = poseidon::circuit::action_digest(dr, &cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
         action_root.enforce_equal(dr, staged_root)?;
@@ -398,12 +409,12 @@ impl Step<Pasta> for SpendAction {
             dr,
             oracles,
             &Slot::output(1),
-            &[spend.nf_current.clone(), spend.nf_next.clone()],
+            &[nf_current, nf_next],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
         let output = left.map(|(_, _, _, anchor, ..)| anchor);
         let fields = ActionsOutput {
-            anchor: spend.anchor.clone(),
+            anchor: left_encoded.as_gadget().anchor.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -663,12 +674,15 @@ impl Step<Pasta> for StampLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let span = right_encoded.as_gadget();
+        let AnchorSpanOutput {
+            anchor_start,
+            anchor_end,
+        } = right_encoded.as_gadget().clone();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = left_encoded.as_gadget().anchor.clone();
+        let StampOutput { anchor, .. } = left_encoded.as_gadget().clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &span.anchor_start);
+        let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
@@ -682,7 +696,7 @@ impl Step<Pasta> for StampLift {
             (stamp_bridge, span_anchor_end)
         });
         let encoded = Encoded::from_gadget(StampOutput {
-            anchor: span.anchor_end.clone(),
+            anchor: anchor_end,
             tachygram_set_bridge: oracles.bridge_hash().clone(),
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
@@ -739,21 +753,22 @@ impl Step<Pasta> for ActionLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let span = right_encoded.as_gadget();
+        let AnchorSpanOutput {
+            anchor_start,
+            anchor_end,
+        } = right_encoded.as_gadget().clone();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = left_encoded.as_gadget().anchor.clone();
+        let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &span.anchor_start);
+        let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "ActionLift: actions anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let fields = ActionsOutput {
-            anchor: span.anchor_end.clone(),
-        };
+        let fields = ActionsOutput { anchor: anchor_end };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             right.map(|(_, span_anchor_end)| span_anchor_end),
@@ -899,7 +914,7 @@ impl Step<Pasta> for FeeFuse {
                 .enforce_equal(dr, &expected)
                 .map_err(|_err| ragu_core::Error::InvalidWitness(err.into()))?;
         }
-        let anchor = left_encoded.as_gadget().anchor.clone();
+        let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let data = D::try_just(|| {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {

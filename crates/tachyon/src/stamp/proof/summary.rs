@@ -226,7 +226,11 @@ impl Step<Pasta> for SummaryAdvance {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let summary = left_encoded.as_gadget();
+        let SummaryOutput {
+            epoch,
+            anchor_prev,
+            anchor_end,
+        } = left_encoded.as_gadget().clone();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let z = oracles.zeta().clone();
         let accumulator_at_z = oracles.query(dr, Slot::left(0), &z)?;
@@ -247,12 +251,8 @@ impl Step<Pasta> for SummaryAdvance {
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         // The epoch is in range: `SummarySeed` range-checks it and every
         // `SummaryAdvance` carries it unchanged.
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &summary.anchor_end,
-            &summary.epoch,
-            oracles.bridge_hash(),
-        )?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &anchor_end, &epoch, oracles.bridge_hash())?;
         let output = D::just(|| {
             let (summary_epoch, summary_anchor_prev, ..) = left.take();
             (
@@ -262,8 +262,8 @@ impl Step<Pasta> for SummaryAdvance {
             )
         });
         let fields = SummaryOutput {
-            epoch: summary.epoch.clone(),
-            anchor_prev: summary.anchor_prev.clone(),
+            epoch,
+            anchor_prev,
             anchor_end: anchor,
         };
         Ok((
