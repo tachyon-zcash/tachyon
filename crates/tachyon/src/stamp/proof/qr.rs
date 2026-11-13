@@ -1403,8 +1403,11 @@ impl Step<Pasta> for QrUnspentInit {
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let expected_sequence =
-            gadgets::indexed_multiset::member(dr, &value_element, &bucket.epoch, &z)?;
+        let expected_sequence = gadgets::indexed_multiset::Member {
+            index: (*bucket.epoch).clone(),
+            value: value_element.clone(),
+        }
+        .eval(dr, &z)?;
         sequence_at_z
             .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {

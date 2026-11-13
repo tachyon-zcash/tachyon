@@ -389,7 +389,11 @@ impl Step<Pasta> for NullifierDerive {
         // sponge keyed on its group's first epoch.
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk.element, &index)? {
-                let factor = gadgets::indexed_multiset::member(dr, &nullifier, &index, &z)?;
+                let factor = gadgets::indexed_multiset::Member {
+                    index: index.clone(),
+                    value: nullifier,
+                }
+                .eval(dr, &z)?;
                 window_at_z = window_at_z.mul(dr, &factor)?;
                 index = index.add(dr, &one);
             }
