@@ -244,25 +244,8 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         &[fee::Descriptor],
     ),
 ) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
-    let left_tg = stamp_a
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-    let right_tg = stamp_b
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-
-    let left_pcd = stamp_a
-        .proof
-        .clone()
-        .carry::<Stamp>((left_tg.commit().bridge().unwrap(), stamp_a.anchor));
-    let right_pcd = stamp_b
-        .proof
-        .clone()
-        .carry::<Stamp>((right_tg.commit().bridge().unwrap(), stamp_b.anchor));
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>(stamp_a.anchor);
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>(stamp_b.anchor);
 
     let merged_acts = descriptors_a
         .iter()

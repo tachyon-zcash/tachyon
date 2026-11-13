@@ -631,9 +631,6 @@ fn fee_seed_binds_its_singletons_and_header() {
         assert_eq!(proof.verify(rng, header).unwrap(), expected);
         assert_eq!(compressed.verify(rng, header).unwrap(), expected);
     }
-    let pcd = seed_pcd
-        .proof()
-        .clone()
-        .carry::<Stamp>((valid.3.commit().bridge().unwrap(), anchor));
+    let pcd = seed_pcd.proof().clone().carry::<Stamp>(anchor);
     assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
 }

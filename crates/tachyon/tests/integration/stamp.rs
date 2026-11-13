@@ -320,7 +320,7 @@ fn overlapping_stamps_cannot_aggregate() {
             left.tachygrams.union(&right.tachygrams).copied().collect();
         let stamp = ProofStamp {
             coverage: stamp_coverage(descriptors.iter().copied(), &fees),
-            anchor: forged.data().1,
+            anchor: *forged.data(),
             tachygram_set: tachygrams
                 .iter()
                 .copied()

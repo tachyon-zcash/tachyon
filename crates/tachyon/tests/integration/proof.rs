@@ -223,9 +223,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     ] {
         let (stamp, plan, fee_descriptor) =
             build_output_stamp(rng, stamp_anchor, user.random_note(200));
-        let stamp_pcd = stamp
-            .proof
-            .carry::<stamp::Stamp>((stamp.tachygram_set.bridge().unwrap(), stamp_anchor));
+        let stamp_pcd = stamp.proof.carry::<stamp::Stamp>(stamp_anchor);
         let lifted = PROOF_SYSTEM.fuse(
             rng,
             stamp::StampLift,
@@ -245,7 +243,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
                 Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == message
             );
         } else {
-            assert_eq!(lifted.unwrap().0.data().1, anchor_end);
+            assert_eq!(*lifted.unwrap().0.data(), anchor_end);
         }
     }
 }
