@@ -152,16 +152,8 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_hash)`.
-///
-/// # Panics
-///
-/// Panics if the set commitment or its bridge hash is the identity.
+/// stamp_set)`.
 #[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "set polynomials have nonidentity commitments"
-)]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
     anchor_start: Anchor,
@@ -171,12 +163,7 @@ pub fn anchor_span_seed(
     (
         anchor_start,
         epoch,
-        tgs.iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit()
-            .bridge()
-            .expect("valid stamp commitment"),
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 

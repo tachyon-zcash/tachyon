@@ -79,7 +79,8 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
                 ),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "invalid anchor step"
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrStampIntakeSeed: the stamp's tachygram set is empty"
     );
 }
 

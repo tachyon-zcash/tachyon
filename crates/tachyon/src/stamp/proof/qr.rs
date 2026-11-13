@@ -45,7 +45,7 @@ use crate::{
     pasta::{EpAffine, Fp},
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
+        QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
@@ -366,6 +366,28 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let [empty_x, empty_y] =
+            super::EMPTY_STAMP_BRIDGE_HASH.map(|coordinate| Element::constant(dr, coordinate));
+        let equal_x = oracles.bridge_hash()[0].is_equal(dr, &mut (), &empty_x)?;
+        let equal_y = oracles.bridge_hash()[1].is_equal(dr, &mut (), &empty_y)?;
+        equal_x
+            .and(dr, &equal_y)?
+            .element()
+            .enforce_zero(dr)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrStampIntakeSeed: the stamp's tachygram set is empty".into(),
+                )
+            })?;
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
@@ -381,16 +403,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
                     "QrStampIntakeSeed: bridge hash is the identity".into(),
                 ));
             }
-            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "invalid anchor step".into(),
-                ));
-            }
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(epoch),
-                stamp_hash,
-            ));
+            let anchor_end = Anchor::from(*anchor.value().take());
             Ok((
                 (
                     epoch,
@@ -404,6 +417,15 @@ impl Step<Pasta> for QrStampIntakeSeed {
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        encoded
+            .as_gadget()
+            .epoch
+            .enforce_equal(dr, &epoch_element)?;
+        encoded
+            .as_gadget()
+            .anchor_prev
+            .enforce_equal(dr, &previous)?;
+        encoded.as_gadget().anchor_end.enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
@@ -1176,26 +1198,32 @@ impl Step<Pasta> for QrBucketSeal {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let intake = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let boundary = poseidon::circuit::anchor_next_epoch(dr, &previous, &intake.epoch)?;
+        boundary
+            .enforce_equal(dr, &intake.anchor_prev)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
+                        .into(),
+                )
+            })?;
+        let one = Element::constant(dr, Fp::ONE);
+        let epoch_next_element = intake.epoch.add(dr, &one);
+        let crossing =
+            poseidon::circuit::anchor_next_epoch(dr, &intake.anchor_end, &epoch_next_element)?;
         let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let output = D::try_just(|| {
-            let (anchor_final_prev,) = witness.take();
-            let (epoch, anchor_prev, anchor_end, discriminant, profile) = left.take();
+            let (epoch, anchor_prev, _, discriminant, profile) = left.take();
             let () = right.take();
-            enforce_zero(
-                Fp::from(anchor_prev)
-                    - poseidon::anchor_next_epoch(Fp::from(anchor_final_prev), Fp::from(epoch)),
-                "QrBucketSeal: witnessed boundary digest does not match intake's first anchor",
-            )?;
-            let epoch_next = epoch.next().ok_or_else(|| {
+            epoch.next().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness(
                     "QrBucketSeal: crossing past the final epoch".into(),
                 )
             })?;
-            let crossing = anchor_end
-                .next_epoch(epoch_next)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
             let contents_hash =
                 EpAffine::from_xy(*hash_x.take(), *hash_y.take()).ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
@@ -1212,7 +1240,7 @@ impl Step<Pasta> for QrBucketSeal {
                 (
                     epoch,
                     anchor_prev,
-                    crossing,
+                    Anchor::from(*crossing.value().take()),
                     discriminant,
                     profile,
                     TachygramSetBridge::from(contents_hash),
@@ -1223,6 +1251,10 @@ impl Step<Pasta> for QrBucketSeal {
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
         let zeta = oracles.zeta().clone();
+        encoded
+            .as_gadget()
+            .anchor_next
+            .enforce_equal(dr, &crossing)?;
         let contents = oracles.query(dr, Slot::left(0), &zeta)?;
         for slot in [Slot::output(0), Slot::output(1)] {
             oracles
