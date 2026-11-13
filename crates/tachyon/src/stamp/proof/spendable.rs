@@ -258,29 +258,42 @@ impl Step<Pasta> for QrSpendableInit {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let unspent = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let native = D::try_just(|| {
-            let (
-                cm,
-                unspent_anchor_start,
-                unspent_epoch_start,
-                unspent_epoch_next,
-                unspent_anchor_next,
-            ) = left.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = right.take();
-            enforce_zero(
-                Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
-                "QrSpendableInit: segment does not start in the bucket's epoch",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
-                "QrSpendableInit: segment does not open where the bucket does",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
-                "QrSpendableInit: segment does not close where the bucket does",
-            )?;
+        let bucket = right_encoded.as_gadget();
+        bucket
+            .epoch
+            .enforce_equal(dr, &unspent.epoch_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSpendableInit: segment does not start in the bucket's epoch".into(),
+                )
+            })?;
+        bucket
+            .anchor_start
+            .enforce_equal(dr, &unspent.anchor_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSpendableInit: segment does not open where the bucket does".into(),
+                )
+            })?;
+        bucket
+            .anchor_next
+            .enforce_equal(dr, &unspent.anchor_next)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSpendableInit: segment does not close where the bucket does".into(),
+                )
+            })?;
+        // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
+        let evaluation = oracles.query(dr, Slot::right(0), &unspent.cm)?;
+        evaluation.enforce_zero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
+        })?;
+        let output = D::try_just(|| {
+            let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();
+            let (bucket_epoch, ..) = right.take();
             let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
             })?;
@@ -289,16 +302,18 @@ impl Step<Pasta> for QrSpendableInit {
                 Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
                 "QrSpendableInit: segment does not end in the epoch after the bucket's",
             )?;
-            Ok((cm, bucket_epoch_next, unspent_anchor_next))
+            Ok((unspent_cm, bucket_epoch_next, unspent_anchor_next))
         })?;
-        let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, ..)| Fp::from(cm)))?;
-        // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.query(dr, Slot::right(0), &x)?;
-        evaluation.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
-        })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), native.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), native, D::unit()))
+        let fields = NoteSpendableOutput {
+            cm: unspent.cm.clone(),
+            epoch_current: unspent.epoch_next.clone(),
+            anchor: unspent.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 

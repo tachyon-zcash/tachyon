@@ -37,10 +37,7 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
-use super::{
-    delegation::NoteNullifiers,
-    qr::{QrBucket, enforce_value_profile},
-};
+use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{
     collections::indexed_multiset,
     digest::poseidon,
@@ -50,7 +47,6 @@ use crate::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
         TachygramSetPoly,
     },
-    ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
 
@@ -633,45 +629,37 @@ impl Step<Pasta> for UnspentLift {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let unspent = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let native = D::try_just(|| {
-            let (value, classes, mask, ..) = witness.take();
-            let (
-                unspent_anchor_start,
-                unspent_epoch_start,
-                unspent_epoch_next,
-                unspent_anchor_next,
-            ) = left.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile, _) =
-                right.take();
-            enforce_zero(
-                Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),
-                "UnspentLift: the bucket does not start where the segment ends",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch),
-                "UnspentLift: the bucket is not the segment's next epoch",
-            )?;
-            enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
-            enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
-
-            let epoch_next = bucket_epoch.next().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
+        let bucket = right_encoded.as_gadget();
+        unspent
+            .anchor_next
+            .enforce_equal(dr, &bucket.anchor_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "UnspentLift: the bucket does not start where the segment ends".into(),
+                )
             })?;
-            let output = (
-                unspent_anchor_start,
-                unspent_epoch_start,
-                epoch_next,
-                bucket_anchor_next,
-            );
-            Ok((value, bucket_epoch, output))
+        unspent
+            .epoch_next
+            .enforce_equal(dr, &bucket.epoch)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "UnspentLift: the bucket is not the segment's next epoch".into(),
+                )
+            })?;
+        let value = witness.as_ref().map(|&(value, ..)| value);
+        let value_element = Element::alloc(dr, &mut (), value.clone().map(Fp::from))?;
+        value_element.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
         })?;
-
-        let value_element = Element::alloc(
+        bucket.profile.enforce_sides_of(
             dr,
-            &mut (),
-            native.clone().map(|witnessed| Fp::from(witnessed.0)),
+            &value_element,
+            &bucket.discriminant,
+            witness.as_ref().map(|&(_, classes, ..)| classes),
+            witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
         #[expect(
             clippy::indexing_slicing,
@@ -683,9 +671,9 @@ impl Step<Pasta> for UnspentLift {
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let challenge = z.value().map(Clone::clone);
         let expected = D::try_just(|| {
-            let (value, bucket_epoch, _) = native.clone().take();
+            let &(bucket_epoch, ..) = right.as_ref().take();
             Ok(indexed_multiset::direct_eval(
-                [(u64::from(bucket_epoch), Fp::from(value))],
+                [(u64::from(bucket_epoch), Fp::from(value.take()))],
                 challenge.take(),
             ))
         })?;
@@ -707,7 +695,19 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
         })?;
 
-        let output = native.map(|witnessed| witnessed.2);
+        let output = D::try_just(|| {
+            let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();
+            let (bucket_epoch, _, bucket_anchor_next, ..) = right.take();
+            let epoch_next = bucket_epoch.next().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
+            })?;
+            Ok((
+                unspent_anchor_start,
+                unspent_epoch_start,
+                epoch_next,
+                bucket_anchor_next,
+            ))
+        })?;
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }

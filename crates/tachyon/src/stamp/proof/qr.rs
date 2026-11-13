@@ -48,7 +48,6 @@ use crate::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
     },
-    ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product},
 };
 
@@ -1032,8 +1031,8 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
-    pub depth: Element<'dr, D>,
-    pub bits: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub profile: gadgets::qr::QrProfile<'dr, D>,
     pub contents_hash: [Element<'dr, D>; 2],
 }
 
@@ -1061,8 +1060,8 @@ impl Header<Fp> for QrBucket {
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
         )]
-        let contents_hash = witness.as_ref().map(|fields| {
-            EpAffine::from(fields.5)
+        let contents_hash = witness.as_ref().map(|&(.., contents_hash)| {
+            EpAffine::from(contents_hash)
                 .coordinates()
                 .expect("bridge hash is not the identity")
         });
@@ -1070,36 +1069,33 @@ impl Header<Fp> for QrBucket {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
             )?,
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_start, ..)| Fp::from(anchor_start)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
-            )?,
-            depth: Element::alloc(
-                dr,
-                allocator,
                 witness
                     .as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.4.depth))),
+                    .map(|&(_, _, _, discriminant, ..)| Fp::from(discriminant)),
             )?,
-            bits: Element::alloc(
+            profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.4.bits))),
+                witness.as_ref().map(|&(.., profile, _)| profile),
             )?,
             contents_hash: [
                 Element::alloc(
@@ -1194,8 +1190,7 @@ impl Step<Pasta> for QrBucketSeal {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let previous = Element::alloc(
             dr,
             &mut (),
@@ -1216,112 +1211,54 @@ impl Step<Pasta> for QrBucketSeal {
         let one = Element::constant(dr, Fp::ONE);
         let next = intake.epoch.add(dr, &one);
         let crossing = poseidon::circuit::anchor_next_epoch(dr, &intake.anchor_end, &next)?;
-        let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let output = D::try_just(|| {
+        let data = D::try_just(|| {
             let (epoch, anchor_prev, _, discriminant, profile) = left.take();
-            let () = right.take();
             epoch.next().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness(
                     "QrBucketSeal: crossing past the final epoch".into(),
                 )
             })?;
-            let contents_hash =
-                EpAffine::from_xy(*hash_x.take(), *hash_y.take()).ok_or_else(|| {
+            let [hash_x, hash_y] = oracles
+                .bridge_hash()
+                .clone()
+                .map(|value| *value.value().take());
+            let contents_hash = EpAffine::from_xy(hash_x, hash_y)
+                .map(TachygramSetBridge::from)
+                .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
                         "QrBucketSeal: bridge hash is not on the curve".into(),
                     )
                 })?;
-            if contents_hash.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "QrBucketSeal: bridge hash is the identity".into(),
-                ));
-            }
-
             Ok((
-                (
-                    epoch,
-                    anchor_prev,
-                    Anchor::from(*crossing.value().take()),
-                    discriminant,
-                    profile,
-                    TachygramSetBridge::from(contents_hash),
-                ),
-                (),
+                epoch,
+                anchor_prev,
+                Anchor::from(*crossing.value().take()),
+                discriminant,
+                profile,
+                contents_hash,
             ))
         })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let fields = QrBucketOutput {
+            epoch: intake.epoch.clone(),
+            anchor_start: intake.anchor_prev.clone(),
+            anchor_next: crossing,
+            discriminant: intake.discriminant.clone(),
+            profile: intake.profile.clone(),
+            contents_hash: oracles.bridge_hash().clone(),
+        };
         let zeta = oracles.zeta().clone();
-        let QrBucketOutput {
-            anchor_next,
-            contents_hash,
-            ..
-        } = encoded.as_gadget().clone();
-        anchor_next.enforce_equal(dr, &crossing)?;
         let contents = oracles.query(dr, Slot::left(0), &zeta)?;
         for slot in [Slot::output(0), Slot::output(1)] {
             oracles
                 .query(dr, slot, &zeta)?
                 .enforce_equal(dr, &contents)?;
         }
-        for (output_hash, oracle_hash) in contents_hash.iter().zip(oracles.bridge_hash()) {
-            output_hash.enforce_equal(dr, oracle_hash)?;
-        }
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
-}
-
-/// Fix `value`'s side at every discriminant of the progression from
-/// `discriminant`, and check `profile` is the value's first `depth` sides.
-///
-/// The relations and their soundness are on [`QrUnspentInit`].
-/// [`UnspentLift`](super::pool::UnspentLift) runs the same checks.
-pub(super) fn enforce_value_profile(
-    value: Tachygram,
-    discriminant: QrDiscriminant,
-    profile: QrProfile,
-    classes: &[QrClassRoot; QrProfile::MAX_DEPTH],
-    mask: &[bool; QrProfile::MAX_DEPTH],
-) -> ragu_core::Result<()> {
-    // TODO: a real circuit must constrain every side and mask bit boolean;
-    // the types carry it under mock ragu.
-    let mut shifted = Fp::from(value) + Fp::from(discriminant);
-    let mut position_fp = Fp::ZERO;
-    let mut depth_acc = Fp::ZERO;
-    let mut index_acc = Fp::ZERO;
-    let mut bits_acc = Fp::ZERO;
-    for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
-        let side_fp = Fp::from(u64::from(side));
-        let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
-        enforce_zero(
-            root.square() - (multiplier * shifted),
-            "QR profile: root does not square to the claimed class",
-        )?;
-        enforce_nonzero(
-            (shifted * (Fp::ONE - side_fp)) + side_fp,
-            "QR profile: exceptional discriminant claimed the non-residue class",
-        )?;
-
-        let selected_fp = Fp::from(u64::from(selected));
-        depth_acc += selected_fp;
-        index_acc += selected_fp * position_fp;
-        bits_acc += selected_fp * (bits_acc + side_fp);
-        shifted += Fp::ONE;
-        position_fp += Fp::ONE;
-    }
-    enforce_zero(
-        depth_acc - Fp::from(u64::from(profile.depth)),
-        "QR profile: depth mask does not match the bucket's depth",
-    )?;
-    enforce_zero(
-        index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
-        "QR profile: depth mask is not a prefix",
-    )?;
-    enforce_zero(
-        bits_acc - Fp::from(u64::from(profile.bits)),
-        "QR profile: value does not take the bucket's profile",
-    )?;
-    Ok(())
 }
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
@@ -1438,30 +1375,22 @@ impl Step<Pasta> for QrUnspentInit {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let native = D::try_just(|| {
-            let (value, classes, mask, _) = witness.take();
-            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, discriminant, profile, _) =
-                left.take();
-            let () = right.take();
-            enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
-            enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
-            let epoch_next = bucket_epoch.next().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
-            })?;
-            let output = (
-                bucket_anchor_start,
-                bucket_epoch,
-                epoch_next,
-                bucket_anchor_next,
-            );
-            Ok((value, bucket_epoch, output))
-        })?;
+        let bucket = left_encoded.as_gadget();
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let value_element = Element::alloc(
             dr,
             &mut (),
-            native.clone().map(|(value, ..)| Fp::from(value)),
+            witness.as_ref().map(|&(value, ..)| Fp::from(value)),
+        )?;
+        value_element.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrUnspentInit: tested value is zero".into())
+        })?;
+        bucket.profile.enforce_sides_of(
+            dr,
+            &value_element,
+            &bucket.discriminant,
+            witness.as_ref().map(|&(_, classes, ..)| classes),
+            witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
         #[expect(
             clippy::indexing_slicing,
@@ -1472,7 +1401,8 @@ impl Step<Pasta> for QrUnspentInit {
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let challenge = z.value().map(|value| *value);
         let expected = D::try_just(|| {
-            let (value, bucket_epoch, _) = native.clone().take();
+            let &(value, ..) = witness.as_ref().take();
+            let &(bucket_epoch, ..) = left.as_ref().take();
             Ok(indexed_multiset::direct_eval(
                 [(u64::from(bucket_epoch), Fp::from(value))],
                 challenge.take(),
@@ -1495,7 +1425,18 @@ impl Step<Pasta> for QrUnspentInit {
             ragu_core::Error::InvalidWitness("QrUnspentInit: found nullifier in the bucket".into())
         })?;
 
-        let output = native.map(|(_, _, output)| output);
+        let output = D::try_just(|| {
+            let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = left.take();
+            let epoch_next = bucket_epoch.next().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
+            })?;
+            Ok((
+                bucket_anchor_start,
+                bucket_epoch,
+                epoch_next,
+                bucket_anchor_next,
+            ))
+        })?;
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
         Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
     }
