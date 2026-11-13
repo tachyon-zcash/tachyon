@@ -105,9 +105,8 @@ impl Step<Pasta> for OutputBind {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let amount = gadgets::uint::Uint::alloc(
             dr,
             witness
@@ -145,23 +144,18 @@ impl Step<Pasta> for OutputBind {
         let blind_point = fixed_base::R_BASE
             .mul_blinding(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
         let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
-        let output = D::try_just(|| {
-            let (commitment, padding) = (
+        let output = D::just(|| {
+            (
                 Tachygram::from(*cm.value().take()),
                 Tachygram::from(*pad.value().take()),
-            );
-
-            Ok((
-                (
-                    commitment,
-                    padding,
-                    value::Commitment::from(cv.value().take()),
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::from_gadget(OutputHeaderOutput { cm, pad, cv });
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+                value::Commitment::from(cv.value().take()),
+            )
+        });
+        let fields = OutputHeaderOutput { cm, pad, cv };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
