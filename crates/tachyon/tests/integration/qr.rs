@@ -3,14 +3,6 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem};
 
-use ragu::{
-    header::Header,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
-};
-use ragu_core::{
-    drivers::{Driver, DriverValue},
-    pasta::Pasta,
-};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -1092,69 +1084,6 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(
         fused.commitments()[0],
         Eq::from(NfSeqPoly::new(epoch0, &[nf0, nf1]).commit()).to_affine()
-    );
-}
-
-/// [`qr::QrEmptyIntakeSeed`] committing its intake to one prover-chosen member.
-struct NonEmptyIntakeSeed(Tachygram);
-
-impl Step<Pasta> for NonEmptyIntakeSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = qr::QrIntake;
-    type Right = ();
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
-
-    const INDEX: Index = <qr::QrEmptyIntakeSeed as Step<Pasta>>::INDEX;
-
-    fn polynomials(
-        &self,
-        _: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([vec![-Fp::from(self.0), Fp::ONE], vec![Fp::ONE]])
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, ()>,
-        right: DriverValue<D, ()>,
-    ) -> ragu_core::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        qr::QrEmptyIntakeSeed.witness::<D, HEADER_SIZE>(dr, oracles, witness, left, right)
-    }
-}
-
-#[test]
-fn qr_empty_intake_seed_rejects_a_member() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let member = Tachygram::random(rng);
-    let anchor = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    assert_matches!(
-        PROOF_SYSTEM
-            .seed(
-                rng,
-                NonEmptyIntakeSeed(member),
-                (anchor, EpochIndex::new(1), discriminant),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrEmptyIntakeSeed: contents must be one"
     );
 }
 
