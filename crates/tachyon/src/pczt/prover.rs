@@ -12,7 +12,7 @@ use super::{Bundle, Partial, Slot};
 use crate::{
     action,
     keys::{ProofAuthorizingKey, public},
-    primitives::{Anchor, AnchorSetPoly},
+    primitives::Anchor,
     stamp::{
         ActionsPlan, ProofStamp, ProveError,
         proof::{delegation, pool, spendable},
@@ -85,10 +85,7 @@ impl Bundle {
             usize,
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
         outputs: BTreeSet<usize>,
     ) -> Result<(), ProverError> {
