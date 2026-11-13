@@ -161,6 +161,7 @@ impl Step<Pasta> for SpendBind {
         let blind_point =
             fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
         let cv = secret
+            .note
             .value
             .to_bits(dr)
             .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
@@ -218,7 +219,7 @@ impl Step<Pasta> for SpendBind {
             )?,
             nf_next: Element::alloc(dr, &mut (), data.as_ref().map(|fields| Fp::from(fields.2)))?,
             anchor: spendable.anchor.clone(),
-            pk: secret.pk.clone(),
+            pk: secret.note.pk.clone(),
             cv,
         };
         let encoded = Encoded::from_gadget(fields);

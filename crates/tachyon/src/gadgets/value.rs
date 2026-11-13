@@ -68,6 +68,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         })
     }
 
+    /// The zero amount, holding `element` to zero.
+    pub(crate) fn from_zero(dr: &mut D, element: Element<'dr, D>) -> Result<Self> {
+        element.enforce_zero(dr)?;
+        Ok(Self { element })
+    }
+
     /// `(part, self - part)`. Both fit the width of `MAX_MONEY` and sum to
     /// `self`, so neither wraps and both are amounts.
     #[expect(clippy::as_conversions, reason = "constant value")]
