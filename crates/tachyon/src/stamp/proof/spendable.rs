@@ -273,13 +273,14 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not close where the bucket does".into(),
                 )
             })?;
-        let next = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+        let epoch_next = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
         })?;
         // The anchor equality rejects a wrong epoch label only through the
         // crossing digest's collision resistance; this ties `epoch_next` to the
         // bucket directly.
-        next.enforce_equal(dr, &unspent.epoch_next)
+        epoch_next
+            .enforce_equal(dr, &unspent.epoch_next)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrSpendableInit: segment does not end in the epoch after the bucket's".into(),
@@ -296,7 +297,7 @@ impl Step<Pasta> for QrSpendableInit {
         });
         let fields = NoteSpendableOutput {
             cm: unspent.cm.clone(),
-            epoch_current: next,
+            epoch_current: epoch_next,
             anchor: unspent.anchor_next.clone(),
         };
         Ok((

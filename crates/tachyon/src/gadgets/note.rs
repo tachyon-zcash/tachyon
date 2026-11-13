@@ -92,7 +92,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// Derives the note commitment from the supplied fields.
     ///
-    /// Neither bounds `value` nor checks `rcm` nonzero; callers do.
+    /// Does not bound `value` or check `rcm` nonzero.
     pub(crate) fn commitment(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::note_commitment(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }

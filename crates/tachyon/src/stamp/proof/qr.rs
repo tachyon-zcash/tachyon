@@ -984,12 +984,13 @@ impl Step<Pasta> for QrSideDescend {
             .enforce_equal(dr, &selected_at_z)?;
         let interpolant_at_z = oracles.query(dr, Slot::right(0), &z)?;
         let quotient_at_z = oracles.query(dr, Slot::right(1), &z)?;
-        let bit_element = bit.element();
         let shifted = z.add(dr, &discriminant_element);
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
         let interpolant_square = interpolant_at_z.square(dr)?;
         let class_residual = interpolant_square.sub(dr, &sibling_product);
-        let scaled_bit = bit_element.scale(dr, Coeff::Arbitrary(QUADRATIC_NON_RESIDUE - Fp::ONE));
+        let scaled_bit = bit
+            .element()
+            .scale(dr, Coeff::Arbitrary(QUADRATIC_NON_RESIDUE - Fp::ONE));
         let sibling_multiplier = scaled_bit.add(dr, &one);
         let expected_class = sibling_multiplier.mul(dr, &shifted)?;
         class_residual

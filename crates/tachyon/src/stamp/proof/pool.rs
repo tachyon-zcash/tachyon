@@ -636,19 +636,19 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
         })?;
         unspent
-            .epoch_next
-            .enforce_equal(dr, &bucket.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentLift: the bucket is not the segment's next epoch".into(),
-                )
-            })?;
-        unspent
             .anchor_next
             .enforce_equal(dr, &bucket.anchor_start)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "UnspentLift: the bucket does not start where the segment ends".into(),
+                )
+            })?;
+        unspent
+            .epoch_next
+            .enforce_equal(dr, &bucket.epoch)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "UnspentLift: the bucket is not the segment's next epoch".into(),
                 )
             })?;
         let value_element = Element::alloc(
@@ -811,8 +811,8 @@ impl Step<Pasta> for UnspentBind {
             "UnspentBind: sequence does not match the derivation",
         )?;
         // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
-        // emits `epoch_next = epoch_start + 1`, `UnspentLift` raises
-        // `epoch_next` by one, and `UnspentFuse` joins halves at an equal
+        // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
+        // of a range-checked epoch, and `UnspentFuse` joins halves at an equal
         // epoch.
         let data = D::just(|| {
             let (

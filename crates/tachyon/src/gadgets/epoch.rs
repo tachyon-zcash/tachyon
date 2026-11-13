@@ -9,7 +9,7 @@ use ragu_primitives::Element;
 use udon::field::Field as _;
 
 use super::range;
-use crate::{constants::EPOCH_MAX, nullifier, pasta::Fp, primitives};
+use crate::{constants::EPOCH_MAX, nullifier, pasta::Fp};
 
 /// Constrains `group_start` to `PoseidonFp::RATE` times a group index within
 /// [`GROUP_BITS`](nullifier::GROUP_BITS), so it is the first epoch of a
@@ -29,24 +29,22 @@ pub(crate) fn enforce_group_start<'dr, D: Driver<'dr, F = Fp>>(
     range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group_index)
 }
 
-/// Constrains `epoch` to an epoch index: both `epoch` and `EPOCH_MAX - epoch`
-/// must fit the epoch width, preventing field wraparound.
+/// Constrains `epoch` to an epoch index, `0..=EPOCH_MAX`: `EPOCH_MAX + 1` is a
+/// power of two, so one width check bounds it exactly.
 pub(crate) fn enforce_epoch<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     epoch: &Element<'dr, D>,
 ) -> Result<()> {
-    range::enforce_width::<D, { primitives::EpochIndex::BITS }>(dr, epoch)?;
-    let maximum = Element::constant(dr, Fp::from(u64::from(EPOCH_MAX)));
-    let slack = maximum.sub(dr, epoch);
-    range::enforce_width::<D, { primitives::EpochIndex::BITS }>(dr, &slack)
+    range::enforce_width::<D, { (EPOCH_MAX + 1).ilog2() }>(dr, epoch)
 }
 
-/// The index after `epoch`, constrained by [`enforce_epoch`]; `epoch` itself
-/// is not checked.
+/// The index after `epoch`, with both `epoch` and the result constrained by
+/// [`enforce_epoch`].
 pub(crate) fn successor<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     epoch: &Element<'dr, D>,
 ) -> Result<Element<'dr, D>> {
+    enforce_epoch(dr, epoch)?;
     let one = Element::constant(dr, Fp::ONE);
     let successor = epoch.add(dr, &one);
     enforce_epoch(dr, &successor)?;

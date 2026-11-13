@@ -1645,7 +1645,7 @@ fn unspent_lift_carries_a_spendable() {
 #[test]
 fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(EpochIndex::new(3).first_block().0, |_| {
         random_block(rng, 1, 2)
@@ -1656,18 +1656,14 @@ fn unspent_lift_rejects_invalid_extensions() {
     let first = epoch_bucket(rng, &pool, epoch0);
     let segment = qr_bucket_segment(rng, &first, nf);
     let bucket = epoch_bucket(rng, &pool, epoch1);
-    let detached_previous = Anchor::random(rng);
-    let detached_entry = detached_previous.next_epoch(epoch1).unwrap();
-    let detached_discriminant = QrDiscriminant::random(rng);
-    let detached_intake = seed_qr_empty_intake(rng, detached_entry, epoch1, detached_discriminant);
-    let detached = seal_qr_intake(rng, detached_intake, detached_previous);
+    let past = epoch_bucket(rng, &pool, epoch2);
     let honest = witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf0]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
 
     for (lift_bucket, lift, expected) in [
         (
-            &detached,
-            witness::unspent_lift((*segment.data(), *detached.pcd.data()), nf1.into(), &[nf0]),
+            &past,
+            witness::unspent_lift((*segment.data(), *past.pcd.data()), nf1.into(), &[nf0]),
             "UnspentLift: the bucket does not start where the segment ends",
         ),
         (
