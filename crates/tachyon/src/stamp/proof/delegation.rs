@@ -357,6 +357,7 @@ impl Step<Pasta> for NullifierDerive {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let secret = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let epoch_start =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
@@ -381,7 +382,6 @@ impl Step<Pasta> for NullifierDerive {
                 "NullifierDerive: window exceeds the epoch range".into(),
             )
         })?;
-        let mk = left_encoded.as_gadget().mk.element.clone();
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         // The window's members at `z`, encoded in-circuit from the
@@ -393,7 +393,9 @@ impl Step<Pasta> for NullifierDerive {
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             let group_offset = offset.sub(dr, &one);
             let group_start = epoch_start.add(dr, &group_offset);
-            for nullifier in poseidon::circuit::nullifier_group(dr, &mk, &group_start)? {
+            for nullifier in
+                poseidon::circuit::nullifier_group(dr, &secret.mk.element, &group_start)?
+            {
                 let index = epoch_start.add(dr, &offset);
                 let factor = gadgets::indexed_multiset::member(dr, &nullifier, &index, &z)?;
                 window_at_z = window_at_z.mul(dr, &factor)?;
@@ -406,18 +408,18 @@ impl Step<Pasta> for NullifierDerive {
             )
         })?;
         let output = D::try_just(|| {
-            let (start, _) = witness.take();
-            let end = (1..NF_DERIVATION_WIDTH)
-                .try_fold(start, |epoch, _| epoch.next())
+            let (window_start, _) = witness.take();
+            let window_end = (1..NF_DERIVATION_WIDTH)
+                .try_fold(window_start, |epoch, _| epoch.next())
                 .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
                         "NullifierDerive: window exceeds the epoch range".into(),
                     )
                 })?;
-            Ok((left.take().0, start, end))
+            Ok((left.take().0, window_start, window_end))
         })?;
         let fields = NoteNullifiersOutput {
-            cm: left_encoded.as_gadget().cm.clone(),
+            cm: secret.cm.clone(),
             epoch_start,
             epoch_end,
         };
@@ -495,20 +497,21 @@ impl Step<Pasta> for NullifierFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_nullifiers = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        left_encoded
-            .as_gadget()
+        let right_nullifiers = right_encoded.as_gadget();
+        left_nullifiers
             .cm
-            .enforce_equal(dr, &right_encoded.as_gadget().cm)
+            .enforce_equal(dr, &right_nullifiers.cm)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
             })?;
-        let end = left_encoded.as_gadget().epoch_end.clone();
-        let start = right_encoded.as_gadget().epoch_start.clone();
         let one = Element::constant(dr, Fp::ONE);
-        end.add(dr, &one)
-            .enforce_equal(dr, &start)
+        left_nullifiers
+            .epoch_end
+            .add(dr, &one)
+            .enforce_equal(dr, &right_nullifiers.epoch_start)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("NullifierFuse: ranges not contiguous".into())
             })?;
@@ -526,9 +529,9 @@ impl Step<Pasta> for NullifierFuse {
             (left_cm, left_epoch_start, right_epoch_end)
         });
         let fields = NoteNullifiersOutput {
-            cm: left_encoded.as_gadget().cm.clone(),
-            epoch_start: left_encoded.as_gadget().epoch_start.clone(),
-            epoch_end: right_encoded.as_gadget().epoch_end.clone(),
+            cm: left_nullifiers.cm.clone(),
+            epoch_start: left_nullifiers.epoch_start.clone(),
+            epoch_end: right_nullifiers.epoch_end.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

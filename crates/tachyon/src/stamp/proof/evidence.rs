@@ -227,25 +227,15 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_bucket = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_bucket = right_encoded.as_gadget();
         for (left_element, right_element) in [
-            (
-                &left_encoded.as_gadget().epoch,
-                &right_encoded.as_gadget().epoch,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_start,
-                &right_encoded.as_gadget().anchor_start,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_next,
-                &right_encoded.as_gadget().anchor_next,
-            ),
-            (
-                &left_encoded.as_gadget().discriminant,
-                &right_encoded.as_gadget().discriminant,
-            ),
+            (&left_bucket.epoch, &right_bucket.epoch),
+            (&left_bucket.anchor_start, &right_bucket.anchor_start),
+            (&left_bucket.anchor_next, &right_bucket.anchor_next),
+            (&left_bucket.discriminant, &right_bucket.discriminant),
         ] {
             left_element
                 .enforce_equal(dr, right_element)
@@ -257,27 +247,21 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         }
         let first = poseidon::circuit::evidence_tree_leaf(
             dr,
-            &left_encoded.as_gadget().epoch,
-            &left_encoded.as_gadget().anchor_start,
-            &left_encoded.as_gadget().anchor_next,
-            &left_encoded.as_gadget().discriminant,
-            (
-                &left_encoded.as_gadget().profile.depth,
-                &left_encoded.as_gadget().profile.bits,
-            ),
-            &left_encoded.as_gadget().contents_hash,
+            &left_bucket.epoch,
+            &left_bucket.anchor_start,
+            &left_bucket.anchor_next,
+            &left_bucket.discriminant,
+            (&left_bucket.profile.depth, &left_bucket.profile.bits),
+            &left_bucket.contents_hash,
         )?;
         let second = poseidon::circuit::evidence_tree_leaf(
             dr,
-            &right_encoded.as_gadget().epoch,
-            &right_encoded.as_gadget().anchor_start,
-            &right_encoded.as_gadget().anchor_next,
-            &right_encoded.as_gadget().discriminant,
-            (
-                &right_encoded.as_gadget().profile.depth,
-                &right_encoded.as_gadget().profile.bits,
-            ),
-            &right_encoded.as_gadget().contents_hash,
+            &right_bucket.epoch,
+            &right_bucket.anchor_start,
+            &right_bucket.anchor_next,
+            &right_bucket.discriminant,
+            (&right_bucket.profile.depth, &right_bucket.profile.bits),
+            &right_bucket.contents_hash,
         )?;
         let output = D::just(|| {
             let (epoch, start, end, discriminant, ..) = left.take();
@@ -291,10 +275,10 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
             )
         });
         let fields = EvidenceTreePairOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
+            epoch: left_bucket.epoch.clone(),
+            anchor_start: left_bucket.anchor_start.clone(),
+            anchor_next: left_bucket.anchor_next.clone(),
+            discriminant: left_bucket.discriminant.clone(),
             first,
             second,
         };
@@ -352,25 +336,15 @@ impl Step<Pasta> for EvidenceTreePairFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_tree = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_tree = right_encoded.as_gadget();
         for (left_element, right_element) in [
-            (
-                &left_encoded.as_gadget().epoch,
-                &right_encoded.as_gadget().epoch,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_start,
-                &right_encoded.as_gadget().anchor_start,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_next,
-                &right_encoded.as_gadget().anchor_next,
-            ),
-            (
-                &left_encoded.as_gadget().discriminant,
-                &right_encoded.as_gadget().discriminant,
-            ),
+            (&left_tree.epoch, &right_tree.epoch),
+            (&left_tree.anchor_start, &right_tree.anchor_start),
+            (&left_tree.anchor_next, &right_tree.anchor_next),
+            (&left_tree.discriminant, &right_tree.discriminant),
         ] {
             left_element
                 .enforce_equal(dr, right_element)
@@ -385,12 +359,12 @@ impl Step<Pasta> for EvidenceTreePairFuse {
             (epoch, start, end, discriminant, root, right.take().4)
         });
         let fields = EvidenceTreePairOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
-            first: left_encoded.as_gadget().root.clone(),
-            second: right_encoded.as_gadget().root.clone(),
+            epoch: left_tree.epoch.clone(),
+            anchor_start: left_tree.anchor_start.clone(),
+            anchor_next: left_tree.anchor_next.clone(),
+            discriminant: left_tree.discriminant.clone(),
+            first: left_tree.root.clone(),
+            second: right_tree.root.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -444,25 +418,15 @@ impl Step<Pasta> for EvidenceTreeFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_pair = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_pair = right_encoded.as_gadget();
         for (left_element, right_element) in [
-            (
-                &left_encoded.as_gadget().epoch,
-                &right_encoded.as_gadget().epoch,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_start,
-                &right_encoded.as_gadget().anchor_start,
-            ),
-            (
-                &left_encoded.as_gadget().anchor_next,
-                &right_encoded.as_gadget().anchor_next,
-            ),
-            (
-                &left_encoded.as_gadget().discriminant,
-                &right_encoded.as_gadget().discriminant,
-            ),
+            (&left_pair.epoch, &right_pair.epoch),
+            (&left_pair.anchor_start, &right_pair.anchor_start),
+            (&left_pair.anchor_next, &right_pair.anchor_next),
+            (&left_pair.discriminant, &right_pair.discriminant),
         ] {
             left_element
                 .enforce_equal(dr, right_element)
@@ -472,13 +436,15 @@ impl Step<Pasta> for EvidenceTreeFuse {
                     )
                 })?;
         }
-        let children = [
-            left_encoded.as_gadget().first.clone(),
-            left_encoded.as_gadget().second.clone(),
-            right_encoded.as_gadget().first.clone(),
-            right_encoded.as_gadget().second.clone(),
-        ];
-        let root = poseidon::circuit::evidence_tree_node(dr, &children)?;
+        let root = poseidon::circuit::evidence_tree_node(
+            dr,
+            &[
+                left_pair.first.clone(),
+                left_pair.second.clone(),
+                right_pair.first.clone(),
+                right_pair.second.clone(),
+            ],
+        )?;
         let output = D::just(|| {
             let (epoch, start, end, discriminant, ..) = left.take();
             (
@@ -490,10 +456,10 @@ impl Step<Pasta> for EvidenceTreeFuse {
             )
         });
         let fields = EvidenceTreeOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
+            epoch: left_pair.epoch.clone(),
+            anchor_start: left_pair.anchor_start.clone(),
+            anchor_next: left_pair.anchor_next.clone(),
+            discriminant: left_pair.discriminant.clone(),
             root,
         };
         Ok((
@@ -551,9 +517,9 @@ impl Step<Pasta> for EvidenceTreeCap {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let tree = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let root = left_encoded.as_gadget().root.clone();
-        let children = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|_| root.clone());
+        let children = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|_| tree.root.clone());
         let raised = poseidon::circuit::evidence_tree_node(dr, &children)?;
         let output = D::just(|| {
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
@@ -566,10 +532,10 @@ impl Step<Pasta> for EvidenceTreeCap {
             )
         });
         let fields = EvidenceTreeOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
+            epoch: tree.epoch.clone(),
+            anchor_start: tree.anchor_start.clone(),
+            anchor_next: tree.anchor_next.clone(),
+            discriminant: tree.discriminant.clone(),
             root: raised,
         };
         Ok((
@@ -649,8 +615,9 @@ impl Step<Pasta> for EvidenceTreeDescend {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let tree = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let mut node = left_encoded.as_gadget().root.clone();
+        let mut node = tree.root.clone();
         for level in 0..Self::LEVELS {
             let outer =
                 Boolean::alloc(dr, &mut (), witness.as_ref().map(|path| path.0[level].0[0]))?;
@@ -691,10 +658,10 @@ impl Step<Pasta> for EvidenceTreeDescend {
             )
         });
         let fields = EvidenceTreeOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
+            epoch: tree.epoch.clone(),
+            anchor_start: tree.anchor_start.clone(),
+            anchor_next: tree.anchor_next.clone(),
+            discriminant: tree.discriminant.clone(),
             root: node,
         };
         Ok((
@@ -773,12 +740,13 @@ impl Step<Pasta> for EvidenceTreeOpen {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let tree = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let fields = QrBucketOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_start: left_encoded.as_gadget().anchor_start.clone(),
-            anchor_next: left_encoded.as_gadget().anchor_next.clone(),
-            discriminant: left_encoded.as_gadget().discriminant.clone(),
+            epoch: tree.epoch.clone(),
+            anchor_start: tree.anchor_start.clone(),
+            anchor_next: tree.anchor_next.clone(),
+            discriminant: tree.discriminant.clone(),
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 &mut (),
@@ -796,15 +764,11 @@ impl Step<Pasta> for EvidenceTreeOpen {
             (&fields.profile.depth, &fields.profile.bits),
             &fields.contents_hash,
         )?;
-        left_encoded
-            .as_gadget()
-            .root
-            .enforce_equal(dr, &leaf)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "EvidenceTreeOpen: witnessed bucket is not the tree's leaf".into(),
-                )
-            })?;
+        tree.root.enforce_equal(dr, &leaf).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "EvidenceTreeOpen: witnessed bucket is not the tree's leaf".into(),
+            )
+        })?;
         let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let output = D::try_just(|| {
             let (profile, _) = witness.take();

@@ -153,33 +153,24 @@ impl Step<Pasta> for SpendBind {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let spendable = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let cm = left_encoded.as_gadget().cm.clone();
-        let secret_cm = right_encoded.as_gadget().cm.clone();
-        cm.enforce_equal(dr, &secret_cm).map_err(|_err| {
+        let secret = right_encoded.as_gadget();
+        spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
-        // `NoteSeed`, the only producer of `NoteSecret`, bounds the value by
-        // MAX_MONEY.
-        let value = right_encoded.as_gadget().value.clone();
         // Each derivation proves its epoch under 2^32, so this bound places
         // both epochs in range, the current one below EPOCH_MAX.
         let one = Element::constant(dr, Fp::ONE);
-        let epoch_next = left_encoded.as_gadget().epoch_current.add(dr, &one);
+        let epoch_next = spendable.epoch_current.add(dr, &one);
         let maximum = Element::constant(dr, Fp::from(u64::from(EPOCH_MAX)));
         let slack = maximum.sub(dr, &epoch_next);
         gadgets::range::enforce_width::<D, 32>(dr, &slack).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
-        let nf_current = right_encoded
-            .as_gadget()
-            .mk
-            .derive_nullifier(dr, &left_encoded.as_gadget().epoch_current)?;
-        let nf_next = right_encoded
-            .as_gadget()
-            .mk
-            .derive_nullifier(dr, &epoch_next)?;
+        let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
+        let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.
         nf_current.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: current-epoch nullifier is zero".into())
@@ -190,7 +181,9 @@ impl Step<Pasta> for SpendBind {
 
         let blind_point =
             fixed_base::R_TABLE.mul_free(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
-        let cv = fixed_base::V_TABLE.mul_bounded(dr, &value, &blind_point)?;
+        // `NoteSeed`, the only producer of `NoteSecret`, bounds the value by
+        // MAX_MONEY.
+        let cv = fixed_base::V_TABLE.mul_bounded(dr, &secret.value, &blind_point)?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
@@ -204,11 +197,11 @@ impl Step<Pasta> for SpendBind {
             )
         });
         let fields = SpendHeaderOutput {
-            cm,
+            cm: spendable.cm.clone(),
             nf_current,
             nf_next,
-            anchor: left_encoded.as_gadget().anchor.clone(),
-            pk: right_encoded.as_gadget().pk.clone(),
+            anchor: spendable.anchor.clone(),
+            pk: secret.pk.clone(),
             cv,
         };
         Ok((

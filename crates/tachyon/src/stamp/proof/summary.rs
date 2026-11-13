@@ -220,6 +220,7 @@ impl Step<Pasta> for SummaryAdvance {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let summary = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         enforce_poly_product(
             dr,
@@ -246,8 +247,8 @@ impl Step<Pasta> for SummaryAdvance {
         // `SummaryAdvance` carries it unchanged.
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
-            &left_encoded.as_gadget().anchor_end,
-            &left_encoded.as_gadget().epoch,
+            &summary.anchor_end,
+            &summary.epoch,
             oracles.bridge_hash(),
         )?;
         let output = D::just(|| {
@@ -259,8 +260,8 @@ impl Step<Pasta> for SummaryAdvance {
             )
         });
         let fields = SummaryOutput {
-            epoch: left_encoded.as_gadget().epoch.clone(),
-            anchor_prev: left_encoded.as_gadget().anchor_prev.clone(),
+            epoch: summary.epoch.clone(),
+            anchor_prev: summary.anchor_prev.clone(),
             anchor_end: anchor,
         };
         Ok((

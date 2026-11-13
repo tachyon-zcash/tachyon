@@ -221,15 +221,15 @@ impl Step<Pasta> for OutputAction {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let output_header = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let cm_root = left_encoded.as_gadget().cm.clone();
-        let pad_root = left_encoded.as_gadget().pad.clone();
+        let cm_root = output_header.cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
         let rk = fixed_base::G_TABLE.mul_canonical(dr, &alpha, None)?;
-        let action_root = poseidon::circuit::action_digest(dr, &left_encoded.as_gadget().cv, &rk)?;
+        let action_root = poseidon::circuit::action_digest(dr, &output_header.cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
         action_root.enforce_equal(dr, staged_root)?;
@@ -244,7 +244,7 @@ impl Step<Pasta> for OutputAction {
             &action_roots,
             "OutputAction: action set does not commit to the action",
         )?;
-        let tachygram_roots = [cm_root, pad_root];
+        let tachygram_roots = [cm_root, output_header.pad.clone()];
         // The stamp accumulator commits to exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -354,6 +354,7 @@ impl Step<Pasta> for SpendAction {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let spend = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let ak_assignment = D::try_just(|| {
             let bytes: [u8; 32] = witness.as_ref().take().1.ak.0.into();
@@ -368,15 +369,13 @@ impl Step<Pasta> for SpendAction {
             witness.as_ref().map(|data| Fp::from(data.1.nk)),
         )?;
         let derived_pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
-        let pk = left_encoded.as_gadget().pk.clone();
-        pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
+        spend.pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
         })?;
-        let cm = left_encoded.as_gadget().cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
-        let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
+        let alpha = poseidon::circuit::alpha_spend(dr, &theta, &spend.cm)?;
         let rk = fixed_base::G_TABLE.mul_canonical(dr, &alpha, Some(&ak))?;
-        let action_root = poseidon::circuit::action_digest(dr, &left_encoded.as_gadget().cv, &rk)?;
+        let action_root = poseidon::circuit::action_digest(dr, &spend.cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
         action_root.enforce_equal(dr, staged_root)?;
@@ -389,8 +388,6 @@ impl Step<Pasta> for SpendAction {
             &[action_root],
             "SpendAction: action set does not commit to the action",
         )?;
-        let current_root = left_encoded.as_gadget().nf_current.clone();
-        let next_root = left_encoded.as_gadget().nf_next.clone();
         // The stamp accumulator commits to exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -398,12 +395,12 @@ impl Step<Pasta> for SpendAction {
             dr,
             oracles,
             &Slot::output(1),
-            &[current_root, next_root],
+            &[spend.nf_current.clone(), spend.nf_next.clone()],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
         let output = left.map(|data| data.3);
         let fields = ActionsOutput {
-            anchor: left_encoded.as_gadget().anchor.clone(),
+            anchor: spend.anchor.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -483,9 +480,8 @@ impl Step<Pasta> for StampMerge {
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
-            .enforce_equal(dr, &right_anchor_element)
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("StampMerge: anchors must match".into())
             })?;
@@ -580,9 +576,8 @@ impl Step<Pasta> for ActionMerge {
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
-            .enforce_equal(dr, &right_anchor_element)
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("ActionMerge: anchors must match".into())
             })?;
@@ -665,19 +660,18 @@ impl Step<Pasta> for StampLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let span = right_encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
         let anchor = left_encoded.as_gadget().anchor.clone();
-        let anchor_start = right_encoded.as_gadget().anchor_start.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &anchor_start);
+        let delta = anchor.sub(dr, &span.anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "StampLift: stamp anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let anchor_end = right_encoded.as_gadget().anchor_end.clone();
         // O1 copies L1, so the output's bridge hash is the left stamp's.
         let data = D::just(|| {
             let (stamp_bridge, _) = left.take();
@@ -685,7 +679,7 @@ impl Step<Pasta> for StampLift {
             (stamp_bridge, span_anchor_end)
         });
         let encoded = Encoded::from_gadget(StampOutput {
-            anchor: anchor_end,
+            anchor: span.anchor_end.clone(),
             tachygram_set_bridge: oracles.bridge_hash().clone(),
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
@@ -742,12 +736,12 @@ impl Step<Pasta> for ActionLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let span = right_encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
         let anchor = left_encoded.as_gadget().anchor.clone();
-        let anchor_start = right_encoded.as_gadget().anchor_start.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &anchor_start);
+        let delta = anchor.sub(dr, &span.anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
@@ -755,7 +749,7 @@ impl Step<Pasta> for ActionLift {
             )
         })?;
         let fields = ActionsOutput {
-            anchor: right_encoded.as_gadget().anchor_end.clone(),
+            anchor: span.anchor_end.clone(),
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -1167,9 +1161,8 @@ impl Step<Pasta> for StampUnmerge {
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        let right_anchor_element = right_encoded.as_gadget().anchor.clone();
         left_anchor_element
-            .enforce_equal(dr, &right_anchor_element)
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("StampUnmerge: anchors must match".into())
             })?;
