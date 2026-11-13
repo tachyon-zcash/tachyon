@@ -29,12 +29,12 @@ use crate::{
     collections::indexed_multiset,
     constants::EPOCH_MAX,
     digest::poseidon,
+    gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
     pasta::{EpAffine, Fp},
     primitives::{EpochIndex, NfSeqPoly},
-    ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_product,
     value,
 };
@@ -54,7 +54,8 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub rcm: Element<'dr, D>,
     pub pk: Element<'dr, D>,
-    pub value: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub value: gadgets::value::Positive<'dr, D>,
     pub psi: Element<'dr, D>,
     pub mk: Element<'dr, D>,
 }
@@ -87,12 +88,10 @@ impl Header<Fp> for NoteSecret {
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
             )?,
-            value: Element::alloc(
+            value: gadgets::value::Positive::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.1.value))),
+                witness.as_ref().map(|&(_, Note { value, .. }, _)| value),
             )?,
             psi: Element::alloc(
                 dr,
@@ -125,8 +124,10 @@ pub struct NoteNullifiers;
 #[derive(Gadget, Write)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub epoch_start: Element<'dr, D>,
-    pub epoch_end: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_start: gadgets::epoch::EpochIndex<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_end: gadgets::epoch::EpochIndex<'dr, D>,
 }
 
 impl Header<Fp> for NoteNullifiers {
@@ -145,17 +146,17 @@ impl Header<Fp> for NoteNullifiers {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
-            epoch_start: Element::alloc(
+            epoch_start: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|&(_, epoch_start, _)| epoch_start),
             )?,
-            epoch_end: Element::alloc(
+            epoch_end: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(.., epoch_end)| epoch_end),
             )?,
         })
     }
@@ -214,12 +215,10 @@ impl Step<Pasta> for NoteSeed {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let value = Element::alloc(
+        let value = gadgets::value::Positive::alloc(
             dr,
             &mut (),
-            witness
-                .as_ref()
-                .map(|&(value, ..)| Fp::from(u64::from(value))),
+            witness.as_ref().map(|&(value, ..)| value),
         )?;
         let psi = Element::alloc(
             dr,
@@ -299,10 +298,7 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// `epoch_start` is a free witness constrained group-aligned, pinned by the
 /// header it produces: it is emitted on the header directly, so every choice
-/// is an honestly labelled window. (The alignment constraint
-/// is a native remainder fed to `enforce_zero` under mock ragu; a real
-/// circuit needs a low-bit decomposition of the witnessed epoch, since
-/// $4q = e$ is always solvable in the field.)
+/// is an honestly labelled window.
 ///
 /// `epoch_start` is fixed before $z$. Each epoch index is that start plus a
 /// circuit constant. The nullifier scalars are sponge outputs of the
@@ -367,20 +363,10 @@ impl Step<Pasta> for NullifierDerive {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        #[expect(
-            clippy::as_conversions,
-            clippy::integer_division_remainder_used,
-            reason = "the group width is a small constant"
-        )]
         let native = D::try_just(|| {
             let (epoch_start, seq) = witness.take();
             let (cm, _note, _mk) = left.take();
             let () = right.take();
-            enforce_zero(
-                Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
-                "NullifierDerive: epoch_start is not group-aligned",
-            )?;
-
             // The whole window must land inside the epoch range: an index past
             // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
             // through `EpochIndex`, which cannot hold such an index; a real
@@ -403,16 +389,23 @@ impl Step<Pasta> for NullifierDerive {
             let output = (cm, epoch_start, epoch_end);
             Ok((seq, output))
         })?;
-        let epoch_start = Element::alloc(
+        let epoch_start = gadgets::uint::Uint::alloc(
             dr,
-            &mut (),
-            native.as_ref().map(|result| Fp::from(result.1.1)),
-        )?;
+            native
+                .as_ref()
+                .map(|&(_, (_, epoch_start, _))| Fp::from(epoch_start)),
+        )
+        .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))
+        .map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "NullifierDerive: epoch_start is not group-aligned".into(),
+            )
+        })?;
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
         )]
-        epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
+        oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         let mut nullifiers = Vec::with_capacity(NF_DERIVATION_WIDTH);
         #[expect(
             clippy::integer_division,

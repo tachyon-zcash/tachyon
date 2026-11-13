@@ -74,7 +74,7 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         let blind = Fq::random(|bytes| rng.fill_bytes(bytes));
         for amount in &accepted {
             Simulator::<Fp>::simulate(Fp::from(*amount), |dr, witness| {
-                let value = Element::alloc(dr, &mut (), witness)?;
+                let value = Uint::alloc(dr, witness)?;
                 let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
                 let point = fixed_base.mul_amount(dr, &value, &blind_point)?;
                 let expected = *orchard::VALUE_COMMIT_R * blind + base * Fq::from(*amount);
@@ -85,7 +85,7 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         }
         for amount in rejected {
             Simulator::<Fp>::simulate(amount, |dr, witness| {
-                let value = Element::alloc(dr, &mut (), witness)?;
+                let value = Uint::alloc(dr, witness)?;
                 let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
                 fixed_base.mul_amount(dr, &value, &blind_point)?;
                 Ok(())
@@ -104,8 +104,10 @@ fn fee_commitment_spans_zero_to_max_money() {
     for maximum in [0, 1, MAX_MONEY, MAX_MONEY + 1] {
         let result = Simulator::<Fp>::simulate(maximum, |dr, witness| {
             let digest = Element::constant(dr, blind);
-            let maximum_element = Element::alloc(dr, &mut (), witness.map(Fp::from))?;
-            let slack = Element::constant(dr, Fp::from(MAX_MONEY)).sub(dr, &maximum_element);
+            let slack = Uint::alloc(
+                dr,
+                witness.map(|value| Fp::from(MAX_MONEY) - Fp::from(value)),
+            )?;
             let blind_point = R_BASE.mul_digest(dr, &digest, None)?;
             let point = FEE_V_BASE.mul_amount(dr, &slack, &blind_point)?;
             let expected = *orchard::VALUE_COMMIT_R * blind_scalar
@@ -157,7 +159,7 @@ fn exceptional_additions_are_rejected() {
         *orchard::VALUE_COMMIT_V * (0..16).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::from(2));
     for onto in [prefix, -prefix] {
         Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
-            let value = Element::alloc(dr, &mut (), witness)?;
+            let value = Uint::alloc(dr, witness)?;
             let blind_point = Point::constant(dr, onto.to_affine())?;
             V_BASE.mul_amount(dr, &value, &blind_point)?;
             Ok(())

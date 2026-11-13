@@ -17,9 +17,8 @@ use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
-    constants::MAX_MONEY,
     digest::poseidon,
-    gadgets::fixed_base,
+    gadgets::{self, fixed_base},
     note::Note,
     pasta::{EpAffine, Fp, Fq},
     value,
@@ -110,13 +109,13 @@ impl Step<Pasta> for OutputBind {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let amount = Element::alloc(
+        let amount = gadgets::uint::Uint::alloc(
             dr,
-            &mut (),
             witness
                 .as_ref()
                 .map(|&(note, _)| Fp::from(u64::from(note.value))),
         )?;
+        let value = gadgets::value::Positive::from_bits(dr, &amount)?;
         let rcm = Element::alloc(
             dr,
             &mut (),
@@ -132,8 +131,8 @@ impl Step<Pasta> for OutputBind {
             &mut (),
             witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
         )?;
-        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
-        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
+        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &value, &psi)?;
+        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &value, &psi)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the set polynomial factor `(X - tg)` trivial.
         cm.clone().enforce_nonzero(dr).map_err(|_err| {
@@ -146,13 +145,6 @@ impl Step<Pasta> for OutputBind {
             .mul_blinding(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
         let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
         let output = D::try_just(|| {
-            let (note, _) = witness.take();
-            if u64::from(note.value) > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "OutputBind: note value exceeds maximum".into(),
-                ));
-            }
-
             let (commitment, padding) = (
                 Tachygram::from(*cm.value().take()),
                 Tachygram::from(*pad.value().take()),
