@@ -343,20 +343,17 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let [empty_x, empty_y] =
-            super::EMPTY_STAMP_BRIDGE_HASH.map(|coordinate| Element::constant(dr, coordinate));
-        let equal_x = oracles.bridge_hash()[0].is_equal(dr, &mut (), &empty_x)?;
-        let equal_y = oracles.bridge_hash()[1].is_equal(dr, &mut (), &empty_y)?;
-        equal_x
-            .and(dr, &equal_y)?
-            .element()
-            .enforce_zero(dr)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrStampIntakeSeed: the stamp's tachygram set is empty".into(),
-                )
-            })?;
+        let z = oracles.zeta().clone();
+        let contents_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        contents_at_z.enforce_equal(dr, &stamp_at_z)?;
+        // The empty set polynomial is the constant one, so a stamp whose
+        // polynomial opens to one at zeta has no tachygrams.
+        let one = Element::constant(dr, Fp::ONE);
+        stamp_at_z
+            .sub(dr, &one)
+            .enforce_nonzero(dr)
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,

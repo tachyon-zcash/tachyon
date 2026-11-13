@@ -148,19 +148,6 @@ impl Step<Pasta> for SpendableInit {
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let epoch_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
-        let [empty_x, empty_y] =
-            super::EMPTY_STAMP_BRIDGE_HASH.map(|coordinate| Element::constant(dr, coordinate));
-        let equal_x = oracles.bridge_hash()[0].is_equal(dr, &mut (), &empty_x)?;
-        let equal_y = oracles.bridge_hash()[1].is_equal(dr, &mut (), &empty_y)?;
-        equal_x
-            .and(dr, &equal_y)?
-            .element()
-            .enforce_zero(dr)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "SpendableInit: the stamp's tachygram set is empty".into(),
-                )
-            })?;
         gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
         // The anchor immediately after the creation stamp, computed in-circuit
         // so the proof certifies the fold of the epoch and the stamp's bridge hash;
