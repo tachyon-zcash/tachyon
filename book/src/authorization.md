@@ -95,7 +95,7 @@ The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire ord
 
 $\mathsf{cvFeeMaxTachyon}$ is the [max fee note](./fee.md)'s value commitment. The fee is authorization data and stays out of the bundle commitment.
 
-The stamp proof binds the same actions by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-change-note) $d_{\fee,j}$ of the covered bundles,
+The stamp proof binds the same actions by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-steps) $d_{\fee,j}$ of the covered bundles,
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr) \prod_j \bigl(X - d_{\fee,j}\bigr)\Bigr) $$
@@ -177,7 +177,7 @@ Each path consumes the same action plans but produces a different component of t
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
+- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
 ```mermaid
 flowchart LR
