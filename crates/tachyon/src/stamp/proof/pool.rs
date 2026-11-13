@@ -39,7 +39,6 @@ use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{
-    collections::indexed_multiset,
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
@@ -664,8 +663,11 @@ impl Step<Pasta> for UnspentLift {
                     "UnspentLift: the bucket is not the segment's next epoch".into(),
                 )
             })?;
-        let value = witness.as_ref().map(|&(value, ..)| value);
-        let value_element = Element::alloc(dr, &mut (), value.clone().map(Fp::from))?;
+        let value_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(value, ..)| Fp::from(value)),
+        )?;
         value_element.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
         })?;
@@ -684,15 +686,11 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let challenge = z.value().map(Clone::clone);
-        let expected = D::try_just(|| {
-            let &(bucket_epoch, ..) = right.as_ref().take();
-            Ok(indexed_multiset::direct_eval(
-                [(u64::from(bucket_epoch), Fp::from(value.take()))],
-                challenge.take(),
-            ))
-        })?;
-        let factor = Element::alloc(dr, &mut (), expected)?;
+        let factor = gadgets::indexed_multiset::Member {
+            index: (*bucket.epoch).clone(),
+            value: value_element.clone(),
+        }
+        .eval(dr, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z
             .enforce_equal(dr, &expected_extended)
