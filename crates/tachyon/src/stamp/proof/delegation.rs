@@ -52,7 +52,8 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     #[ragu(gadget)]
     pub note: gadgets::note::Note<'dr, D>,
-    pub mk: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
 
 impl Header<Fp> for NoteSecret {
@@ -78,11 +79,13 @@ impl Header<Fp> for NoteSecret {
                 allocator,
                 witness.as_ref().map(|&(_, note, _)| note),
             )?,
-            mk: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
-            )?,
+            mk: gadgets::master::NoteMasterKey {
+                element: Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
+                )?,
+            },
         })
     }
 }
@@ -256,7 +259,7 @@ impl Step<Pasta> for NoteSeed {
         let fields = NoteSecretOutput {
             cm,
             note: circuit_note,
-            mk,
+            mk: gadgets::master::NoteMasterKey { element: mk },
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -386,7 +389,7 @@ impl Step<Pasta> for NullifierDerive {
         // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge, each
         // sponge keyed on its group's first epoch.
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
-            for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk, &index)? {
+            for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk.element, &index)? {
                 let factor = gadgets::indexed_multiset::Member {
                     index: index.clone(),
                     value: nullifier,
