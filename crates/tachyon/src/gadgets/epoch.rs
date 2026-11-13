@@ -3,13 +3,15 @@
 use core::ops::Deref;
 
 use ragu_core::{
-    PoseidonPermutation as _, Result,
+    Error, PoseidonPermutation as _, Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
     pasta::PoseidonFp,
 };
-use ragu_primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write};
+use ragu_primitives::{
+    Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write,
+};
 use udon::field::Field as _;
 
 use super::uint::Uint;
@@ -81,6 +83,21 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         let element = self.element.add(dr, &one);
         Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &element)?;
         Ok(Self { element })
+    }
+
+    /// Splits this index into the first epoch of its nullifier group and the
+    /// two low bits that select within the group.
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn group(&self, dr: &mut D) -> Result<(Element<'dr, D>, [Boolean<'dr, D>; 2])> {
+        let bits =
+            Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &self.element)?;
+        let mut low_bits = bits.bits().iter().cloned();
+        let (Some(low), Some(high)) = (low_bits.next(), low_bits.next()) else {
+            return Err(Error::InvalidWitness("an epoch has two low bits".into()));
+        };
+        let twice_high = high.element().double(dr);
+        let group_start = self.element.sub(dr, &low.element()).sub(dr, &twice_high);
+        Ok((group_start, [low, high]))
     }
 }
 
