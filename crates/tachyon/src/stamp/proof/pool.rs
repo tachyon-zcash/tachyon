@@ -44,7 +44,7 @@ use super::{
 use crate::{
     collections::indexed_multiset,
     digest::poseidon,
-    note::{self},
+    note,
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
@@ -391,17 +391,23 @@ impl Step<Pasta> for AnchorSpanFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_span = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (left_anchor_start, left_anchor_end) = left.take();
-            let (right_anchor_start, right_anchor_end) = right.take();
-            enforce_zero(
-                Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
-                "AnchorSpanFuse: spans do not share a vertex",
-            )?;
-            Ok(((left_anchor_start, right_anchor_end), ()))
-        })?;
+        let right_span = right_encoded.as_gadget();
+        left_span
+            .anchor_end
+            .enforce_equal(dr, &right_span.anchor_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "AnchorSpanFuse: spans do not share a vertex".into(),
+                )
+            })?;
+        let data = D::just(|| {
+            let (left_anchor_start, ..) = left.take();
+            let (_, right_anchor_end) = right.take();
+            (left_anchor_start, right_anchor_end)
+        });
         enforce_poly_product(
             dr,
             oracles,
@@ -410,9 +416,15 @@ impl Step<Pasta> for AnchorSpanFuse {
             &Slot::output(0),
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let fields = AnchorSpanOutput {
+            anchor_start: left_span.anchor_start.clone(),
+            anchor_end: right_span.anchor_end.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
 
@@ -467,31 +479,36 @@ impl Step<Pasta> for UnspentFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_unspent = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (left_anchor_start, left_epoch_start, left_epoch_next, left_anchor_next) =
-                left.take();
-            let (right_anchor_start, right_epoch_start, right_epoch_next, right_anchor_next) =
-                right.take();
-            enforce_zero(
-                Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
-                "UnspentFuse: left.anchor_next must equal right.anchor_start",
-            )?;
-            enforce_zero(
-                Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
-                "UnspentFuse: halves do not meet at one epoch",
-            )?;
-            Ok((
-                (
-                    left_anchor_start,
-                    left_epoch_start,
-                    right_epoch_next,
-                    right_anchor_next,
-                ),
-                (),
-            ))
-        })?;
+        let right_unspent = right_encoded.as_gadget();
+        left_unspent
+            .anchor_next
+            .enforce_equal(dr, &right_unspent.anchor_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "UnspentFuse: left.anchor_next must equal right.anchor_start".into(),
+                )
+            })?;
+        left_unspent
+            .epoch_next
+            .enforce_equal(dr, &right_unspent.epoch_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "UnspentFuse: halves do not meet at one epoch".into(),
+                )
+            })?;
+        let data = D::just(|| {
+            let (left_anchor_start, left_epoch_start, ..) = left.take();
+            let (_, _, right_epoch_next, right_anchor_next) = right.take();
+            (
+                left_anchor_start,
+                left_epoch_start,
+                right_epoch_next,
+                right_anchor_next,
+            )
+        });
         enforce_poly_product(
             dr,
             oracles,
@@ -500,9 +517,17 @@ impl Step<Pasta> for UnspentFuse {
             &Slot::output(0),
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let fields = ArbitraryUnspentOutput {
+            anchor_start: left_unspent.anchor_start.clone(),
+            epoch_start: left_unspent.epoch_start.clone(),
+            epoch_next: right_unspent.epoch_next.clone(),
+            anchor_next: right_unspent.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
 
@@ -741,6 +766,7 @@ impl Step<Pasta> for UnspentBind {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let unspent = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
@@ -784,7 +810,17 @@ impl Step<Pasta> for UnspentBind {
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let fields = NoteUnspentOutput {
+            cm: right_encoded.as_gadget().cm.clone(),
+            anchor_start: unspent.anchor_start.clone(),
+            epoch_start: unspent.epoch_start.clone(),
+            epoch_next: unspent.epoch_next.clone(),
+            anchor_next: unspent.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            aux,
+        ))
     }
 }

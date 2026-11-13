@@ -468,8 +468,11 @@ fn unmerge_binds_its_sets() {
         .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
-    let dividend_header = Stamp::header(alice_bob_tachygrams.commit(), alice_bob.anchor).unwrap();
-    let divisor_header = Stamp::header(bob_tachygrams.commit(), bob.stamp.anchor).unwrap();
+    let dividend_header = (
+        alice_bob_tachygrams.commit().bridge().unwrap(),
+        alice_bob.anchor,
+    );
+    let divisor_header = (bob_tachygrams.commit().bridge().unwrap(), bob.stamp.anchor);
     let valid = witness::stamp_unmerge(
         (dividend_header, divisor_header),
         alice_actions,

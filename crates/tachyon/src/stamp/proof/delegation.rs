@@ -460,21 +460,24 @@ impl Step<Pasta> for NullifierFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_nullifiers = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (left_cm, left_epoch_start, left_epoch_end) = left.take();
-            let (right_cm, right_epoch_start, right_epoch_end) = right.take();
-            enforce_zero(
-                Fp::from(left_cm) - Fp::from(right_cm),
-                "NullifierFuse: note commitments differ",
-            )?;
-            enforce_zero(
-                Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
-                "NullifierFuse: ranges not contiguous",
-            )?;
-            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
-        })?;
+        let right_nullifiers = right_encoded.as_gadget();
+        left_nullifiers
+            .cm
+            .enforce_equal(dr, &right_nullifiers.cm)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
+            })?;
+        let one = Element::constant(dr, Fp::ONE);
+        left_nullifiers
+            .epoch_end
+            .add(dr, &one)
+            .enforce_equal(dr, &right_nullifiers.epoch_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("NullifierFuse: ranges not contiguous".into())
+            })?;
         enforce_poly_product(
             dr,
             oracles,
@@ -483,8 +486,20 @@ impl Step<Pasta> for NullifierFuse {
             &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let data = D::just(|| {
+            let (left_cm, left_epoch_start, _) = left.take();
+            let (_, _, right_epoch_end) = right.take();
+            (left_cm, left_epoch_start, right_epoch_end)
+        });
+        let fields = NoteNullifiersOutput {
+            cm: left_nullifiers.cm.clone(),
+            epoch_start: left_nullifiers.epoch_start.clone(),
+            epoch_end: right_nullifiers.epoch_end.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
