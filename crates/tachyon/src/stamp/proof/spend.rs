@@ -160,7 +160,10 @@ impl Step<Pasta> for SpendBind {
         let secret = right_encoded.as_gadget();
         let blind_point =
             fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
-        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.value, &blind_point)?;
+        let cv = secret
+            .value
+            .to_bits(dr)
+            .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
         let output = D::try_just(|| {
             let (spendable_cm, spendable_epoch_current, anchor) = left.take();
             let (secret_cm, note, mk) = right.take();

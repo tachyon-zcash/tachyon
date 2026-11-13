@@ -6,7 +6,9 @@ use core::assert_matches;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
-    VerifyCoverageError, VerifyTachygramsError, action, bundle, fee,
+    VerifyCoverageError, VerifyTachygramsError, action, bundle,
+    constants::MAX_MONEY,
+    fee,
     stamp::{
         self, Proof as _, ProofStamp,
         proof::{
@@ -130,6 +132,61 @@ fn fee_fuse_binds_its_sets() {
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
         );
+    }
+}
+
+#[test]
+fn fee_fuse_slack_boundaries() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = Anchor::random(rng);
+    let left = fee_less_output_bundle(rng, &wallet, anchor, wallet.random_note(300));
+    let digests = left
+        .descriptors()
+        .map(|descriptor| descriptor.digest().unwrap())
+        .collect();
+    let left_pcd = left.stamp.proof.clone().carry::<Actions>(anchor);
+    for (maximum, fee) in [
+        (0, 0),
+        (1, 0),
+        (1, 1),
+        (1000, 1000),
+        (MAX_MONEY, 0),
+        (MAX_MONEY, MAX_MONEY),
+    ] {
+        let note = wallet.random_note(maximum);
+        let witness = witness::fee_fuse(
+            (anchor, ()),
+            note,
+            value::Positive::try_from(fee).unwrap(),
+            &digests,
+            &left.stamp.tachygrams,
+        );
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                FeeFuse,
+                witness.clone(),
+                left_pcd.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(PROOF_SYSTEM.verify_differential(&pcd, &mut *rng).unwrap());
+        if maximum < MAX_MONEY {
+            let mut corrupt = witness;
+            corrupt.1 = value::Positive::try_from(maximum + 1).unwrap();
+            assert_matches!(
+                PROOF_SYSTEM.fuse(
+                    rng,
+                    FeeFuse,
+                    corrupt,
+                    left_pcd.clone(),
+                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                ).err(),
+                Some(ragu_core::Error::InvalidWitness(err))
+                    if err.to_string() == "FeeFuse: change is out of range"
+            );
+        }
     }
 }
 

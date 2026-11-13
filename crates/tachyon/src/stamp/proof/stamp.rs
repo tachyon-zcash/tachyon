@@ -27,7 +27,7 @@ use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
-    gadgets::fixed_base,
+    gadgets::{self, fixed_base},
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp},
@@ -845,44 +845,27 @@ impl Step<Pasta> for FeeFuse {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        D::try_just(|| {
-            let &(max_fee_note, fee, _) = witness.as_ref().take();
-
-            let feemax = u64::from(max_fee_note.value);
-            if feemax > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "FeeFuse: maximum fee exceeds MAX_MONEY".into(),
-                ));
-            }
-            // `feemax` and `fee` are below 2^64, far below the field modulus, so the
-            // field difference lies in [0, MAX_MONEY] exactly when the integer
-            // difference does.
-            feemax
-                .checked_sub(u64::from(fee))
-                .filter(|&change| change <= MAX_MONEY)
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
-                })?;
-            Ok(())
-        })?;
-
         let max_fee_note = witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note);
-        let maximum = Element::alloc(
+        let slack = gadgets::uint::Uint::alloc(
             dr,
-            &mut (),
             max_fee_note
                 .as_ref()
-                .map(|&Note { value, .. }| Fp::from(u64::from(value))),
-        )?;
-        let fee = Element::alloc(
-            dr,
-            &mut (),
-            witness
-                .as_ref()
-                .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
-        )?;
-        let change = maximum.sub(dr, &fee);
-        let slack = Element::constant(dr, Fp::from(MAX_MONEY)).sub(dr, &maximum);
+                .map(|&Note { value, .. }| Fp::from(MAX_MONEY) - Fp::from(u64::from(value))),
+        )
+        .map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
+        })?;
+        let maximum = gadgets::value::Positive::from_slack(dr, &slack)?;
+        let (fee, change) = maximum
+            .split(
+                dr,
+                witness
+                    .as_ref()
+                    .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
+            )
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
+            })?;
         let pk = Element::alloc(
             dr,
             &mut (),
@@ -900,7 +883,7 @@ impl Step<Pasta> for FeeFuse {
         )?;
         let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
-        for (index, actual) in [&pk, &psi, &rcm, &maximum, &fee].into_iter().enumerate() {
+        for (index, actual) in [&pk, &psi, &rcm, &*maximum, &*fee].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
         let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
