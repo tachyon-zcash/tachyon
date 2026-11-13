@@ -157,7 +157,7 @@ impl Step<Pasta> for SpendableInit {
             &mut (),
             witness
                 .as_ref()
-                .map(|&(.., creation_epoch)| Fp::from(creation_epoch)),
+                .map(|&(_, _, creation_epoch)| Fp::from(creation_epoch)),
         )?;
         gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
         // The anchor immediately after the creation stamp, computed in-circuit
@@ -177,7 +177,7 @@ impl Step<Pasta> for SpendableInit {
         })?;
         let output = D::just(|| {
             let (cm, ..) = left.take();
-            let (.., creation_epoch) = witness.take();
+            let (_, _, creation_epoch) = witness.take();
             (cm, creation_epoch, Anchor::from(*anchor.value().take()))
         });
         let fields = NoteSpendableOutput {

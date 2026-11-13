@@ -901,14 +901,13 @@ impl Step<Pasta> for FeeFuse {
         }
         let anchor = left_encoded.as_gadget().anchor.clone();
         let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let anchor_value = anchor.value();
         let data = D::try_just(|| {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("FeeFuse: bridge hash is not on the curve".into())
             })?;
             Ok((
                 TachygramSetBridge::from(bridge_hash),
-                Anchor::from(*anchor_value.take()),
+                Anchor::from(*anchor.value().take()),
             ))
         })?;
         let encoded = Encoded::from_gadget(StampOutput {

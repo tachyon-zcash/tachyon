@@ -688,7 +688,7 @@ impl Step<Pasta> for UnspentLift {
         let contents_at_value = oracles.query(dr, Slot::right(0), &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
-            contents_at_value.value().map(|value| *value),
+            contents_at_value.value().map(Clone::clone),
         );
         nonzero_value.enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
