@@ -79,7 +79,11 @@ impl Header<Fp> for NoteSecret {
                 witness.as_ref().map(|&(_, note, _)| note),
             )?,
             mk: gadgets::master::NoteMasterKey {
-                element: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
+                element: Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
+                )?,
             },
         })
     }
