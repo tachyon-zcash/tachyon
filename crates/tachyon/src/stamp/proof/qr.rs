@@ -1166,7 +1166,7 @@ impl Step<Pasta> for QrBucketSeal {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &intake.epoch)
+        let next = gadgets::epoch::EpochIndex::successor(dr, &intake.epoch)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrBucketSeal: crossing past the final epoch".into(),
@@ -1175,15 +1175,16 @@ impl Step<Pasta> for QrBucketSeal {
             .into_element();
         let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
         let boundary = poseidon::circuit::anchor_next_epoch(dr, &previous, &intake.epoch)?;
-        boundary
-            .enforce_equal(dr, &intake.anchor_prev)
+        intake
+            .anchor_prev
+            .enforce_equal(dr, &boundary)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
                         .into(),
                 )
             })?;
-        let crossing = poseidon::circuit::anchor_next_epoch(dr, &intake.anchor_end, &epoch_next)?;
+        let crossing = poseidon::circuit::anchor_next_epoch(dr, &intake.anchor_end, &next)?;
         let data = D::try_just(|| {
             let (epoch, anchor_prev, _, discriminant, profile) = left.take();
             let [hash_x, hash_y] = oracles

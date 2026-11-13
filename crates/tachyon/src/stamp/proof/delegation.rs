@@ -408,15 +408,15 @@ impl Step<Pasta> for NullifierDerive {
             )
         })?;
         let output = D::try_just(|| {
-            let (window_start, _) = witness.take();
-            let window_end = (1..NF_DERIVATION_WIDTH)
-                .try_fold(window_start, |epoch, _| epoch.next())
+            let (start, _) = witness.take();
+            let end = (1..NF_DERIVATION_WIDTH)
+                .try_fold(start, |epoch, _| epoch.next())
                 .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
                         "NullifierDerive: window exceeds the epoch range".into(),
                     )
                 })?;
-            Ok((left.take().0, window_start, window_end))
+            Ok((left.take().0, start, end))
         })?;
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),
