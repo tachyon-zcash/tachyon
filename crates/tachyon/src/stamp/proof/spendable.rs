@@ -250,7 +250,7 @@ impl Step<Pasta> for QrSpendableInit {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let bucket_epoch = right_encoded.as_gadget().network.epoch.clone();
+        let bucket_epoch = right_encoded.as_gadget().epoch.clone();
         let unspent_epoch = left_encoded.as_gadget().epoch_start.clone();
         bucket_epoch
             .enforce_equal(dr, &unspent_epoch)
@@ -259,7 +259,7 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not start in the bucket's epoch".into(),
                 )
             })?;
-        let bucket_start = right_encoded.as_gadget().network.anchor_start.clone();
+        let bucket_start = right_encoded.as_gadget().anchor_start.clone();
         let unspent_start = left_encoded.as_gadget().anchor_start.clone();
         bucket_start
             .enforce_equal(dr, &unspent_start)
@@ -268,7 +268,7 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not open where the bucket does".into(),
                 )
             })?;
-        let bucket_end = right_encoded.as_gadget().network.anchor_next.clone();
+        let bucket_end = right_encoded.as_gadget().anchor_next.clone();
         let unspent_end = left_encoded.as_gadget().anchor_next.clone();
         bucket_end.enforce_equal(dr, &unspent_end).map_err(|_err| {
             ragu_core::Error::InvalidWitness(

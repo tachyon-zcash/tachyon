@@ -6,58 +6,14 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe as _,
 };
-use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, allocator::Allocator, comparison::GadgetEquals, io::Write,
-};
+use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, Anchor, EpochIndex, QrClassRoot, QrDiscriminant},
+    primitives::{self, QrClassRoot},
 };
-
-/// The fields every bucket of one QR network shares: the epoch, the anchors
-/// its buckets open at and close at, and the discriminant.
-#[derive(Gadget, Write, GadgetEquals)]
-#[expect(
-    missing_debug_implementations,
-    reason = "a gadget holds driver wires, like the header gadgets it sits in"
-)]
-pub struct QrNetwork<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
-    pub anchor_start: Element<'dr, D>,
-    pub anchor_next: Element<'dr, D>,
-    pub discriminant: Element<'dr, D>,
-}
-
-impl<'dr, D: Driver<'dr, F = Fp>> QrNetwork<'dr, D> {
-    /// Allocates a header's network fields.
-    pub(crate) fn alloc<A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        network: DriverValue<D, (EpochIndex, Anchor, Anchor, QrDiscriminant)>,
-    ) -> Result<Self> {
-        Ok(Self {
-            epoch: Element::alloc(
-                dr,
-                allocator,
-                network.as_ref().map(|fields| Fp::from(fields.0)),
-            )?,
-            anchor_start: Element::alloc(
-                dr,
-                allocator,
-                network.as_ref().map(|fields| Fp::from(fields.1)),
-            )?,
-            anchor_next: Element::alloc(
-                dr,
-                allocator,
-                network.as_ref().map(|fields| Fp::from(fields.2)),
-            )?,
-            discriminant: Element::alloc(dr, allocator, network.map(|fields| Fp::from(fields.3)))?,
-        })
-    }
-}
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.
