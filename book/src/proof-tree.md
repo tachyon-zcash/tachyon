@@ -581,8 +581,8 @@ flowchart LR
 | NoteSpendable | (cm, epoch_current, anchor) |
 | OutputHeader | (cm, pad, cv) |
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) |
-| Actions | (action_commit, stamp_tg_commit, anchor) |
-| Stamp | (action_commit, stamp_tg_commit, anchor) |
+| Actions | (action_commit, tachygram_set_bridge, anchor) |
+| Stamp | (action_commit, tachygram_set_bridge, anchor) |
 
 ## Steps
 
