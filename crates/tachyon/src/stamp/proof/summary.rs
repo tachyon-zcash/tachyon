@@ -21,14 +21,14 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
-use udon::curve::Affine as _;
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
+use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
-    pasta::{EpAffine, Fp},
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    relations::enforce::{enforce_poly_equal, enforce_poly_product},
+    gadgets,
+    pasta::Fp,
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
 };
 
 /// One summarized run of an epoch's stamps.
@@ -40,7 +40,8 @@ pub struct Summary;
 
 #[derive(Gadget, Write)]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,
 }
@@ -58,20 +59,24 @@ impl Header<Fp> for Summary {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(SummaryOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_prev, _)| Fp::from(anchor_prev)),
             )?,
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(.., anchor_end)| Fp::from(anchor_end)),
             )?,
         })
     }
@@ -129,38 +134,51 @@ impl Step<Pasta> for SummarySeed {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
-        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let output = D::try_just(|| {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
+        )?;
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, _)| epoch),
+        )?;
+        let z = oracles.zeta().clone();
+        let accumulator_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        accumulator_at_z.enforce_equal(dr, &stamp_at_z)?;
+        // The empty set polynomial is the constant one, so a stamp whose
+        // polynomial opens to one at zeta has no tachygrams.
+        let one = Element::constant(dr, Fp::ONE);
+        stamp_at_z
+            .sub(dr, &one)
+            .enforce_nonzero(dr)
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
+        let output = D::just(|| {
             let (anchor_prev, epoch, _) = witness.take();
-            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "SummarySeed: bridge hash is not on the curve".into(),
-                )
-            })?;
-            if stamp_hash.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SummarySeed: bridge hash is the identity".into(),
-                ));
-            }
-            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "invalid anchor step".into(),
-                ));
-            }
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(epoch),
-                stamp_hash,
-            ));
-            Ok(((epoch, anchor_prev, anchor_end), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+            (epoch, anchor_prev, Anchor::from(*anchor.value().take()))
+        });
+        let fields = SummaryOutput {
+            epoch: epoch_element,
+            anchor_prev: previous,
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -212,44 +230,50 @@ impl Step<Pasta> for SummaryAdvance {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        enforce_poly_product(
-            dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::output(1),
-            &Slot::output(0),
-            "SummaryAdvance: extended accumulator must fold the stamp",
-        )?;
-        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let output = D::try_just(|| {
-            let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
-            right.take();
-            let stamp_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "SummaryAdvance: bridge hash is not on the curve".into(),
-                )
-            })?;
-            if stamp_hash.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "SummaryAdvance: bridge hash is the identity".into(),
-                ));
-            }
-            if stamp_hash == EpAffine::from(TachygramSetCommit::default().bridge()?) {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "invalid anchor step".into(),
-                ));
-            }
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(summary_anchor_end),
-                Fp::from(summary_epoch),
-                stamp_hash,
-            ));
-            Ok(((summary_epoch, summary_anchor_prev, anchor_end), ()))
+        let SummaryOutput {
+            epoch,
+            anchor_prev,
+            anchor_end,
+        } = left_encoded.as_gadget().clone();
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let z = oracles.zeta().clone();
+        let accumulator_at_z = oracles.query(dr, Slot::left(0), &z)?;
+        let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let folded = accumulator_at_z.mul(dr, &stamp_at_z)?;
+        extended_at_z.enforce_equal(dr, &folded).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "SummaryAdvance: extended accumulator must fold the stamp".into(),
+            )
         })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        // The empty set polynomial is the constant one, so a stamp whose
+        // polynomial opens to one at zeta has no tachygrams.
+        let one = Element::constant(dr, Fp::ONE);
+        stamp_at_z
+            .sub(dr, &one)
+            .enforce_nonzero(dr)
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        // The epoch is in range: `SummarySeed` range-checks it and every
+        // `SummaryAdvance` carries it unchanged.
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &anchor_end, &epoch, oracles.bridge_hash())?;
+        let output = D::just(|| {
+            let (summary_epoch, summary_anchor_prev, ..) = left.take();
+            (
+                summary_epoch,
+                summary_anchor_prev,
+                Anchor::from(*anchor.value().take()),
+            )
+        });
+        let fields = SummaryOutput {
+            epoch,
+            anchor_prev,
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

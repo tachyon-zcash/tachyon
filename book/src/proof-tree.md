@@ -586,7 +586,7 @@ Every proof has two output polynomial slots; the table names their role separate
 | OutputHeader | (cm, pad, cv) | — |
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) | — |
 | Actions | anchor | O0: actions; O1: tachygrams |
-| Stamp | (stamp_tg_commit, anchor) | O0: actions; O1: tachygrams |
+| Stamp | (tachygram_set_bridge, anchor) | O0: actions; O1: tachygrams |
 
 ## Steps
 
