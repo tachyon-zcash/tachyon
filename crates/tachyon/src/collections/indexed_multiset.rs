@@ -77,7 +77,7 @@ use udon::field::Field as _;
 
 use crate::{arithmetic, pasta::Fp};
 
-const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
+pub(crate) const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000002"
 ));
 
@@ -94,12 +94,6 @@ fn encode_single(idx: u64, m: Fp) -> [Fp; 4] {
     ]
 }
 
-#[must_use]
-fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
-    let i = Fp::from(idx) + Fp::ONE;
-    ((i * x) + m).pow_u64(3) - NON_RESIDUE
-}
-
 /// Encode the provided indexed members.
 pub(crate) fn encode(
     members: impl IntoIterator<Item = (u64, Fp)>,
@@ -111,11 +105,4 @@ pub(crate) fn encode(
                 arithmetic::poly_mul(&product, &encode_single(idx, m))
             }),
     )
-}
-
-/// Evaluate the indexed multiset without building the polynomial.
-pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -> Fp {
-    members
-        .into_iter()
-        .fold(Fp::ONE, |acc, (idx, m)| acc * direct_eval_single(idx, m, x))
 }
