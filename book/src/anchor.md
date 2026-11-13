@@ -15,10 +15,10 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ x(\mathsf{tg}_\mathsf{bridge}),\ y(\mathsf{tg}_\mathsf{bridge}))
 $$
 
-where $e$ is the containing block's epoch and $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
+where $e$ is the containing block's epoch and $\mathsf{tg}_\mathsf{bridge}$ is the Pallas bridge hash of the stamp's Vesta tachygram-set commitment[^tachygrams]. Poseidon absorbs the bridge point's two affine coordinates, not limbs of the compressed commitment encoding.
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
 
