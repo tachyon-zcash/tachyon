@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::MAX_MONEY_BITS,
+    constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
     gadgets::{self, fixed_base},
@@ -861,14 +861,14 @@ impl Step<Pasta> for FeeFuse {
         gadgets::range::enforce_money(dr, &max_fee_note.value).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
         })?;
-        // `fee + change = max_fee_note.value <= MAX_MONEY`, so `MAX_MONEY_BITS`
-        // bounds both without wrap.
-        gadgets::range::enforce_width::<D, MAX_MONEY_BITS>(dr, &fee).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeFuse: fee is out of range".into())
-        })?;
-        gadgets::range::enforce_width::<D, MAX_MONEY_BITS>(dr, &change).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
-        })?;
+        // `fee + change = max_fee_note.value <= MAX_MONEY`, so the bit width of
+        // `MAX_MONEY` bounds both without wrap.
+        gadgets::range::enforce_width::<D, { MAX_MONEY.bit_width() }>(dr, &fee).map_err(
+            |_err| ragu_core::Error::InvalidWitness("FeeFuse: fee is out of range".into()),
+        )?;
+        gadgets::range::enforce_width::<D, { MAX_MONEY.bit_width() }>(dr, &change).map_err(
+            |_err| ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into()),
+        )?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
         for (index, actual) in [
             &max_fee_note.pk,

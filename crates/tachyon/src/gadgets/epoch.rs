@@ -9,10 +9,10 @@ use ragu_primitives::Element;
 use udon::field::Field as _;
 
 use super::range;
-use crate::{constants::EPOCH_MAX, nullifier, pasta::Fp};
+use crate::{constants::EPOCH_MAX, pasta::Fp};
 
 /// Constrains `group_start` to `PoseidonFp::RATE` times a group index within
-/// [`GROUP_BITS`](nullifier::GROUP_BITS), so it is the first epoch of a
+/// the epoch width less `log2(RATE)` bits, so it is the first epoch of a
 /// nullifier group and cannot wrap.
 pub(crate) fn enforce_group_start<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
@@ -26,7 +26,7 @@ pub(crate) fn enforce_group_start<'dr, D: Driver<'dr, F = Fp>>(
         .invert()
         .expect("the sponge rate is invertible");
     let group_index = group_start.scale(dr, Coeff::Arbitrary(inverse_rate));
-    range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group_index)
+    range::enforce_width::<D, { u32::BITS - PoseidonFp::RATE.ilog2() }>(dr, &group_index)
 }
 
 /// Constrains `epoch` to an epoch index, `0..=EPOCH_MAX`: `EPOCH_MAX + 1` is a

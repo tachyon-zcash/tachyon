@@ -1,20 +1,13 @@
 //! Nullifiers and nullifier operations.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use crate::{
-    pasta::Fp,
-    primitives::{EpochIndex, Tachygram},
-};
+use crate::{pasta::Fp, primitives::Tachygram};
 
 /// Epochs covered per nullifier derivation step.
 pub const NF_DERIVATION_WIDTH: usize = 16;
-
-/// Bit width of a nullifier group index, `epoch / PoseidonFp::RATE`.
-pub(crate) const GROUP_BITS: u32 = EpochIndex::BITS - PoseidonFp::RATE.ilog2();
 
 /// A Tachyon nullifier.
 ///

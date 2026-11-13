@@ -30,9 +30,6 @@ pub struct EpochIndex(u32);
 pub struct EpochDiff(u32);
 
 impl EpochIndex {
-    /// Bit width of an epoch index.
-    pub const BITS: u32 = u32::BITS;
-
     /// The epoch at `index`.
     ///
     /// # Panics

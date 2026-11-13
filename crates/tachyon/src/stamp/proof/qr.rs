@@ -947,7 +947,7 @@ impl Step<Pasta> for QrSideDescend {
                 )
             })?;
         }
-        gadgets::range::enforce_width::<D, { QrProfile::DEPTH_BITS }>(
+        gadgets::range::enforce_width::<D, { QrProfile::MAX_DEPTH.ilog2() }>(
             dr,
             &sides.intake.profile.depth,
         )

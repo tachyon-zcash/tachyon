@@ -6,10 +6,7 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe as _};
 use ragu_primitives::{Boolean, Element, GadgetExt as _, multipack};
 use udon::field::Field as _;
 
-use crate::{
-    constants::{MAX_MONEY, MAX_MONEY_BITS},
-    pasta::Fp,
-};
+use crate::{constants::MAX_MONEY, pasta::Fp};
 
 /// Constrains `value` below $2^{BITS}$ by decomposing it into `BITS` Boolean
 /// bits that pack back to it.
@@ -44,13 +41,13 @@ pub(crate) fn enforce_width<'dr, D: Driver<'dr, F = Fp>, const BITS: u32>(
 
 /// Constrains `value` to `0..=MAX_MONEY`, the range of a valid amount.
 ///
-/// `value` and `MAX_MONEY - value` each fit [`MAX_MONEY_BITS`] bits. Their sum
-/// is `MAX_MONEY`, far below the field modulus, so neither wraps.
+/// `value` and `MAX_MONEY - value` each fit the bit width of `MAX_MONEY`. Their
+/// sum is `MAX_MONEY`, far below the field modulus, so neither wraps.
 pub(crate) fn enforce_money<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     value: &Element<'dr, D>,
 ) -> Result<()> {
-    enforce_width::<D, MAX_MONEY_BITS>(dr, value)?;
+    enforce_width::<D, { MAX_MONEY.bit_width() }>(dr, value)?;
     let slack = Element::constant(dr, Fp::from(MAX_MONEY)).sub(dr, value);
-    enforce_width::<D, MAX_MONEY_BITS>(dr, &slack)
+    enforce_width::<D, { MAX_MONEY.bit_width() }>(dr, &slack)
 }
