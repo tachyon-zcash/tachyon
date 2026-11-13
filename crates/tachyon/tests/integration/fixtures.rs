@@ -17,8 +17,8 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
+    Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
@@ -520,12 +520,8 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> (
-    ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-    AnchorSetPoly,
-) {
-    let (span, members) = build_anchor_span_pcd(rng, pool, range);
-    (span, AnchorSetPoly::from_iter(members))
+) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
+    build_anchor_span_pcd(rng, pool, range).0
 }
 
 pub(crate) struct QrIntakeEntry {
@@ -1435,10 +1431,7 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) {
         let ask = self.sk.derive_auth_private();
@@ -1483,10 +1476,7 @@ impl WalletSim {
         Vec<(
             ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<(
-                ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-                AnchorSetPoly,
-            )>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
         Anchor,
         Note,

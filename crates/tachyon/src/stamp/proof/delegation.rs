@@ -40,9 +40,8 @@ use crate::{
 /// A note's certified record: its commitment, its opening, and its master key
 /// (wallet-only).
 ///
-/// `mk` is derived natively from the note's secrets and certified here, so
-/// every consuming [`NullifierDerive`] threads a genuine master key without
-/// re-witnessing the note. `note` is the opening `cm` commits to.
+/// [`NoteSeed`] proves that `mk` belongs to the note, so [`NullifierDerive`]
+/// can use it without proving the note's opening again.
 /// [`SpendBind`](super::spend::SpendBind) reads it.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
