@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use crate::{
@@ -21,7 +21,6 @@ use crate::{
     digest::poseidon,
     note::Note,
     pasta::{EpAffine, Fp},
-    ragu_constraint::enforce_nonzero,
     value,
 };
 
@@ -109,6 +108,38 @@ impl Step<Pasta> for OutputBind {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let amount = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(note, _)| Fp::from(u64::from(note.value))),
+        )?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(note, _)| Fp::from(note.rcm)),
+        )?;
+        let pk = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(note, _)| Fp::from(note.pk)),
+        )?;
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
+        )?;
+        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
+        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
+        // Two zero tachygrams collide whatever they were meant to be, and a
+        // zero root leaves the set polynomial factor `(X - tg)` trivial.
+        cm.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("OutputBind: note commitment is zero".into())
+        })?;
+        pad.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
+        })?;
         let output = D::try_just(|| {
             let (note, rcv) = witness.take();
             if u64::from(note.value) > MAX_MONEY {
@@ -117,28 +148,17 @@ impl Step<Pasta> for OutputBind {
                 ));
             }
 
-            let (cm, pad) = {
-                let (rcm, pk, value, psi) = (
-                    Fp::from(note.rcm),
-                    Fp::from(note.pk),
-                    u64::from(note.value),
-                    Fp::from(note.psi),
-                );
-                (
-                    Tachygram::from(poseidon::note_commitment(rcm, pk, value, psi)),
-                    Tachygram::from(poseidon::pad_tachygram(rcm, pk, value, psi)),
-                )
-            };
+            let (commitment, padding) = (
+                Tachygram::from(*cm.value().take()),
+                Tachygram::from(*pad.value().take()),
+            );
 
-            // Two zero tachygrams collide whatever they were meant to be, and a
-            // zero root leaves the accumulator factor `(X - tg)` trivial.
-            enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
-            enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
-
-            Ok(((cm, pad, rcv.commit(-note.value)), ()))
+            Ok(((commitment, padding, rcv.commit(-note.value)), ()))
         })?;
         let (data, aux) = output.cast();
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        encoded.as_gadget().cm.enforce_equal(dr, &cm)?;
+        encoded.as_gadget().pad.enforce_equal(dr, &pad)?;
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

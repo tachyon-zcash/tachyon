@@ -22,7 +22,7 @@ use zcash_tachyon::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
-    digest::{blake2b, poseidon},
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     fee,
@@ -486,11 +486,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
             .collect::<Vec<_>>()
         {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(state),
-                Fp::from(witness.1),
-                witness.2.into(),
-            ));
+            let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .unwrap();

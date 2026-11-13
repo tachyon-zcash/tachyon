@@ -48,7 +48,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetBridge, TachygramSetCommit,
+        TachygramSetPoly,
     },
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -259,8 +259,8 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Left = ();
     type Output = AnchorSpan;
     type Right = ();
-    /// `(anchor_start, epoch, stamp_hash)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetBridge);
+    /// `(anchor_start, epoch, stamp)`
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(31);
 
@@ -270,17 +270,16 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-            Fp::from(witness.0),
-            Fp::from(witness.1),
-            witness.2.into(),
-        ));
+        let anchor_end = witness
+            .0
+            .next_stamp(witness.1, &witness.2.commit())
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok([
             AnchorSetPoly::from_iter([anchor_end])
                 .as_ref()
                 .iter_coeffs()
                 .collect(),
-            alloc::vec![Fp::ONE],
+            witness.2.as_ref().iter_coeffs().collect(),
         ])
     }
 
@@ -306,32 +305,53 @@ impl Step<Pasta> for AnchorSpanSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (anchor_start, epoch, stamp_hash) = witness.take();
-            if stamp_hash == TachygramSetCommit::default().bridge()? {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "invalid anchor step".into(),
-                ));
-            }
-            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_start),
-                Fp::from(epoch),
-                stamp_hash.into(),
-            ));
-
-            Ok(((anchor_start, anchor_end), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        let header = encoded.as_gadget();
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+        )?;
+        // The empty set polynomial is the constant one, so a stamp whose
+        // polynomial opens to one at zeta has no tachygrams.
+        let z = oracles.zeta().clone();
+        let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let one = Element::constant(dr, Fp::ONE);
+        stamp_at_z
+            .sub(dr, &one)
+            .enforce_nonzero(dr)
+            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         enforce_poly_roots(
             dr,
             oracles,
             &Slot::output(0),
-            array::from_ref(&header.anchor_end),
+            array::from_ref(&anchor),
             "AnchorSpanSeed: members must contain the resulting anchor",
         )?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let data = D::just(|| {
+            let (anchor_start, ..) = witness.take();
+            (anchor_start, Anchor::from(*anchor.value().take()))
+        });
+        let fields = AnchorSpanOutput {
+            anchor_start: previous,
+            anchor_end: anchor,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
 
@@ -661,7 +681,7 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let challenge = z.value().map(|value| *value);
+        let challenge = z.value().map(Clone::clone);
         let expected = D::try_just(|| {
             let (value, bucket_epoch, _) = native.clone().take();
             Ok(indexed_multiset::direct_eval(
@@ -681,7 +701,7 @@ impl Step<Pasta> for UnspentLift {
         let contents_at_value = oracles.query(dr, Slot::right(0), &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
-            contents_at_value.value().map(|value| *value),
+            contents_at_value.value().map(Clone::clone),
         );
         nonzero_value.enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
@@ -766,7 +786,12 @@ impl Step<Pasta> for UnspentBind {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let unspent = left_encoded.as_gadget();
+        let ArbitraryUnspentOutput {
+            anchor_start,
+            epoch_start,
+            epoch_next,
+            anchor_next,
+        } = left_encoded.as_gadget().clone();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
@@ -812,10 +837,10 @@ impl Step<Pasta> for UnspentBind {
         let (data, aux) = output.cast();
         let fields = NoteUnspentOutput {
             cm: right_encoded.as_gadget().cm.clone(),
-            anchor_start: unspent.anchor_start.clone(),
-            epoch_start: unspent.epoch_start.clone(),
-            epoch_next: unspent.epoch_next.clone(),
-            anchor_next: unspent.anchor_next.clone(),
+            anchor_start,
+            epoch_start,
+            epoch_next,
+            anchor_next,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

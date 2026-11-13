@@ -146,9 +146,29 @@ impl Step<Pasta> for SpendableInit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(_, _, creation_epoch)| Fp::from(creation_epoch)),
+        )?;
+        let anchor = poseidon::circuit::anchor_next_stamp(
+            dr,
+            &previous,
+            &epoch_element,
+            oracles.bridge_hash(),
+        )?;
         let [hash_x, hash_y] = oracles.bridge_hash().each_ref().map(Element::value);
         let native = D::try_just(|| {
-            let (anchor_prev, _, creation_epoch) = witness.take();
+            let (_, _, creation_epoch) = witness.take();
             let (cm, ..) = left.take();
             let () = right.take();
             let creation_hash =
@@ -163,12 +183,10 @@ impl Step<Pasta> for SpendableInit {
                 ));
             }
             // O1's bridge hash binds the creation set absorbed into the anchor.
-            let anchor = Anchor::from(poseidon::anchor_next_stamp(
-                Fp::from(anchor_prev),
-                Fp::from(creation_epoch),
-                creation_hash,
-            ));
-            Ok((cm, (cm, creation_epoch, anchor)))
+            Ok((
+                cm,
+                (cm, creation_epoch, Anchor::from(*anchor.value().take())),
+            ))
         })?;
         let x = Element::alloc(dr, &mut (), native.clone().map(|(cm, _)| Fp::from(cm)))?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
@@ -178,6 +196,11 @@ impl Step<Pasta> for SpendableInit {
         })?;
         let data = native.map(|(_, output)| output);
         let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        encoded
+            .as_gadget()
+            .epoch_current
+            .enforce_equal(dr, &epoch_element)?;
+        encoded.as_gadget().anchor.enforce_equal(dr, &anchor)?;
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
