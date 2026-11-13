@@ -26,7 +26,6 @@ use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    collections::indexed_multiset,
     digest::poseidon,
     gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
@@ -53,7 +52,8 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     #[ragu(gadget)]
     pub note: gadgets::note::Note<'dr, D>,
-    pub mk: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
 
 impl Header<Fp> for NoteSecret {
@@ -79,11 +79,13 @@ impl Header<Fp> for NoteSecret {
                 allocator,
                 witness.as_ref().map(|&(_, note, _)| note),
             )?,
-            mk: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
-            )?,
+            mk: gadgets::master::NoteMasterKey {
+                element: Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
+                )?,
+            },
         })
     }
 }
@@ -257,7 +259,7 @@ impl Step<Pasta> for NoteSeed {
         let fields = NoteSecretOutput {
             cm,
             note: circuit_note,
-            mk,
+            mk: gadgets::master::NoteMasterKey { element: mk },
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -270,28 +272,18 @@ impl Step<Pasta> for NoteSeed {
 /// Derive one window of nullifiers and export it as a
 /// [`NoteNullifiers`].
 ///
-/// `Left = NoteSeed`. Witnesses the window's start epoch (constrained
-/// group-aligned, $w \bmod r = 0$ for $r$ the sponge rate `PoseidonFp::RATE`)
-/// and the window sequence. Runs one `Tachyon-NfDerive` sponge per group over
-/// $(\mathsf{mk}, w)$, each absorbing two elements and squeezing $r$
-/// nullifiers for one permutation, then binds the sequence to the window's
-/// members by a single opening at a free $z$ against their natively encoded
-/// product.
+/// The window starts on a group boundary. One `Tachyon-NfDerive` sponge per
+/// group absorbs the note's master key and the group's first epoch, then
+/// produces `PoseidonFp::RATE` nullifiers.
 ///
 /// # Soundness
 ///
-/// `mk` is threaded from the left header, so it is the note's genuine master
-/// key by PCD soundness. The opening's only free operand is the window
-/// sequence, committed before $z$ exists.
-///
-/// `epoch_start` is a free witness constrained group-aligned, pinned by the
-/// header it produces: it is emitted on the header directly, so every choice
-/// is an honestly labelled window.
-///
-/// `epoch_start` is fixed before $z$. Each epoch index is that start plus a
-/// circuit constant. The nullifier scalars are sponge outputs of the
-/// threaded `mk`, pinned in-circuit, so the product identity alone forces
-/// every member.
+/// The input proof identifies the note's master key. The start epoch is fixed
+/// before the challenge; it must be a multiple of the sponge rate, and the
+/// final epoch must remain in range. The circuit derives every nullifier and
+/// index from those inputs. Opening the committed sequence at the random
+/// challenge checks the whole window, whose bounds are published on the output
+/// header.
 ///
 /// Opens the derived sequence once.
 #[derive(Debug)]
@@ -329,6 +321,12 @@ impl Step<Pasta> for NullifierDerive {
         ])
     }
 
+    #[expect(
+        clippy::integer_division,
+        clippy::integer_division_remainder_used,
+        clippy::indexing_slicing,
+        reason = "the fixed sponge rate divides the window width; indices are fixed"
+    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -350,10 +348,9 @@ impl Step<Pasta> for NullifierDerive {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let secret = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let native = D::try_just(|| {
-            let (epoch_start, seq) = witness.take();
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let output = D::try_just(|| {
+            let (epoch_start, _) = witness.take();
             let epoch_end = (1..NF_DERIVATION_WIDTH)
                 .try_fold(epoch_start, |epoch, _| epoch.next())
                 .ok_or_else(|| {
@@ -362,13 +359,13 @@ impl Step<Pasta> for NullifierDerive {
                     )
                 })?;
             let (cm, ..) = left.take();
-            Ok((seq, (cm, epoch_start, epoch_end)))
+            Ok((cm, epoch_start, epoch_end))
         })?;
         let epoch_start = gadgets::uint::Uint::alloc(
             dr,
-            native
+            output
                 .as_ref()
-                .map(|&(_, (_, epoch_start, _))| Fp::from(epoch_start)),
+                .map(|&(_, epoch_start, _)| Fp::from(epoch_start)),
         )
         .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))
         .map_err(|_err| {
@@ -376,52 +373,37 @@ impl Step<Pasta> for NullifierDerive {
                 "NullifierDerive: epoch_start is not group-aligned".into(),
             )
         })?;
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "the framework enforces NUM_STAGED = 1"
-        )]
         oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
         #[expect(clippy::as_conversions, reason = "constant value")]
         let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
         let epoch_end = epoch_start.add(dr, &width);
-        let mut nullifiers = Vec::with_capacity(NF_DERIVATION_WIDTH);
-        #[expect(
-            clippy::integer_division,
-            clippy::integer_division_remainder_used,
-            clippy::as_conversions,
-            reason = "fixed window and sponge rate"
-        )]
-        for group in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
-            let offset = Element::constant(dr, Fp::from((group * PoseidonFp::RATE) as u64));
-            let group_start = epoch_start.add(dr, &offset);
-            let outputs = poseidon::circuit::nullifier_group(dr, &secret.mk, &group_start)?;
-            nullifiers.extend(outputs);
-        }
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let output = native.as_ref().map(|result| result.1);
-        let z_value = z.value().map(|challenge| *challenge);
-        // The window's members at `z`, encoded natively from the
+        // The window's members at `z`, encoded in-circuit from the
         // sponge-derived nullifiers and their epochs.
-        let window_at_z = D::try_just(|| {
-            let challenge = z_value.take();
-            let (_, output_data) = native.take();
-            Ok(indexed_multiset::direct_eval(
-                (output_data.1.into()..)
-                    .zip(nullifiers.into_iter().map(|item| *item.value().take())),
-                challenge,
-            ))
+        let mut window_at_z = Element::constant(dr, Fp::ONE);
+        let mut index = (*epoch_start).clone();
+        let one = Element::constant(dr, Fp::ONE);
+        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge, each
+        // sponge keyed on its group's first epoch.
+        for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
+            for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk.element, &index)? {
+                let factor = gadgets::indexed_multiset::Member {
+                    index: index.clone(),
+                    value: nullifier,
+                }
+                .eval(dr, &z)?;
+                window_at_z = window_at_z.mul(dr, &factor)?;
+                index = index.add(dr, &one);
+            }
+        }
+        window_at_z.enforce_equal(dr, &seq_at_z).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "NullifierDerive: sequence does not match the derived window".into(),
+            )
         })?;
-        let window_assignment = Element::alloc(dr, &mut (), window_at_z)?;
-        seq_at_z
-            .enforce_equal(dr, &window_assignment)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "NullifierDerive: sequence does not match the derived window".into(),
-                )
-            })?;
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),
             epoch_start,

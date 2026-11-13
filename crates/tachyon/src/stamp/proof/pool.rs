@@ -39,7 +39,6 @@ use udon::field::Field as _;
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{
-    collections::indexed_multiset,
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
@@ -664,8 +663,11 @@ impl Step<Pasta> for UnspentLift {
                     "UnspentLift: the bucket is not the segment's next epoch".into(),
                 )
             })?;
-        let value = witness.as_ref().map(|&(value, ..)| value);
-        let value_element = Element::alloc(dr, &mut (), value.clone().map(Fp::from))?;
+        let value_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(value, ..)| Fp::from(value)),
+        )?;
         value_element.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
         })?;
@@ -684,15 +686,11 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let challenge = z.value().map(Clone::clone);
-        let expected = D::try_just(|| {
-            let &(bucket_epoch, ..) = right.as_ref().take();
-            Ok(indexed_multiset::direct_eval(
-                [(u64::from(bucket_epoch), Fp::from(value.take()))],
-                challenge.take(),
-            ))
-        })?;
-        let factor = Element::alloc(dr, &mut (), expected)?;
+        let factor = gadgets::indexed_multiset::Member {
+            index: (*bucket.epoch).clone(),
+            value: value_element.clone(),
+        }
+        .eval(dr, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z
             .enforce_equal(dr, &expected_extended)
@@ -828,7 +826,11 @@ impl Step<Pasta> for UnspentBind {
             &Slot::right(0),
             "UnspentBind: sequence does not match the derivation",
         )?;
-        let output = D::try_just(|| {
+        // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
+        // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
+        // of a range-checked epoch, and `UnspentFuse` joins halves at an equal
+        // epoch.
+        let data = D::just(|| {
             let (
                 unspent_anchor_start,
                 unspent_epoch_start,
@@ -836,29 +838,14 @@ impl Step<Pasta> for UnspentBind {
                 unspent_anchor_next,
             ) = left.take();
             let (nullifiers_cm, ..) = right.take();
-            // Defensive. `QrUnspentInit` emits `epoch_next = epoch_start + 1`, and
-            // every other producer only raises `epoch_next`, so every
-            // `ArbitraryUnspent` covers at least one epoch.
-            // TODO: a real circuit needs a range decomposition of
-            // `epoch_next - epoch_start`; mock ragu accepts the native comparison.
-            if unspent_epoch_next <= unspent_epoch_start {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "UnspentBind: segment covers no epoch".into(),
-                ));
-            }
-
-            Ok((
-                (
-                    nullifiers_cm,
-                    unspent_anchor_start,
-                    unspent_epoch_start,
-                    unspent_epoch_next,
-                    unspent_anchor_next,
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
+            (
+                nullifiers_cm,
+                unspent_anchor_start,
+                unspent_epoch_start,
+                unspent_epoch_next,
+                unspent_anchor_next,
+            )
+        });
         let fields = NoteUnspentOutput {
             cm: right_encoded.as_gadget().cm.clone(),
             anchor_start,
@@ -869,7 +856,7 @@ impl Step<Pasta> for UnspentBind {
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
-            aux,
+            D::unit(),
         ))
     }
 }
