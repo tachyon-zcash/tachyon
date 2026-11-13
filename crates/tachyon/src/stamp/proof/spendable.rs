@@ -247,8 +247,7 @@ impl Step<Pasta> for QrSpendableInit {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let unspent = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let bucket = right_encoded.as_gadget();
         bucket
             .epoch
