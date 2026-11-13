@@ -38,8 +38,8 @@ pub enum ExtractError {
 
 #[expect(clippy::multiple_inherent_impl, reason = "one impl block per role")]
 impl Bundle {
-    /// Extract a verified uncompressed bundle, with actions in sorted descriptor
-    /// order.
+    /// Extract a verified uncompressed bundle, with actions in sorted
+    /// descriptor order.
     ///
     /// When every note value is present, they must sum to the value balance.
     /// The extracted bundle is verified as an autonome against `sighash`:
