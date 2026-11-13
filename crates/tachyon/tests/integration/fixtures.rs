@@ -258,11 +258,11 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let left_pcd = stamp_a
         .proof
         .clone()
-        .carry::<Stamp>(Stamp::header(left_tg.commit(), stamp_a.anchor).unwrap());
+        .carry::<Stamp>((left_tg.commit().bridge().unwrap(), stamp_a.anchor));
     let right_pcd = stamp_b
         .proof
         .clone()
-        .carry::<Stamp>(Stamp::header(right_tg.commit(), stamp_b.anchor).unwrap());
+        .carry::<Stamp>((right_tg.commit().bridge().unwrap(), stamp_b.anchor));
 
     let merged_acts = descriptors_a
         .iter()

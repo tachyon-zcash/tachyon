@@ -577,6 +577,6 @@ fn fee_seed_binds_its_singletons_and_header() {
     let pcd = seed_pcd
         .proof()
         .clone()
-        .carry::<Stamp>(Stamp::header(valid.3.commit(), anchor).unwrap());
+        .carry::<Stamp>((valid.3.commit().bridge().unwrap(), anchor));
     assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
 }

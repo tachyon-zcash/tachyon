@@ -26,7 +26,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp, Fq},
-    primitives::{ActionDigest, Anchor, TachygramSetBridge, TachygramSetCommit, effect},
+    primitives::{ActionDigest, Anchor, TachygramSetBridge, effect},
     ragu_constraint::{enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
@@ -74,7 +74,7 @@ impl Header<Fp> for Actions {
 
 /// Header for one or more fee-bearing lineages.
 ///
-/// O0/O1 hold the action and tachygram sets. `stamp_tg_commit` holds O1's
+/// O0/O1 hold the action and tachygram sets. `tachygram_set_bridge` holds O1's
 /// bridge hash. [`StampMerge`] enforces both output sets as input products.
 ///
 /// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
@@ -91,11 +91,11 @@ pub struct Stamp;
 #[derive(Gadget, Write)]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
-    pub stamp_tg_commit: [Element<'dr, D>; 2],
+    pub tachygram_set_bridge: [Element<'dr, D>; 2],
 }
 
 impl Header<Fp> for Stamp {
-    /// `(stamp_tg_commit, anchor)`
+    /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
@@ -110,7 +110,7 @@ impl Header<Fp> for Stamp {
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
         )]
-        let stamp_tg_commit = witness.as_ref().map(|fields| {
+        let tachygram_set_bridge = witness.as_ref().map(|fields| {
             EpAffine::from(fields.0)
                 .coordinates()
                 .expect("bridge hash is not the identity")
@@ -121,67 +121,23 @@ impl Header<Fp> for Stamp {
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            stamp_tg_commit: [
+            tachygram_set_bridge: [
                 Element::alloc(
                     dr,
                     allocator,
-                    stamp_tg_commit.as_ref().map(|coordinates| coordinates.0),
+                    tachygram_set_bridge
+                        .as_ref()
+                        .map(|coordinates| coordinates.0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    stamp_tg_commit.as_ref().map(|coordinates| coordinates.1),
+                    tachygram_set_bridge
+                        .as_ref()
+                        .map(|coordinates| coordinates.1),
                 )?,
             ],
         })
-    }
-}
-
-impl Stamp {
-    /// Reconstructs the header from the public tachygram commitment and anchor.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the commitment is the identity.
-    pub fn header(
-        commitment: TachygramSetCommit,
-        anchor: Anchor,
-    ) -> ragu_core::Result<(TachygramSetBridge, Anchor)> {
-        Ok((commitment.bridge()?, anchor))
-    }
-
-    #[expect(
-        clippy::type_complexity,
-        reason = "the encoded header and its carried data"
-    )]
-    fn output<'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        dr: &mut D,
-        oracles: &Oracles<'_, 'dr, D>,
-        anchor: DriverValue<D, Anchor>,
-    ) -> ragu_core::Result<(
-        Encoded<'dr, D, Self, HEADER_SIZE>,
-        DriverValue<D, <Self as Header<Fp>>::Data>,
-    )> {
-        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
-        let data = D::try_just(|| {
-            let stamp_tg_commit = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("Stamp: bridge hash is not on the curve".into())
-            })?;
-            if stamp_tg_commit.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "Stamp: bridge hash is the identity".into(),
-                ));
-            }
-            Ok((
-                TachygramSetBridge::from(stamp_tg_commit),
-                anchor.clone().take(),
-            ))
-        })?;
-        let encoded = Encoded::from_gadget(StampOutput {
-            anchor: Element::alloc(dr, &mut (), anchor.map(Fp::from))?,
-            stamp_tg_commit: oracles.bridge_hash().clone(),
-        });
-        Ok((encoded, data))
     }
 }
 
@@ -535,17 +491,29 @@ impl Step<Pasta> for StampMerge {
             &Slot::output(1),
             "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
-        let output = D::try_just(|| {
-            let (_, left_anchor) = left.take();
-            let (_, right_anchor) = right.take();
-            // Same-anchor constraint.
-            enforce_zero(
-                Fp::from(left_anchor) - Fp::from(right_anchor),
-                "StampMerge: anchors must match",
-            )?;
-            Ok(left_anchor)
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        left_anchor_element
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("StampMerge: anchors must match".into())
+            })?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let anchor_value = left_anchor_element.value();
+        let data = D::try_just(|| {
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "StampMerge: bridge hash is not on the curve".into(),
+                )
+            })?;
+            Ok((
+                TachygramSetBridge::from(bridge_hash),
+                Anchor::from(*anchor_value.take()),
+            ))
         })?;
-        let (encoded, data) = Stamp::output(dr, oracles, output)?;
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor: left_anchor_element,
+            tachygram_set_bridge: oracles.bridge_hash().clone(),
+        });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
@@ -619,19 +587,20 @@ impl Step<Pasta> for ActionMerge {
             &Slot::output(1),
             "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
-        let output = D::try_just(|| {
-            let left_anchor = left.take();
-            let right_anchor = right.take();
-            // Same-anchor constraint.
-            enforce_zero(
-                Fp::from(left_anchor) - Fp::from(right_anchor),
-                "ActionMerge: anchors must match",
-            )?;
-            Ok((left_anchor, ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        left_anchor_element
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("ActionMerge: anchors must match".into())
+            })?;
+        let fields = ActionsOutput {
+            anchor: left_anchor_element,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            left,
+            D::unit(),
+        ))
     }
 }
 
@@ -703,20 +672,28 @@ impl Step<Pasta> for StampLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let span = right_encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = Element::alloc(dr, &mut (), left.as_ref().map(|data| Fp::from(data.1)))?;
-        let anchor_start =
-            Element::alloc(dr, &mut (), right.as_ref().map(|data| Fp::from(data.0)))?;
+        let anchor = left_encoded.as_gadget().anchor.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &anchor_start);
+        let delta = anchor.sub(dr, &span.anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "StampLift: stamp anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let (encoded, data) = Stamp::output(dr, oracles, right.map(|(_, end)| end))?;
+        // O1 copies L1, so the output's bridge hash is the left stamp's.
+        let data = D::just(|| {
+            let (stamp_bridge, _) = left.take();
+            let (_, span_anchor_end) = right.take();
+            (stamp_bridge, span_anchor_end)
+        });
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor: span.anchor_end.clone(),
+            tachygram_set_bridge: oracles.bridge_hash().clone(),
+        });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
@@ -771,24 +748,26 @@ impl Step<Pasta> for ActionLift {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let span = right_encoded.as_gadget();
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
         enforce_poly_equal(dr, oracles, Slot::left(1), Slot::output(1))?;
-        let anchor = Element::alloc(dr, &mut (), left.as_ref().map(|&data| Fp::from(data)))?;
-        let anchor_start =
-            Element::alloc(dr, &mut (), right.as_ref().map(|data| Fp::from(data.0)))?;
+        let anchor = left_encoded.as_gadget().anchor.clone();
         let anchor_evaluation = oracles.query(dr, Slot::right(0), &anchor)?;
-        let delta = anchor.sub(dr, &anchor_start);
+        let delta = anchor.sub(dr, &span.anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "ActionLift: actions anchor is neither the span's start nor a member".into(),
             )
         })?;
-        let (data, aux) = right
-            .map(|(_, span_anchor_end)| (span_anchor_end, ()))
-            .cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let fields = ActionsOutput {
+            anchor: span.anchor_end.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            right.map(|(_, span_anchor_end)| span_anchor_end),
+            D::unit(),
+        ))
     }
 }
 
@@ -863,7 +842,6 @@ impl Step<Pasta> for FeeFuse {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
             let (max_fee_note, fee, _) = witness.take();
-            let left_anchor = left.take();
             let () = right.take();
 
             let feemax = u64::from(max_fee_note.value);
@@ -910,7 +888,6 @@ impl Step<Pasta> for FeeFuse {
                 "FeeFuse: fee change note commitment is zero",
             )?;
             Ok((
-                left_anchor,
                 fee_digest,
                 fee_change_commitment,
                 [
@@ -925,12 +902,11 @@ impl Step<Pasta> for FeeFuse {
 
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
         for index in 0..Self::NUM_STAGED {
-            let value = native.clone().map(|(_, _, _, fields)| fields[index]);
+            let value = native.clone().map(|(_, _, fields)| fields[index]);
             Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, ..)| digest))?;
-        let fee_change =
-            Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(digest, ..)| digest))?;
+        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, change, _)| change))?;
         let z = oracles.zeta().clone();
         for (column, root, err) in [
             (
@@ -952,7 +928,22 @@ impl Step<Pasta> for FeeFuse {
                 .enforce_equal(dr, &expected)
                 .map_err(|_err| ragu_core::Error::InvalidWitness(err.into()))?;
         }
-        let (encoded, data) = Stamp::output(dr, oracles, native.map(|(anchor, ..)| anchor))?;
+        let anchor = left_encoded.as_gadget().anchor.clone();
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let anchor_value = anchor.value();
+        let data = D::try_just(|| {
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeFuse: bridge hash is not on the curve".into())
+            })?;
+            Ok((
+                TachygramSetBridge::from(bridge_hash),
+                Anchor::from(*anchor_value.take()),
+            ))
+        })?;
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor,
+            tachygram_set_bridge: oracles.bridge_hash().clone(),
+        });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
@@ -1023,8 +1014,10 @@ impl Step<Pasta> for FeeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let anchor_element =
+            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
         let native = D::try_just(|| {
-            let (max_fee_note, anchor, ..) = witness.take();
+            let (max_fee_note, ..) = witness.take();
             let () = left.take();
             let () = right.take();
             enforce_zero(
@@ -1060,7 +1053,6 @@ impl Step<Pasta> for FeeSeed {
                 "FeeSeed: fee change note commitment is zero",
             )?;
             Ok((
-                anchor,
                 fee_digest,
                 fee_change_commitment,
                 [Fp::from(u64::from(max_fee_note.value)), pk, psi, rcm],
@@ -1068,10 +1060,10 @@ impl Step<Pasta> for FeeSeed {
         })?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 4")]
         for index in 0..Self::NUM_STAGED {
-            let value = native.clone().map(|(_, _, _, fields)| fields[index]);
+            let value = native.clone().map(|(_, _, fields)| fields[index]);
             Element::alloc(dr, &mut (), value)?.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(_, digest, ..)| digest))?;
+        let fee_digest = Element::alloc(dr, &mut (), native.clone().map(|(digest, ..)| digest))?;
         enforce_poly_roots(
             dr,
             oracles,
@@ -1079,8 +1071,7 @@ impl Step<Pasta> for FeeSeed {
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
-        let fee_change =
-            Element::alloc(dr, &mut (), native.clone().map(|(_, _, change, _)| change))?;
+        let fee_change = Element::alloc(dr, &mut (), native.clone().map(|(_, change, _)| change))?;
         enforce_poly_roots(
             dr,
             oracles,
@@ -1088,7 +1079,21 @@ impl Step<Pasta> for FeeSeed {
             &[fee_change],
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         )?;
-        let (encoded, data) = Stamp::output(dr, oracles, native.map(|(anchor, ..)| anchor))?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let anchor_value = anchor_element.value();
+        let data = D::try_just(|| {
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeSeed: bridge hash is not on the curve".into())
+            })?;
+            Ok((
+                TachygramSetBridge::from(bridge_hash),
+                Anchor::from(*anchor_value.take()),
+            ))
+        })?;
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor: anchor_element,
+            tachygram_set_bridge: oracles.bridge_hash().clone(),
+        });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }
@@ -1193,16 +1198,29 @@ impl Step<Pasta> for StampUnmerge {
             &Slot::left(1),
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
-        let output = D::try_just(|| {
-            let (_, left_anchor) = left.take();
-            let (_, right_anchor) = right.take();
-            enforce_zero(
-                Fp::from(left_anchor) - Fp::from(right_anchor),
-                "StampUnmerge: anchors must match",
-            )?;
-            Ok(left_anchor)
+        let left_anchor_element = left_encoded.as_gadget().anchor.clone();
+        left_anchor_element
+            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("StampUnmerge: anchors must match".into())
+            })?;
+        let [x, y] = oracles.bridge_hash().each_ref().map(Element::value);
+        let anchor_value = left_anchor_element.value();
+        let data = D::try_just(|| {
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "StampUnmerge: bridge hash is not on the curve".into(),
+                )
+            })?;
+            Ok((
+                TachygramSetBridge::from(bridge_hash),
+                Anchor::from(*anchor_value.take()),
+            ))
         })?;
-        let (encoded, data) = Stamp::output(dr, oracles, output)?;
+        let encoded = Encoded::from_gadget(StampOutput {
+            anchor: left_anchor_element,
+            tachygram_set_bridge: oracles.bridge_hash().clone(),
+        });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
 }

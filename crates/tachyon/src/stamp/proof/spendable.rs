@@ -22,7 +22,7 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
@@ -316,7 +316,7 @@ impl Step<Pasta> for SpendableLift {
         &self,
         dr: &mut D,
         _oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> ragu_core::Result<(
@@ -332,34 +332,48 @@ impl Step<Pasta> for SpendableLift {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let spendable = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let () = witness.take();
-            let (spendable_cm, spendable_epoch_current, spendable_anchor) = left.take();
-            let (
-                unspent_cm,
-                unspent_anchor_start,
-                unspent_epoch_start,
-                unspent_epoch_next,
-                unspent_anchor_next,
-            ) = right.take();
-            enforce_zero(
-                Fp::from(unspent_cm) - Fp::from(spendable_cm),
-                "SpendableLift: unspent cm does not match spendable",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
-                "SpendableLift: segment does not start at the lineage epoch",
-            )?;
-            enforce_zero(
-                Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
-                "SpendableLift: unspent not adjacent to spendable",
-            )?;
-            Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let unspent = right_encoded.as_gadget();
+        spendable
+            .cm
+            .enforce_equal(dr, &unspent.cm)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: unspent cm does not match spendable".into(),
+                )
+            })?;
+        spendable
+            .epoch_current
+            .enforce_equal(dr, &unspent.epoch_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: segment does not start at the lineage epoch".into(),
+                )
+            })?;
+        spendable
+            .anchor
+            .enforce_equal(dr, &unspent.anchor_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendableLift: unspent not adjacent to spendable".into(),
+                )
+            })?;
+        let output = D::just(|| {
+            let (output_cm, ..) = left.take();
+            let (_, _, _, unspent_epoch_next, unspent_anchor_next) = right.take();
+            (output_cm, unspent_epoch_next, unspent_anchor_next)
+        });
+        let fields = NoteSpendableOutput {
+            cm: spendable.cm.clone(),
+            epoch_current: unspent.epoch_next.clone(),
+            anchor: unspent.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
