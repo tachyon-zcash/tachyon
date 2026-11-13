@@ -28,6 +28,7 @@ pub mod witness;
 
 mod arithmetic;
 mod collections;
+mod gadgets;
 mod primitives;
 mod ragu_constraint;
 mod relations;

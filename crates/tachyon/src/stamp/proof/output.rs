@@ -12,15 +12,16 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::Pasta,
 };
-use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
     constants::MAX_MONEY,
     digest::poseidon,
+    gadgets::fixed_base,
     note::Note,
-    pasta::{EpAffine, Fp},
+    pasta::{EpAffine, Fp, Fq},
     value,
 };
 
@@ -37,6 +38,7 @@ pub struct OutputHeader;
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub cm: Element<'dr, D>,
     pub pad: Element<'dr, D>,
+    #[ragu(gadget)]
     pub cv: Point<'dr, D, C>,
 }
 
@@ -140,8 +142,11 @@ impl Step<Pasta> for OutputBind {
         pad.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
         })?;
+        let blind_point =
+            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
+        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
         let output = D::try_just(|| {
-            let (note, rcv) = witness.take();
+            let (note, _) = witness.take();
             if u64::from(note.value) > MAX_MONEY {
                 return Err(ragu_core::Error::InvalidWitness(
                     "OutputBind: note value exceeds maximum".into(),
@@ -153,12 +158,17 @@ impl Step<Pasta> for OutputBind {
                 Tachygram::from(*pad.value().take()),
             );
 
-            Ok(((commitment, padding, rcv.commit(-note.value)), ()))
+            Ok((
+                (
+                    commitment,
+                    padding,
+                    value::Commitment::from(cv.value().take()),
+                ),
+                (),
+            ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        encoded.as_gadget().cm.enforce_equal(dr, &cm)?;
-        encoded.as_gadget().pad.enforce_equal(dr, &pad)?;
+        let encoded = Encoded::from_gadget(OutputHeaderOutput { cm, pad, cv });
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }
