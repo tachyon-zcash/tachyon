@@ -18,10 +18,11 @@ use udon::curve::EndomorphismAffine;
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
     constants::MAX_MONEY,
+    gadgets::fixed_base,
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
-    pasta::{EpAffine, Fp},
+    pasta::{EpAffine, Fp, Fq},
     primitives::Anchor,
     ragu_constraint::{enforce_nonzero, enforce_zero},
     value,
@@ -45,6 +46,7 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
     pub nf_next: Element<'dr, D>,
     pub anchor: Element<'dr, D>,
     pub pk: Element<'dr, D>,
+    #[ragu(gadget)]
     pub cv: Point<'dr, D, C>,
 }
 
@@ -152,10 +154,14 @@ impl Step<Pasta> for SpendBind {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let spendable = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let secret = right_encoded.as_gadget();
+        let blind_point =
+            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.value, &blind_point)?;
         let output = D::try_just(|| {
-            let (rcv,) = witness.take();
             let (spendable_cm, spendable_epoch_current, anchor) = left.take();
             let (secret_cm, note, mk) = right.take();
             enforce_zero(
@@ -194,13 +200,25 @@ impl Step<Pasta> for SpendBind {
                     nf_next,
                     anchor,
                     note.pk,
-                    rcv.commit(note.value),
+                    value::Commitment::from(cv.value().take()),
                 ),
                 (),
             ))
         })?;
         let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
+        let fields = SpendHeaderOutput {
+            cm: spendable.cm.clone(),
+            nf_current: Element::alloc(
+                dr,
+                &mut (),
+                data.as_ref().map(|fields| Fp::from(fields.1)),
+            )?,
+            nf_next: Element::alloc(dr, &mut (), data.as_ref().map(|fields| Fp::from(fields.2)))?,
+            anchor: spendable.anchor.clone(),
+            pk: secret.pk.clone(),
+            cv,
+        };
+        let encoded = Encoded::from_gadget(fields);
         Ok(((left_encoded, right_encoded, encoded), data, aux))
     }
 }

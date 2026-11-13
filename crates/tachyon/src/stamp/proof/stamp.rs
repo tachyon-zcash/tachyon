@@ -3,7 +3,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use ragu::{
     header::{Header, Suffix},
@@ -27,12 +26,12 @@ use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
     digest::poseidon,
-    entropy::{ActionEntropy, ActionRandomizer},
+    entropy::ActionEntropy,
+    gadgets::fixed_base,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
-    pasta::{EpAffine, Fp, Fq},
+    pasta::{EpAffine, Fp},
     primitives::{ActionDigest, Anchor, TachygramSetBridge, effect},
-    ragu_constraint::enforce_zero,
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
 };
@@ -227,29 +226,16 @@ impl Step<Pasta> for OutputAction {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let output_header = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let anchor_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, anchor, ..)| Fp::from(anchor)),
+        )?;
+        let cm_root = output_header.cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
-        let alpha = poseidon::circuit::alpha_output(dr, &theta, &output_header.cm)?;
-        let native = D::try_just(|| {
-            let (_, anchor, ..) = witness.take();
-            let (cm, pad, _) = left.take();
-            let () = right.take();
-            // TODO: a real circuit squeezes alpha in Fp and needs its bit
-            // decomposition to use it as an Fq scalar (p < q, so no reduction);
-            // mock ragu embeds it natively.
-            #[expect(
-                clippy::expect_used,
-                reason = "p < q, so every Fp repr is canonical in Fq"
-            )]
-            let randomizer = ActionRandomizer::<effect::Output>(
-                Fq::from_bytes(alpha.value().take().to_bytes()).expect("p < q"),
-                PhantomData,
-            );
-            let rk = private::ActionSigningKey::new(&randomizer).derive_action_public();
-            Ok((anchor, EpAffine::from(rk), Fp::from(cm), Fp::from(pad)))
-        })?;
-        let rk = Point::alloc(dr, native.as_ref().map(|&(_, rk, ..)| rk))?;
+        let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
+        let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, None)?;
         let action_root = poseidon::circuit::action_digest(dr, &output_header.cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
@@ -265,9 +251,7 @@ impl Step<Pasta> for OutputAction {
             &action_roots,
             "OutputAction: action set does not commit to the action",
         )?;
-        let cm_root = Element::alloc(dr, &mut (), native.clone().map(|(_, _, cm, _)| cm))?;
-        let pad_root = Element::alloc(dr, &mut (), native.clone().map(|(_, _, _, pad)| pad))?;
-        let tachygram_roots = [cm_root, pad_root];
+        let tachygram_roots = [cm_root, output_header.pad.clone()];
         // The stamp accumulator commits to exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -278,9 +262,15 @@ impl Step<Pasta> for OutputAction {
             &tachygram_roots,
             "OutputAction: tachygram set does not commit to the bound pair",
         )?;
-        let data = native.map(|(output, ..)| output);
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
+        let output = witness.map(|(_, anchor, ..)| anchor);
+        let fields = ActionsOutput {
+            anchor: anchor_element,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -371,9 +361,15 @@ impl Step<Pasta> for SpendAction {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let SpendHeaderOutput { cm, pk, cv, .. } = left_encoded.as_gadget().clone();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let SpendHeaderOutput {
+            cm,
+            nf_current,
+            nf_next,
+            pk,
+            cv,
+            ..
+        } = left_encoded.as_gadget().clone();
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let ak_assignment = D::try_just(|| {
             let &(_, pak, ..) = witness.as_ref().take();
             let bytes: [u8; 32] = pak.ak.0.into();
@@ -393,30 +389,7 @@ impl Step<Pasta> for SpendAction {
         })?;
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
-        let native = D::try_just(|| {
-            let (_, pak, ..) = witness.take();
-            let (_, nf_current, nf_next, anchor, ..) = left.take();
-            let () = right.take();
-            // TODO: a real circuit squeezes alpha in Fp and needs its bit
-            // decomposition to use it as an Fq scalar (p < q, so no reduction);
-            // mock ragu embeds it natively.
-            #[expect(
-                clippy::expect_used,
-                reason = "p < q, so every Fp repr is canonical in Fq"
-            )]
-            let randomizer = ActionRandomizer::<effect::Spend>(
-                Fq::from_bytes(alpha.value().take().to_bytes()).expect("p < q"),
-                PhantomData,
-            );
-            let rk = pak.ak.derive_action_public(&randomizer);
-            Ok((
-                anchor,
-                EpAffine::from(rk),
-                Fp::from(nf_current),
-                Fp::from(nf_next),
-            ))
-        })?;
-        let rk = Point::alloc(dr, native.as_ref().map(|&(_, rk, ..)| rk))?;
+        let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
         let action_root = poseidon::circuit::action_digest(dr, &cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
@@ -430,12 +403,6 @@ impl Step<Pasta> for SpendAction {
             &[action_root],
             "SpendAction: action set does not commit to the action",
         )?;
-        let current_root = Element::alloc(
-            dr,
-            &mut (),
-            native.clone().map(|(_, _, current, _)| current),
-        )?;
-        let next_root = Element::alloc(dr, &mut (), native.clone().map(|(_, _, _, next)| next))?;
         // The stamp accumulator commits to exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -443,12 +410,18 @@ impl Step<Pasta> for SpendAction {
             dr,
             oracles,
             &Slot::output(1),
-            &[current_root, next_root],
+            &[nf_current, nf_next],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
-        let data = native.map(|(output, ..)| output);
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
+        let output = left.map(|(_, _, _, anchor, ..)| anchor);
+        let fields = ActionsOutput {
+            anchor: left_encoded.as_gadget().anchor.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -830,13 +803,12 @@ impl Step<Pasta> for FeeFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        let (max_fee_note, fee, _) = *witness;
         Ok(alloc::vec![
-            Fp::from(u64::from(max_fee_note.value)),
-            Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi),
-            Fp::from(max_fee_note.rcm),
-            Fp::from(u64::from(fee)),
+            Fp::from(witness.0.pk),
+            Fp::from(witness.0.psi),
+            Fp::from(witness.0.rcm),
+            Fp::from(u64::from(witness.0.value)),
+            Fp::from(u64::from(witness.1))
         ])
     }
 
@@ -873,11 +845,7 @@ impl Step<Pasta> for FeeFuse {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let pk = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.pk.into()))?;
-        let psi = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.psi.into()))?;
-        let rcm = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.rcm.into()))?;
-        let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
-        let native = D::try_just(|| {
+        D::try_just(|| {
             let &(max_fee_note, fee, _) = witness.as_ref().take();
 
             let feemax = u64::from(max_fee_note.value);
@@ -895,28 +863,17 @@ impl Step<Pasta> for FeeFuse {
                 .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
                 })?;
-            // TODO: a real circuit squeezes r in Fp and needs its bit
-            // decomposition to use it as an Fq scalar (p < q, so no reduction);
-            // mock ragu embeds it natively.
-            #[expect(
-                clippy::expect_used,
-                reason = "p < q, so every Fp repr is canonical in Fq"
-            )]
-            let cv_feemax = EpAffine::from(
-                value::Trapdoor::from_scalar(
-                    Fq::from_bytes(blind.value().take().to_bytes()).expect("p < q"),
-                )
-                .commit(-max_fee_note.value),
-            );
-            if cv_feemax.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "FeeFuse: fee commitment is the identity".into(),
-                ));
-            }
-            Ok(cv_feemax)
+            Ok(())
         })?;
 
-        let cv = Point::alloc(dr, native)?;
+        let max_fee_note = witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note);
+        let maximum = Element::alloc(
+            dr,
+            &mut (),
+            max_fee_note
+                .as_ref()
+                .map(|&Note { value, .. }| Fp::from(u64::from(value))),
+        )?;
         let fee = Element::alloc(
             dr,
             &mut (),
@@ -924,18 +881,30 @@ impl Step<Pasta> for FeeFuse {
                 .as_ref()
                 .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
         )?;
-        let maximum = Element::alloc(
+        let change = maximum.sub(dr, &fee);
+        let slack = Element::constant(dr, Fp::from(MAX_MONEY)).sub(dr, &maximum);
+        let pk = Element::alloc(
             dr,
             &mut (),
-            witness
-                .as_ref()
-                .map(|&(max_fee_note, ..)| Fp::from(u64::from(max_fee_note.value))),
+            max_fee_note.as_ref().map(|&Note { pk, .. }| Fp::from(pk)),
         )?;
-        let change = maximum.sub(dr, &fee);
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            max_fee_note.as_ref().map(|&Note { psi, .. }| Fp::from(psi)),
+        )?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            max_fee_note.as_ref().map(|&Note { rcm, .. }| Fp::from(rcm)),
+        )?;
+        let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
-        for (index, actual) in [&maximum, &pk, &psi, &rcm, &fee].into_iter().enumerate() {
+        for (index, actual) in [&pk, &psi, &rcm, &maximum, &fee].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
+        let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
+        let cv = fixed_base::FEE_V_BASE.mul_amount(dr, &slack, &blind_point)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee)?;
         let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &change, &psi)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
@@ -997,7 +966,7 @@ impl Step<Pasta> for FeeSeed {
     type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(36);
-    const NUM_STAGED: usize = 4;
+    const NUM_STAGED: usize = 3;
 
     fn staged(
         &self,
@@ -1005,12 +974,10 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        let &(max_fee_note, ..) = witness;
         Ok(alloc::vec![
-            Fp::from(u64::from(max_fee_note.value)),
-            Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi),
-            Fp::from(max_fee_note.rcm),
+            Fp::from(witness.0.pk),
+            Fp::from(witness.0.psi),
+            Fp::from(witness.0.rcm)
         ])
     }
 
@@ -1045,14 +1012,23 @@ impl Step<Pasta> for FeeSeed {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let anchor_element = Element::alloc(
             dr,
             &mut (),
             witness.as_ref().map(|&(_, anchor, ..)| Fp::from(anchor)),
         )?;
+        let maximum = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(max_fee_note, ..)| Fp::from(u64::from(max_fee_note.value))),
+        )?;
+        maximum.enforce_zero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
+        })?;
         let pk = Element::alloc(
             dr,
             &mut (),
@@ -1075,41 +1051,18 @@ impl Step<Pasta> for FeeSeed {
                 .map(|&(max_fee_note, ..)| Fp::from(max_fee_note.rcm)),
         )?;
         let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
-        let native = D::try_just(|| {
-            let (max_fee_note, ..) = witness.take();
-            let () = left.take();
-            let () = right.take();
-            enforce_zero(
-                Fp::from(u64::from(max_fee_note.value)),
-                "FeeSeed: maximum fee must be zero",
-            )?;
-            // TODO: a real circuit squeezes r in Fp and needs its bit
-            // decomposition to use it as an Fq scalar (p < q, so no reduction);
-            // mock ragu embeds it natively.
-            #[expect(
-                clippy::expect_used,
-                reason = "p < q, so every Fp repr is canonical in Fq"
-            )]
-            let cv_feemax = EpAffine::from(
-                value::Trapdoor::from_scalar(
-                    Fq::from_bytes(blind.value().take().to_bytes()).expect("p < q"),
-                )
-                .commit(-max_fee_note.value),
-            );
-            if cv_feemax.is_identity() {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "FeeSeed: fee commitment is the identity".into(),
-                ));
-            }
-            Ok(cv_feemax)
-        })?;
-        let zero = Element::constant(dr, Fp::ZERO);
-        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 4")]
-        for (index, actual) in [&zero, &pk, &psi, &rcm].into_iter().enumerate() {
+        #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 3")]
+        for (index, actual) in [&pk, &psi, &rcm].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = Point::alloc(dr, native)?;
+        let cv = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
+        let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
+        let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &zero, &psi)?;
+        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+        fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
+        })?;
         enforce_poly_roots(
             dr,
             oracles,
@@ -1117,11 +1070,6 @@ impl Step<Pasta> for FeeSeed {
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
-        let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &zero, &psi)?;
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
-        })?;
         enforce_poly_roots(
             dr,
             oracles,
