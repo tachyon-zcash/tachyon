@@ -1,0 +1,111 @@
+//! Circuit mirror of [`Note`](crate::note::Note) derivations.
+
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Gadget,
+    maybe::Maybe as _,
+};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+
+use crate::{
+    constants::MAX_MONEY,
+    digest::poseidon,
+    gadgets::{fixed_base, uint::Uint, value::Positive},
+    note,
+    pasta::{EpAffine, Fp},
+};
+
+/// The fields of a native [`Note`](crate::note::Note) inside a circuit, in
+/// note commitment order.
+#[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
+pub struct Note<'dr, D: Driver<'dr>> {
+    /// Commitment trapdoor.
+    pub rcm: Element<'dr, D>,
+    /// Recipient payment key.
+    pub pk: Element<'dr, D>,
+    /// Note amount.
+    #[ragu(gadget)]
+    pub value: Positive<'dr, D>,
+    /// Nullifier trapdoor.
+    pub psi: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
+    /// Allocates the fields of a native note, range-checking its value.
+    pub(crate) fn alloc<A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        note: DriverValue<D, note::Note>,
+    ) -> Result<Self> {
+        Ok(Self {
+            rcm: Element::alloc(
+                dr,
+                allocator,
+                note.as_ref().map(|&note::Note { rcm, .. }| Fp::from(rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                allocator,
+                note.as_ref().map(|&note::Note { pk, .. }| Fp::from(pk)),
+            )?,
+            value: Positive::alloc(
+                dr,
+                allocator,
+                note.as_ref().map(|&note::Note { value, .. }| value),
+            )?,
+            psi: Element::alloc(
+                dr,
+                allocator,
+                note.map(|note::Note { psi, .. }| Fp::from(psi)),
+            )?,
+        })
+    }
+
+    /// The canonical Fp digest representing the native maximum-fee blind.
+    ///
+    /// Fixed-base digest multiplication embeds this scalar into Fq canonically,
+    /// as the native derivation does.
+    pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
+    }
+
+    /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
+    /// which this ties to `MAX_MONEY - value`.
+    pub(crate) fn cv_feemax(
+        &self,
+        dr: &mut D,
+        slack: &Uint<'dr, D, 51>,
+    ) -> Result<Point<'dr, D, EpAffine>> {
+        let total = slack.pack(dr)?.add(dr, &self.value);
+        Element::constant(dr, Fp::from(MAX_MONEY)).enforce_equal(dr, &total)?;
+        let blind = self.derive_feemax_blind(dr)?;
+        let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
+        fixed_base::FEE_V_BASE.mul_amount(dr, slack, &blind_point)
+    }
+
+    /// Enforces a zero `value` and returns the max fee commitment for it: the
+    /// blind term alone, with no value term.
+    pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
+        self.value.enforce_zero(dr)?;
+        let blind = self.derive_feemax_blind(dr)?;
+        fixed_base::R_BASE.mul_digest(dr, &blind, None)
+    }
+
+    /// Derives the note commitment from the supplied fields.
+    ///
+    /// Does not bound `value` or check `rcm` nonzero.
+    pub(crate) fn commitment(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        poseidon::circuit::note_commitment(dr, &self.rcm, &self.pk, &self.value, &self.psi)
+    }
+
+    /// Derives the output's padding tachygram from the fields
+    /// [`commitment`](Self::commitment) commits to.
+    pub(crate) fn pad_tachygram(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        poseidon::circuit::pad_tachygram(dr, &self.rcm, &self.pk, &self.value, &self.psi)
+    }
+}
