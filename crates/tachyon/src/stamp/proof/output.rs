@@ -17,7 +17,6 @@ use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
-    digest::poseidon,
     gadgets::{self, fixed_base},
     note::Note,
     pasta::{EpAffine, Fp, Fq},
@@ -115,24 +114,26 @@ impl Step<Pasta> for OutputBind {
                 .as_ref()
                 .map(|&(note, _)| Fp::from(u64::from(note.value))),
         )?;
-        let value = gadgets::value::Positive::from_bits(dr, &amount)?;
-        let rcm = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|&(note, _)| Fp::from(note.rcm)),
-        )?;
-        let pk = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|&(note, _)| Fp::from(note.pk)),
-        )?;
-        let psi = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
-        )?;
-        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &value, &psi)?;
-        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &value, &psi)?;
+        let note = gadgets::note::Note {
+            rcm: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.pk)),
+            )?,
+            value: gadgets::value::Positive::from_bits(dr, &amount)?,
+            psi: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
+            )?,
+        };
+        let cm = note.commitment(dr)?;
+        let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the set polynomial factor `(X - tg)` trivial.
         cm.clone().enforce_nonzero(dr).map_err(|_err| {
