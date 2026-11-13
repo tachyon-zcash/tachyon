@@ -22,18 +22,18 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     collections::indexed_multiset,
-    constants::EPOCH_MAX,
-    keys::{NoteMasterKey, ProofAuthorizingKey},
+    digest::poseidon,
+    gadgets,
+    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::Fp,
+    pasta::{EpAffine, Fp},
     primitives::{EpochIndex, NfSeqPoly},
-    ragu_constraint::enforce_zero,
     relations::enforce::enforce_poly_product,
     value,
 };
@@ -51,10 +51,8 @@ pub struct NoteSecret;
 #[derive(Gadget, Write)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub rcm: Element<'dr, D>,
-    pub pk: Element<'dr, D>,
-    pub value: Element<'dr, D>,
-    pub psi: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub note: gadgets::note::Note<'dr, D>,
     pub mk: Element<'dr, D>,
 }
 
@@ -74,31 +72,18 @@ impl Header<Fp> for NoteSecret {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
-            rcm: Element::alloc(
+            note: gadgets::note::Note::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.rcm)),
+                witness.as_ref().map(|&(_, note, _)| note),
             )?,
-            pk: Element::alloc(
+            mk: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
+                witness.as_ref().map(|&(_, _, NoteMasterKey(mk))| mk),
             )?,
-            value: Element::alloc(
-                dr,
-                allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.1.value))),
-            )?,
-            psi: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.psi)),
-            )?,
-            mk: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
         })
     }
 }
@@ -124,8 +109,10 @@ pub struct NoteNullifiers;
 #[derive(Gadget, Write)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub epoch_start: Element<'dr, D>,
-    pub epoch_end: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_start: gadgets::epoch::EpochIndex<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_end: gadgets::epoch::EpochIndex<'dr, D>,
 }
 
 impl Header<Fp> for NoteNullifiers {
@@ -144,17 +131,17 @@ impl Header<Fp> for NoteNullifiers {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
-            epoch_start: Element::alloc(
+            epoch_start: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|&(_, epoch_start, _)| epoch_start),
             )?,
-            epoch_end: Element::alloc(
+            epoch_end: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(.., epoch_end)| epoch_end),
             )?,
         })
     }
@@ -211,24 +198,72 @@ impl Step<Pasta> for NoteSeed {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (value, psi, rcm, pak) = witness.take();
-            let note = Note {
-                pk: pak.derive_payment_key(),
-                value,
-                psi,
-                rcm,
-            };
-            let mk = pak.nk.derive_note_private(note.psi);
-            let cm = note.commitment();
-            Ok(((cm, note, mk), ()))
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let value = gadgets::value::Positive::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(value, ..)| value),
+        )?;
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, psi, ..)| Fp::from(psi)),
+        )?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, _, rcm, _)| Fp::from(rcm)),
+        )?;
+        rcm.clone().enforce_nonzero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("NoteSeed: commitment trapdoor is zero".into())
         })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let nk = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(.., pak)| Fp::from(pak.nk)),
+        )?;
+        let ak_assignment = D::try_just(|| {
+            let &(.., pak) = witness.as_ref().take();
+            let bytes: [u8; 32] = pak.ak.0.into();
+            EpAffine::from_bytes(bytes).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("NoteSeed: invalid ak encoding".into())
+            })
+        })?;
+        let ak = Point::alloc(dr, ak_assignment)?;
+        let pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
+        let mk = poseidon::circuit::nf_master(dr, &psi, &nk)?;
+        let circuit_note = gadgets::note::Note {
+            rcm,
+            pk,
+            value,
+            psi,
+        };
+        let cm = circuit_note.commitment(dr)?;
+        let output = D::just(|| {
+            let (note_value, note_psi, note_rcm, _) = witness.take();
+            let note = Note {
+                pk: PaymentKey::from(*circuit_note.pk.value().take()),
+                value: note_value,
+                psi: note_psi,
+                rcm: note_rcm,
+            };
+            (
+                note::Commitment::from(*cm.value().take()),
+                note,
+                NoteMasterKey(*mk.value().take()),
+            )
+        });
+        let fields = NoteSecretOutput {
+            cm,
+            note: circuit_note,
+            mk,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -251,10 +286,7 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// `epoch_start` is a free witness constrained group-aligned, pinned by the
 /// header it produces: it is emitted on the header directly, so every choice
-/// is an honestly labelled window. (The alignment constraint
-/// is a native remainder fed to `enforce_zero` under mock ragu; a real
-/// circuit needs a low-bit decomposition of the witnessed epoch, since
-/// $4q = e$ is always solvable in the field.)
+/// is an honestly labelled window.
 ///
 /// `epoch_start` is fixed before $z$. Each epoch index is that start plus a
 /// circuit constant. The nullifier scalars are sponge outputs of the
@@ -317,56 +349,56 @@ impl Step<Pasta> for NullifierDerive {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let secret = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        #[expect(
-            clippy::as_conversions,
-            clippy::integer_division_remainder_used,
-            reason = "the group width is a small constant"
-        )]
         let native = D::try_just(|| {
             let (epoch_start, seq) = witness.take();
-            let (cm, _note, mk) = left.take();
-            let () = right.take();
-            enforce_zero(
-                Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
-                "NullifierDerive: epoch_start is not group-aligned",
-            )?;
-
-            // The whole window must land inside the epoch range: an index past
-            // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
-            // through `EpochIndex`, which cannot hold such an index; a real
-            // circuit sees a raw field element and needs the check.
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_possible_truncation,
-                reason = "the window width is a small constant"
-            )]
-            let epoch_end = u32::from(epoch_start)
-                .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
-                .filter(|last| *last <= EPOCH_MAX)
-                .map(EpochIndex::new)
+            let epoch_end = (1..NF_DERIVATION_WIDTH)
+                .try_fold(epoch_start, |epoch, _| epoch.next())
                 .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
                         "NullifierDerive: window exceeds the epoch range".into(),
                     )
                 })?;
-
-            // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
-            let nullifiers = mk.derive_window(epoch_start);
-            let output = (cm, epoch_start, epoch_end);
-            Ok((seq, output, nullifiers))
+            let (cm, ..) = left.take();
+            Ok((seq, (cm, epoch_start, epoch_end)))
         })?;
-        let epoch_start = Element::alloc(
+        let epoch_start = gadgets::uint::Uint::alloc(
             dr,
-            &mut (),
-            native.as_ref().map(|result| Fp::from(result.1.1)),
-        )?;
+            native
+                .as_ref()
+                .map(|&(_, (_, epoch_start, _))| Fp::from(epoch_start)),
+        )
+        .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))
+        .map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "NullifierDerive: epoch_start is not group-aligned".into(),
+            )
+        })?;
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
         )]
-        epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
+        oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
+        // The whole window must land inside the epoch range: an index past
+        // EPOCH_MAX maps to no block height, so it labels nothing.
+        #[expect(clippy::as_conversions, reason = "constant value")]
+        let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
+        let epoch_end = epoch_start.add(dr, &width);
+        let mut nullifiers = Vec::with_capacity(NF_DERIVATION_WIDTH);
+        #[expect(
+            clippy::integer_division,
+            clippy::integer_division_remainder_used,
+            clippy::as_conversions,
+            reason = "fixed window and sponge rate"
+        )]
+        for group in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
+            let offset = Element::constant(dr, Fp::from((group * PoseidonFp::RATE) as u64));
+            let group_start = epoch_start.add(dr, &offset);
+            let outputs = poseidon::circuit::nullifier_group(dr, &secret.mk, &group_start)?;
+            nullifiers.extend(outputs);
+        }
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let output = native.as_ref().map(|result| result.1);
@@ -375,9 +407,10 @@ impl Step<Pasta> for NullifierDerive {
         // sponge-derived nullifiers and their epochs.
         let window_at_z = D::try_just(|| {
             let challenge = z_value.take();
-            let (_, output_data, nullifiers) = native.take();
+            let (_, output_data) = native.take();
             Ok(indexed_multiset::direct_eval(
-                (output_data.1.into()..).zip(nullifiers.map(Fp::from)),
+                (output_data.1.into()..)
+                    .zip(nullifiers.into_iter().map(|item| *item.value().take())),
                 challenge,
             ))
         })?;
@@ -389,8 +422,22 @@ impl Step<Pasta> for NullifierDerive {
                     "NullifierDerive: sequence does not match the derived window".into(),
                 )
             })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
+        let fields = NoteNullifiersOutput {
+            cm: secret.cm.clone(),
+            epoch_start,
+            epoch_end: gadgets::uint::Uint::from_element(dr, &epoch_end)
+                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))
+                .map_err(|_err| {
+                    ragu_core::Error::InvalidWitness(
+                        "NullifierDerive: window exceeds the epoch range".into(),
+                    )
+                })?,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -460,21 +507,24 @@ impl Step<Pasta> for NullifierFuse {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_nullifiers = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (left_cm, left_epoch_start, left_epoch_end) = left.take();
-            let (right_cm, right_epoch_start, right_epoch_end) = right.take();
-            enforce_zero(
-                Fp::from(left_cm) - Fp::from(right_cm),
-                "NullifierFuse: note commitments differ",
-            )?;
-            enforce_zero(
-                Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
-                "NullifierFuse: ranges not contiguous",
-            )?;
-            Ok(((left_cm, left_epoch_start, right_epoch_end), ()))
-        })?;
+        let right_nullifiers = right_encoded.as_gadget();
+        left_nullifiers
+            .cm
+            .enforce_equal(dr, &right_nullifiers.cm)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
+            })?;
+        let one = Element::constant(dr, Fp::ONE);
+        left_nullifiers
+            .epoch_end
+            .add(dr, &one)
+            .enforce_equal(dr, &right_nullifiers.epoch_start)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("NullifierFuse: ranges not contiguous".into())
+            })?;
         enforce_poly_product(
             dr,
             oracles,
@@ -483,8 +533,20 @@ impl Step<Pasta> for NullifierFuse {
             &Slot::output(0),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let data = D::just(|| {
+            let (left_cm, left_epoch_start, _) = left.take();
+            let (_, _, right_epoch_end) = right.take();
+            (left_cm, left_epoch_start, right_epoch_end)
+        });
+        let fields = NoteNullifiersOutput {
+            cm: left_nullifiers.cm.clone(),
+            epoch_start: left_nullifiers.epoch_start.clone(),
+            epoch_end: right_nullifiers.epoch_end.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            data,
+            D::unit(),
+        ))
     }
 }
