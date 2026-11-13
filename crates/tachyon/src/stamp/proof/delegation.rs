@@ -27,7 +27,6 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     collections::indexed_multiset,
-    constants::EPOCH_MAX,
     digest::poseidon,
     gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
@@ -350,33 +349,20 @@ impl Step<Pasta> for NullifierDerive {
         Self: 'dr,
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let secret = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let native = D::try_just(|| {
             let (epoch_start, seq) = witness.take();
-            let (cm, _note, _mk) = left.take();
-            let () = right.take();
-            // The whole window must land inside the epoch range: an index past
-            // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
-            // through `EpochIndex`, which cannot hold such an index; a real
-            // circuit sees a raw field element and needs the check.
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_possible_truncation,
-                reason = "the window width is a small constant"
-            )]
-            let epoch_end = u32::from(epoch_start)
-                .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
-                .filter(|last| *last <= EPOCH_MAX)
-                .map(EpochIndex::new)
+            let epoch_end = (1..NF_DERIVATION_WIDTH)
+                .try_fold(epoch_start, |epoch, _| epoch.next())
                 .ok_or_else(|| {
                     ragu_core::Error::InvalidWitness(
                         "NullifierDerive: window exceeds the epoch range".into(),
                     )
                 })?;
-
-            let output = (cm, epoch_start, epoch_end);
-            Ok((seq, output))
+            let (cm, ..) = left.take();
+            Ok((seq, (cm, epoch_start, epoch_end)))
         })?;
         let epoch_start = gadgets::uint::Uint::alloc(
             dr,
@@ -395,6 +381,11 @@ impl Step<Pasta> for NullifierDerive {
             reason = "the framework enforces NUM_STAGED = 1"
         )]
         oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
+        // The whole window must land inside the epoch range: an index past
+        // EPOCH_MAX maps to no block height, so it labels nothing.
+        #[expect(clippy::as_conversions, reason = "constant value")]
+        let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
+        let epoch_end = epoch_start.add(dr, &width);
         let mut nullifiers = Vec::with_capacity(NF_DERIVATION_WIDTH);
         #[expect(
             clippy::integer_division,
@@ -405,8 +396,7 @@ impl Step<Pasta> for NullifierDerive {
         for group in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             let offset = Element::constant(dr, Fp::from((group * PoseidonFp::RATE) as u64));
             let group_start = epoch_start.add(dr, &offset);
-            let outputs =
-                poseidon::circuit::nullifier_group(dr, &left_encoded.as_gadget().mk, &group_start)?;
+            let outputs = poseidon::circuit::nullifier_group(dr, &secret.mk, &group_start)?;
             nullifiers.extend(outputs);
         }
         let z = oracles.zeta().clone();
@@ -432,12 +422,22 @@ impl Step<Pasta> for NullifierDerive {
                     "NullifierDerive: sequence does not match the derived window".into(),
                 )
             })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        encoded
-            .as_gadget()
-            .epoch_start
-            .enforce_equal(dr, &epoch_start)?;
-        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
+        let fields = NoteNullifiersOutput {
+            cm: secret.cm.clone(),
+            epoch_start,
+            epoch_end: gadgets::uint::Uint::from_element(dr, &epoch_end)
+                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))
+                .map_err(|_err| {
+                    ragu_core::Error::InvalidWitness(
+                        "NullifierDerive: window exceeds the epoch range".into(),
+                    )
+                })?,
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 

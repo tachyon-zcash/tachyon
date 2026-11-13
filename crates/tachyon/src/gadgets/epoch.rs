@@ -10,6 +10,7 @@ use ragu_core::{
     pasta::PoseidonFp,
 };
 use ragu_primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write};
+use udon::field::Field as _;
 
 use super::uint::Uint;
 use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};
@@ -47,6 +48,17 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         Ok(Self { element })
     }
 
+    /// The epoch `bits` encodes.
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn from_bits(
+        dr: &mut D,
+        bits: &Uint<'dr, D, { (EPOCH_MAX + 1).ilog2() as usize }>,
+    ) -> Result<Self> {
+        Ok(Self {
+            element: bits.pack(dr)?,
+        })
+    }
+
     /// The epoch `bits` encodes, with its low `log2(RATE)` bits held to zero:
     /// the first epoch of a nullifier group.
     #[expect(clippy::as_conversions, reason = "constant value")]
@@ -57,8 +69,20 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         for (bit, _) in bits.bits().iter().zip(0..PoseidonFp::RATE.ilog2()) {
             bit.element().enforce_zero(dr)?;
         }
-        Ok(Self {
-            element: bits.pack(dr)?,
-        })
+        Self::from_bits(dr, bits)
+    }
+
+    /// The index after this one. Range-checks both this index and the
+    /// result; unsatisfiable at `EPOCH_MAX`.
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn next(&self, dr: &mut D) -> Result<Self> {
+        Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &self.element)?;
+        let one = Element::constant(dr, Fp::ONE);
+        let element = self.element.add(dr, &one);
+        Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &element)?;
+        Ok(Self { element })
     }
 }
+
+#[cfg(test)]
+mod tests;

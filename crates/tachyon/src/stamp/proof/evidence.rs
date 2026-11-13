@@ -59,7 +59,8 @@ pub struct EvidenceTree;
 
 #[derive(Gadget, Write)]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -79,30 +80,36 @@ impl Header<Fp> for EvidenceTree {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(EvidenceTreeOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_start, ..)| Fp::from(anchor_start)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness
+                    .as_ref()
+                    .map(|&(.., discriminant, _)| Fp::from(discriminant)),
             )?,
             root: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.4)),
+                witness.as_ref().map(|&(.., root)| Fp::from(root)),
             )?,
         })
     }
@@ -119,7 +126,8 @@ pub struct EvidenceTreePair;
 
 #[derive(Gadget, Write)]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -147,35 +155,41 @@ impl Header<Fp> for EvidenceTreePair {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(EvidenceTreePairOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_start, ..)| Fp::from(anchor_start)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, _, discriminant, ..)| Fp::from(discriminant)),
             )?,
             first: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.4)),
+                witness.as_ref().map(|&(.., first, _)| Fp::from(first)),
             )?,
             second: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.5)),
+                witness.as_ref().map(|&(.., second)| Fp::from(second)),
             )?,
         })
     }
@@ -233,8 +247,8 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         let right_bucket = right_encoded.as_gadget();
         for (left_element, right_element, error) in [
             (
-                &left_bucket.epoch,
-                &right_bucket.epoch,
+                &*left_bucket.epoch,
+                &*right_bucket.epoch,
                 "EvidenceTreeLeafPair: inputs cover different epochs",
             ),
             (
@@ -354,8 +368,8 @@ impl Step<Pasta> for EvidenceTreePairFuse {
         let right_tree = right_encoded.as_gadget();
         for (left_element, right_element, error) in [
             (
-                &left_tree.epoch,
-                &right_tree.epoch,
+                &*left_tree.epoch,
+                &*right_tree.epoch,
                 "EvidenceTreePairFuse: inputs cover different epochs",
             ),
             (
@@ -456,8 +470,8 @@ impl Step<Pasta> for EvidenceTreeFuse {
         let right_pair = right_encoded.as_gadget();
         for (left_element, right_element, error) in [
             (
-                &left_pair.epoch,
-                &right_pair.epoch,
+                &*left_pair.epoch,
+                &*right_pair.epoch,
                 "EvidenceTreeFuse: inputs cover different epochs",
             ),
             (

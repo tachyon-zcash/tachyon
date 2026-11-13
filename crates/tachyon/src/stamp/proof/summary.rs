@@ -26,6 +26,7 @@ use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
+    gadgets,
     pasta::Fp,
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
 };
@@ -39,7 +40,8 @@ pub struct Summary;
 
 #[derive(Gadget, Write)]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,
 }
@@ -57,20 +59,24 @@ impl Header<Fp> for Summary {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(SummaryOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_prev, _)| Fp::from(anchor_prev)),
             )?,
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(.., anchor_end)| Fp::from(anchor_end)),
             )?,
         })
     }
@@ -137,10 +143,10 @@ impl Step<Pasta> for SummarySeed {
                 .as_ref()
                 .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, _)| epoch),
         )?;
         let z = oracles.zeta().clone();
         let accumulator_at_z = oracles.query(dr, Slot::output(0), &z)?;
@@ -247,6 +253,8 @@ impl Step<Pasta> for SummaryAdvance {
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        // The epoch is in range: `SummarySeed` range-checks it and every
+        // `SummaryAdvance` carries it unchanged.
         let anchor =
             poseidon::circuit::anchor_next_stamp(dr, &anchor_end, &epoch, oracles.bridge_hash())?;
         let output = D::just(|| {

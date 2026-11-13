@@ -37,7 +37,10 @@ use ragu_core::{
 use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};
 
-use super::{pool::ArbitraryUnspent, summary::Summary};
+use super::{
+    pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
+    summary::Summary,
+};
 pub use crate::collections::qr::classify;
 use crate::{
     collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
@@ -61,7 +64,8 @@ pub struct QrIntake;
 
 #[derive(Gadget, Write)]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -82,10 +86,10 @@ impl Header<Fp> for QrIntake {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(QrIntakeOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_prev: Element::alloc(
                 dr,
@@ -362,10 +366,10 @@ impl Step<Pasta> for QrStampIntakeSeed {
                 .as_ref()
                 .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, ..)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, ..)| epoch),
         )?;
         let z = oracles.zeta().clone();
         let contents_at_z = oracles.query(dr, Slot::output(0), &z)?;
@@ -477,10 +481,10 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
                 .as_ref()
                 .map(|&(_, _, discriminant)| Fp::from(discriminant)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, _)| epoch),
         )?;
         let data = D::just(|| {
             let (anchor, epoch, discriminant) = witness.take();
@@ -568,8 +572,8 @@ impl Step<Pasta> for QrIntakeMerge {
         )?;
         for (left_element, right_element, message) in [
             (
-                &left_intake.epoch,
-                &right_intake.epoch,
+                &*left_intake.epoch,
+                &*right_intake.epoch,
                 "QrIntakeMerge: inputs cover different epochs",
             ),
             (
@@ -897,8 +901,8 @@ impl Step<Pasta> for QrSideDescend {
         let selection = right_encoded.as_gadget();
         for (source, selected, message) in [
             (
-                &sides.intake.epoch,
-                &selection.intake.epoch,
+                &*sides.intake.epoch,
+                &*selection.intake.epoch,
                 "QrSideDescend: selection epoch does not match sides",
             ),
             (
@@ -1027,7 +1031,8 @@ pub struct QrBucket;
 
 #[derive(Gadget, Write)]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -1066,10 +1071,10 @@ impl Header<Fp> for QrBucket {
                 .expect("bridge hash is not the identity")
         });
         Ok(QrBucketOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_start: Element::alloc(
                 dr,
@@ -1191,6 +1196,9 @@ impl Step<Pasta> for QrBucketSeal {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let next = intake.epoch.next(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrBucketSeal: crossing past the final epoch".into())
+        })?;
         let previous = Element::alloc(
             dr,
             &mut (),
@@ -1208,16 +1216,9 @@ impl Step<Pasta> for QrBucketSeal {
                         .into(),
                 )
             })?;
-        let one = Element::constant(dr, Fp::ONE);
-        let next = intake.epoch.add(dr, &one);
         let crossing = poseidon::circuit::anchor_next_epoch(dr, &intake.anchor_end, &next)?;
         let data = D::try_just(|| {
             let (epoch, anchor_prev, _, discriminant, profile) = left.take();
-            epoch.next().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "QrBucketSeal: crossing past the final epoch".into(),
-                )
-            })?;
             let [hash_x, hash_y] = oracles
                 .bridge_hash()
                 .clone()
@@ -1392,6 +1393,9 @@ impl Step<Pasta> for QrUnspentInit {
             witness.as_ref().map(|&(_, classes, ..)| classes),
             witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
+        let epoch_next_element = bucket.epoch.next(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
+        })?;
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
@@ -1437,7 +1441,16 @@ impl Step<Pasta> for QrUnspentInit {
                 bucket_anchor_next,
             ))
         })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
+        let fields = ArbitraryUnspentOutput {
+            anchor_start: bucket.anchor_start.clone(),
+            epoch_start: bucket.epoch.clone(),
+            epoch_next: epoch_next_element,
+            anchor_next: bucket.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }

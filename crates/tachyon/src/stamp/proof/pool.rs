@@ -41,7 +41,7 @@ use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{
     collections::indexed_multiset,
     digest::poseidon,
-    note,
+    gadgets, note,
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
@@ -84,8 +84,10 @@ pub struct ArbitraryUnspent;
 #[derive(Gadget, Write)]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
-    pub epoch_start: Element<'dr, D>,
-    pub epoch_next: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_start: gadgets::epoch::EpochIndex<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_next: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_next: Element<'dr, D>,
 }
 
@@ -105,22 +107,26 @@ impl Header<Fp> for ArbitraryUnspent {
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness
+                    .as_ref()
+                    .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
             )?,
-            epoch_start: Element::alloc(
+            epoch_start: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|&(_, epoch_start, ..)| epoch_start),
             )?,
-            epoch_next: Element::alloc(
+            epoch_next: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(_, _, epoch_next, _)| epoch_next),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness
+                    .as_ref()
+                    .map(|&(.., anchor_next)| Fp::from(anchor_next)),
             )?,
         })
     }
@@ -135,8 +141,10 @@ pub struct NoteUnspent;
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,
-    pub epoch_start: Element<'dr, D>,
-    pub epoch_next: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_start: gadgets::epoch::EpochIndex<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_next: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_next: Element<'dr, D>,
 }
 
@@ -156,27 +164,31 @@ impl Header<Fp> for NoteUnspent {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_start, ..)| Fp::from(anchor_start)),
             )?,
-            epoch_start: Element::alloc(
+            epoch_start: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(_, _, epoch_start, ..)| epoch_start),
             )?,
-            epoch_next: Element::alloc(
+            epoch_next: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|&(.., epoch_next, _)| epoch_next),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.4)),
+                witness
+                    .as_ref()
+                    .map(|&(.., anchor_next)| Fp::from(anchor_next)),
             )?,
         })
     }
@@ -308,10 +320,10 @@ impl Step<Pasta> for AnchorSpanSeed {
                 .as_ref()
                 .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, _)| epoch),
         )?;
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
@@ -633,6 +645,9 @@ impl Step<Pasta> for UnspentLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let bucket = right_encoded.as_gadget();
+        let epoch_next_element = bucket.epoch.next(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
+        })?;
         unspent
             .anchor_next
             .enforce_equal(dr, &bucket.anchor_start)
@@ -708,8 +723,17 @@ impl Step<Pasta> for UnspentLift {
                 bucket_anchor_next,
             ))
         })?;
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), output.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), output, D::unit()))
+        let fields = ArbitraryUnspentOutput {
+            anchor_start: unspent.anchor_start.clone(),
+            epoch_start: unspent.epoch_start.clone(),
+            epoch_next: epoch_next_element,
+            anchor_next: bucket.anchor_next.clone(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
 
