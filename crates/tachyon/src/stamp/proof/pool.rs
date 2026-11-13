@@ -320,7 +320,7 @@ impl Step<Pasta> for AnchorSpanSeed {
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -632,11 +632,9 @@ impl Step<Pasta> for UnspentLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let bucket = right_encoded.as_gadget();
-        let epoch_next_element = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
-            })?
-            .into_element();
+        let epoch_next_element = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
+        })?;
         unspent
             .epoch_next
             .enforce_equal(dr, &bucket.epoch)
@@ -676,8 +674,7 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let factor =
-            gadgets::indexed_multiset::member(dr, &value_element, &epoch_next_element, &z)?;
+        let factor = gadgets::indexed_multiset::member(dr, &value_element, &bucket.epoch, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z
             .enforce_equal(dr, &expected_extended)

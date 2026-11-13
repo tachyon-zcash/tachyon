@@ -159,13 +159,12 @@ impl Step<Pasta> for SpendBind {
         spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
-        let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &spendable.epoch_current)
-            .map_err(|_err| {
+        let epoch_next =
+            gadgets::epoch::successor(dr, &spendable.epoch_current).map_err(|_err| {
                 ragu_core::Error::InvalidWitness(
                     "SpendBind: no epoch follows the spend epoch".into(),
                 )
-            })?
-            .into_element();
+            })?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.

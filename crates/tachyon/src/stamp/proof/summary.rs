@@ -154,7 +154,7 @@ impl Step<Pasta> for SummarySeed {
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,

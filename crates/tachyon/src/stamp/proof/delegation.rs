@@ -71,7 +71,7 @@ impl Header<Fp> for NoteSecret {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
             note: gadgets::note::Note::alloc(
                 dr,
@@ -379,7 +379,7 @@ impl Step<Pasta> for NullifierDerive {
         #[expect(clippy::as_conversions, reason = "constant value")]
         let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
         let epoch_end = epoch_start.add(dr, &width);
-        gadgets::epoch::EpochIndex::new(dr, &epoch_end).map_err(|_err| {
+        gadgets::epoch::enforce_epoch(dr, &epoch_end).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "NullifierDerive: window exceeds the epoch range".into(),
             )
@@ -389,19 +389,15 @@ impl Step<Pasta> for NullifierDerive {
         // The window's members at `z`, encoded in-circuit from the
         // sponge-derived nullifiers and their epochs.
         let mut window_at_z = Element::constant(dr, Fp::ONE);
-        let mut offset = Element::constant(dr, Fp::ONE);
+        let mut index = epoch_start.clone();
         let one = Element::constant(dr, Fp::ONE);
-        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
+        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge, each
+        // sponge keyed on its group's first epoch.
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
-            let group_offset = offset.sub(dr, &one);
-            let group_start = epoch_start.add(dr, &group_offset);
-            for nullifier in
-                poseidon::circuit::nullifier_group(dr, &secret.mk.element, &group_start)?
-            {
-                let index = epoch_start.add(dr, &offset);
+            for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk.element, &index)? {
                 let factor = gadgets::indexed_multiset::member(dr, &nullifier, &index, &z)?;
                 window_at_z = window_at_z.mul(dr, &factor)?;
-                offset = offset.add(dr, &one);
+                index = index.add(dr, &one);
             }
         }
         window_at_z.enforce_equal(dr, &seq_at_z).map_err(|_err| {

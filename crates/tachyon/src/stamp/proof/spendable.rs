@@ -159,7 +159,7 @@ impl Step<Pasta> for SpendableInit {
                 .as_ref()
                 .map(|&(_, _, creation_epoch)| Fp::from(creation_epoch)),
         )?;
-        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         // The anchor immediately after the creation stamp, computed in-circuit
         // so the proof certifies the fold of the epoch and the stamp's bridge hash;
         // consensus membership of the eventual spend anchor binds the rest
@@ -273,11 +273,9 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not close where the bucket does".into(),
                 )
             })?;
-        let next = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
-            })?
-            .into_element();
+        let next = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+        })?;
         // The anchor equality rejects a wrong epoch label only through the
         // crossing digest's collision resistance; this ties `epoch_next` to the
         // bucket directly.

@@ -7,8 +7,8 @@ fn epoch_successor_rejects_raw_final_and_out_of_domain_assignments() {
     let successor = |index: Fp| {
         Simulator::<Fp>::simulate(index, |driver, assignment| {
             let epoch = Element::alloc(driver, &mut (), assignment)?;
-            EpochIndex::new(driver, &epoch)?;
-            EpochIndex::successor(driver, &epoch)?;
+            enforce_epoch(driver, &epoch)?;
+            successor(driver, &epoch)?;
             Ok(())
         })
         .map(|_| ())

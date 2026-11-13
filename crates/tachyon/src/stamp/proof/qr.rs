@@ -88,22 +88,28 @@ impl Header<Fp> for QrIntake {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
             )?,
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_prev, ..)| Fp::from(anchor_prev)),
             )?,
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, anchor_end, ..)| Fp::from(anchor_end)),
             )?,
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness
+                    .as_ref()
+                    .map(|&(.., discriminant, _)| Fp::from(discriminant)),
             )?,
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
@@ -154,8 +160,8 @@ impl Header<Fp> for QrIntakeSides {
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
         )]
-        let non_residue_hash = witness.as_ref().map(|fields| {
-            EpAffine::from(fields.5)
+        let non_residue_hash = witness.as_ref().map(|&(.., non_residue_hash)| {
+            EpAffine::from(non_residue_hash)
                 .coordinates()
                 .expect("bridge hash is not the identity")
         });
@@ -375,7 +381,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -480,7 +486,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
             &mut (),
             witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
         )?;
-        gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
+        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let data = D::just(|| {
             let (anchor, epoch, discriminant) = witness.take();
             let () = left.take();
@@ -1068,8 +1074,8 @@ impl Header<Fp> for QrBucket {
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
         )]
-        let contents_hash = witness.as_ref().map(|fields| {
-            EpAffine::from(fields.5)
+        let contents_hash = witness.as_ref().map(|&(.., contents_hash)| {
+            EpAffine::from(contents_hash)
                 .coordinates()
                 .expect("bridge hash is not the identity")
         });
@@ -1077,22 +1083,28 @@ impl Header<Fp> for QrBucket {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
             )?,
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|&(_, anchor_start, ..)| Fp::from(anchor_start)),
             )?,
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.3)),
+                witness
+                    .as_ref()
+                    .map(|&(_, _, _, discriminant, ..)| Fp::from(discriminant)),
             )?,
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
@@ -1193,13 +1205,9 @@ impl Step<Pasta> for QrBucketSeal {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let next = gadgets::epoch::EpochIndex::successor(dr, &intake.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrBucketSeal: crossing past the final epoch".into(),
-                )
-            })?
-            .into_element();
+        let next = gadgets::epoch::successor(dr, &intake.epoch).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrBucketSeal: crossing past the final epoch".into())
+        })?;
         let previous = Element::alloc(
             dr,
             &mut (),
@@ -1394,11 +1402,9 @@ impl Step<Pasta> for QrUnspentInit {
             witness.as_ref().map(|&(_, classes, ..)| classes),
             witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
-        let epoch_next_element = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
-            })?
-            .into_element();
+        let epoch_next_element = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
+        })?;
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
@@ -1407,7 +1413,7 @@ impl Step<Pasta> for QrUnspentInit {
         let z = oracles.zeta().clone();
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let expected_sequence =
-            gadgets::indexed_multiset::member(dr, &value_element, &epoch_next_element, &z)?;
+            gadgets::indexed_multiset::member(dr, &value_element, &bucket.epoch, &z)?;
         sequence_at_z
             .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {
