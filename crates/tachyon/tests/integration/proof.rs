@@ -225,7 +225,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             build_output_stamp(rng, stamp_anchor, user.random_note(200));
         let stamp_pcd = stamp
             .proof
-            .carry(stamp::Stamp::header(stamp.tachygram_set, stamp_anchor).unwrap());
+            .carry::<stamp::Stamp>((stamp.tachygram_set.bridge().unwrap(), stamp_anchor));
         let lifted = PROOF_SYSTEM.fuse(
             rng,
             stamp::StampLift,
