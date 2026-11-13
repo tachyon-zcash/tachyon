@@ -110,8 +110,10 @@ pub struct NoteNullifiers;
 #[derive(Gadget, Write)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub epoch_start: Element<'dr, D>,
-    pub epoch_end: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_start: gadgets::epoch::EpochIndex<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_end: gadgets::epoch::EpochIndex<'dr, D>,
 }
 
 impl Header<Fp> for NoteNullifiers {
@@ -130,17 +132,17 @@ impl Header<Fp> for NoteNullifiers {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
-            epoch_start: Element::alloc(
+            epoch_start: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|&(_, epoch_start, _)| epoch_start),
             )?,
-            epoch_end: Element::alloc(
+            epoch_end: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(.., epoch_end)| epoch_end),
             )?,
         })
     }
@@ -199,14 +201,11 @@ impl Step<Pasta> for NoteSeed {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let value = Element::alloc(
+        let value = gadgets::value::Positive::alloc(
             dr,
             &mut (),
-            witness
-                .as_ref()
-                .map(|&(value, ..)| Fp::from(u64::from(value))),
+            witness.as_ref().map(|&(value, ..)| value),
         )?;
-        gadgets::range::enforce_money(dr, &value)?;
         let psi = Element::alloc(
             dr,
             &mut (),
@@ -361,35 +360,30 @@ impl Step<Pasta> for NullifierDerive {
             let (cm, ..) = left.take();
             Ok((cm, epoch_start, epoch_end))
         })?;
-        let epoch_start = Element::alloc(
+        let epoch_start = gadgets::uint::Uint::alloc(
             dr,
-            &mut (),
             output
                 .as_ref()
                 .map(|&(_, epoch_start, _)| Fp::from(epoch_start)),
-        )?;
-        epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
-        gadgets::epoch::enforce_group_start(dr, &epoch_start).map_err(|_err| {
+        )
+        .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))
+        .map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "NullifierDerive: epoch_start is not group-aligned".into(),
             )
         })?;
+        oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
         #[expect(clippy::as_conversions, reason = "constant value")]
         let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
         let epoch_end = epoch_start.add(dr, &width);
-        gadgets::epoch::enforce_epoch(dr, &epoch_end).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "NullifierDerive: window exceeds the epoch range".into(),
-            )
-        })?;
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
         // The window's members at `z`, encoded in-circuit from the
         // sponge-derived nullifiers and their epochs.
         let mut window_at_z = Element::constant(dr, Fp::ONE);
-        let mut index = epoch_start.clone();
+        let mut index = (*epoch_start).clone();
         let one = Element::constant(dr, Fp::ONE);
         // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge, each
         // sponge keyed on its group's first epoch.
@@ -408,7 +402,13 @@ impl Step<Pasta> for NullifierDerive {
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),
             epoch_start,
-            epoch_end,
+            epoch_end: gadgets::uint::Uint::from_element(dr, &epoch_end)
+                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))
+                .map_err(|_err| {
+                    ragu_core::Error::InvalidWitness(
+                        "NullifierDerive: window exceeds the epoch range".into(),
+                    )
+                })?,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

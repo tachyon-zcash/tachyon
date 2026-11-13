@@ -6,12 +6,12 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe as _,
 };
-use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
+use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 
 use crate::{
     constants::MAX_MONEY,
     digest::poseidon,
-    gadgets::fixed_base,
+    gadgets::{fixed_base, uint::Uint, value::Positive},
     note,
     pasta::{EpAffine, Fp},
 };
@@ -29,13 +29,14 @@ pub struct Note<'dr, D: Driver<'dr>> {
     /// Recipient payment key.
     pub pk: Element<'dr, D>,
     /// Note amount.
-    pub value: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub value: Positive<'dr, D>,
     /// Nullifier trapdoor.
     pub psi: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
-    /// Allocates the fields of a native note.
+    /// Allocates the fields of a native note, range-checking its value.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -45,20 +46,23 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
             rcm: Element::alloc(
                 dr,
                 allocator,
-                note.as_ref().map(|fields| Fp::from(fields.rcm)),
+                note.as_ref().map(|&note::Note { rcm, .. }| Fp::from(rcm)),
             )?,
             pk: Element::alloc(
                 dr,
                 allocator,
-                note.as_ref().map(|fields| Fp::from(fields.pk)),
+                note.as_ref().map(|&note::Note { pk, .. }| Fp::from(pk)),
             )?,
-            value: Element::alloc(
+            value: Positive::alloc(
                 dr,
                 allocator,
-                note.as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.value))),
+                note.as_ref().map(|&note::Note { value, .. }| value),
             )?,
-            psi: Element::alloc(dr, allocator, note.map(|fields| Fp::from(fields.psi)))?,
+            psi: Element::alloc(
+                dr,
+                allocator,
+                note.map(|note::Note { psi, .. }| Fp::from(psi)),
+            )?,
         })
     }
 
@@ -70,16 +74,18 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }
 
-    /// The max fee commitment, `cv_feemax`.
-    ///
-    /// Callers bound `value` by
-    /// [`enforce_money`](crate::gadgets::range::enforce_money).
-    pub(crate) fn cv_feemax(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
+    /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
+    /// which this ties to `MAX_MONEY - value`.
+    pub(crate) fn cv_feemax(
+        &self,
+        dr: &mut D,
+        slack: &Uint<'dr, D, 51>,
+    ) -> Result<Point<'dr, D, EpAffine>> {
+        let total = slack.pack(dr)?.add(dr, &self.value);
+        Element::constant(dr, Fp::from(MAX_MONEY)).enforce_equal(dr, &total)?;
         let blind = self.derive_feemax_blind(dr)?;
         let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
-        let bound = Element::constant(dr, Fp::from(MAX_MONEY));
-        let slack = bound.sub(dr, &self.value);
-        fixed_base::FEE_V_BASE.mul_amount(dr, &slack, &blind_point)
+        fixed_base::FEE_V_BASE.mul_amount(dr, slack, &blind_point)
     }
 
     /// Enforces a zero `value` and returns the max fee commitment for it: the

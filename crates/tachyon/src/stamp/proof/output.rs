@@ -107,9 +107,30 @@ impl Step<Pasta> for OutputBind {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let note =
-            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|&(note, _)| note))?;
-        gadgets::range::enforce_money(dr, &note.value)?;
+        let amount = gadgets::uint::Uint::alloc(
+            dr,
+            witness
+                .as_ref()
+                .map(|&(note, _)| Fp::from(u64::from(note.value))),
+        )?;
+        let note = gadgets::note::Note {
+            rcm: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.pk)),
+            )?,
+            value: gadgets::value::Positive::from_bits(dr, &amount)?,
+            psi: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
+            )?,
+        };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
@@ -122,7 +143,7 @@ impl Step<Pasta> for OutputBind {
         })?;
         let blind_point = fixed_base::R_BASE
             .mul_blinding(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
-        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &note.value, &blind_point)?;
+        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),

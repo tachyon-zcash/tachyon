@@ -64,7 +64,8 @@ pub struct QrIntake;
 
 #[derive(Gadget, Write)]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_prev: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -85,10 +86,10 @@ impl Header<Fp> for QrIntake {
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(QrIntakeOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_prev: Element::alloc(
                 dr,
@@ -365,10 +366,10 @@ impl Step<Pasta> for QrStampIntakeSeed {
                 .as_ref()
                 .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, ..)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, ..)| epoch),
         )?;
         let z = oracles.zeta().clone();
         let contents_at_z = oracles.query(dr, Slot::output(0), &z)?;
@@ -381,7 +382,6 @@ impl Step<Pasta> for QrStampIntakeSeed {
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -481,12 +481,11 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
                 .as_ref()
                 .map(|&(_, _, discriminant)| Fp::from(discriminant)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+            witness.as_ref().map(|&(_, epoch, _)| epoch),
         )?;
-        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         let data = D::just(|| {
             let (anchor, epoch, discriminant) = witness.take();
             let () = left.take();
@@ -573,8 +572,8 @@ impl Step<Pasta> for QrIntakeMerge {
         )?;
         for (left_element, right_element, message) in [
             (
-                &left_intake.epoch,
-                &right_intake.epoch,
+                &*left_intake.epoch,
+                &*right_intake.epoch,
                 "QrIntakeMerge: inputs cover different epochs",
             ),
             (
@@ -902,8 +901,8 @@ impl Step<Pasta> for QrSideDescend {
         let selection = right_encoded.as_gadget();
         for (source, selected, message) in [
             (
-                &sides.intake.epoch,
-                &selection.intake.epoch,
+                &*sides.intake.epoch,
+                &*selection.intake.epoch,
                 "QrSideDescend: selection epoch does not match sides",
             ),
             (
@@ -947,23 +946,12 @@ impl Step<Pasta> for QrSideDescend {
                 )
             })?;
         }
-        gadgets::range::enforce_width::<D, { QrProfile::MAX_DEPTH.ilog2() }>(
-            dr,
-            &sides.intake.profile.depth,
-        )
-        .map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QrSideDescend: profile has no bit left for another side".into(),
-            )
-        })?;
         let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
         let discriminant_element = sides
             .intake
             .discriminant
             .add(dr, &sides.intake.profile.depth);
         let one = Element::constant(dr, Fp::ONE);
-        let next_depth = sides.intake.profile.depth.add(dr, &one);
-        let next_bits = sides.intake.profile.bits.double(dr).add(dr, &bit.element());
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
@@ -1001,6 +989,17 @@ impl Step<Pasta> for QrSideDescend {
                 )
             })?;
 
+        let fields = QrIntakeOutput {
+            epoch: sides.intake.epoch.clone(),
+            anchor_prev: sides.intake.anchor_prev.clone(),
+            anchor_end: sides.intake.anchor_end.clone(),
+            discriminant: sides.intake.discriminant.clone(),
+            profile: sides.intake.profile.descend(dr, &bit).map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "QrSideDescend: profile has no bit left for another side".into(),
+                )
+            })?,
+        };
         let output = D::just(|| {
             let (epoch, anchor_prev, anchor_end, discriminant, profile, _) = left.take();
             (
@@ -1011,16 +1010,6 @@ impl Step<Pasta> for QrSideDescend {
                 profile.descend(bit.value().take()),
             )
         });
-        let fields = QrIntakeOutput {
-            epoch: sides.intake.epoch.clone(),
-            anchor_prev: sides.intake.anchor_prev.clone(),
-            anchor_end: sides.intake.anchor_end.clone(),
-            discriminant: sides.intake.discriminant.clone(),
-            profile: gadgets::qr::QrProfile {
-                depth: next_depth,
-                bits: next_bits,
-            },
-        };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             output,
@@ -1042,7 +1031,8 @@ pub struct QrBucket;
 
 #[derive(Gadget, Write)]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
-    pub epoch: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
     pub discriminant: Element<'dr, D>,
@@ -1081,10 +1071,10 @@ impl Header<Fp> for QrBucket {
                 .expect("bridge hash is not the identity")
         });
         Ok(QrBucketOutput {
-            epoch: Element::alloc(
+            epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|&(epoch, ..)| Fp::from(epoch)),
+                witness.as_ref().map(|&(epoch, ..)| epoch),
             )?,
             anchor_start: Element::alloc(
                 dr,
@@ -1206,7 +1196,7 @@ impl Step<Pasta> for QrBucketSeal {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let next = gadgets::epoch::successor(dr, &intake.epoch).map_err(|_err| {
+        let next = intake.epoch.next(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrBucketSeal: crossing past the final epoch".into())
         })?;
         let previous = Element::alloc(
@@ -1403,7 +1393,7 @@ impl Step<Pasta> for QrUnspentInit {
             witness.as_ref().map(|&(_, classes, ..)| classes),
             witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
-        let epoch_next_element = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+        let epoch_next_element = bucket.epoch.next(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
         })?;
         #[expect(

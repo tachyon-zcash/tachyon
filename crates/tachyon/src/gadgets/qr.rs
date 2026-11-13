@@ -9,6 +9,7 @@ use ragu_core::{
 use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
+use super::uint::Uint;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
@@ -56,6 +57,22 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             depth: Element::constant(dr, Fp::from(u64::from(primitives::QrProfile::ROOT.depth))),
             bits: Element::constant(dr, Fp::from(u64::from(primitives::QrProfile::ROOT.bits))),
         }
+    }
+
+    /// The child profile on side `bit`. The parent's depth is checked below
+    /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
+    /// the new side.
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
+        Uint::<_, { primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>::from_element(
+            dr,
+            &self.depth,
+        )?;
+        let one = Element::constant(dr, Fp::ONE);
+        Ok(Self {
+            depth: self.depth.add(dr, &one),
+            bits: self.bits.double(dr).add(dr, &bit.element()),
+        })
     }
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.

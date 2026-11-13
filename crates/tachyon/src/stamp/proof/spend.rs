@@ -17,7 +17,7 @@ use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    gadgets::{self, fixed_base},
+    gadgets::fixed_base,
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
@@ -159,12 +159,9 @@ impl Step<Pasta> for SpendBind {
         spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
-        let epoch_next =
-            gadgets::epoch::successor(dr, &spendable.epoch_current).map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "SpendBind: no epoch follows the spend epoch".into(),
-                )
-            })?;
+        let epoch_next = spendable.epoch_current.next(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
+        })?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.
@@ -177,9 +174,11 @@ impl Step<Pasta> for SpendBind {
 
         let blind_point =
             fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
-        // `NoteSeed`, the only producer of `NoteSecret`, bounds the value by
-        // MAX_MONEY.
-        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.note.value, &blind_point)?;
+        let cv = secret
+            .note
+            .value
+            .to_bits(dr)
+            .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();

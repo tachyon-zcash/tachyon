@@ -3,24 +3,28 @@ use ragu_primitives::Simulator;
 use super::*;
 
 #[test]
-fn epoch_successor_rejects_raw_final_and_out_of_domain_assignments() {
-    let successor = |index: Fp| {
-        Simulator::<Fp>::simulate(index, |driver, assignment| {
-            let epoch = Element::alloc(driver, &mut (), assignment)?;
-            enforce_epoch(driver, &epoch)?;
-            successor(driver, &epoch)?;
+fn next_rejects_the_final_epoch() {
+    let next = |index: u32| {
+        Simulator::<Fp>::simulate(primitives::EpochIndex::new(index), |driver, assignment| {
+            EpochIndex::alloc(driver, &mut (), assignment)?.next(driver)?;
             Ok(())
         })
         .map(|_| ())
     };
-    for index in [Fp::ZERO, Fp::from(u64::from(EPOCH_MAX - 1))] {
-        successor(index).unwrap();
+    for index in [0, EPOCH_MAX - 1] {
+        next(index).unwrap();
     }
-    for index in [
-        -Fp::ONE,
-        Fp::from(u64::from(EPOCH_MAX)),
-        Fp::from(u64::from(EPOCH_MAX) + 1),
-    ] {
-        successor(index).unwrap_err();
+    next(EPOCH_MAX).unwrap_err();
+}
+
+#[test]
+fn group_clears_the_two_low_bits() {
+    for (index, group_start) in [(0, 0), (EPOCH_MAX, EPOCH_MAX - 3)] {
+        Simulator::<Fp>::simulate(primitives::EpochIndex::new(index), |driver, assignment| {
+            let (start, _) = EpochIndex::alloc(driver, &mut (), assignment)?.group(driver)?;
+            assert_eq!(*start.value().take(), Fp::from(u64::from(group_start)));
+            Ok(())
+        })
+        .unwrap();
     }
 }

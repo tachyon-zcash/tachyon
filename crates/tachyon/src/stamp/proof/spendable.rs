@@ -43,7 +43,8 @@ pub struct NoteSpendable;
 #[derive(Gadget, Write)]
 pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub epoch_current: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub epoch_current: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor: Element<'dr, D>,
 }
 
@@ -63,17 +64,17 @@ impl Header<Fp> for NoteSpendable {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|&(cm, ..)| Fp::from(cm)),
             )?,
-            epoch_current: Element::alloc(
+            epoch_current: gadgets::epoch::EpochIndex::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|&(_, epoch_current, _)| epoch_current),
             )?,
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|&(.., anchor)| Fp::from(anchor)),
             )?,
         })
     }
@@ -152,14 +153,13 @@ impl Step<Pasta> for SpendableInit {
                 .as_ref()
                 .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
         )?;
-        let epoch_element = Element::alloc(
+        let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
             &mut (),
             witness
                 .as_ref()
-                .map(|&(_, _, creation_epoch)| Fp::from(creation_epoch)),
+                .map(|&(_, _, creation_epoch)| creation_epoch),
         )?;
-        gadgets::epoch::enforce_epoch(dr, &epoch_element)?;
         // The anchor immediately after the creation stamp, computed in-circuit
         // so the proof certifies the fold of the epoch and the stamp's bridge hash;
         // consensus membership of the eventual spend anchor binds the rest
@@ -273,7 +273,7 @@ impl Step<Pasta> for QrSpendableInit {
                     "QrSpendableInit: segment does not close where the bucket does".into(),
                 )
             })?;
-        let epoch_next = gadgets::epoch::successor(dr, &bucket.epoch).map_err(|_err| {
+        let epoch_next = bucket.epoch.next(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
         })?;
         // The anchor equality rejects a wrong epoch label only through the

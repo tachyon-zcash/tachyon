@@ -39,6 +39,7 @@ use udon::{
     field::Field as _,
 };
 
+use super::uint::Uint;
 use crate::{
     constants::{
         MAX_MONEY,
@@ -437,31 +438,16 @@ impl FixedBase<85> {
 }
 
 impl FixedBase<17> {
-    /// $\[v\]B + C + P$ for $v$ decomposed into 51 bits, which doubles as the
-    /// range check $v < 2^{51}$. As in Orchard's short path, $v$ is a
-    /// magnitude and a sign; Tachyon's sign is constant per step and lives in
-    /// the base.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "multipack packs 51 bits into one chunk"
-    )]
+    /// $\[v\]B + C + P$ for the 51 bits of $v$. As in Orchard's short path, $v$
+    /// is a magnitude and a sign; Tachyon's sign is constant per step and
+    /// lives in the base.
     pub(crate) fn mul_amount<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        value: &Element<'dr, D>,
+        value: &Uint<'dr, D, 51>,
         onto: &Point<'dr, D, EpAffine>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let bits = FixedVec::<_, ConstLen<51>>::try_from_fn(|index| {
-            Boolean::alloc(
-                dr,
-                &mut (),
-                value
-                    .value()
-                    .map(|candidate| candidate.to_le_bits().as_ref()[index]),
-            )
-        })?;
-        multipack(dr, &bits)?[0].enforce_equal(dr, value)?;
-        self.multiply(dr, &bits, Some(onto))
+        self.multiply(dr, value.bits(), Some(onto))
     }
 }
 
