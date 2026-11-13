@@ -18,7 +18,6 @@ use udon::curve::EndomorphismAffine;
 use crate::{
     Tachygram,
     constants::MAX_MONEY,
-    digest::poseidon,
     gadgets::{self, fixed_base},
     note::Note,
     pasta::{EpAffine, Fp, Fq},
@@ -109,35 +108,14 @@ impl Step<Pasta> for OutputBind {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let amount = Element::alloc(
-            dr,
-            &mut (),
-            witness
-                .as_ref()
-                .map(|data| Fp::from(u64::from(data.0.value))),
-        )?;
+        let note = gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
         // With the 51-bit decomposition `mul_amount` makes of the amount, this
         // bounds the amount by MAX_MONEY.
         let bound = Element::constant(dr, Fp::from(MAX_MONEY));
-        let slack = bound.sub(dr, &amount);
+        let slack = bound.sub(dr, &note.value);
         gadgets::range::enforce_width::<D, 51>(dr, &slack)?;
-        let rcm = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.rcm)),
-        )?;
-        let pk = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.pk)),
-        )?;
-        let psi = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.psi)),
-        )?;
-        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &amount, &psi)?;
-        let pad = poseidon::circuit::pad_tachygram(dr, &rcm, &pk, &amount, &psi)?;
+        let cm = note.commitment(dr)?;
+        let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the set polynomial factor `(X - tg)` trivial.
         cm.clone().enforce_nonzero(dr).map_err(|_err| {
@@ -148,7 +126,7 @@ impl Step<Pasta> for OutputBind {
         })?;
         let blind_point =
             fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
-        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
+        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &note.value, &blind_point)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),

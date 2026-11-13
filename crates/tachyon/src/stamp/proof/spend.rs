@@ -183,7 +183,7 @@ impl Step<Pasta> for SpendBind {
             fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
         // `NoteSeed`, the only producer of `NoteSecret`, bounds the value by
         // MAX_MONEY.
-        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.value, &blind_point)?;
+        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.note.value, &blind_point)?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
@@ -201,7 +201,7 @@ impl Step<Pasta> for SpendBind {
             nf_current,
             nf_next,
             anchor: spendable.anchor.clone(),
-            pk: secret.pk.clone(),
+            pk: secret.note.pk.clone(),
             cv,
         };
         Ok((

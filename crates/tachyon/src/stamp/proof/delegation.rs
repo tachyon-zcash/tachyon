@@ -50,10 +50,8 @@ pub struct NoteSecret;
 #[derive(Gadget, Write)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
-    pub rcm: Element<'dr, D>,
-    pub pk: Element<'dr, D>,
-    pub value: Element<'dr, D>,
-    pub psi: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub note: gadgets::note::Note<'dr, D>,
     #[ragu(gadget)]
     pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
@@ -76,27 +74,10 @@ impl Header<Fp> for NoteSecret {
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?,
-            rcm: Element::alloc(
+            note: gadgets::note::Note::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.rcm)),
-            )?,
-            pk: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.pk)),
-            )?,
-            value: Element::alloc(
-                dr,
-                allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(u64::from(fields.1.value))),
-            )?,
-            psi: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1.psi)),
+                witness.as_ref().map(|fields| fields.1),
             )?,
             mk: gadgets::master::NoteMasterKey {
                 element: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
@@ -244,11 +225,17 @@ impl Step<Pasta> for NoteSeed {
         let ak = Point::alloc(dr, ak_assignment)?;
         let pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
         let mk = poseidon::circuit::nf_master(dr, &psi, &nk)?;
-        let cm = poseidon::circuit::note_commitment(dr, &rcm, &pk, &value, &psi)?;
+        let circuit_note = gadgets::note::Note {
+            rcm,
+            pk,
+            value,
+            psi,
+        };
+        let cm = circuit_note.commitment(dr)?;
         let output = D::just(|| {
             let (note_value, note_psi, note_rcm, _) = witness.take();
             let note = Note {
-                pk: PaymentKey::from(*pk.value().take()),
+                pk: PaymentKey::from(*circuit_note.pk.value().take()),
                 value: note_value,
                 psi: note_psi,
                 rcm: note_rcm,
@@ -261,10 +248,7 @@ impl Step<Pasta> for NoteSeed {
         });
         let fields = NoteSecretOutput {
             cm,
-            rcm,
-            pk,
-            value,
-            psi,
+            note: circuit_note,
             mk: gadgets::master::NoteMasterKey { element: mk },
         };
         Ok((

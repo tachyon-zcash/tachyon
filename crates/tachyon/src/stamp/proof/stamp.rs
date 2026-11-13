@@ -20,7 +20,6 @@ use udon::{curve::Affine as _, field::Field as _};
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
     gadgets::{self, fixed_base},
@@ -826,13 +825,8 @@ impl Step<Pasta> for FeeFuse {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let maximum = Element::alloc(
-            dr,
-            &mut (),
-            witness
-                .as_ref()
-                .map(|data| Fp::from(u64::from(data.0.value))),
-        )?;
+        let fee_note =
+            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
         let fee = Element::alloc(
             dr,
             &mut (),
@@ -842,43 +836,35 @@ impl Step<Pasta> for FeeFuse {
         // to MAX_MONEY.
         // Their integer sum is below p, excluding field wraparound and proving
         // 0 <= fee <= maximum <= MAX_MONEY.
-        let change = maximum.sub(dr, &fee);
+        let change = fee_note.value.sub(dr, &fee);
         gadgets::range::enforce_width::<D, 51>(dr, &fee).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee is out of range".into())
         })?;
         gadgets::range::enforce_width::<D, 51>(dr, &change).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
         })?;
-        let bound = Element::constant(dr, Fp::from(MAX_MONEY));
-        let slack = bound.sub(dr, &maximum);
-        let pk = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.pk)),
-        )?;
-        let psi = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.psi)),
-        )?;
-        let rcm = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.rcm)),
-        )?;
-        let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
-        for (index, actual) in [&pk, &psi, &rcm, &maximum, &fee].into_iter().enumerate() {
+        for (index, actual) in [
+            &fee_note.pk,
+            &fee_note.psi,
+            &fee_note.rcm,
+            &fee_note.value,
+            &fee,
+        ]
+        .into_iter()
+        .enumerate()
+        {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
-        let cv = fixed_base::FEE_V_BASE
-            .mul_amount(dr, &slack, &blind_point)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
-            })?;
+        let cv = fee_note.cv_feemax(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
+        })?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee)?;
-        let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &change, &psi)?;
+        let fee_change = gadgets::note::Note {
+            value: change,
+            ..fee_note
+        }
+        .commitment(dr)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
@@ -989,40 +975,26 @@ impl Step<Pasta> for FeeSeed {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let anchor_element =
             Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let maximum = Element::alloc(
-            dr,
-            &mut (),
-            witness
-                .as_ref()
-                .map(|data| Fp::from(u64::from(data.0.value))),
-        )?;
-        maximum.enforce_zero(dr).map_err(|_err| {
+        let fee_note =
+            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        fee_note.value.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
         })?;
-        let pk = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.pk)),
-        )?;
-        let psi = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.psi)),
-        )?;
-        let rcm = Element::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|data| Fp::from(data.0.rcm)),
-        )?;
-        let blind = poseidon::circuit::feemax_blind(dr, &pk, &psi, &rcm)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 3")]
-        for (index, actual) in [&pk, &psi, &rcm].into_iter().enumerate() {
+        for (index, actual) in [&fee_note.pk, &fee_note.psi, &fee_note.rcm]
+            .into_iter()
+            .enumerate()
+        {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
+        let cv = fee_note.cv_feemax_zero(dr)?;
         let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
-        let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &zero, &psi)?;
+        let fee_change = gadgets::note::Note {
+            value: zero,
+            ..fee_note
+        }
+        .commitment(dr)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
