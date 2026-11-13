@@ -17,7 +17,6 @@ use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
-    constants::MAX_MONEY,
     gadgets::{self, fixed_base},
     note::Note,
     pasta::{EpAffine, Fp, Fq},
@@ -110,11 +109,7 @@ impl Step<Pasta> for OutputBind {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let note =
             gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|&(note, _)| note))?;
-        // With the 51-bit decomposition `mul_amount` makes of the amount, this
-        // bounds the amount by MAX_MONEY.
-        let bound = Element::constant(dr, Fp::from(MAX_MONEY));
-        let slack = bound.sub(dr, &note.value);
-        gadgets::range::enforce_width::<D, 51>(dr, &slack)?;
+        gadgets::range::enforce_money(dr, &note.value)?;
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a

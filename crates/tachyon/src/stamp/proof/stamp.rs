@@ -856,15 +856,14 @@ impl Step<Pasta> for FeeFuse {
                 .as_ref()
                 .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
         )?;
-        // The three 51-bit values `fee`, `change` and `slack` sum identically
-        // to MAX_MONEY.
-        // Their integer sum is below p, excluding field wraparound and proving
-        // 0 <= fee <= maximum <= MAX_MONEY.
-        let change = fee_note.value.sub(dr, &fee);
-        gadgets::range::enforce_width::<D, 51>(dr, &fee).map_err(|_err| {
+        gadgets::range::enforce_money(dr, &fee_note.value).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
+        })?;
+        gadgets::range::enforce_money(dr, &fee).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee is out of range".into())
         })?;
-        gadgets::range::enforce_width::<D, 51>(dr, &change).map_err(|_err| {
+        let change = fee_note.value.sub(dr, &fee);
+        gadgets::range::enforce_money(dr, &change).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
         })?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
@@ -880,9 +879,7 @@ impl Step<Pasta> for FeeFuse {
         {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fee_note.cv_feemax(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
-        })?;
+        let cv = fee_note.cv_feemax(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee)?;
         let fee_change = gadgets::note::Note {
             value: change,
@@ -1006,9 +1003,6 @@ impl Step<Pasta> for FeeSeed {
             &mut (),
             witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note),
         )?;
-        fee_note.value.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
-        })?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 3")]
         for (index, actual) in [&fee_note.pk, &fee_note.psi, &fee_note.rcm]
             .into_iter()
@@ -1016,7 +1010,9 @@ impl Step<Pasta> for FeeSeed {
         {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fee_note.cv_feemax_zero(dr)?;
+        let cv = fee_note.cv_feemax_zero(dr).map_err(|_err| {
+            ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
+        })?;
         let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
         let fee_change = gadgets::note::Note {

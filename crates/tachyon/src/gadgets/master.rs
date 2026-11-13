@@ -11,7 +11,7 @@ use ragu_primitives::{Boolean, Element, io::Write};
 use udon::field::Field as _;
 
 use super::range;
-use crate::{digest::poseidon, pasta::Fp};
+use crate::{digest::poseidon, nullifier, pasta::Fp};
 
 /// A [`NoteMasterKey`](crate::keys::NoteMasterKey) inside a circuit.
 #[derive(Gadget, Write)]
@@ -22,11 +22,6 @@ use crate::{digest::poseidon, pasta::Fp};
 pub struct NoteMasterKey<'dr, D: Driver<'dr>> {
     pub element: Element<'dr, D>,
 }
-
-const _: () = assert!(
-    PoseidonFp::RATE == 1 << (u32::BITS - 30),
-    "derive_nullifier writes an epoch as four times a 30-bit group plus two position bits"
-);
 
 impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
     /// The nullifier for `epoch`: entry $b_0 + 2 b_1$ of the
@@ -54,10 +49,15 @@ impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
         let high = Boolean::alloc(dr, &mut (), high_bit)?;
         let twice_high = high.element().double(dr);
         let group_start = epoch.sub(dr, &low.element()).sub(dr, &twice_high);
-        #[expect(clippy::expect_used, reason = "four is invertible in Fp")]
-        let quarter = Fp::from(4).invert().expect("four is invertible");
-        let group = group_start.scale(dr, Coeff::Arbitrary(quarter));
-        range::enforce_width::<D, 30>(dr, &group)?;
+        #[expect(
+            clippy::expect_used,
+            reason = "the sponge rate is a small nonzero constant"
+        )]
+        let inverse_rate = Fp::from(1u64 << PoseidonFp::RATE.ilog2())
+            .invert()
+            .expect("the sponge rate is invertible");
+        let group = group_start.scale(dr, Coeff::Arbitrary(inverse_rate));
+        range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group)?;
         let [first, second, third, fourth] =
             poseidon::circuit::nullifier_group(dr, &self.element, &group_start)?;
         let lower = low.conditional_select(dr, &first, &second)?;

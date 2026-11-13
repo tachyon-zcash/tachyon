@@ -99,6 +99,9 @@ pub struct QrProfile {
 }
 
 impl QrProfile {
+    /// Bit width that bounds a depth below [`MAX_DEPTH`](Self::MAX_DEPTH),
+    /// leaving a position for another side.
+    pub const DEPTH_BITS: u32 = Self::MAX_DEPTH.ilog2();
     /// The greatest depth a profile reaches, and the number of discriminants a
     /// value is classified at.
     #[expect(clippy::as_conversions, reason = "constant value")]

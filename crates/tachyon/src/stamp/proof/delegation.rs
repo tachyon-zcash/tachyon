@@ -26,7 +26,6 @@ use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    constants::MAX_MONEY,
     digest::poseidon,
     gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
@@ -203,11 +202,7 @@ impl Step<Pasta> for NoteSeed {
                 .as_ref()
                 .map(|&(value, ..)| Fp::from(u64::from(value))),
         )?;
-        // Both the value and MAX_MONEY - value fit 51 bits, so neither wraps.
-        let maximum = Element::constant(dr, Fp::from(MAX_MONEY));
-        let slack = maximum.sub(dr, &value);
-        gadgets::range::enforce_width::<D, 51>(dr, &value)?;
-        gadgets::range::enforce_width::<D, 51>(dr, &slack)?;
+        gadgets::range::enforce_money(dr, &value)?;
         let psi = Element::alloc(
             dr,
             &mut (),
@@ -280,19 +275,15 @@ impl Step<Pasta> for NoteSeed {
 /// # Soundness
 ///
 /// The input proof identifies the note's master key. The start epoch is fixed
-/// before the challenge; its two low bits must be zero, and the final epoch
-/// must remain in range. The circuit derives every nullifier and index from
-/// those inputs. Opening the committed sequence at the random challenge
-/// checks the whole window, whose bounds are published on the output header.
+/// before the challenge; it must be a multiple of the sponge rate, and the
+/// final epoch must remain in range. The circuit derives every nullifier and
+/// index from those inputs. Opening the committed sequence at the random
+/// challenge checks the whole window, whose bounds are published on the output
+/// header.
 ///
 /// Opens the derived sequence once.
 #[derive(Debug)]
 pub struct NullifierDerive;
-
-const _: () = assert!(
-    PoseidonFp::RATE == 1 << (u32::BITS - 30),
-    "NullifierDerive scales by a quarter and range-checks a 30-bit group index"
-);
 
 impl Step<Pasta> for NullifierDerive {
     type Aux<'source> = ();
@@ -362,16 +353,25 @@ impl Step<Pasta> for NullifierDerive {
                 .map(|&(epoch_start, _)| Fp::from(epoch_start)),
         )?;
         epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
-        // `epoch_start = 4 · group` with `group < 2^30`: a multiple of four
-        // below 2^32, so `4 · group` cannot wrap.
-        #[expect(clippy::expect_used, reason = "four is invertible in Fp")]
-        let quarter = Fp::from(4).invert().expect("four is invertible");
-        let group = epoch_start.scale(dr, Coeff::Arbitrary(quarter));
-        gadgets::range::enforce_width::<D, 30>(dr, &group).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "NullifierDerive: epoch_start is not group-aligned".into(),
-            )
-        })?;
+        // `epoch_start = RATE · group_index` with `group_index` within the
+        // epoch width less `log2(RATE)` bits: a multiple of `RATE` within the
+        // epoch width, so `RATE · group_index` cannot wrap. `RATE` is a power
+        // of two, so `2^log2(RATE)` is `RATE`.
+        #[expect(
+            clippy::expect_used,
+            reason = "the sponge rate is a small nonzero constant"
+        )]
+        let inverse_rate = Fp::from(1u64 << PoseidonFp::RATE.ilog2())
+            .invert()
+            .expect("the sponge rate is invertible");
+        let group_index = epoch_start.scale(dr, Coeff::Arbitrary(inverse_rate));
+        gadgets::range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group_index).map_err(
+            |_err| {
+                ragu_core::Error::InvalidWitness(
+                    "NullifierDerive: epoch_start is not group-aligned".into(),
+                )
+            },
+        )?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
         #[expect(clippy::as_conversions, reason = "constant value")]

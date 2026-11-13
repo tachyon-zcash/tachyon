@@ -46,6 +46,9 @@ pub(crate) mod orchard {
 /// Maximum representable value in zatoshis (§5.3 of the protocol spec).
 pub const MAX_MONEY: u64 = 2_100_000_000_000_000;
 
+/// Bit length of [`MAX_MONEY`]: every valid amount fits this many bits.
+pub const MAX_MONEY_BITS: u32 = MAX_MONEY.bit_width();
+
 /// Maximum block height (the protocol spec uses u32).
 pub const BLOCK_MAX: u32 = u32::MAX;
 

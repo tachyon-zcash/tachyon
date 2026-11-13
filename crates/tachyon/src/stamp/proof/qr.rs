@@ -831,11 +831,6 @@ impl Step<Pasta> for QrSideSelect {
 #[derive(Debug)]
 pub struct QrSideDescend;
 
-const _: () = assert!(
-    QrProfile::MAX_DEPTH == 1 << 5,
-    "QrSideDescend's 5-bit depth check must leave a position for another side"
-);
-
 impl Step<Pasta> for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
@@ -944,7 +939,11 @@ impl Step<Pasta> for QrSideDescend {
                 )
             })?;
         }
-        gadgets::range::enforce_width::<D, 5>(dr, &sides.intake.profile.depth).map_err(|_err| {
+        gadgets::range::enforce_width::<D, { QrProfile::DEPTH_BITS }>(
+            dr,
+            &sides.intake.profile.depth,
+        )
+        .map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "QrSideDescend: profile has no bit left for another side".into(),
             )

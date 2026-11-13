@@ -72,8 +72,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// The max fee commitment, `cv_feemax`.
     ///
-    /// The 51-bit decomposition of `MAX_MONEY - value` bounds `value` by
-    /// `MAX_MONEY`.
+    /// Callers bound `value` by
+    /// [`enforce_money`](crate::gadgets::range::enforce_money).
     pub(crate) fn cv_feemax(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         let blind = self.derive_feemax_blind(dr)?;
         let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
@@ -82,11 +82,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         fixed_base::FEE_V_BASE.mul_amount(dr, &slack, &blind_point)
     }
 
-    /// The max fee commitment of a zero-value note: the blind term alone,
-    /// with no value term.
-    ///
-    /// Valid only when `value` is proven zero; nothing here constrains it.
+    /// Enforces a zero `value` and returns the max fee commitment for it: the
+    /// blind term alone, with no value term.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
+        self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;
         fixed_base::R_BASE.mul_digest(dr, &blind, None)
     }

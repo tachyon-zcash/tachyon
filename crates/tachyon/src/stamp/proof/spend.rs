@@ -23,7 +23,7 @@ use crate::{
     note,
     nullifier::Nullifier,
     pasta::{EpAffine, Fp, Fq},
-    primitives::Anchor,
+    primitives::{Anchor, EpochIndex},
     value,
 };
 
@@ -166,7 +166,7 @@ impl Step<Pasta> for SpendBind {
         let epoch_next = spendable.epoch_current.add(dr, &one);
         let maximum = Element::constant(dr, Fp::from(u64::from(EPOCH_MAX)));
         let slack = maximum.sub(dr, &epoch_next);
-        gadgets::range::enforce_width::<D, 32>(dr, &slack).map_err(|_err| {
+        gadgets::range::enforce_width::<D, { EpochIndex::BITS }>(dr, &slack).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
