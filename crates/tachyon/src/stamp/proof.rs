@@ -1,7 +1,6 @@
 //! Tachyon proofs via Ragu PCD.
 //!
-//! Registers all PCD step types and provides accumulator helpers for
-//! stamp construction and verification.
+//! Registers all PCD step types.
 //!
 //! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
 //! steps in that order; `ApplicationBuilder` rejects any other sequence.
@@ -90,7 +89,7 @@ fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>
 }
 
 lazy_static! {
-    /// A static ref to the mock ragu application.
+    /// A static ref to the ragu application.
     pub static ref PROOF_SYSTEM: Application<'static, Pasta, ProductionRank, HEADER_SIZE> = {
         #[expect(
             clippy::expect_used,
