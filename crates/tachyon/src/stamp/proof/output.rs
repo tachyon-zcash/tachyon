@@ -108,7 +108,8 @@ impl Step<Pasta> for OutputBind {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let note = gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        let note =
+            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|&(note, _)| note))?;
         // With the 51-bit decomposition `mul_amount` makes of the amount, this
         // bounds the amount by MAX_MONEY.
         let bound = Element::constant(dr, Fp::from(MAX_MONEY));
@@ -124,8 +125,8 @@ impl Step<Pasta> for OutputBind {
         pad.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
         })?;
-        let blind_point =
-            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
+        let blind_point = fixed_base::R_BASE
+            .mul_blinding(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
         let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &note.value, &blind_point)?;
         let output = D::just(|| {
             (

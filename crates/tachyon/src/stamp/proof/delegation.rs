@@ -199,25 +199,36 @@ impl Step<Pasta> for NoteSeed {
         let value = Element::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|data| Fp::from(u64::from(data.0))),
+            witness
+                .as_ref()
+                .map(|&(value, ..)| Fp::from(u64::from(value))),
         )?;
         // Both the value and MAX_MONEY - value fit 51 bits, so neither wraps.
         let maximum = Element::constant(dr, Fp::from(MAX_MONEY));
         let slack = maximum.sub(dr, &value);
         gadgets::range::enforce_width::<D, 51>(dr, &value)?;
         gadgets::range::enforce_width::<D, 51>(dr, &slack)?;
-        let psi = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let rcm = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
+        let psi = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, psi, ..)| Fp::from(psi)),
+        )?;
+        let rcm = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, _, rcm, _)| Fp::from(rcm)),
+        )?;
         rcm.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("NoteSeed: commitment trapdoor is zero".into())
         })?;
         let nk = Element::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|data| Fp::from(data.3.nk)),
+            witness.as_ref().map(|&(.., pak)| Fp::from(pak.nk)),
         )?;
         let ak_assignment = D::try_just(|| {
-            let bytes: [u8; 32] = witness.as_ref().take().3.ak.0.into();
+            let &(.., pak) = witness.as_ref().take();
+            let bytes: [u8; 32] = pak.ak.0.into();
             EpAffine::from_bytes(bytes).ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("NoteSeed: invalid ak encoding".into())
             })
@@ -343,8 +354,13 @@ impl Step<Pasta> for NullifierDerive {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let secret = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let epoch_start =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let epoch_start = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(epoch_start, _)| Fp::from(epoch_start)),
+        )?;
         epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
         // `epoch_start = 4 · group` with `group < 2^30`: a multiple of four
         // below 2^32, so `4 · group` cannot wrap.
@@ -400,7 +416,8 @@ impl Step<Pasta> for NullifierDerive {
                         "NullifierDerive: window exceeds the epoch range".into(),
                     )
                 })?;
-            Ok((left.take().0, start, end))
+            let (cm, ..) = left.take();
+            Ok((cm, start, end))
         })?;
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),

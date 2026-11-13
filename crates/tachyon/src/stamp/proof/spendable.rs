@@ -145,9 +145,20 @@ impl Step<Pasta> for SpendableInit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let nullifiers = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
-        let epoch_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(.., creation_epoch)| Fp::from(creation_epoch)),
+        )?;
         gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
         // The anchor immediately after the creation stamp, computed in-circuit
         // so the proof certifies the fold of the epoch and the stamp's bridge hash;
@@ -165,11 +176,9 @@ impl Step<Pasta> for SpendableInit {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
         })?;
         let output = D::just(|| {
-            (
-                left.take().0,
-                witness.take().2,
-                Anchor::from(*anchor.value().take()),
-            )
+            let (cm, ..) = left.take();
+            let (.., creation_epoch) = witness.take();
+            (cm, creation_epoch, Anchor::from(*anchor.value().take()))
         });
         let fields = NoteSpendableOutput {
             cm: nullifiers.cm.clone(),

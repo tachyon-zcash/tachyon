@@ -222,10 +222,13 @@ impl Step<Pasta> for OutputAction {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let output_header = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let anchor_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let anchor_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, anchor, ..)| Fp::from(anchor)),
+        )?;
         let cm_root = output_header.cm.clone();
-        let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
+        let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, None)?;
         let action_root = poseidon::circuit::action_digest(dr, &output_header.cv, &rk)?;
@@ -356,7 +359,8 @@ impl Step<Pasta> for SpendAction {
         let spend = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let ak_assignment = D::try_just(|| {
-            let bytes: [u8; 32] = witness.as_ref().take().1.ak.0.into();
+            let &(_, pak, ..) = witness.as_ref().take();
+            let bytes: [u8; 32] = pak.ak.0.into();
             EpAffine::from_bytes(bytes).ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("SpendAction: invalid ak encoding".into())
             })
@@ -365,13 +369,13 @@ impl Step<Pasta> for SpendAction {
         let nk = Element::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|data| Fp::from(data.1.nk)),
+            witness.as_ref().map(|&(_, pak, ..)| Fp::from(pak.nk)),
         )?;
         let derived_pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
         spend.pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
         })?;
-        let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
+        let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &spend.cm)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
         let action_root = poseidon::circuit::action_digest(dr, &spend.cv, &rk)?;
@@ -397,7 +401,7 @@ impl Step<Pasta> for SpendAction {
             &[spend.nf_current.clone(), spend.nf_next.clone()],
             "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
-        let output = left.map(|data| data.3);
+        let output = left.map(|(_, _, _, anchor, ..)| anchor);
         let fields = ActionsOutput {
             anchor: spend.anchor.clone(),
         };
@@ -825,12 +829,17 @@ impl Step<Pasta> for FeeFuse {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let fee_note =
-            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        let fee_note = gadgets::note::Note::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note),
+        )?;
         let fee = Element::alloc(
             dr,
             &mut (),
-            witness.as_ref().map(|data| Fp::from(u64::from(data.1))),
+            witness
+                .as_ref()
+                .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
         )?;
         // The three 51-bit values `fee`, `change` and `slack` sum identically
         // to MAX_MONEY.
@@ -973,10 +982,16 @@ impl Step<Pasta> for FeeSeed {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let anchor_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
-        let fee_note =
-            gadgets::note::Note::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        let anchor_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, anchor, ..)| Fp::from(anchor)),
+        )?;
+        let fee_note = gadgets::note::Note::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note),
+        )?;
         fee_note.value.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
         })?;

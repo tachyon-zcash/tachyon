@@ -356,7 +356,8 @@ impl Step<Pasta> for EvidenceTreePairFuse {
         }
         let output = D::just(|| {
             let (epoch, start, end, discriminant, root) = left.take();
-            (epoch, start, end, discriminant, root, right.take().4)
+            let (.., right_root) = right.take();
+            (epoch, start, end, discriminant, root, right_root)
         });
         let fields = EvidenceTreePairOutput {
             epoch: left_tree.epoch.clone(),
@@ -619,17 +620,30 @@ impl Step<Pasta> for EvidenceTreeDescend {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let mut node = tree.root.clone();
         for level in 0..Self::LEVELS {
-            let outer =
-                Boolean::alloc(dr, &mut (), witness.as_ref().map(|path| path.0[level].0[0]))?;
-            let inner =
-                Boolean::alloc(dr, &mut (), witness.as_ref().map(|path| path.0[level].0[1]))?;
+            let outer = Boolean::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(path,)| {
+                    let ([outer, _], _) = path[level];
+                    outer
+                }),
+            )?;
+            let inner = Boolean::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(path,)| {
+                    let ([_, inner], _) = path[level];
+                    inner
+                }),
+            )?;
             let allocated = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|child| {
                 Element::alloc(
                     dr,
                     &mut (),
-                    witness
-                        .as_ref()
-                        .map(|path| Fp::from(path.0[level].1[child])),
+                    witness.as_ref().map(|&(path,)| {
+                        let (_, children) = path[level];
+                        Fp::from(children[child])
+                    }),
                 )
             });
             let children = {
@@ -750,7 +764,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 &mut (),
-                witness.as_ref().map(|data| data.0),
+                witness.as_ref().map(|&(profile, _)| profile),
             )?,
             contents_hash: oracles.bridge_hash().clone(),
         };

@@ -254,8 +254,13 @@ impl Step<Pasta> for QrSummaryIntake {
         let summary = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let discriminant =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let discriminant = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(discriminant,)| Fp::from(discriminant)),
+        )?;
         let data = D::just(|| {
             let (intake_discriminant,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
@@ -338,11 +343,25 @@ impl Step<Pasta> for QrStampIntakeSeed {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let discriminant_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
-        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
-        let epoch_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let discriminant_element = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(_, _, discriminant, _)| Fp::from(discriminant)),
+        )?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, ..)| Fp::from(epoch)),
+        )?;
         let z = oracles.zeta().clone();
         let contents_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
@@ -442,12 +461,23 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         contents.enforce_equal(dr, &one).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrEmptyIntakeSeed: contents must be one".into())
         })?;
-        let anchor_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
-        let discriminant_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.2)))?;
-        let epoch_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let anchor_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(anchor, ..)| Fp::from(anchor)),
+        )?;
+        let discriminant_element = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(_, _, discriminant)| Fp::from(discriminant)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+        )?;
         gadgets::epoch::EpochIndex::new(dr, &epoch_element)?;
         let data = D::just(|| {
             let (anchor, epoch, discriminant) = witness.take();
@@ -919,7 +949,7 @@ impl Step<Pasta> for QrSideDescend {
                 "QrSideDescend: profile has no bit left for another side".into(),
             )
         })?;
-        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|data| data.0))?;
+        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
         let discriminant_element = sides
             .intake
             .discriminant
@@ -1170,7 +1200,13 @@ impl Step<Pasta> for QrBucketSeal {
                 )
             })?
             .into_element();
-        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_final_prev,)| Fp::from(anchor_final_prev)),
+        )?;
         let boundary = poseidon::circuit::anchor_next_epoch(dr, &previous, &intake.epoch)?;
         intake
             .anchor_prev
@@ -1343,8 +1379,11 @@ impl Step<Pasta> for QrUnspentInit {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let bucket = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let value_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let value_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(value, ..)| Fp::from(value)),
+        )?;
         value_element.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrUnspentInit: tested value is zero".into())
         })?;
@@ -1352,8 +1391,8 @@ impl Step<Pasta> for QrUnspentInit {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|data| data.1),
-            witness.as_ref().map(|data| data.2),
+            witness.as_ref().map(|&(_, classes, ..)| classes),
+            witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
         let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
             .map_err(|_err| {

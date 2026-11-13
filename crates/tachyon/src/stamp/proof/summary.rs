@@ -131,9 +131,18 @@ impl Step<Pasta> for SummarySeed {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
-        let epoch_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_prev, ..)| Fp::from(anchor_prev)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+        )?;
         let z = oracles.zeta().clone();
         let accumulator_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;

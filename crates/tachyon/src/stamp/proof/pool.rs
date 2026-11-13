@@ -299,9 +299,18 @@ impl Step<Pasta> for AnchorSpanSeed {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let previous = Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
-        let epoch_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.1)))?;
+        let previous = Element::alloc(
+            dr,
+            &mut (),
+            witness
+                .as_ref()
+                .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
+        )?;
+        let epoch_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(_, epoch, _)| Fp::from(epoch)),
+        )?;
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let z = oracles.zeta().clone();
@@ -644,8 +653,11 @@ impl Step<Pasta> for UnspentLift {
                     "UnspentLift: the bucket does not start where the segment ends".into(),
                 )
             })?;
-        let value_element =
-            Element::alloc(dr, &mut (), witness.as_ref().map(|data| Fp::from(data.0)))?;
+        let value_element = Element::alloc(
+            dr,
+            &mut (),
+            witness.as_ref().map(|&(value, ..)| Fp::from(value)),
+        )?;
         value_element.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
         })?;
@@ -653,8 +665,8 @@ impl Step<Pasta> for UnspentLift {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|data| data.1),
-            witness.as_ref().map(|data| data.2),
+            witness.as_ref().map(|&(_, classes, ..)| classes),
+            witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
         #[expect(
             clippy::indexing_slicing,
