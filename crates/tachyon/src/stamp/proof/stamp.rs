@@ -844,7 +844,7 @@ impl Step<Pasta> for FeeFuse {
     {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let fee_note = gadgets::note::Note::alloc(
+        let max_fee_note = gadgets::note::Note::alloc(
             dr,
             &mut (),
             witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note),
@@ -856,22 +856,22 @@ impl Step<Pasta> for FeeFuse {
                 .as_ref()
                 .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
         )?;
-        gadgets::range::enforce_money(dr, &fee_note.value).map_err(|_err| {
+        gadgets::range::enforce_money(dr, &max_fee_note.value).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
         })?;
         gadgets::range::enforce_money(dr, &fee).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee is out of range".into())
         })?;
-        let change = fee_note.value.sub(dr, &fee);
+        let change = max_fee_note.value.sub(dr, &fee);
         gadgets::range::enforce_money(dr, &change).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
         })?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 5")]
         for (index, actual) in [
-            &fee_note.pk,
-            &fee_note.psi,
-            &fee_note.rcm,
-            &fee_note.value,
+            &max_fee_note.pk,
+            &max_fee_note.psi,
+            &max_fee_note.rcm,
+            &max_fee_note.value,
             &fee,
         ]
         .into_iter()
@@ -879,11 +879,11 @@ impl Step<Pasta> for FeeFuse {
         {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fee_note.cv_feemax(dr)?;
+        let cv = max_fee_note.cv_feemax(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee)?;
         let fee_change = gadgets::note::Note {
             value: change,
-            ..fee_note
+            ..max_fee_note
         }
         .commitment(dr)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
@@ -998,26 +998,26 @@ impl Step<Pasta> for FeeSeed {
             &mut (),
             witness.as_ref().map(|&(_, anchor, ..)| Fp::from(anchor)),
         )?;
-        let fee_note = gadgets::note::Note::alloc(
+        let max_fee_note = gadgets::note::Note::alloc(
             dr,
             &mut (),
             witness.as_ref().map(|&(max_fee_note, ..)| max_fee_note),
         )?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 3")]
-        for (index, actual) in [&fee_note.pk, &fee_note.psi, &fee_note.rcm]
+        for (index, actual) in [&max_fee_note.pk, &max_fee_note.psi, &max_fee_note.rcm]
             .into_iter()
             .enumerate()
         {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fee_note.cv_feemax_zero(dr).map_err(|_err| {
+        let cv = max_fee_note.cv_feemax_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
         })?;
         let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
         let fee_change = gadgets::note::Note {
             value: zero,
-            ..fee_note
+            ..max_fee_note
         }
         .commitment(dr)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.

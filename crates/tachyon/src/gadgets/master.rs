@@ -1,17 +1,11 @@
 //! Note master keys inside a circuit.
 
-use ragu_core::{
-    PoseidonPermutation as _, Result,
-    drivers::{Coeff, Driver},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    pasta::PoseidonFp,
-};
+use ragu_core::{Result, drivers::Driver, gadgets::Gadget, maybe::Maybe as _};
 use ragu_primitives::{Boolean, Element, io::Write};
 use udon::field::Field as _;
 
-use super::range;
-use crate::{digest::poseidon, nullifier, pasta::Fp};
+use super::epoch;
+use crate::{digest::poseidon, pasta::Fp};
 
 /// A [`NoteMasterKey`](crate::keys::NoteMasterKey) inside a circuit.
 #[derive(Gadget, Write)]
@@ -29,8 +23,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
     /// $\mathsf{epoch} = 4g + b_0 + 2 b_1$ with Boolean $b_0, b_1$ and
     /// $g < 2^{30}$.
     ///
-    /// The decomposition is unique and proves $\mathsf{epoch} < 2^{32}$; the
-    /// caller bounds the epoch by `EPOCH_MAX`.
+    /// The decomposition is unique and proves $\mathsf{epoch} < 2^{32}$.
     #[expect(
         clippy::indexing_slicing,
         reason = "bits 0 and 1 of a canonical field encoding"
@@ -49,15 +42,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
         let high = Boolean::alloc(dr, &mut (), high_bit)?;
         let twice_high = high.element().double(dr);
         let group_start = epoch.sub(dr, &low.element()).sub(dr, &twice_high);
-        #[expect(
-            clippy::expect_used,
-            reason = "the sponge rate is a small nonzero constant"
-        )]
-        let inverse_rate = Fp::from(1u64 << PoseidonFp::RATE.ilog2())
-            .invert()
-            .expect("the sponge rate is invertible");
-        let group = group_start.scale(dr, Coeff::Arbitrary(inverse_rate));
-        range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group)?;
+        epoch::enforce_group_start(dr, &group_start)?;
         let [first, second, third, fourth] =
             poseidon::circuit::nullifier_group(dr, &self.element, &group_start)?;
         let lower = low.conditional_select(dr, &first, &second)?;

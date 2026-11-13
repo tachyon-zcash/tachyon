@@ -17,7 +17,7 @@ use ragu::{
 };
 use ragu_core::{
     PoseidonPermutation as _,
-    drivers::{Coeff, Driver, DriverValue},
+    drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
@@ -76,7 +76,7 @@ impl Header<Fp> for NoteSecret {
             note: gadgets::note::Note::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| fields.1),
+                witness.as_ref().map(|&(_, note, _)| note),
             )?,
             mk: gadgets::master::NoteMasterKey {
                 element: Element::alloc(dr, allocator, witness.as_ref().map(|fields| fields.2.0))?,
@@ -345,33 +345,31 @@ impl Step<Pasta> for NullifierDerive {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let secret = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let output = D::try_just(|| {
+            let (epoch_start, _) = witness.take();
+            let epoch_end = (1..NF_DERIVATION_WIDTH)
+                .try_fold(epoch_start, |epoch, _| epoch.next())
+                .ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "NullifierDerive: window exceeds the epoch range".into(),
+                    )
+                })?;
+            let (cm, ..) = left.take();
+            Ok((cm, epoch_start, epoch_end))
+        })?;
         let epoch_start = Element::alloc(
             dr,
             &mut (),
-            witness
+            output
                 .as_ref()
-                .map(|&(epoch_start, _)| Fp::from(epoch_start)),
+                .map(|&(_, epoch_start, _)| Fp::from(epoch_start)),
         )?;
         epoch_start.enforce_equal(dr, &oracles.staged()[0])?;
-        // `epoch_start = RATE · group_index` with `group_index` within the
-        // epoch width less `log2(RATE)` bits: a multiple of `RATE` within the
-        // epoch width, so `RATE · group_index` cannot wrap. `RATE` is a power
-        // of two, so `2^log2(RATE)` is `RATE`.
-        #[expect(
-            clippy::expect_used,
-            reason = "the sponge rate is a small nonzero constant"
-        )]
-        let inverse_rate = Fp::from(1u64 << PoseidonFp::RATE.ilog2())
-            .invert()
-            .expect("the sponge rate is invertible");
-        let group_index = epoch_start.scale(dr, Coeff::Arbitrary(inverse_rate));
-        gadgets::range::enforce_width::<D, { nullifier::GROUP_BITS }>(dr, &group_index).map_err(
-            |_err| {
-                ragu_core::Error::InvalidWitness(
-                    "NullifierDerive: epoch_start is not group-aligned".into(),
-                )
-            },
-        )?;
+        gadgets::epoch::enforce_group_start(dr, &epoch_start).map_err(|_err| {
+            ragu_core::Error::InvalidWitness(
+                "NullifierDerive: epoch_start is not group-aligned".into(),
+            )
+        })?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
         #[expect(clippy::as_conversions, reason = "constant value")]
@@ -406,18 +404,6 @@ impl Step<Pasta> for NullifierDerive {
             ragu_core::Error::InvalidWitness(
                 "NullifierDerive: sequence does not match the derived window".into(),
             )
-        })?;
-        let output = D::try_just(|| {
-            let (start, _) = witness.take();
-            let end = (1..NF_DERIVATION_WIDTH)
-                .try_fold(start, |epoch, _| epoch.next())
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "NullifierDerive: window exceeds the epoch range".into(),
-                    )
-                })?;
-            let (cm, ..) = left.take();
-            Ok((cm, start, end))
         })?;
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),

@@ -27,19 +27,15 @@ pub(crate) fn enforce_width<'dr, D: Driver<'dr, F = Fp>, const BITS: u32>(
             "a range check covers at most 64 bits"
         );
     }
-    let bits = (0..BITS)
-        .map(|position| {
+    let bits = (0usize..)
+        .zip(0..BITS)
+        .map(|(index, _)| {
             Boolean::alloc(
                 dr,
                 &mut (),
-                value.value().map(|candidate| {
-                    candidate
-                        .to_le_bits()
-                        .as_ref()
-                        .iter()
-                        .zip(0..BITS)
-                        .any(|(bit, index)| index == position && *bit)
-                }),
+                value
+                    .value()
+                    .map(|candidate| candidate.to_le_bits().as_ref()[index]),
             )
         })
         .collect::<Result<Vec<_>>>()?;

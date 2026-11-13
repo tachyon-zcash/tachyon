@@ -13,17 +13,16 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
-use udon::{curve::EndomorphismAffine, field::Field as _};
+use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    constants::EPOCH_MAX,
     gadgets::{self, fixed_base},
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
     pasta::{EpAffine, Fp, Fq},
-    primitives::{Anchor, EpochIndex},
+    primitives::Anchor,
     value,
 };
 
@@ -160,15 +159,13 @@ impl Step<Pasta> for SpendBind {
         spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
         })?;
-        // Each derivation proves its epoch under 2^32, so this bound places
-        // both epochs in range, the current one below EPOCH_MAX.
-        let one = Element::constant(dr, Fp::ONE);
-        let epoch_next = spendable.epoch_current.add(dr, &one);
-        let maximum = Element::constant(dr, Fp::from(u64::from(EPOCH_MAX)));
-        let slack = maximum.sub(dr, &epoch_next);
-        gadgets::range::enforce_width::<D, { EpochIndex::BITS }>(dr, &slack).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
-        })?;
+        let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &spendable.epoch_current)
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "SpendBind: no epoch follows the spend epoch".into(),
+                )
+            })?
+            .into_element();
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.

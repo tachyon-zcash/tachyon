@@ -108,7 +108,7 @@ impl Header<Fp> for QrIntake {
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| fields.4),
+                witness.as_ref().map(|&(.., profile)| profile),
             )?,
         })
     }
@@ -163,9 +163,11 @@ impl Header<Fp> for QrIntakeSides {
             intake: QrIntake::encode(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| (fields.0, fields.1, fields.2, fields.3, fields.4)),
+                witness.as_ref().map(
+                    |&(epoch, anchor_prev, anchor_end, discriminant, profile, _)| {
+                        (epoch, anchor_prev, anchor_end, discriminant, profile)
+                    },
+                ),
             )?,
             non_residue_hash: [
                 Element::alloc(
@@ -254,7 +256,7 @@ impl Step<Pasta> for QrSummaryIntake {
         let summary = left_encoded.as_gadget();
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let discriminant = Element::alloc(
+        let discriminant_element = Element::alloc(
             dr,
             &mut (),
             witness
@@ -262,14 +264,14 @@ impl Step<Pasta> for QrSummaryIntake {
                 .map(|&(discriminant,)| Fp::from(discriminant)),
         )?;
         let data = D::just(|| {
-            let (intake_discriminant,) = witness.take();
+            let (discriminant,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             let () = right.take();
             (
                 summary_epoch,
                 summary_anchor_prev,
                 summary_anchor_end,
-                intake_discriminant,
+                discriminant,
                 QrProfile::ROOT,
             )
         });
@@ -277,7 +279,7 @@ impl Step<Pasta> for QrSummaryIntake {
             epoch: summary.epoch.clone(),
             anchor_prev: summary.anchor_prev.clone(),
             anchor_end: summary.anchor_end.clone(),
-            discriminant,
+            discriminant: discriminant_element,
             profile: gadgets::qr::QrProfile::root(dr),
         };
         enforce_poly_equal(dr, oracles, Slot::left(0), Slot::output(0))?;
@@ -993,14 +995,13 @@ impl Step<Pasta> for QrSideDescend {
             })?;
 
         let output = D::just(|| {
-            let (side, ..) = witness.take();
             let (epoch, anchor_prev, anchor_end, discriminant, profile, _) = left.take();
             (
                 epoch,
                 anchor_prev,
                 anchor_end,
                 discriminant,
-                profile.descend(side),
+                profile.descend(bit.value().take()),
             )
         });
         let fields = QrIntakeOutput {
@@ -1096,7 +1097,7 @@ impl Header<Fp> for QrBucket {
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 allocator,
-                witness.as_ref().map(|fields| fields.4),
+                witness.as_ref().map(|&(.., profile, _)| profile),
             )?,
             contents_hash: [
                 Element::alloc(
@@ -1393,7 +1394,7 @@ impl Step<Pasta> for QrUnspentInit {
             witness.as_ref().map(|&(_, classes, ..)| classes),
             witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
-        let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
+        let epoch_next_element = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
             })?
@@ -1406,7 +1407,7 @@ impl Step<Pasta> for QrUnspentInit {
         let z = oracles.zeta().clone();
         let sequence_at_z = oracles.query(dr, Slot::output(0), &z)?;
         let expected_sequence =
-            gadgets::indexed_multiset::member(dr, &value_element, &epoch_next, &z)?;
+            gadgets::indexed_multiset::member(dr, &value_element, &epoch_next_element, &z)?;
         sequence_at_z
             .enforce_equal(dr, &expected_sequence)
             .map_err(|_err| {
@@ -1425,20 +1426,20 @@ impl Step<Pasta> for QrUnspentInit {
 
         let output = D::try_just(|| {
             let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = left.take();
-            let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
+            let epoch_next = bucket_epoch.next().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
             })?;
             Ok((
                 bucket_anchor_start,
                 bucket_epoch,
-                bucket_epoch_next,
+                epoch_next,
                 bucket_anchor_next,
             ))
         })?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: bucket.anchor_start.clone(),
             epoch_start: bucket.epoch.clone(),
-            epoch_next,
+            epoch_next: epoch_next_element,
             anchor_next: bucket.anchor_next.clone(),
         };
         Ok((

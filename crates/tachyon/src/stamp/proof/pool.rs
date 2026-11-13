@@ -632,7 +632,7 @@ impl Step<Pasta> for UnspentLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let bucket = right_encoded.as_gadget();
-        let epoch_next = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
+        let epoch_next_element = gadgets::epoch::EpochIndex::successor(dr, &bucket.epoch)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
             })?
@@ -676,7 +676,8 @@ impl Step<Pasta> for UnspentLift {
         let z = oracles.zeta().clone();
         let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
-        let factor = gadgets::indexed_multiset::member(dr, &value_element, &epoch_next, &z)?;
+        let factor =
+            gadgets::indexed_multiset::member(dr, &value_element, &epoch_next_element, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z
             .enforce_equal(dr, &expected_extended)
@@ -696,21 +697,21 @@ impl Step<Pasta> for UnspentLift {
 
         let output = D::try_just(|| {
             let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();
-            let (bucket_index, _, bucket_anchor_next, ..) = right.take();
-            let segment_epoch_next = bucket_index.next().ok_or_else(|| {
+            let (bucket_epoch, _, bucket_anchor_next, ..) = right.take();
+            let epoch_next = bucket_epoch.next().ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
             })?;
             Ok((
                 unspent_anchor_start,
                 unspent_epoch_start,
-                segment_epoch_next,
+                epoch_next,
                 bucket_anchor_next,
             ))
         })?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: unspent.anchor_start.clone(),
             epoch_start: unspent.epoch_start.clone(),
-            epoch_next,
+            epoch_next: epoch_next_element,
             anchor_next: bucket.anchor_next.clone(),
         };
         Ok((
