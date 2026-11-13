@@ -287,9 +287,7 @@ impl Proof for Uncompressed {
         rng: &mut RNG,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let pcd = self
-            .clone()
-            .carry::<Stamp>(Stamp::header(header.1, header.2)?);
+        let pcd = self.clone().carry::<Stamp>((header.1.bridge()?, header.2));
         let [action_slot, tachygram_slot] = pcd.commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
@@ -329,11 +327,7 @@ impl Proof for Compressed {
         {
             return Ok(false);
         }
-        PROOF_SYSTEM.verify_compressed(
-            &self
-                .clone()
-                .carry::<Stamp>(Stamp::header(header.1, header.2)?),
-        )
+        PROOF_SYSTEM.verify_compressed(&self.clone().carry::<Stamp>((header.1.bridge()?, header.2)))
     }
 }
 
@@ -1219,10 +1213,9 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let left_pcd =
-            left_proof.carry::<Stamp>(Stamp::header(left_tg_poly.commit(), left_anchor)?);
+        let left_pcd = left_proof.carry::<Stamp>((left_tg_poly.commit().bridge()?, left_anchor));
         let right_pcd =
-            right_proof.carry::<Stamp>(Stamp::header(right_tg_poly.commit(), right_anchor)?);
+            right_proof.carry::<Stamp>((right_tg_poly.commit().bridge()?, right_anchor));
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
@@ -1274,9 +1267,12 @@ impl ProofStamp<Uncompressed> {
         }
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let mut stamp_pcd = self.proof.carry::<Stamp>(
-            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
-        );
+        let mut stamp_pcd = self.proof.carry::<Stamp>((
+            self.tachygram_set
+                .bridge()
+                .map_err(ProveError::ProofFailed)?,
+            self.anchor,
+        ));
         for (span, _members) in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(
@@ -1410,9 +1406,10 @@ impl ProofStamp<Uncompressed> {
             .commit();
         let proof = PROOF_SYSTEM
             .rerandomize(
-                merged_proof.carry::<Stamp>(
-                    Stamp::header(tachygram_set, anchor).map_err(ProveError::ProofFailed)?,
-                ),
+                merged_proof.carry::<Stamp>((
+                    tachygram_set.bridge().map_err(ProveError::ProofFailed)?,
+                    anchor,
+                )),
                 rng,
             )
             .map_err(ProveError::ProofFailed)?
@@ -1484,14 +1481,20 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_pcd = self.proof.carry::<Stamp>(
-            Stamp::header(dividend_tachygram_set.commit(), self.anchor)
+        let dividend_pcd = self.proof.carry::<Stamp>((
+            dividend_tachygram_set
+                .commit()
+                .bridge()
                 .map_err(ProveError::ProofFailed)?,
-        );
-        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>(
-            Stamp::header(divisor_tachygram_set.commit(), divisor_stamp.anchor)
+            self.anchor,
+        ));
+        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>((
+            divisor_tachygram_set
+                .commit()
+                .bridge()
                 .map_err(ProveError::ProofFailed)?,
-        );
+            divisor_stamp.anchor,
+        ));
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -1545,9 +1548,12 @@ impl ProofStamp<Uncompressed> {
         self,
         rng: &mut RNG,
     ) -> Result<ProofStamp<Compressed>, ProveError> {
-        let pcd = self.proof.carry::<Stamp>(
-            Stamp::header(self.tachygram_set, self.anchor).map_err(ProveError::ProofFailed)?,
-        );
+        let pcd = self.proof.carry::<Stamp>((
+            self.tachygram_set
+                .bridge()
+                .map_err(ProveError::ProofFailed)?,
+            self.anchor,
+        ));
         let (compressed, _) = PROOF_SYSTEM
             .compress(&pcd, rng)
             .map_err(ProveError::ProofFailed)?
