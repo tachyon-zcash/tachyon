@@ -48,13 +48,13 @@ use crate::{
 };
 
 lazy_static! {
-    pub(crate) static ref R_TABLE: Table<85> = Table::new(*orchard::VALUE_COMMIT_R, Ep::identity());
-    pub(crate) static ref G_TABLE: Table<85> = Table::new(*ACTION_AUTH_GENERATOR, Ep::identity());
-    pub(crate) static ref V_TABLE: Table<17> = Table::new(*orchard::VALUE_COMMIT_V, Ep::identity());
-    pub(crate) static ref NEG_V_TABLE: Table<17> =
-        Table::new(-*orchard::VALUE_COMMIT_V, Ep::identity());
+    pub(crate) static ref R_BASE: FixedBase<85> = FixedBase::new(*orchard::VALUE_COMMIT_R, Ep::identity());
+    pub(crate) static ref G_BASE: FixedBase<85> = FixedBase::new(*ACTION_AUTH_GENERATOR, Ep::identity());
+    pub(crate) static ref V_BASE: FixedBase<17> = FixedBase::new(*orchard::VALUE_COMMIT_V, Ep::identity());
+    pub(crate) static ref NEG_V_BASE: FixedBase<17> =
+        FixedBase::new(-*orchard::VALUE_COMMIT_V, Ep::identity());
     /// Multiplied by `MAX_MONEY - maximum`, computes $[-\mathsf{maximum}]\mathcal{V}$.
-    pub(crate) static ref FEE_V_TABLE: Table<17> = Table::new(
+    pub(crate) static ref FEE_V_BASE: FixedBase<17> = FixedBase::new(
         *orchard::VALUE_COMMIT_V,
         -*orchard::VALUE_COMMIT_V * Fq::from(MAX_MONEY)
     );
@@ -198,13 +198,13 @@ impl Window {
 }
 
 /// A radix-8 table of $W$ windows for the base $B$ with correction $C$.
-pub(crate) struct Table<const W: usize> {
+pub(crate) struct FixedBase<const W: usize> {
     // Native constant storage only. Circuit iteration is bounded by const W.
     interior: Vec<Window>,
     top: Window,
 }
 
-impl<const W: usize> Table<W> {
+impl<const W: usize> FixedBase<W> {
     #[expect(
         clippy::expect_used,
         reason = "fixed tables must contain only finite points"
@@ -355,14 +355,14 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
     Ok([result_x, result_y])
 }
 
-impl Table<85> {
+impl FixedBase<85> {
     /// $\[h\]B + P$ for the canonical value of a digest $h$. The 255 bits are
     /// compared against $p - 1$, so $h$ and $h + p$ cannot both decode.
     #[expect(
         clippy::indexing_slicing,
         reason = "multipack splits 255 bits into a 254-bit and a 1-bit chunk"
     )]
-    pub(crate) fn mul_canonical<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_digest<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         digest: &Element<'dr, D>,
@@ -387,7 +387,7 @@ impl Table<85> {
     /// $\[k\]B$ for some $k$ whose 255 free bits nothing recomposes: $r$ or
     /// $r + q$, for a blind nothing else binds.
     #[expect(clippy::indexing_slicing, reason = "native fixed field representation")]
-    pub(crate) fn mul_free<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_blinding<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         scalar: &DriverValue<D, Fq>,
@@ -436,7 +436,7 @@ impl Table<85> {
     }
 }
 
-impl Table<17> {
+impl FixedBase<17> {
     /// $\[v\]B + C + P$ for $v$ decomposed into 51 bits, which doubles as the
     /// range check $v < 2^{51}$. As in Orchard's short path, $v$ is a
     /// magnitude and a sign; Tachyon's sign is constant per step and lives in
@@ -445,7 +445,7 @@ impl Table<17> {
         clippy::indexing_slicing,
         reason = "multipack packs 51 bits into one chunk"
     )]
-    pub(crate) fn mul_bounded<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_amount<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,

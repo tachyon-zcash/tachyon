@@ -18,7 +18,7 @@ fn blind_multiplication_is_the_blind_times_the_base() {
     );
     for blind in blinds {
         Simulator::<Fp>::simulate(blind, |dr, witness| {
-            let point = R_TABLE.mul_free(dr, &witness)?;
+            let point = R_BASE.mul_blinding(dr, &witness)?;
             assert_eq!(
                 point.value().take(),
                 (*orchard::VALUE_COMMIT_R * blind).to_affine()
@@ -40,17 +40,17 @@ fn digest_multiplication_is_the_canonical_digest_times_the_base() {
         Fp::random(|bytes| rng.fill_bytes(bytes)),
     ] {
         let scalar = Fq::from_bytes(digest.to_bytes()).unwrap();
-        for (table, base, onto) in [
-            (&*G_TABLE, *ACTION_AUTH_GENERATOR, None),
-            (&*G_TABLE, *ACTION_AUTH_GENERATOR, Some(start)),
-            (&*R_TABLE, *orchard::VALUE_COMMIT_R, None),
+        for (fixed_base, base, onto) in [
+            (&*G_BASE, *ACTION_AUTH_GENERATOR, None),
+            (&*G_BASE, *ACTION_AUTH_GENERATOR, Some(start)),
+            (&*R_BASE, *orchard::VALUE_COMMIT_R, None),
         ] {
             Simulator::<Fp>::simulate(digest, |dr, witness| {
                 let element = Element::alloc(dr, &mut (), witness)?;
                 let onto_point = onto
                     .map(|point| Point::constant(dr, point.to_affine()))
                     .transpose()?;
-                let point = table.mul_canonical(dr, &element, onto_point.as_ref())?;
+                let point = fixed_base.mul_digest(dr, &element, onto_point.as_ref())?;
                 let expected = base * scalar + onto.unwrap_or_else(Ep::identity);
                 assert_eq!(point.value().take(), expected.to_affine());
                 Ok(())
@@ -67,16 +67,16 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
     // Each digit in every window.
     accepted.extend((1..8).map(|digit| (0..17).fold(0, |acc, _| acc * 8 + digit)));
     let rejected = [Fp::from(1u64 << 51), -Fp::ONE];
-    for (table, base) in [
-        (&*V_TABLE, *orchard::VALUE_COMMIT_V),
-        (&*NEG_V_TABLE, -*orchard::VALUE_COMMIT_V),
+    for (fixed_base, base) in [
+        (&*V_BASE, *orchard::VALUE_COMMIT_V),
+        (&*NEG_V_BASE, -*orchard::VALUE_COMMIT_V),
     ] {
         let blind = Fq::random(|bytes| rng.fill_bytes(bytes));
         for amount in &accepted {
             Simulator::<Fp>::simulate(Fp::from(*amount), |dr, witness| {
                 let value = Element::alloc(dr, &mut (), witness)?;
-                let blind_point = R_TABLE.mul_free(dr, &Simulator::<Fp>::just(|| blind))?;
-                let point = table.mul_bounded(dr, &value, &blind_point)?;
+                let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
+                let point = fixed_base.mul_amount(dr, &value, &blind_point)?;
                 let expected = *orchard::VALUE_COMMIT_R * blind + base * Fq::from(*amount);
                 assert_eq!(point.value().take(), expected.to_affine());
                 Ok(())
@@ -86,8 +86,8 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         for amount in rejected {
             Simulator::<Fp>::simulate(amount, |dr, witness| {
                 let value = Element::alloc(dr, &mut (), witness)?;
-                let blind_point = R_TABLE.mul_free(dr, &Simulator::<Fp>::just(|| blind))?;
-                table.mul_bounded(dr, &value, &blind_point)?;
+                let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
+                fixed_base.mul_amount(dr, &value, &blind_point)?;
                 Ok(())
             })
             .map(|_| ())
@@ -106,8 +106,8 @@ fn fee_commitment_spans_zero_to_max_money() {
             let digest = Element::constant(dr, blind);
             let maximum_element = Element::alloc(dr, &mut (), witness.map(Fp::from))?;
             let slack = Element::constant(dr, Fp::from(MAX_MONEY)).sub(dr, &maximum_element);
-            let blind_point = R_TABLE.mul_canonical(dr, &digest, None)?;
-            let point = FEE_V_TABLE.mul_bounded(dr, &slack, &blind_point)?;
+            let blind_point = R_BASE.mul_digest(dr, &digest, None)?;
+            let point = FEE_V_BASE.mul_amount(dr, &slack, &blind_point)?;
             let expected = *orchard::VALUE_COMMIT_R * blind_scalar
                 - *orchard::VALUE_COMMIT_V * Fq::from(maximum);
             assert_eq!(point.value().take(), expected.to_affine());
@@ -128,14 +128,14 @@ fn fee_commitment_spans_zero_to_max_money() {
 #[test]
 fn exceptional_additions_are_rejected() {
     Simulator::<Fp>::simulate(Fq::ZERO, |dr, witness| {
-        R_TABLE.mul_free(dr, &witness)?;
+        R_BASE.mul_blinding(dr, &witness)?;
         Ok(())
     })
     .map(|_| ())
     .unwrap_err();
     Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
         let element = Element::alloc(dr, &mut (), witness)?;
-        G_TABLE.mul_canonical(dr, &element, None)?;
+        G_BASE.mul_digest(dr, &element, None)?;
         Ok(())
     })
     .map(|_| ())
@@ -146,7 +146,7 @@ fn exceptional_additions_are_rejected() {
     let doubling = Fq::from(2).pow_u64(253)
         - Fq::from(4) * (0..84).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::ONE);
     Simulator::<Fp>::simulate(doubling, |dr, witness| {
-        R_TABLE.mul_free(dr, &witness)?;
+        R_BASE.mul_blinding(dr, &witness)?;
         Ok(())
     })
     .map(|_| ())
@@ -159,7 +159,7 @@ fn exceptional_additions_are_rejected() {
         Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
             let value = Element::alloc(dr, &mut (), witness)?;
             let blind_point = Point::constant(dr, onto.to_affine())?;
-            V_TABLE.mul_bounded(dr, &value, &blind_point)?;
+            V_BASE.mul_amount(dr, &value, &blind_point)?;
             Ok(())
         })
         .map(|_| ())

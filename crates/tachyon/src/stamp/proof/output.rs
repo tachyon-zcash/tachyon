@@ -116,7 +116,7 @@ impl Step<Pasta> for OutputBind {
                 .as_ref()
                 .map(|data| Fp::from(u64::from(data.0.value))),
         )?;
-        // With the 51-bit decomposition `mul_bounded` makes of the amount, this
+        // With the 51-bit decomposition `mul_amount` makes of the amount, this
         // bounds the amount by MAX_MONEY.
         let bound = Element::constant(dr, Fp::from(MAX_MONEY));
         let slack = bound.sub(dr, &amount);
@@ -147,8 +147,8 @@ impl Step<Pasta> for OutputBind {
             ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
         })?;
         let blind_point =
-            fixed_base::R_TABLE.mul_free(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
-        let cv = fixed_base::NEG_V_TABLE.mul_bounded(dr, &amount, &blind_point)?;
+            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.1)))?;
+        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),

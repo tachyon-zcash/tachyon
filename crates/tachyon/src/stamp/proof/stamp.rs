@@ -228,7 +228,7 @@ impl Step<Pasta> for OutputAction {
         let cm_root = output_header.cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
-        let rk = fixed_base::G_TABLE.mul_canonical(dr, &alpha, None)?;
+        let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, None)?;
         let action_root = poseidon::circuit::action_digest(dr, &output_header.cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
@@ -374,7 +374,7 @@ impl Step<Pasta> for SpendAction {
         })?;
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|data| data.0.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &spend.cm)?;
-        let rk = fixed_base::G_TABLE.mul_canonical(dr, &alpha, Some(&ak))?;
+        let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
         let action_root = poseidon::circuit::action_digest(dr, &spend.cv, &rk)?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
@@ -871,9 +871,9 @@ impl Step<Pasta> for FeeFuse {
         for (index, actual) in [&pk, &psi, &rcm, &maximum, &fee].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let blind_point = fixed_base::R_TABLE.mul_canonical(dr, &blind, None)?;
-        let cv = fixed_base::FEE_V_TABLE
-            .mul_bounded(dr, &slack, &blind_point)
+        let blind_point = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
+        let cv = fixed_base::FEE_V_BASE
+            .mul_amount(dr, &slack, &blind_point)
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
             })?;
@@ -1019,7 +1019,7 @@ impl Step<Pasta> for FeeSeed {
         for (index, actual) in [&pk, &psi, &rcm].into_iter().enumerate() {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
-        let cv = fixed_base::R_TABLE.mul_canonical(dr, &blind, None)?;
+        let cv = fixed_base::R_BASE.mul_digest(dr, &blind, None)?;
         let zero = Element::constant(dr, Fp::ZERO);
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
         let fee_change = poseidon::circuit::note_commitment(dr, &rcm, &pk, &zero, &psi)?;

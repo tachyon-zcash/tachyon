@@ -180,10 +180,10 @@ impl Step<Pasta> for SpendBind {
         })?;
 
         let blind_point =
-            fixed_base::R_TABLE.mul_free(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
+            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|data| Fq::from(data.0)))?;
         // `NoteSeed`, the only producer of `NoteSecret`, bounds the value by
         // MAX_MONEY.
-        let cv = fixed_base::V_TABLE.mul_bounded(dr, &secret.value, &blind_point)?;
+        let cv = fixed_base::V_BASE.mul_amount(dr, &secret.value, &blind_point)?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
