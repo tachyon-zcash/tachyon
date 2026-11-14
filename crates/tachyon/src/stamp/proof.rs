@@ -41,8 +41,9 @@ use crate::{
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
-/// Computes the value `Application::bridge_hash` returns, without an application.
-/// The test in `proof/tests.rs` pins it to the application's result.
+/// Computes the value `Application::bridge_hash` returns, without an
+/// application. The test in `proof/tests.rs` pins it to the application's
+/// result.
 ///
 /// # Panics
 ///
@@ -55,7 +56,8 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     let (x, y) = commitment
         .coordinates()
         .expect("tachygram set commitment is not the identity");
-    // The bridge stage starts after the endoscalar values, rounded up to whole gates.
+    // The bridge stage starts after the endoscalar values, rounded up to whole
+    // gates.
     let x_wire = (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).next_multiple_of(2);
     let y_wire = x_wire + 1;
     let generators = Pasta::nested_generators(pasta::baked()).g();
