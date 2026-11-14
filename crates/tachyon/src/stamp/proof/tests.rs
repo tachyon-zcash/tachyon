@@ -1,3 +1,5 @@
+use ragu_core::pasta::Pasta;
+use ragu_pcd::profile::{Profile, ProfiledCycle};
 use udon::curve::Projective as _;
 
 use super::bridge_hash;
@@ -6,6 +8,18 @@ use crate::{
     primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly},
     stamp::proof::new_application,
 };
+
+#[test]
+fn application_profile_excludes_decompression() {
+    // Ragu registers Decompress exactly when this statement circuit exists.
+    // Its constant-one output slots do not preserve our non-membership checks.
+    assert!(
+        <<Pasta as ProfiledCycle>::Profile as Profile>::native_extension()
+            .statement
+            .is_none(),
+        "Tachyon requires a profile without Decompress; statement support needs a slot-preservation audit",
+    );
+}
 
 #[test]
 fn bridge_hash_matches_application() {

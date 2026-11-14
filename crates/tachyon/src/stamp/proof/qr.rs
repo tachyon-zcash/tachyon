@@ -24,15 +24,15 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ragu::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
-};
 use ragu_core::{
     drivers::{Coeff, Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::Pasta,
+};
+use ragu_pcd::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};

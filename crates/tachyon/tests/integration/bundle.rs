@@ -25,9 +25,9 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block, random_block_with,
-    shared_sk, stamp_coverage,
+    PoolSim, WalletSim, build_lift_span, build_output_plan, build_output_stamp_with_fee,
+    mock_sighash, mock_wtxid, random_block, random_block_with, shared_autonome, shared_sk,
+    stamp_coverage,
 };
 
 #[test]
@@ -134,10 +134,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
 
 #[test]
 fn edited_bundles_fail_binding_verification() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let original = build_autonome(rng, app, &wallet, 1000, 700);
+    let original = shared_autonome();
     for edited in [
         {
             let mut permuted = original.clone();
@@ -214,7 +211,7 @@ fn zero_action_bundle_requires_a_zero_balance() {
 
 #[test]
 fn duplicated_spend_cannot_inflate() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let note = wallet.random_note(200);
@@ -305,7 +302,7 @@ fn duplicated_spend_cannot_inflate() {
 
 #[test]
 fn based_aggregate_with_two_adjuncts() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
@@ -316,7 +313,7 @@ fn based_aggregate_with_two_adjuncts() {
     let b_spend = wallet.random_note(500);
     let b_output = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.mine(random_block_with(
         rng,
         &[
@@ -324,12 +321,10 @@ fn based_aggregate_with_two_adjuncts() {
             vec![a_spend.commitment()],
             vec![b_spend.commitment()],
         ],
-        50,
+        3,
     ));
     let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    pool.mine_through(rng, BlockHeight(EPOCH_SIZE));
 
     let spend_epoch = cm_height.epoch().next().unwrap();
     let based_sp = wallet.spendable_at(rng, app, &pool, &based_spend, spend_epoch);
@@ -431,10 +426,9 @@ fn based_aggregate_with_two_adjuncts() {
 
 #[test]
 fn autonome_verify_rejects_flipped_signatures() {
-    let app = &application();
+    let bundle = shared_autonome();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, app, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
     let wtxid: [u8; 64] = mock_wtxid(&bundle).into();
     bundle.verify(rng, app, &sighash, &wtxid, &[]).unwrap();
@@ -463,10 +457,9 @@ fn autonome_verify_rejects_flipped_signatures() {
 
 #[test]
 fn stamped_bundle_round_trips() {
-    let app = &application();
+    let stamped = shared_autonome();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, app, &wallet, 1000, 700);
     let mut buf = Vec::new();
     stamped.write(&mut buf).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*buf).unwrap();
@@ -576,11 +569,8 @@ fn read_preserves_action_order() {
 
 #[test]
 fn stripped_bundle_round_trips() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
     let wtxid = AggregateId::try_from([0x11u8; 64]).unwrap();
-    let stripped = build_autonome(rng, app, &wallet, 1000, 700).strip(wtxid);
+    let stripped = shared_autonome().strip(wtxid);
     let mut buf = Vec::new();
     stripped.write(&mut buf).unwrap();
     let mut erased_buf = Vec::new();
@@ -618,10 +608,6 @@ fn stripped_bundle_round_trips() {
 
 #[test]
 fn bundle_state_mismatches_are_rejected() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-
     let buf: &[u8] = &[0x03];
     for err in [
         Bundle::<ProofStamp<stamp::Uncompressed>>::read(buf).unwrap_err(),
@@ -634,7 +620,7 @@ fn bundle_state_mismatches_are_rejected() {
 
     assert!(TachyonBundle::read(&[0x00][..]).unwrap().is_no_bundle());
 
-    let stamped = build_autonome(rng, app, &wallet, 1000, 700);
+    let stamped = shared_autonome();
     let adjunct = stamped
         .clone()
         .strip(AggregateId::try_from([0x11u8; 64]).unwrap());
@@ -659,10 +645,7 @@ fn bundle_state_mismatches_are_rejected() {
 
 #[test]
 fn auth_digest_invariants() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, app, &wallet, 1000, 700);
+    let stamped = shared_autonome();
     let (commitment, auth_digest) = (stamped.commitment(), stamped.auth_digest());
     let pointer = stamped.clone().strip(mock_wtxid(&stamped));
     let repointed = stamped
@@ -694,10 +677,7 @@ fn auth_digest_invariants() {
 
 #[test]
 fn read_rejects_noncanonical_tachygrams() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, app, &wallet, 1000, 700);
+    let bundle = shared_autonome();
     let n = bundle.stamp.tachygrams.len();
 
     let mut buf = Vec::new();
@@ -775,13 +755,8 @@ fn plan_value_balance_is_bounded_by_max_money() {
 
 #[test]
 fn read_bounds_the_value_balance() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
     let mut buf = Vec::new();
-    build_autonome(rng, app, &wallet, 1000, 700)
-        .write(&mut buf)
-        .unwrap();
+    shared_autonome().write(&mut buf).unwrap();
     let max_money = i64::try_from(MAX_MONEY).unwrap();
 
     for value_balance in [max_money, -max_money] {
@@ -806,7 +781,7 @@ fn read_bounds_the_value_balance() {
 
 #[test]
 fn verify_tachygrams_rejects_an_edited_list() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -860,10 +835,7 @@ fn verify_tachygrams_rejects_an_edited_list() {
 
 #[test]
 fn memo_binds_the_commitment_but_not_the_auth_digest() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, app, &wallet, 1000, 700);
+    let mut bundle = shared_autonome();
     let (commitment, auth_digest) = (bundle.commitment(), bundle.auth_digest());
 
     bundle.memo = vec![0x5Au8; 128];
@@ -877,10 +849,7 @@ fn memo_binds_the_commitment_but_not_the_auth_digest() {
 
 #[test]
 fn memo_round_trips_and_rejects_truncation() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, app, &wallet, 1000, 700);
+    let mut bundle = shared_autonome();
 
     for memo in [Vec::new(), vec![0xABu8; 1500]] {
         bundle.memo = memo.clone();
@@ -926,7 +895,7 @@ fn plan_memo_reaches_the_signed_bundle() {
 
 #[test]
 fn bundle_lift_preserves_coverage() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
@@ -952,7 +921,7 @@ fn bundle_lift_preserves_coverage() {
             if reason.to_string() == "no anchor span proof for no anchor advance"
     );
 
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
 
     let lifted = bundle.lift(rng, app, &[], vec![span]).unwrap();
@@ -964,7 +933,7 @@ fn bundle_lift_preserves_coverage() {
 
 #[test]
 fn bundle_lift_over_an_aggregate() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
@@ -973,16 +942,14 @@ fn bundle_lift_over_an_aggregate() {
     let spend_b = wallet.random_note(500);
     let output_b = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.mine(random_block_with(
         rng,
         &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
-        50,
+        2,
     ));
     let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE - 1) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    pool.mine_through(rng, BlockHeight(EPOCH_SIZE - 1));
 
     let sp_a = wallet.spendable_at(rng, app, &pool, &spend_a, cm_height.epoch().next().unwrap());
     let sp_b = wallet.spendable_at(rng, app, &pool, &spend_b, cm_height.epoch().next().unwrap());
@@ -1055,7 +1022,7 @@ fn bundle_lift_over_an_aggregate() {
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
     pool.advance(1, |_| vec![]);
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
 
     let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();

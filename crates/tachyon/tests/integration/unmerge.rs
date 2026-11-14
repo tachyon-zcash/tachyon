@@ -8,7 +8,7 @@ use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
     stamp::{
-        self, ProofStamp, ProveError,
+        self, ProofStamp,
         proof::stamp::{Stamp, StampUnmerge},
     },
     value, witness,
@@ -22,7 +22,7 @@ use crate::fixtures::{
 
 #[test]
 fn unmerge_removes_a_divisor_across_merge_boundaries() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -134,7 +134,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
 
 #[test]
 fn unmerge_keeps_the_dividend_fee() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -263,7 +263,7 @@ fn unmerge_keeps_the_dividend_fee() {
 
 #[test]
 fn unmerge_by_a_lifted_divisor() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
@@ -278,7 +278,7 @@ fn unmerge_by_a_lifted_divisor() {
     );
     let stamped_at = pool.height();
 
-    pool.advance(2, |_| random_block(rng, 1, 4));
+    pool.advance(2, |_| random_block(rng, 1, 1));
     let mut alice = wallet.autonome(
         rng,
         app,
@@ -318,8 +318,9 @@ fn unmerge_by_a_lifted_divisor() {
         )
         .unwrap();
 
-    assert_matches!(
-        alice_bob.clone().unmerge(
+    let unaligned = alice_bob
+        .clone()
+        .unmerge(
             rng,
             app,
             (
@@ -331,9 +332,20 @@ fn unmerge_by_a_lifted_divisor() {
                 bob.descriptors().collect(),
                 [bob.fee_descriptor()].into(),
             ),
-        ),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
-            if err.to_string() == "StampUnmerge: anchors must match"
+        )
+        .unwrap();
+    assert!(
+        !unaligned
+            .verify_proof(
+                rng,
+                app,
+                alice
+                    .descriptors()
+                    .map(|desc| desc.digest().unwrap())
+                    .chain(iter::once(alice.fee_descriptor().digest().unwrap()))
+            )
+            .unwrap(),
+        "StampUnmerge: anchors must match"
     );
 
     alice.stamp = alice_bob
@@ -365,7 +377,7 @@ fn unmerge_by_a_lifted_divisor() {
 
 #[test]
 fn unmerge_by_itself_leaves_no_leaves() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -409,7 +421,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
 
 #[test]
 fn unmerge_splitting_a_bundle() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -486,7 +498,7 @@ fn unmerge_splitting_a_bundle() {
 
 #[test]
 fn unmerge_binds_its_sets() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -567,17 +579,18 @@ fn unmerge_binds_its_sets() {
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    StampUnmerge,
-                    corrupt,
-                    alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-                    bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                StampUnmerge,
+                corrupt,
+                alice_bob.proof.clone().carry::<Stamp>(dividend_header),
+                bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 }

@@ -640,7 +640,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
@@ -813,13 +813,16 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             .verify_proof(rng, app, action_digests.iter().copied())
     }
 
-    /// Verify everything about this bundle. Does not verify any details about
-    /// the provided adjuncts.
+    /// Verify this bundle's signatures, coverage, tachygrams and proof.
+    /// Does not verify any details about the provided adjuncts.
     ///
     /// - Signatures are valid
     /// - Adjuncts are covered
     /// - Tachygrams are consistent
     /// - Proof is correct
+    ///
+    /// The caller checks that the stamp's anchor belongs to the canonical chain
+    /// folded natively with [`Anchor::next_stamp`] and [`Anchor::next_epoch`].
     ///
     /// If you need more control, call each verify method directly.
     ///
