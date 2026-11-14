@@ -11,6 +11,7 @@ use crate::{
     digest::poseidon,
     pasta::{Eq, Fp},
     serialization,
+    stamp::proof::bridge_hash,
 };
 
 lazy_static! {
@@ -72,13 +73,10 @@ impl Anchor {
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
-            let stamp_hash = stamp_commit
-                .bridge()
-                .map_err(|_err| AnchorError::NextStampZero)?;
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
                 epoch.into(),
-                stamp_hash.into(),
+                bridge_hash(stamp_commit.as_ref().to_affine()),
             )))
         }
     }

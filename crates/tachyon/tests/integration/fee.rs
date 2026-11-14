@@ -4,6 +4,7 @@ use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, VerifyTachygramsError, action, bundle,
@@ -631,9 +632,12 @@ fn fee_seed_binds_its_singletons_and_header() {
         assert_eq!(proof.verify(rng, header).unwrap(), expected);
         assert_eq!(compressed.verify(rng, header).unwrap(), expected);
     }
-    let pcd = seed_pcd
-        .proof()
-        .clone()
-        .carry::<Stamp>((valid.3.commit().bridge().unwrap(), anchor));
+    let pcd = seed_pcd.proof().clone().carry::<Stamp>((
+        PROOF_SYSTEM
+            .bridge_hash(valid.3.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        anchor,
+    ));
     assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
 }

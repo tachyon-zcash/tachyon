@@ -4,6 +4,7 @@ use alloc::vec;
 use core::{assert_matches, iter};
 
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
     stamp::{
@@ -469,10 +470,19 @@ fn unmerge_binds_its_sets() {
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
     let dividend_header = (
-        alice_bob_tachygrams.commit().bridge().unwrap(),
+        PROOF_SYSTEM
+            .bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
         alice_bob.anchor,
     );
-    let divisor_header = (bob_tachygrams.commit().bridge().unwrap(), bob.stamp.anchor);
+    let divisor_header = (
+        PROOF_SYSTEM
+            .bridge_hash(bob_tachygrams.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        bob.stamp.anchor,
+    );
     let valid = witness::stamp_unmerge(
         (dividend_header, divisor_header),
         alice_actions,
