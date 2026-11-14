@@ -1,18 +1,4 @@
-//! Scaled QR splits. [`QrIntakeSplit`] is the only step that witnesses both
-//! factors of a pinned polynomial, and its product fixes each side only up to
-//! a nonzero constant, so a prover may scale one side by $k$ and the other by
-//! $1/k$. Roots survive: the contents are nonzero, so the product keeps their
-//! root multiset, and the class identity in [`QrSideDescend`] constrains the
-//! sibling's roots and takes any constant into its quotient. [`QrUnspentInit`]
-//! and [`UnspentLift`](super::super::pool::UnspentLift) open a bucket for
-//! nonzero at the tested value, [`QrSpendableInit`] for zero at `cm`, and
-//! [`EvidenceTreeOpen`] replays only the polynomial its leaf hashes, so no
-//! consumer reads more than the roots.
-//!
-//! These tests pin current behaviour: the empty-intake and same-set rules
-//! test opened values against the canonical form and admit scaled forms. A
-//! change that binds the rules to every scaling flips
-//! `qr_split_rules_test_canonical_form_only`, as intended.
+//! Non-monic QR splits must preserve bucket membership answers.
 
 #![allow(clippy::too_many_lines, reason = "test module")]
 
@@ -53,9 +39,7 @@ use crate::{
     value, witness,
 };
 
-/// Select and descend into side `bit`. The sibling is `sibling_scale` times
-/// the monic polynomial over `sibling_members`, so the honest hints carry the
-/// quotient divided by `sibling_scale`.
+/// Scale the sibling's quotient inversely to preserve its class identity.
 fn descend(
     rng: &mut StdRng,
     sides: &Pcd<Pasta, ProductionRank, QrIntakeSides>,
@@ -89,8 +73,6 @@ fn descend(
     Ok(child)
 }
 
-/// Exclude `note`'s epoch-zero nullifier from `bucket` and bind the segment to
-/// the note's genuine nullifier derivation.
 fn exclude_and_bind(
     rng: &mut StdRng,
     bucket: &Pcd<Pasta, ProductionRank, QrBucket>,
@@ -159,12 +141,7 @@ fn exclude_and_bind(
     unspent
 }
 
-/// Characterizes the scope of the canonical-form rules. `QrIntakeSplit`
-/// rejects contents that open to one at the challenge and `QrSideDescend`
-/// rejects sides that open equal, which is exactly the canonical empty set and
-/// the canonical equal split. A split scaled by `a` and `1/a` keeps the
-/// product and every root but opens to other values, so the same degenerate
-/// partitions pass all three steps.
+/// Reciprocal scaling bypasses canonical-form checks without changing roots.
 #[test]
 fn qr_split_rules_test_canonical_form_only() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -172,8 +149,7 @@ fn qr_split_rules_test_canonical_form_only() {
     let member = Tachygram::random(rng);
     let member_fp = Fp::from(member);
     let side = classify(member_fp, discriminant.at(0)).0;
-    // The sibling must hold the member in its own class, so descend into the
-    // other.
+    // Keep the sibling's member in its own class.
     let bit = !side;
 
     let scale = Fp::from(7u64);
@@ -186,7 +162,6 @@ fn qr_split_rules_test_canonical_form_only() {
     let monic = TachygramSetPoly::from_iter([member]);
     let empty = TachygramSetPoly::from_iter(iter::empty());
 
-    // Duplicated member: contents (X - m)^2.
     let doubled = [member, member];
     let (intake, ()) = PROOF_SYSTEM
         .seed(
@@ -268,7 +243,6 @@ fn qr_split_rules_test_canonical_form_only() {
         )
     );
 
-    // Empty side: contents {m}, descending into the side that holds nothing.
     let single = [member];
     let mut held: Polynomial<Fp, ProductionRank> = monic.clone().into();
     held.scale(scale);
@@ -437,14 +411,7 @@ fn qr_split_rules_test_canonical_form_only() {
     );
 }
 
-/// Buckets from a scaled split answer every inclusion and exclusion question
-/// as the honest buckets of the same profile and roots, through the evidence
-/// tree and down to [`UnspentBind`] and [`SpendBind`].
-///
-/// The epoch publishes one stamp `{cm}`. The scaled split puts `a·(X - cm)` on
-/// `cm`'s side and the constant `1/a` on the other; the honest split puts
-/// `X - cm` and one. The scaled empty side splits again into `b` and
-/// `1/(a·b)`, a bucket the honest network cannot reach.
+/// Scaled and monic buckets give identical answers through [`SpendBind`].
 #[test]
 fn scaled_qr_buckets_answer_as_honest_buckets() {
     let rng = &mut StdRng::seed_from_u64(1);
@@ -661,7 +628,6 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         QrProfile::ROOT.descend(!side).descend(deep_bit)
     );
 
-    // Admit the scaled buckets next to the honest ones and replay them.
     let (admitted_scaled, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -775,8 +741,6 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
             if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
     );
 
-    // Exclusion of the note's absent nullifier, bound to its derivation, then
-    // inclusion of its commitment and a spend.
     let rcv = value::Trapdoor::random(rng);
     let mut spends = Vec::new();
     for bucket in [&opened_honest_held, &opened_scaled_held] {
@@ -835,8 +799,6 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     }
     assert_eq!(spends[0], spends[1]);
 
-    // Exclusion of any value of the empty side's profile, bound to a second
-    // note, which none of the buckets holds.
     for empty_bucket in [&honest_empty, &scaled_empty, &scaled_deep] {
         let unspent = exclude_and_bind(rng, empty_bucket, other_note, pak);
         for bucket in [&honest_held, &scaled_held, empty_bucket] {
@@ -860,11 +822,6 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     }
 }
 
-/// A scaled split of a duplicated member yields a stray bucket: `k·(X - cm)`
-/// on the side opposite `cm`'s class. Monic polynomials reach the same bucket
-/// whenever two members share a class, by filing one on the wrong side, and
-/// the stray bucket answers every question as the scaled one does. A stray
-/// member proves only its own publication, which is true.
 #[test]
 fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let rng = &mut StdRng::seed_from_u64(2);
@@ -897,7 +854,6 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let scale_inv = scale.invert().unwrap();
     let monic = TachygramSetPoly::from_iter([cm]);
 
-    // The duplicated stamp {cm, cm}, scaled into a stray bucket.
     let doubled = [cm, cm];
     let (duplicate_intake, ()) = PROOF_SYSTEM
         .seed(
@@ -986,7 +942,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
             .unwrap()
     );
 
-    // The stamp {cm, companion}, filing cm on the wrong side with monic sides.
+    // Monic factors can also put cm in the wrong class.
     let pair = [cm, companion];
     let (pair_intake, ()) = PROOF_SYSTEM
         .seed(
@@ -1140,7 +1096,6 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         unspents.push(unspent);
     }
 
-    // The canonical bucket of the stray's profile holds nothing.
     assert_matches!(
         PROOF_SYSTEM.fuse(rng, QrSpendableInit, (), unspents[1].clone(), pair_empty.clone()).err(),
         Some(ragu_core::Error::InvalidWitness(err))

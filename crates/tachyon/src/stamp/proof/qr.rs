@@ -629,22 +629,15 @@ impl Step<Pasta> for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
-/// A canonical empty intake, whose contents are the constant one, is not
-/// split.
+/// Constant-one contents (the canonical empty intake) cannot be split.
 ///
 /// # Soundness
 ///
-/// The product pins the two sides to a factorization of the contents up to a
-/// nonzero constant: $(a \cdot N, R / a)$ passes wherever $(N, R)$ does. Their
-/// roots and multiplicities are fixed, their commitments are not, and every
-/// consumer of a bucket reads only whether its contents vanish at a point.
-/// This is the only step that witnesses both factors of a pinned polynomial.
-/// The empty-intake rule here and the same-set rule in [`QrSideDescend`]
-/// therefore constrain the canonical form only. The scaled forms they admit
-/// yield buckets with no roots, or stray buckets that monic sides already
-/// reach. [`QrSideSelect`] checks the exceptional-value assignment, and
-/// [`QrSideDescend`] attests each child's sibling. The contents and both sides
-/// open once each at the product challenge.
+/// The product pins a factorization, up to reciprocal nonzero scaling.
+/// The empty-intake and equal-side checks constrain canonical forms only;
+/// bucket consumers depend only on roots. [`QrSideSelect`] checks the
+/// exceptional-value assignment, and [`QrSideDescend`] attests each child's
+/// sibling. The contents and both sides open once at the product challenge.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -702,7 +695,6 @@ impl Step<Pasta> for QrIntakeSplit {
                 "QrIntakeSplit: the sides do not partition the contents".into(),
             )
         })?;
-        // A canonical empty intake's contents are the constant one.
         let one = Element::constant(dr, Fp::ONE);
         contents_at_z
             .sub(dr, &one)
@@ -824,8 +816,7 @@ impl Step<Pasta> for QrSideSelect {
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
-/// child. A split whose two sides open equal at $\zeta$, as the canonical
-/// sides of a split into the same set do, is rejected.
+/// child. Equal openings at $\zeta$ are rejected, not equal root sets.
 ///
 /// # Soundness
 ///
@@ -835,8 +826,7 @@ impl Step<Pasta> for QrSideSelect {
 /// at the sibling's class $c$, and the split's product places every member of
 /// the other class in the child. The child may hold a stray member of the
 /// sibling's class; consumers open it nonzero, so a stray member cannot pass a
-/// value that is present. A scaled split into the same set is one such case;
-/// see [`QrIntakeSplit`]. $R$ is read off the header, so a descent classifies
+/// value that is present. $R$ is read off the header, so a descent classifies
 /// at the same $R_0$ as every other step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
