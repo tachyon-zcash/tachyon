@@ -22,7 +22,7 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{assert_matches, iter};
+use core::{array, assert_matches, iter};
 
 use ragu::Pcd;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
@@ -62,13 +62,13 @@ fn scaled_factors(
     roots: [&[Tachygram]; 2],
     scales: [Fp; 2],
 ) -> (TachygramSetPoly, TachygramSetPoly) {
-    let [non_residue, residue] = core::array::from_fn(|index| {
+    let factors: [TachygramSetPoly; 2] = array::from_fn(|index| {
         let monic: TachygramSetPoly = roots[index].iter().copied().collect();
         let mut poly: Polynomial<Fp, ProductionRank> = monic.into();
         poly.scale(scales[index]);
         TachygramSetPoly::arbitrary(poly)
     });
-    (non_residue, residue)
+    factors.into()
 }
 
 fn split_stamp(
@@ -260,10 +260,6 @@ fn exclude_and_bind(
 /// Pins acceptance of reciprocally scaled equal-root sides and empty contents,
 /// beside rejection of their canonical forms; acceptance is not a requirement.
 #[test]
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "paired canonical and scaled cases"
-)]
 fn qr_split_rules_test_canonical_form_only() {
     let rng = &mut StdRng::seed_from_u64(0);
     let discriminant = QrDiscriminant::random(rng);
@@ -278,7 +274,7 @@ fn qr_split_rules_test_canonical_form_only() {
     for constant in [scale, deep_scale] {
         assert!(constant != Fp::ZERO && constant != Fp::ONE && constant != -Fp::ONE);
     }
-    let monic: TachygramSetPoly = [member].into_iter().collect();
+    let monic: TachygramSetPoly = iter::once(member).collect();
     let empty: TachygramSetPoly = iter::empty().collect();
     let doubled = [member, member];
     let (intake, honest_sides) =
@@ -511,9 +507,15 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     );
 
     let [scaled_pair, honest_pair] = [(&scaled_held, &scaled_empty), (&honest_held, &honest_empty)]
-        .map(|(held, empty)| {
+        .map(|(occupied, vacant)| {
             let (pair, ()) = APP
-                .fuse(rng, EvidenceTreeLeafPair, (), held.clone(), empty.clone())
+                .fuse(
+                    rng,
+                    EvidenceTreeLeafPair,
+                    (),
+                    occupied.clone(),
+                    vacant.clone(),
+                )
                 .unwrap();
             assert!(APP.verify_differential(&pair, &mut *rng).unwrap());
             pair
@@ -666,9 +668,9 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         pak,
         note,
         cm,
-        nf: _,
         discriminant,
         side,
+        ..
     } = note_case(rng);
     let absent = iter::repeat_with(|| Tachygram::random(rng))
         .find(|value| classify(Fp::from(*value), discriminant.at(0)).0 != side)
