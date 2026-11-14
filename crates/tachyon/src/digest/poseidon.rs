@@ -54,37 +54,48 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 
 /// A fee digest, $d_\mathsf{fee} = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}(
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
-/// \mathsf{fee})$.
+/// \mathsf{fee}, \mathsf{cm}_\mathsf{chg})$.
 ///
 /// # Panics
 ///
 /// Panics if `cv_feemax` is the identity.
 #[must_use]
-pub fn fee_digest(cv_feemax: EpAffine, fee: u64) -> Fp {
+pub fn fee_digest(cv_feemax: EpAffine, fee: u64, fee_change: crate::Tachygram) -> Fp {
     #[expect(clippy::expect_used, reason = "callers reject the identity")]
     let (x, y) = cv_feemax
         .coordinates()
         .expect("cv_feemax must not be the identity");
 
-    let [hash] = emulated(FEE_DIGEST_DOMAIN, [x, y, Fp::from(fee)]);
+    let [hash] = emulated(
+        FEE_DIGEST_DOMAIN,
+        [x, y, Fp::from(fee), Fp::from(fee_change)],
+    );
     hash
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
-/// Derives an action digest from action fields.
+/// Derives an action digest from `cv`, `rk`, the pair's sum and product.
 ///
 /// # Panics
 ///
 /// Panics if `cv` or `rk` is the identity.
 #[must_use]
-pub fn action_digest(cv: EpAffine, rk: EpAffine) -> Fp {
+pub fn action_digest(
+    cv: EpAffine,
+    rk: EpAffine,
+    (first, second): (crate::Tachygram, crate::Tachygram),
+) -> Fp {
     #[expect(clippy::expect_used, reason = "callers reject the identity")]
     let (cv_x, cv_y) = cv.coordinates().expect("cv must not be the identity");
     #[expect(clippy::expect_used, reason = "callers reject the identity")]
     let (rk_x, rk_y) = rk.coordinates().expect("rk must not be the identity");
+    let (tg0, tg1) = (Fp::from(first), Fp::from(second));
 
-    let [hash] = emulated(ACTION_DIGEST_DOMAIN, [cv_x, cv_y, rk_x, rk_y]);
+    let [hash] = emulated(
+        ACTION_DIGEST_DOMAIN,
+        [cv_x, cv_y, rk_x, rk_y, tg0 + tg1, tg0 * tg1],
+    );
     hash
 }
 
@@ -330,23 +341,27 @@ pub(crate) mod circuit {
         dr: &mut D,
         cv: &Point<'dr, D, EpAffine>,
         fee: &Element<'dr, D>,
+        fee_change: &Element<'dr, D>,
     ) -> Result<Element<'dr, D>> {
         let mut cv_coordinates = Vec::new();
         cv.write(dr, &mut cv_coordinates)?;
         let sponge = init(dr, FEE_DIGEST_DOMAIN);
-        absorb(dr, sponge, cv_coordinates.iter().chain([fee]))?.squeeze(dr)
+        absorb(dr, sponge, cv_coordinates.iter().chain([fee, fee_change]))?.squeeze(dr)
     }
 
     pub(crate) fn action_digest<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         cv: &Point<'dr, D, EpAffine>,
         rk: &Point<'dr, D, EpAffine>,
+        tachygrams: [&Element<'dr, D>; 2],
     ) -> Result<Element<'dr, D>> {
         let mut coordinates = Vec::new();
         cv.write(dr, &mut coordinates)?;
         rk.write(dr, &mut coordinates)?;
+        let sum = tachygrams[0].add(dr, tachygrams[1]);
+        let product = tachygrams[0].mul(dr, tachygrams[1])?;
         let sponge = init(dr, ACTION_DIGEST_DOMAIN);
-        absorb(dr, sponge, &coordinates)?.squeeze(dr)
+        absorb(dr, sponge, coordinates.iter().chain([&sum, &product]))?.squeeze(dr)
     }
 
     pub(crate) fn payment_key<'dr, D: Driver<'dr, F = Fp>>(

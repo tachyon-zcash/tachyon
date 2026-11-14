@@ -107,6 +107,20 @@ pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     })
 }
 
+const ACTION_TACHYGRAMS_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActionTg";
+
+/// `hActionTachygramsTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-ActionTg}$
+/// over each $\mathsf{tg}_{\mathsf{lo},i} \Vert \mathsf{tg}_{\mathsf{hi},i}$
+/// in action order.
+#[must_use]
+pub fn action_tachygrams_digest(pairs: &[[u8; 64]]) -> [u8; 32] {
+    hasher_256(ACTION_TACHYGRAMS_PERSONALIZATION, |state| {
+        for pair in pairs {
+            state.update(pair);
+        }
+    })
+}
+
 const STAMP_FEES_PERSONALIZATION: &[u8; 12] = b"Tachyon-Fees";
 
 /// `hStampFeesTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
@@ -203,18 +217,13 @@ pub fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
     })
 }
 
-/// Digest of a proof stamp's proof, anchor, tachygram-set commitment, and
-/// tachygrams.
-///
-/// Tachygrams are hashed in the order given, so the digest commits to that
-/// order.
+/// Digest of a proof stamp's proof, anchor and tachygram-set commitment.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
 ///     \mathsf{hStampProofTachyon} \Vert
 ///     \mathsf{anchorTachyon} \Vert
-///     \mathsf{cTachygrams} \Vert
-///     \mathsf{vTachygrams}
+///     \mathsf{cTachygrams}
 ///   )
 /// $$
 #[must_use]
@@ -222,17 +231,11 @@ pub fn stamp_data_digest(
     stamp_proof_digest: [u8; 32],
     anchor: [u8; 32],
     tachygram_set: [u8; 32],
-    tachygrams: &[[u8; 32]],
 ) -> [u8; 32] {
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);
         state.update(&tachygram_set);
-
-        // only variable-length component
-        for tg in tachygrams {
-            state.update(tg);
-        }
     })
 }
 
@@ -241,6 +244,7 @@ pub fn stamp_data_digest(
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \Vert \mathsf{vActionSigs} \Vert
+///     \mathsf{hActionTachygramsTachyon} \Vert
 ///     \mathsf{bindingSigTachyon} \Vert \mathsf{tachyonStampState}
 ///   )
 /// $$
@@ -250,14 +254,15 @@ pub fn stamp_data_digest(
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
-/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonAggregateId} $ |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{cmFeeChangeTachyon} \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
+/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{cmFeeChangeTachyon} \Vert \mathsf{tachyonAggregateId} $ |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
+    action_tachygrams_digest: &[u8; 32],
     binding_sig: &[u8; 64],
-    stamp_contrib: &[u8; 72],
+    stamp_contrib: &[u8; 104],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
         state.update(&[state_header]);
@@ -265,6 +270,7 @@ pub fn bundle_auth_digest(
         for sig in action_sigs {
             state.update(sig);
         }
+        state.update(action_tachygrams_digest);
         state.update(binding_sig);
         state.update(stamp_contrib);
     })

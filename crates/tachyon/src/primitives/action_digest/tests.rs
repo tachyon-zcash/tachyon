@@ -4,7 +4,14 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 
 use super::*;
-use crate::{entropy::ActionEntropy, keys::private, note, pasta::Fp, primitives::effect, value};
+use crate::{
+    entropy::ActionEntropy,
+    keys::private,
+    note,
+    pasta::Fp,
+    primitives::{Tachygram, effect},
+    value,
+};
 
 #[test]
 fn digest_rejects_identity_points() {
@@ -19,11 +26,15 @@ fn digest_rejects_identity_points() {
         public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
 
     assert_matches!(
-        ActionDigest::new(value::Commitment::default(), rk),
+        ActionDigest::new(
+            value::Commitment::default(),
+            rk,
+            (Tachygram::from(cm), Tachygram::from(cm))
+        ),
         Err(ActionDigestError::IdentityCv)
     );
     assert_matches!(
-        ActionDigest::new(cv, identity_rk),
+        ActionDigest::new(cv, identity_rk, (Tachygram::from(cm), Tachygram::from(cm))),
         Err(ActionDigestError::IdentityRk)
     );
 }

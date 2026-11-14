@@ -5,6 +5,8 @@ A nullifier is a secret bound at note creation, and published later to destroy t
 To spend a note, a transaction author must prove that no valid nullifier for the note has been published in the pool between the note's creation and some anchor[^anchor].
 Spending a note publishes two of its nullifiers to the pool, for the anchor epoch and the next epoch, making such a proof impossible to produce for later anchors.
 
+The two nullifiers form the action's unordered [tachygram pair](./tachygrams.md). Re-proving the spend at another epoch replaces that pair; its value commitment and randomized action key remain the same.
+
 Pool state is likely to advance between proof creation and mining, so consensus closes the gap by confirming the nullifiers did not enter the pool in the interim.[^tachygrams] The second nullifier allows consensus to tolerate an epoch transition in that interim.
 
 ## Derivation
@@ -45,6 +47,8 @@ Distinct notes under the same $\mathsf{nk}$ should not re-use $\psi$ because the
 ## Delegation
 
 A delegate may observe pool state and prove the absence of nullifiers without holding key material or any information about a note.
+
+A delegate that knows a note's nullifier window can recognize the action that spends it from the action's published pair.
 
 The delegate is provided an arbitrary sequence of values $\delta_{e..e+d}$ to prove absent from epochs $e..e+d$ and these tested values are committed as a contiguous sequence.
 

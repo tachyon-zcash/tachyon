@@ -8,11 +8,11 @@ use udon::curve::Affine as _;
 use crate::{
     digest::poseidon,
     pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError},
+    primitives::{ActionDigest, ActionDigestError, Tachygram},
     value,
 };
 
-/// A bundle's fee descriptor: the max fee commitment and the fee value.
+/// A bundle's max fee commitment, fee and fee change commitment.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
     /// The max fee commitment.
@@ -20,6 +20,9 @@ pub struct Descriptor {
 
     /// The fee, `vFeeTachyon`.
     pub v_fee: value::Positive,
+
+    /// The fee change note commitment.
+    pub fee_change: Tachygram,
 }
 
 impl Descriptor {
@@ -36,6 +39,7 @@ impl Descriptor {
         Ok(ActionDigest::from(poseidon::fee_digest(
             cv_feemax,
             u64::from(self.v_fee),
+            self.fee_change,
         )))
     }
 }
@@ -47,9 +51,11 @@ impl PartialOrd for Descriptor {
 }
 
 impl Ord for Descriptor {
-    /// Orders fee descriptors by their coverage entries.
+    /// Orders by coverage entry, then change commitment.
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        <[u8; 40]>::from(*self).cmp(&<[u8; 40]>::from(*other))
+        <[u8; 40]>::from(*self)
+            .cmp(&<[u8; 40]>::from(*other))
+            .then(self.fee_change.cmp(&other.fee_change))
     }
 }
 

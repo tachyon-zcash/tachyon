@@ -28,7 +28,7 @@ $$
     )
 $$
 
-For an output operation, $\mathsf{cm}$ is the published [tachygram](./tachygrams.md).
+For an output operation, $\mathsf{cm}$ is one member of the action's published [tachygram pair](./tachygrams.md); the other is padding.
 
 ## Nullifier
 

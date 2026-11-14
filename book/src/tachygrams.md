@@ -2,7 +2,7 @@
 
 A tachygram is an opaque Poseidon $\mathbb{F}_p$ commitment to the creation or destruction of a note[^notes].
 
-A tachyon transaction is published with a stamp containing tachygrams for the notes involved in its proven actions.
+A Tachyon transaction publishes each action's tachygram pair alongside its value commitment and action key, and its fee change note commitment beside the fee in the stamp trailer.
 
 Every action publishes exactly two tachygrams, whichever kind it is.
 
@@ -22,7 +22,7 @@ $$
     )
 $$
 
-The pad commits to the note opening rather than to $\mathsf{cm}$. Both values appear in the same published multiset, so a pad derived as $\mathsf{tg}_\bot = H^\mathsf{pad}(\mathsf{cm})$ would let an observer test every pair in the set for that relation, match each output to its own pad, and recover the output count. Deriving both from the opening leaves an observer with two unlinkable field elements.
+The pad commits to the note opening rather than to $\mathsf{cm}$. A pad derived as $\mathsf{tg}_\bot = H^\mathsf{pad}(\mathsf{cm})$ would let an observer test the published pair for that relation and identify an output. Deriving both from the opening hides which member is the commitment and whether the action is an output.
 
 A spend action publishes a nullifier for the present epoch and one for the next[^nullifiers].
 
@@ -30,16 +30,17 @@ $$
 \mathsf{tg}_0 = \mathsf{nf}_e, \qquad \mathsf{tg}_1 = \mathsf{nf}_{e+1}
 $$
 
-Uniform arity is what makes the two action kinds indistinguishable in the published set: an observer counting tachygrams learns the action count and nothing about the split between spends and outputs.
+Each action digest absorbs the pair as $(\mathsf{tg}_0 + \mathsf{tg}_1, \mathsf{tg}_0 \mathsf{tg}_1)$, binding its members without their order. The wire encodes the pair in strictly ascending order by bytewise comparison of the 32-byte little-endian encodings. Both action kinds publish two members, concealing the split between spends and outputs in one version of a transaction.
+
+An observer learns which two tachygrams belong to each action and which tachygram is each bundle's fee change. Re-proving a spend at another epoch replaces its pair, while an output keeps its pair. Comparing two versions therefore identifies the spend and output actions. A fee change alone leaves the action pairs unchanged.
 
 ## Tachygram sets
 
 An intermediate `Actions` proof, built from actions and merges before the bundle's fee is applied, contains the two tachygrams of every action it covers.
 
-A published stamp has every covered bundle's fee applied, so it also contains one [fee change note](./fee.md#fee-change-note) commitment per covered bundle.
-A published stamp covering $N$ actions in $B$ bundles contains $2N + B$ tachygrams: three for an autonome with a single action, and two per action plus one per bundle for an aggregate. Ideally, the consensus chain will contain aggregated[^aggregation] bundles[^bundle].
+A published stamp has every covered bundle's fee applied. Its tachygram set is the union of the covered actions' pairs and each covered bundle's [fee change note](./fee.md#fee-change-note) commitment. These members are read from the covered bundles[^bundle]; the stamp carries only their set commitment. Ideally, the consensus chain contains aggregated[^aggregation] bundles.
 
-The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
+The stamp proof binds a commitment to the unordered set of those tachygrams.
 
 $$
 \mathsf{tachygram\_acc}(X) =
@@ -52,7 +53,7 @@ This set is the atomic unit which folds into pool state to contribute to the anc
 
 ## Consensus validation
 
-When a stamp is published, consensus checks that every tachygram in the stamp is absent from every block of the current epoch and the immediately preceding epoch. A duplicate within that two-epoch window is rejected.
+Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. It also checks that every member is absent from every block of the current epoch and the immediately preceding epoch. A duplicate within that two-epoch window is rejected.
 
 The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
 

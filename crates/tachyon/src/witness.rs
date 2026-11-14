@@ -453,6 +453,7 @@ pub fn output_action(
     let digest = ActionDigest::new(
         cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
+        (cm, pad),
     )
     .expect("action digest");
 
@@ -487,7 +488,12 @@ pub fn spend_action(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
+    let digest = ActionDigest::new(
+        cv,
+        pak.ak.derive_action_public(&alpha),
+        (Tachygram::from(nf_current), Tachygram::from(nf_next)),
+    )
+    .expect("action digest");
 
     (
         theta,
@@ -554,16 +560,6 @@ pub fn fee_fuse(
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, FeeFuse> {
-    #[expect(
-        clippy::expect_used,
-        reason = "a planned max fee commitment is never the identity"
-    )]
-    let fee_digest = fee::Descriptor {
-        cv_feemax: max_fee_note.cv_feemax(),
-        v_fee: fee,
-    }
-    .digest()
-    .expect("fee digest");
     #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
     let fee_change_note = Note {
         value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
@@ -571,6 +567,17 @@ pub fn fee_fuse(
         ..max_fee_note
     };
     let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
+    #[expect(
+        clippy::expect_used,
+        reason = "a planned max fee commitment is never the identity"
+    )]
+    let fee_digest = fee::Descriptor {
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: fee,
+        fee_change: fee_change_commitment,
+    }
+    .digest()
+    .expect("fee digest");
 
     let mut output_action_digests = action_digests.clone();
     output_action_digests.insert(fee_digest);
@@ -604,6 +611,11 @@ pub fn fee_seed(
         0,
         "a fee seed's max fee note must have zero value"
     );
+    let fee_change_note = Note {
+        value: value::Positive::ZERO,
+        ..max_fee_note
+    };
+    let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
     #[expect(
         clippy::expect_used,
         reason = "a planned max fee commitment is never the identity"
@@ -611,14 +623,10 @@ pub fn fee_seed(
     let fee_digest = fee::Descriptor {
         cv_feemax: max_fee_note.cv_feemax(),
         v_fee: value::Positive::ZERO,
+        fee_change: fee_change_commitment,
     }
     .digest()
     .expect("fee digest");
-    let fee_change_note = Note {
-        value: value::Positive::ZERO,
-        ..max_fee_note
-    };
-    let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
     (
         max_fee_note,
         anchor,
