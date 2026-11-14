@@ -22,8 +22,8 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
-    Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant,
+    QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
@@ -183,7 +183,14 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
     let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-    unproven.actions[0]
+    let action = unproven.actions[0];
+    let (first, second) = (Tachygram::random(rng), Tachygram::random(rng));
+    Action {
+        cv: action.cv,
+        rk: action.rk,
+        sig: action.sig,
+        tg: (first.min(second), first.max(second)),
+    }
 }
 
 pub fn build_output_plan<RNG: CryptoRng>(
@@ -205,15 +212,19 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     ProofStamp<stamp::Uncompressed>,
     action::Plan<effect::Output>,
     fee::Descriptor,
+    (Tachygram, Tachygram),
 ) {
-    let (stamp, plan, max_fee_note) = build_output_stamp_with_fee(rng, app, anchor, note);
+    let (stamp, plan, max_fee_note, pair) = build_output_stamp_with_fee(rng, app, anchor, note);
+    let change = stamp.fee_change;
     (
         stamp,
         plan,
         fee::Descriptor {
             cv_feemax: max_fee_note.cv_feemax(),
             v_fee: value::Positive::ZERO,
+            fee_change: change,
         },
+        pair,
     )
 }
 
@@ -226,11 +237,12 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     ProofStamp<stamp::Uncompressed>,
     action::Plan<effect::Output>,
     Note,
+    (Tachygram, Tachygram),
 ) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
     let pak = WalletSim::new(shared_sk()).pak;
     let max_fee_note = WalletSim::random(rng).random_note(0);
-    let stamp = stamp::Plan::new(
+    let (stamp, pairs) = stamp::Plan::new(
         vec![],
         vec![(plan.descriptor(), theta, note, rcv)],
         anchor,
@@ -239,7 +251,7 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     )
     .prove(rng, app, &pak, vec![])
     .unwrap();
-    (stamp, plan, max_fee_note)
+    (stamp, plan, max_fee_note, pairs[&plan.descriptor()])
 }
 
 pub fn build_autonome<RNG: CryptoRng>(
@@ -271,34 +283,23 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     app: &App<'_>,
     (stamp_a, descriptors_a, fee_descriptors_a): (
         &ProofStamp<stamp::Uncompressed>,
-        &Vec<action::Descriptor>,
+        &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         &[fee::Descriptor],
     ),
     (stamp_b, descriptors_b, fee_descriptors_b): (
         &ProofStamp<stamp::Uncompressed>,
-        &Vec<action::Descriptor>,
+        &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         &[fee::Descriptor],
     ),
 ) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
-    let left_tg = stamp_a
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-    let right_tg = stamp_b
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
-        app.bridge_hash(left_tg.commit().as_ref().to_affine())
+        app.bridge_hash(stamp_a.tachygram_set.as_ref().to_affine())
             .unwrap()
             .into(),
         stamp_a.anchor,
     ));
     let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
-        app.bridge_hash(right_tg.commit().as_ref().to_affine())
+        app.bridge_hash(stamp_b.tachygram_set.as_ref().to_affine())
             .unwrap()
             .into(),
         stamp_b.anchor,
@@ -307,7 +308,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let merged_acts = descriptors_a
         .iter()
         .chain(descriptors_b.iter())
-        .map(|desc| desc.digest().unwrap())
+        .map(|(desc, pair)| ActionDigest::new(desc.cv, desc.rk, *pair).unwrap())
         .chain(
             fee_descriptors_a
                 .iter()
@@ -316,11 +317,17 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
                 .map(|descriptor| descriptor.digest().unwrap()),
         )
         .collect::<ActionSetPoly>();
-    let merged_tg = stamp_a
-        .tachygrams
-        .iter()
-        .chain(stamp_b.tachygrams.iter())
+    let merged_tg = descriptors_a
+        .values()
+        .chain(descriptors_b.values())
         .copied()
+        .flat_map(<[Tachygram; 2]>::from)
+        .chain(
+            fee_descriptors_a
+                .iter()
+                .chain(fee_descriptors_b)
+                .map(|fee| fee.fee_change),
+        )
         .collect::<TachygramSetPoly>();
 
     let (pcd, ()) = app
@@ -1584,9 +1591,9 @@ impl WalletSim {
         let (bundle_plan, unproven, spend_pcds) =
             self.signed(rng, app, spends, output_notes, self.random_note(0));
         let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);
-        let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
+        let (stamp, pairs) = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
 
-        unproven.stamp(stamp)
+        unproven.stamp(stamp, &pairs).unwrap()
     }
 
     pub fn signed<RNG: CryptoRng>(

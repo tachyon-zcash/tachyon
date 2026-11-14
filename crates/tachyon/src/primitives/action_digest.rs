@@ -7,10 +7,11 @@ use crate::{
     digest::poseidon,
     keys::public,
     pasta::{EpAffine, Fp},
+    primitives::Tachygram,
     value,
 };
 
-/// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
+/// Poseidon digest of an action's `cv`, `rk` and unordered tachygram pair.
 ///
 /// Each action produces one digest, which serves as a root in the
 /// accumulator polynomial. Multiple actions are accumulated via
@@ -43,7 +44,8 @@ pub enum ActionDigestError {
 }
 
 impl ActionDigest {
-    /// Digest a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
+    /// Digests an action and its unordered tachygram pair. The digest absorbs
+    /// the pair's sum and product, so member order does not matter.
     ///
     /// # Errors
     ///
@@ -52,6 +54,7 @@ impl ActionDigest {
     pub fn new(
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
+        tachygrams: (Tachygram, Tachygram),
     ) -> Result<Self, ActionDigestError> {
         let cv_point = EpAffine::from(cv);
         if cv_point.is_identity() {
@@ -61,7 +64,9 @@ impl ActionDigest {
         if rk_point.is_identity() {
             return Err(ActionDigestError::IdentityRk);
         }
-        Ok(Self(poseidon::action_digest(cv_point, rk_point)))
+        Ok(Self(poseidon::action_digest(
+            cv_point, rk_point, tachygrams,
+        )))
     }
 }
 

@@ -31,7 +31,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp},
-    primitives::{ActionDigest, Anchor, TachygramSetBridge, effect},
+    primitives::{ActionDigest, Anchor, Tachygram, TachygramSetBridge, effect},
     relations::enforce::{enforce_poly_equal, enforce_poly_product, enforce_poly_roots},
     value,
 };
@@ -156,7 +156,7 @@ impl Header<Fp> for Stamp {
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Two permutations (`alpha`, the action digest) and one scalar
+/// Three permutations (`alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct OutputAction;
@@ -180,12 +180,12 @@ impl Step<Pasta> for OutputAction {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        let (cm, _, cv) = *left.data;
+        let (cm, pad, cv) = *left.data;
         let alpha = witness
             .0
             .randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let digest = ActionDigest::new(cv, rk, (cm, pad)).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "OutputAction: action digest construction failed".into(),
             )
@@ -236,7 +236,12 @@ impl Step<Pasta> for OutputAction {
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, None)?;
-        let action_root = poseidon::circuit::action_digest(dr, &output_header.cv, &rk)?;
+        let action_root = poseidon::circuit::action_digest(
+            dr,
+            &output_header.cv,
+            &rk,
+            [&cm_root, &output_header.pad],
+        )?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
         action_root.enforce_equal(dr, staged_root)?;
@@ -288,7 +293,7 @@ impl Step<Pasta> for OutputAction {
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Three permutations (`pk`, `alpha`, the action digest) and one scalar
+/// Four permutations (`pk`, `alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set
 /// polynomials.
 #[derive(Debug)]
@@ -318,10 +323,15 @@ impl Step<Pasta> for SpendAction {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Vec<Fp>> {
-        let (cm, _, _, _, _, cv) = *left.data;
+        let (cm, nf_current, nf_next, _, _, cv) = *left.data;
         let alpha = witness.0.randomizer::<effect::Spend>(cm);
         let rk = witness.1.ak.derive_action_public(&alpha);
-        let digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let digest = ActionDigest::new(
+            cv,
+            rk,
+            (Tachygram::from(nf_current), Tachygram::from(nf_next)),
+        )
+        .map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "SpendAction: action digest construction failed".into(),
             )
@@ -390,7 +400,7 @@ impl Step<Pasta> for SpendAction {
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
-        let action_root = poseidon::circuit::action_digest(dr, &cv, &rk)?;
+        let action_root = poseidon::circuit::action_digest(dr, &cv, &rk, [&nf_current, &nf_next])?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
         action_root.enforce_equal(dr, staged_root)?;
@@ -783,6 +793,8 @@ impl Step<Pasta> for ActionLift {
 ///
 /// Opens both input and output sets. The fee note and fee are fixed before
 /// the challenge.
+/// Three permutations (fee blind, change commitment, fee digest) and two
+/// scalar multiplications.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -905,12 +917,12 @@ impl Step<Pasta> for FeeFuse {
             actual.enforce_equal(dr, &oracles.staged()[index])?;
         }
         let cv = max_fee_note.cv_feemax(dr, &slack)?;
-        let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee)?;
         let fee_change = gadgets::note::Note {
             value: change,
             ..max_fee_note
         }
         .commitment(dr)?;
+        let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee, &fee_change)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
@@ -958,6 +970,8 @@ impl Step<Pasta> for FeeFuse {
 /// Proves a zero-action bundle's zero fee.
 ///
 /// Opens both singleton sets. The fee note is fixed before the challenge.
+/// Three permutations (fee blind, change commitment, fee digest) and one
+/// scalar multiplication.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1064,9 +1078,9 @@ impl Step<Pasta> for FeeSeed {
         }
         let cv = max_fee_note.cv_feemax_zero(dr)?;
         let zero = Element::constant(dr, Fp::ZERO);
-        let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero)?;
         // With a zero maximum and fee, the change note is the max-fee note.
         let fee_change = max_fee_note.commitment(dr)?;
+        let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero, &fee_change)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
@@ -1121,19 +1135,15 @@ impl Step<Pasta> for FeeSeed {
 ///
 /// Both columns are products of linear factors, so unique factorization in
 /// $\mathbb{F}_p\[X\]$ places the divisor's digest multiset inside the
-/// dividend's. Repeated roots subtract by multiplicity. A digest determines
-/// its tachygrams at a fixed epoch. The epoch closes through consensus anchor
-/// membership: the output threads the dividend's anchor, a span folds only
-/// under the `Tachyon-AnchorSt` domain, and
-/// [`SpendableInit`](super::spendable::SpendableInit) absorbs the creation
-/// epoch. Once consensus checks the published anchor, every spend leaf beneath
-/// it derived its nullifier pair at that anchor's epoch, and the tachygram
+/// dividend's. Repeated roots subtract by multiplicity. Each action digest
+/// absorbs its tachygram pair's sum and product, which fix the pair as a
+/// multiset, and each fee digest absorbs its fee change. By Poseidon
+/// collision resistance a digest determines its tachygrams, and the tachygram
 /// quotient is exactly the removed leaves' tachygrams.
 ///
-/// This rests on Poseidon collision resistance, Pedersen binding, discrete
-/// log, and Poseidon preimage resistance composed through a discrete-log
-/// relation. [`NoteSeed`](super::delegation::NoteSeed) derives `pk` and
-/// [`SpendAction`] checks it, which closes that relation in-circuit.
+/// This quotient argument rests on the product check at a challenge fixed
+/// after every set commitment, the commitments' binding, and collision
+/// resistance of the domain-separated action and fee digests.
 ///
 /// Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in
 /// hand, and merging in a complement first lets division remove any leaf

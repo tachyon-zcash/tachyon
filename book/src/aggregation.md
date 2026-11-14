@@ -57,13 +57,13 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
-Tachygrams in a stamp must be distinct.
-Parsing and [bundle validation](./bundle.md#stamp-trailer) fix the list and its commitment.
+Tachygrams covered by a stamp must be distinct.
+[Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
 [`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
-Validation recomputes `cTachygrams` from the distinct `vTachygrams`, so such a stamp fails verification.
+Validation recomputes `cTachygrams` from the derived union, so such a stamp fails verification.
 An honest aggregator never merges stamps whose tachygram sets overlap.
 
-The tachygram cap in the [stamp trailer](./bundle.md#stamp-trailer) bounds a stamp at $2N + B \le 2^{13} - 1$, so one aggregate covers at most 4,095 actions.
+The derived union holds at most $2^{13} - 1$ tachygrams, so one aggregate covers at most 4,095 actions, with each covered bundle's fee change also taking space.
 This follows from Ragu's production rank and is not a policy limit.
 
 ### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
@@ -145,15 +145,15 @@ flowchart LR
 
 ## Action set indicator
 
-An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header: a verifier reconstructs the header from the covered actions. Within a block that material is all at hand, since each adjunct points to its aggregate by `wtxid`. Before block inclusion it is not: aggregators publish only their merged transactions, and the ambiguity between actions and tachygrams makes a nearly-complete collection of adjuncts hard to recognize without falling back on full proof verification.
+An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header: a verifier reconstructs the header from the covered bundles. Within a block that material is all at hand, since each adjunct points to its aggregate by `wtxid`. Before block inclusion, an observer needs a way to recognize a complete collection of candidate adjuncts without full proof verification.
 
-To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_feemax || LE64(fee)` of every [fee descriptor](./fee.md) it covers. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the proof. The proof binds the same actions and fee descriptors as a Pedersen commitment to their Poseidon digests; recomputing the trailer digest is the cheap check, and it is a separate construction over the same set rather than a copy of the one the proof carries.
+To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_feemax || LE64(fee)` coverage entries of every [fee descriptor](./fee.md) it covers. The indicator excludes action pairs and fee changes. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the stamp proof. The stamp proof binds the descriptors together with their tachygrams through a Pedersen commitment to their Poseidon digests.
 
-A stripped adjunct keeps its fee descriptor: `cvFeeMaxTachyon` in the bundle body and `vFeeTachyon` in the stripped trailer. The covering verifier collects every covered fee descriptor from the published bundles.
+A stripped adjunct keeps its action pairs and fee descriptor: `cvFeeMaxTachyon` in the bundle body, and `vFeeTachyon` and `cmFeeChangeTachyon` in the stripped trailer. The covering verifier collects these from the published bundles.
 
 The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
 
-Coverage verification uses it as the first of two fast-fail gates. It recomputes the digest over the candidate collection's action descriptors and fee descriptors and, on disagreement with the carried `hStampCoverageTachyon`, fails before attempting the expensive proof verification. It then checks the tachygram arity, `nTachygrams == 2 * covered actions + covered bundles`, which the fixed ratios make an exact test: a stamp short of the arity has reused a tachygram, since the published tachygrams are a set.
+Coverage verification recomputes the indicator over the candidate collection's action descriptors and fee coverage entries and fails on disagreement before attempting stamp proof verification. Tachygram validation derives the union of all covered action pairs and fee changes, rejects repeated members and an oversized union, and checks `cTachygrams`.
 
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.

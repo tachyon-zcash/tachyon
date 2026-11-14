@@ -8,8 +8,8 @@ use ragu_core::pasta::Pasta;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note,
+    Tachygram, TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,
@@ -243,7 +243,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             Some("StampLift: stamp anchor is neither the span's start nor a member"),
         ),
     ] {
-        let (stamp, plan, fee_descriptor) =
+        let (stamp, plan, fee_descriptor, pair) =
             build_output_stamp(rng, app, stamp_anchor, user.random_note(200));
         let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
             app.bridge_hash(stamp.tachygram_set.as_ref().to_affine())
@@ -257,7 +257,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             witness::stamp_lift(
                 (*stamp_pcd.data(), *span.data()),
                 ActionSetPoly::from_iter([
-                    plan.digest().unwrap(),
+                    ActionDigest::new(plan.cv(), plan.rk, pair).unwrap(),
                     fee_descriptor.digest().unwrap(),
                 ]),
             ),
@@ -499,7 +499,19 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
-        Eq::from(ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()).to_affine()
+        Eq::from(
+            ActionSetPoly::from_iter([ActionDigest::new(
+                plan.cv(),
+                plan.rk,
+                (
+                    Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                    Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
+                )
+            )
+            .unwrap()])
+            .commit()
+        )
+        .to_affine()
     );
     assert_eq!(
         tachygram_commit,
@@ -1022,14 +1034,14 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         )
         .unwrap();
     assert_eq!(*pcd.data(), anchor);
+    let plan = action::Plan::output(note, theta, rcv);
+    let pair = (Tachygram::from(note.commitment()), pad);
     assert_eq!(
         pcd.commitments()[..2],
         [
             Eq::from(
-                ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv)
-                    .digest()
-                    .unwrap()])
-                .commit()
+                ActionSetPoly::from_iter([ActionDigest::new(plan.cv(), plan.rk, pair).unwrap()])
+                    .commit()
             )
             .to_affine(),
             Eq::from(
@@ -1038,11 +1050,10 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             .to_affine(),
         ]
     );
+    let foreign = action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv);
     assert_ne!(
-        action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv)
-            .digest()
-            .unwrap(),
-        action::Plan::output(note, theta, rcv).digest().unwrap()
+        ActionDigest::new(foreign.cv(), foreign.rk, pair).unwrap(),
+        ActionDigest::new(plan.cv(), plan.rk, pair).unwrap()
     );
 }
 

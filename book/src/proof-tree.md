@@ -63,11 +63,11 @@ The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`,
 
 `SpendAction` consumes that `SpendHeader`, witnessing the action entropy `theta` and the proof authorizing key.
 It requires the key to derive the header's `pk`, so the randomized action key `rk` belongs to the lineage's note, whose minted value `cv` commits to[^notes].
-It derives the action randomizer `alpha` from `theta` and `cm`, then the action digest from `cv` and `rk`, and emits `Actions` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+It derives the action randomizer `alpha` from `theta` and `cm`, then the action digest from `cv`, `rk`, and the nullifier pair's sum and product, and emits `Actions` whose tachygram set contains those same nullifiers and whose anchor is threaded from the spend.
 
 An output operation also takes two steps, `OutputBind` and `OutputAction`.
 `OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and the value commitment `cv`.
-`OutputAction` derives `alpha` from the witnessed `theta` and `cm`, adds an anchor, and emits single-action `Actions` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
+`OutputAction` derives `alpha` from the witnessed `theta` and `cm`, binds `cv`, `rk`, and the pair's sum and product in the action digest, adds an anchor, and emits single-action `Actions` whose tachygram set is that same pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
 
 A transaction with multiple spend and output actions composes them with `ActionMerge`.
 The output is `Actions` whose multisets are the union of the two inputs' at the shared anchor.
@@ -82,17 +82,17 @@ Consensus and sync services publish spans as an epoch progresses.
 A wallet lifts its stamp along the published spans to the end of the latest one.
 For the stamps published after that, it builds its own span.
 
-On publication the bundle carries the action descriptors, the fee descriptor, the tachygrams, the anchor, and the stamp proof.
+On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor including its fee change, the anchor, and the stamp proof.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 
 After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
 Each input is anchored at the height its wallet chose.
 The aggregator runs `StampLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
-The merged stamp stays with one receiving bundle and keeps that bundle's fee, and the bundles it covers are stripped to point at the receiver.
+The merged stamp stays with one receiving bundle and keeps that bundle's fee and fee change, and the bundles it covers are stripped to point at the receiver.
 An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
 `StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
-It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee.
+It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee and fee change.
 An aggregator uses it when a block includes some of its contributors while the aggregate is still being built: it divides the aggregate by the included contributors' stamps and keeps building from the quotient.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 
@@ -426,10 +426,18 @@ The note's age never becomes public. The lineage carries only its current epoch,
 ### Stamp construction {#stamp-construction}
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
-`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
+`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded. Deriving the pad from the note opening hides which member is the commitment and whether the action is an output[^tachygrams].
 Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
 `OutputAction` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
 `SpendAction` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, then the action verification key and action digest, and emits `Actions` whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
+
+Both action steps compute
+
+$$
+d = \mathsf{Poseidon}_\texttt{Tachyon-ActionDg}\bigl(x(\mathsf{cv}), y(\mathsf{cv}), x(\mathsf{rk}), y(\mathsf{rk}), \mathsf{tg}_0 + \mathsf{tg}_1, \mathsf{tg}_0\mathsf{tg}_1\bigr).
+$$
+
+They absorb the same two tachygram wires whose roots they enforce in the tachygram set. The sum and product fix the unordered pair by the coefficients of $(X - \mathsf{tg}_0)(X - \mathsf{tg}_1)$.
 
 Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step ([ragu#720](https://github.com/tachyon-zcash/ragu/pull/720)), and a scalar multiplication about a quarter.
 The work splits as follows, each stamp step also opening its action-set and tachygram-set polynomials:
@@ -437,18 +445,19 @@ The work splits as follows, each stamp step also opening its action-set and tach
 | Step | Permutations | Scalar multiplications |
 | ---- | ------------ | ---------------------- |
 | OutputBind | 2 (`cm`, `pad`) | 2 (`cv`) |
-| OutputAction | 2 (`alpha`, action digest) | 1 (`rk`) |
+| OutputAction | 3 (1 `alpha`, 2 action digest) | 1 (`rk`) |
 | SpendBind | 2 (nullifier pair) | 2 (`cv`) |
-| SpendAction | 3 (`pk`, `alpha`, action digest) | 1 (`rk`) |
+| SpendAction | 4 (1 `pk`, 1 `alpha`, 2 action digest) | 1 (`rk`) |
+| FeeFuse | 3 (fee blind, fee change commitment, fee digest) | 2 (`cv_feemax`) |
+| FeeSeed | 3 (fee blind, fee change commitment, fee digest) | 1 (`cv_feemax`) |
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
 `StampUnmerge` checks anchor equality, witnesses the quotient sets, and enforces, for each set, that the dividend's set polynomial is the product of the divisor's and the quotient's.
-Every stamp's action set polynomial is a product of linear factors, one per leaf digest, and its tachygram set polynomial is the product over exactly those leaves' tachygrams.
-Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's.
-Once consensus checks the published [anchor](./anchor.md), every spend leaf beneath it derived its nullifier pair at that anchor's epoch, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
+Every stamp's action set polynomial is a product of linear factors, one per action or fee digest, and its tachygram set polynomial is the product over exactly those digests' tachygrams.
+Unique factorization makes the division exact: the divisor's digests are a sub-multiset of the dividend's. Each digest determines its tachygrams by Poseidon collision resistance, so the tachygram quotient holds exactly the remaining digests' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
+`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note). Its fee digest absorbs the same fee change commitment that it adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
 
 ### Stamp anchor
 

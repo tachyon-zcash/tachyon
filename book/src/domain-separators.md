@@ -23,6 +23,7 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | Purpose | Value |
 | ------- | ----- |
 | Action descriptors | `Tachyon-Actions` |
+| Action tachygram pairs | `Tachyon-ActionTg` |
 | A stamp's fee descriptors | `Tachyon-Fees` |
 | A stamp's coverage | `Tachyon-Coverage` |
 | Memo payload | `Tachyon-Memo` |

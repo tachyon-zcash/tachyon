@@ -13,7 +13,7 @@ Before block inclusion, Tachyon shielded data is recursively 'aggregated' in a c
 
 ### Tachygrams
 
-**Tachygrams** are 32-byte field elements representing either nullifiers or note commitments. The consensus protocol does not need to distinguish between nullifiers and note commitments, and treats them identically.[^tachygram]
+**Tachygrams** are 32-byte field elements representing nullifiers, note commitments, or output padding. The consensus protocol treats them identically.[^tachygram]
 
 [^tachygram]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the design rationale behind unified tachyactions and tachygrams.
 [^ragu]: See the Ragu [book](https://tachyon.z.cash/ragu/).
@@ -26,11 +26,14 @@ Each **tachyaction** indistinguishably represents either the creation or destruc
 - A tachyaction with a commitment tachygram proves a note is created.
 - A tachyaction with a nullifier tachygram proves a note is destroyed.
 
-**Each tachyaction is cryptographically bound to one tachygram, but does not contain that tachygram.* A tachyaction *does* contain:
+Each tachyaction contains:
 
 - `cv` - a 32-byte homomorphic commitment to the note's created or destroyed value
-- `rk` - a 32-byte public key[^ragu-rerandomization] bound to one tachygram
+- `rk` - a 32-byte public key[^ragu-rerandomization]
+- `tachygrams` - an unordered pair of 32-byte [tachygrams](./tachygrams.md), encoded in strictly ascending order
 - `sig` - a 64-byte RedPallas[^redpallas] signature by `rk` over the transaction sighash
+
+The action digest binds `cv`, `rk`, and the pair through its sum and product. The signature signs the effecting descriptor `(cv, rk)` through the transaction sighash; the pair is authorization data.
 
 [^ragu-rerandomization]: Ragu's [proof rerandomization](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization) conceals private proof inputs by selecting new unrelated proof inputs that verify identically.
 
@@ -41,10 +44,10 @@ The **tachystamp** is a recursive zero-knowledge proof that all related tachyact
 It contains:
 
 - `fee` - the fee the carrying bundle pays, chosen at or below its signed maximum
+- `fee_change` - that bundle's fee change note commitment
 - `coverage` - a digest of the action and fee descriptors the proof covers
 - `anchor` - a chain [anchor](./anchor.md)
-- `tachygram_set` - a commitment to the tachygrams below
-- `tachygrams` - two per action (a spend's two nullifiers, or an output's commitment and padding), plus one fee change note commitment per covered bundle
+- `tachygram_set` - a commitment to the union of the covered actions' pairs and covered bundles' fee change note commitments
 - `proof` - the recursive proof (which may be aggregated)
 
 The proof establishes:
@@ -77,7 +80,7 @@ A Tachyon bundle collects tachyactions with authorization data:
 - `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
 - `memo` - opaque recipient-directed payload, empty when absent
-- `tachystamp` - fee, coverage, anchor, tachygram set, tachygrams, proof (may be aggregated or replaced by a pointer)
+- `tachystamp` - fee, fee change, coverage, anchor, tachygram set commitment, stamp proof (may be aggregated or replaced by a pointer)
 
 ```mermaid
 ---
@@ -92,8 +95,7 @@ style tachyaction2 fill:#7fffd440,stroke:black
 style tachyaction3 fill:#7fffd440,stroke:black
 style tachyaction_vec fill:#7fffd440,stroke:black
 
-style tachygram_vec fill:#ffa50040,stroke:black
-style proof fill:#da70d640
+style stamp_proof fill:#da70d640
 style anchor fill:#f0fff040
 
 style tachystamp fill:#7fff0040
@@ -105,43 +107,46 @@ subgraph shielded_data["Bundle"]
         subgraph tachyaction1["tachyaction"]
             cv1["cv"]
             rk1["rk"]
+            tg1["tachygram pair"]
             sig1:::signature@{shape: hex, label: "sig"}
         end
 
        subgraph tachyaction2["tachyaction"]
             cv2["cv"]
             rk2["rk"]
+            tg2["tachygram pair"]
             sig2:::signature@{shape: hex, label: "sig"}
         end
 
        subgraph tachyaction3["tachyaction"]
             cv3["cv"]
             rk3["rk"]
+            tg3["tachygram pair"]
             sig3:::signature@{shape: hex, label: "sig"}
         end
     end
 
     subgraph tachystamp
         fee
+        fee_change
         coverage
         tachygram_set
         anchor@{shape: odd}
-        proof@{shape: notch-rect}
-        tachygram_vec@{shape: procs, label: "tachygram"}
+        stamp_proof@{shape: notch-rect, label: "stamp proof"}
 
-        anchor ---> proof
-        tachygram_vec ---> proof
+        anchor ---> stamp_proof
+        fee & fee_change & tachygram_set ---> stamp_proof
     end
 
-    rk1 & rk2 & rk3 -.- tachygram_vec
-    cv1 & cv2 & cv3 ---> proof
+    rk1 & rk2 & rk3 & tg1 & tg2 & tg3 ---> stamp_proof
+    cv1 & cv2 & cv3 ---> stamp_proof
 
     sig_binding:::signature@{shape: hex, label: "binding_sig"}
     v_balance["value_balance"]
     cv_feemax["cv_feemax"]
     memo
 
-    cv_feemax ---> proof
+    cv_feemax ---> stamp_proof
 
     v_balance ===> sig_binding
     cv_feemax ===> sig_binding
@@ -163,8 +168,8 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped (`ProofStamp`) | bundle with fee, `hStampCoverageTachyon`, anchor, tachygram set commitment, tachygrams, proof |
-| `0b0000_0010` | stripped (`PointerStamp`) | bundle with fee and the covering aggregate's `wtxid` |
+| `0b0000_0001` | stamped (`ProofStamp`) | bundle with fee, fee change, `hStampCoverageTachyon`, anchor, tachygram set commitment, stamp proof |
+| `0b0000_0010` | stripped (`PointerStamp`) | bundle with fee, fee change, and the covering aggregate's `wtxid` |
 
 ### Bundle body
 
@@ -174,7 +179,7 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | --- | --- | --- |
 | `valueBalanceTachyon` | i64 | net value of tachyon actions, with the max fee note counted as an output |
 | `nActionsTachyon` | compactsize | number of tachyon actions |
-| `vActionsTachyon` | 64 * nActionsTachyon | `cv` (32 bytes), `rk` (32 bytes) |
+| `vActionsTachyon` | 128 * nActionsTachyon | `cv`, `rk`, `tg_lo`, `tg_hi` (32 bytes each) |
 | `cvFeeMaxTachyon` | 32 bytes | [max fee note](./fee.md) value commitment |
 | `vActionSigsTachyon` | 64 * nActionsTachyon | authorization per action over the tx sighash |
 | `bindingSigTachyon` | 64 bytes | binding signature over the tx sighash |
@@ -183,9 +188,11 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 
 `cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance, where `vFeeTachyon` is the fee its trailer carries.
 
+Each action's tachygram pair must be strictly ascending by bytewise comparison of its 32-byte little-endian encodings. Parsing rejects any other order or equal members. Stripping retains the pairs in the bundle body.
+
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
-`nMemoTachyon` is public, and `0` reveals that no payload is present. The field is variable-length because Tachyon has no per-action ciphertext to hide a memo inside: an action is `(cv, rk)`, 64 bytes. The payload is also bimodal, carrying key-exchange ciphertexts on first contact and ordinary memo text otherwise, at sizes differing by more than an order of magnitude. A fixed field would have to be sized for the first-contact case and charged on every transaction.
+`nMemoTachyon` is public, and `0` reveals that no payload is present. The field is variable-length because Tachyon has no per-action ciphertext to hide a memo inside. The payload is also bimodal, carrying key-exchange ciphertexts on first contact and ordinary memo text otherwise, at sizes differing by more than an order of magnitude. A fixed field would have to be sized for the first-contact case and charged on every transaction.
 
 ### Stamp trailer {#stamp-trailer}
 
@@ -194,27 +201,16 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | Name | Format | Description |
 | --- | --- | --- |
 | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
+| `cmFeeChangeTachyon` | 32 bytes | carrying bundle's fee change note commitment |
 | `hStampCoverageTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors and fee descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
-| `cTachygrams` | 32 bytes | commitment to the tachygrams below |
-| `nTachygrams` | compactSize | number of tachygrams |
-| `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
+| `cTachygrams` | 32 bytes | commitment to the tachygram union derived from covered bundles |
 | `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
 | `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
 
-`vTachygrams` must be non-empty and strictly ascending by bytewise comparison of each 32-byte little-endian encoding, the order the stamp digest commits to.
-It holds at most $2^{13} - 1$ entries, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$.
-Parsing rejects any other list.
+Full validation derives the tachygram union from every covered action's pair and every covered bundle's `cmFeeChangeTachyon`. It rejects any repeated member and a union larger than $2^{13} - 1$ members: a set polynomial with $n$ roots has $n + 1$ coefficients, and Ragu's production rank gives $2^{13}$.
 
-`cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
-
-Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore has
-
-$$
-\mathtt{nTachygrams} = 2N + B.
-$$
-
-A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set. A max fee note publishes its fee change note's commitment.
+`cTachygrams` is carried, so full validation recomputes it from that union and rejects a mismatch. Anchor advancement absorbs the carried point, letting a validator extend the chain without touching the tachygrams again.
 
 `hStampCoverageTachyon` is an assistive indicator built from two sub-digests:
 
@@ -226,7 +222,7 @@ $$
 \end{aligned}
 $$
 
-$\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+$\mathsf{hStampActionsTachyon}$ hashes the 64-byte descriptor $a_i$ of every action the stamp covers, excluding its pair. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor, excluding its fee change. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the stamp proof. The stamp proof binds the descriptors together with their tachygrams through a Pedersen commitment to their Poseidon digests. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
@@ -241,6 +237,7 @@ When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped tra
 | Name | Format | Description |
 | --- | --- | --- |
 | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
+| `cmFeeChangeTachyon` | 32 bytes | carrying bundle's fee change note commitment |
 | `tachyonAggregateId` | 64 bytes | nonzero `wtxid` of the covering aggregate |
 
 Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.

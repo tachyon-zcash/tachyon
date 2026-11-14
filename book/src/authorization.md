@@ -1,6 +1,6 @@
 # Authorization
 
-A Tachyon bundle requires three layers of authorization: per-action signatures that bind each tachyaction to its tachygram, value commitments that hide individual values while preserving their algebraic sum, and a binding signature that proves the declared balance is correct.
+A Tachyon bundle requires per-action signatures, value commitments that hide individual values while preserving their algebraic sum, and a binding signature that proves the declared balance is correct. The stamp binds each action to its tachygram pair.
 This chapter covers each layer, then shows the complete flow from action creation through consensus.
 
 ## Actions
@@ -31,7 +31,7 @@ flowchart TB
     output_alpha -->|"rsk = alpha"| sign
 
     sign(("sign(rsk, sighash)"))
-    sign --- action["action { cv, rk, sig }"]
+    sign --- action["signed action { cv, rk, sig }"]
 ```
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
@@ -91,13 +91,13 @@ $$
 \bigr)
 $$
 
-The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
+The action descriptor digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the descriptors and their order. The tachygram pairs are authorization data and are excluded. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
 
 $\mathsf{cvFeeMaxTachyon}$ is the [max fee note](./fee.md)'s value commitment. The fee is authorization data and stays out of the bundle commitment.
 
 The stamp proof binds the same actions by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-change-note) $d_{\fee,j}$ of the covered bundles,
 
-$$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
+$$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}\bigl(x(\mathsf{cv}_i), y(\mathsf{cv}_i), x(\mathsf{rk}_i), y(\mathsf{rk}_i), \mathsf{tg}_{i,0} + \mathsf{tg}_{i,1}, \mathsf{tg}_{i,0}\mathsf{tg}_{i,1}\bigr) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr) \prod_j \bigl(X - d_{\fee,j}\bigr)\Bigr) $$
 
 which is order-independent, as a set commitment must be to survive [aggregation](./aggregation.md). The BLAKE2b digest and the action accumulator both fix the actions and are not interchangeable.
@@ -111,7 +111,7 @@ The sighash is computed at the transaction layer, incorporating the bundle commi
 The tachyon crate contributes its bundle commitment; a transaction-level crate computes the sighash and passes it in as opaque bytes.
 
 This binds every signature to the complete set of effecting data across all pools.
-The stamp steps derive `alpha` in-circuit from the witnessed `theta` and the `cm` their left header certifies, so `rk` is itself a commitment to `cm`, and the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+The stamp steps derive `alpha` in-circuit from the witnessed `theta` and the `cm` their left header certifies. The action digest binds `cv`, `rk`, and the unordered tachygram pair, absorbing the same pair whose roots the step enforces in its tachygram set.
 
 Tachyon also contributes to the transaction-level `auth_digest` that backs `wtxid`. See [Transaction Identifiers](./transaction-identifiers.md) for the formula and how aggregation changes the authorization form.
 
@@ -216,6 +216,7 @@ flowchart LR
             binding_sig
             memo_2[memo]
             fee
+            fee_change
             stamp
         end
         other2@{ shape: st-doc, label: "other tx data" }
@@ -233,8 +234,9 @@ flowchart LR
         end
     end
     action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- stamp
+    leaf -.-|tachygram pairs| action
     zero_actions["0 actions"] -.- fee_seed -.- stamp
-    max_fee_note -.- fee_fuse & fee_seed -.- fee
+    max_fee_note -.- fee_fuse & fee_seed -.- fee & fee_change
 
 
     sighash ~~~ binding
@@ -261,7 +263,7 @@ flowchart LR
 
 Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
 
-A modified action breaks both checks.
+A modified descriptor breaks both checks. A modified pair breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md).
 
 ## Detailed Sequence
 
@@ -270,8 +272,6 @@ Custody is drawn as a separate participant for a device-split integration that d
 `Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
 Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
-
-The tachygram set commitment and stamp trailer fields below describe the design on `main` today; [#226](https://github.com/tachyon-zcash/tachyon/issues/226) may redesign them.
 
 ```mermaid
 sequenceDiagram
@@ -373,7 +373,7 @@ and Proving
                 note over Stamper: pk == Poseidon_PkDerive(x(ak), y(ak), nk)
                 note over Stamper: alpha = Poseidon_Spend(theta, cm)
                 note over Stamper: rk = ak + [alpha]G
-                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
+                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk), nf_e + nf_next, nf_e * nf_next)
                 note over Stamper: Actions (Commit(X - d), Commit((X - nf_e)(X - nf_next)), anchor)
             end
             loop per supplied anchor span, possibly none
@@ -391,7 +391,7 @@ and Proving
             critical OutputAction(OutputHeader), witness theta, anchor
                 note over Stamper: alpha = Poseidon_Output(theta, cm)
                 note over Stamper: rk = [alpha]G
-                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk))
+                note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk), cm + pad, cm * pad)
                 note over Stamper: Actions (Commit(X - d), Commit((X - cm)(X - pad)), anchor)
             end
         end
@@ -409,14 +409,14 @@ and Proving
         alt no actions
             critical FeeSeed, witness max_fee_note, anchor
                 note over Stamper: feemax == 0, so fee == 0
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0)
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0, cm_chg)
                 note over Stamper: Stamp (Commit(X - d_fee), Commit(X - cm_chg), anchor)
             end
         else
             critical FeeFuse(Actions), witness max_fee_note, fee
-                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee)
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, feemax - fee, psi)
+                note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee, cm_chg)
                 note over Stamper: fee_action = action_poly * (X - d_fee)
                 note over Stamper: fee_tg = tg_poly * (X - cm_chg)
                 note over Stamper: Stamp (Commit(fee_action), Commit(fee_tg), anchor)
@@ -425,16 +425,17 @@ and Proving
         note over Stamper: rerandomize proof
         note over Stamper: hStampCoverageTachyon = Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
         destroy Stamper
-        Stamper ->> User: ProofStamp { fee, coverage, anchor, tachygram_set, tachygrams, proof }
+        Stamper ->> User: ProofStamp { fee, fee_change, coverage, anchor, tachygram_set, proof }, descriptor-to-pair map
+        note over User: attach each ascending pair to its signed action
 
         break
-            note over User: rebuild header from own descriptors, fee descriptor and tachygrams, verify proof
+            note over User: rebuild header from action descriptors and pairs, fee descriptor and fee change, verify stamp proof
         end
     end
 end
 
 create participant Consensus
-note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, stamp { fee, coverage, anchor, tachygram_set, tachygrams, proof } }
+note over User: transaction { actions with pairs[], value_balance, cv_feemax, binding_sig, memo, stamp { fee, fee_change, coverage, anchor, tachygram_set, proof } }
 deactivate User
 destroy User
 User ->> Consensus: transaction
@@ -455,12 +456,13 @@ break verify_coverage
     note over Consensus: hStampCoverageTachyon == Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
 end
 break verify_tachygrams
-    note over Consensus: nTachygrams == 2N + B
+    note over Consensus: derive tachygrams from covered action pairs and fee changes
+    note over Consensus: reject repeated members and an oversized union
     note over Consensus: cTachygrams == Commit(product over tachygrams of (X - tg))
 end
 break verify_proof
-    note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i))
-    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j)
+    note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i), tg_i0 + tg_i1, tg_i0 * tg_i1)
+    note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j, cm_chg_j)
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
     note over Consensus: verify proof against Stamp (action_acc, cTachygrams, anchor)
 end
