@@ -157,7 +157,7 @@ impl FromIterator<Anchor> for AnchorSetPoly {
 impl TachygramSetPoly {
     /// Skip set encoding for tests of non-canonical polynomials.
     #[cfg(test)]
-    pub(crate) fn from_noncanonical_for_test(poly: Polynomial<Fp, ProductionRank>) -> Self {
+    pub(crate) const fn from_noncanonical_for_test(poly: Polynomial<Fp, ProductionRank>) -> Self {
         Self(poly)
     }
 

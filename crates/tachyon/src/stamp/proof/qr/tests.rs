@@ -63,13 +63,17 @@ fn descend(
         sides.clone(),
         PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
     )?;
-    assert!(
-        PROOF_SYSTEM
-            .verify_differential(&selected, &mut *rng)
-            .unwrap()
-    );
+    if !PROOF_SYSTEM.verify_differential(&selected, &mut *rng)? {
+        return Err(ragu_core::Error::InvalidWitness(
+            "selection proof failed verification".into(),
+        ));
+    }
     let (child, ()) = PROOF_SYSTEM.fuse(rng, QrSideDescend, (bit,), sides.clone(), selected)?;
-    assert!(PROOF_SYSTEM.verify_differential(&child, &mut *rng).unwrap());
+    if !PROOF_SYSTEM.verify_differential(&child, &mut *rng)? {
+        return Err(ragu_core::Error::InvalidWitness(
+            "child proof failed verification".into(),
+        ));
+    }
     Ok(child)
 }
 
@@ -143,6 +147,7 @@ fn exclude_and_bind(
 
 /// Reciprocal scaling bypasses canonical-form checks without changing roots.
 #[test]
+#[expect(clippy::cognitive_complexity, reason = "keep the test cases inline")]
 fn qr_split_rules_test_canonical_form_only() {
     let rng = &mut StdRng::seed_from_u64(0);
     let discriminant = QrDiscriminant::random(rng);
@@ -201,12 +206,12 @@ fn qr_split_rules_test_canonical_form_only() {
             if err.to_string() == "QrSideDescend: the two sides agree at the challenge"
     );
 
-    let mut scaled_non_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
-    scaled_non_residue.scale(scale);
-    let scaled_non_residue = TachygramSetPoly::from_noncanonical_for_test(scaled_non_residue);
-    let mut scaled_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
-    scaled_residue.scale(scale_inv);
-    let scaled_residue = TachygramSetPoly::from_noncanonical_for_test(scaled_residue);
+    let mut non_residue_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    non_residue_poly.scale(scale);
+    let scaled_non_residue = TachygramSetPoly::from_noncanonical_for_test(non_residue_poly);
+    let mut residue_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    residue_poly.scale(scale_inv);
+    let scaled_residue = TachygramSetPoly::from_noncanonical_for_test(residue_poly);
     for (poly, factor) in [(&scaled_non_residue, scale), (&scaled_residue, scale_inv)] {
         assert_eq!(
             poly.as_ref()
@@ -244,12 +249,12 @@ fn qr_split_rules_test_canonical_form_only() {
     );
 
     let single = [member];
-    let mut held: Polynomial<Fp, ProductionRank> = monic.clone().into();
-    held.scale(scale);
-    let held = TachygramSetPoly::from_noncanonical_for_test(held);
-    let mut constant: Polynomial<Fp, ProductionRank> = empty.clone().into();
-    constant.scale(scale_inv);
-    let constant = TachygramSetPoly::from_noncanonical_for_test(constant);
+    let mut held_poly: Polynomial<Fp, ProductionRank> = monic.into();
+    held_poly.scale(scale);
+    let held = TachygramSetPoly::from_noncanonical_for_test(held_poly);
+    let mut constant_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    constant_poly.scale(scale_inv);
+    let constant = TachygramSetPoly::from_noncanonical_for_test(constant_poly);
     assert_eq!(
         held.as_ref()
             .iter_stored_coeffs()
@@ -315,12 +320,12 @@ fn qr_split_rules_test_canonical_form_only() {
         PROOF_SYSTEM.commit(&[Fp::ONE]).unwrap()
     );
 
-    let mut first: Polynomial<Fp, ProductionRank> = empty.clone().into();
-    first.scale(deep_scale);
-    let first = TachygramSetPoly::from_noncanonical_for_test(first);
-    let mut second: Polynomial<Fp, ProductionRank> = empty.clone().into();
-    second.scale(deep_cofactor);
-    let second = TachygramSetPoly::from_noncanonical_for_test(second);
+    let mut first_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    first_poly.scale(deep_scale);
+    let first = TachygramSetPoly::from_noncanonical_for_test(first_poly);
+    let mut second_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    second_poly.scale(deep_cofactor);
+    let second = TachygramSetPoly::from_noncanonical_for_test(second_poly);
     assert_eq!(
         first
             .as_ref()
@@ -413,6 +418,7 @@ fn qr_split_rules_test_canonical_form_only() {
 
 /// Scaled and monic buckets give identical answers through [`SpendBind`].
 #[test]
+#[expect(clippy::cognitive_complexity, reason = "keep the test cases inline")]
 fn scaled_qr_buckets_answer_as_honest_buckets() {
     let rng = &mut StdRng::seed_from_u64(1);
     let epoch = EpochIndex::new(0);
@@ -440,11 +446,11 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         rcm: note::CommitmentTrapdoor::random(rng),
     })
     .find(|candidate| {
-        let nf = pak
+        let candidate_nf = pak
             .nk
             .derive_note_private(candidate.psi)
             .derive_nullifier(epoch);
-        classify(Fp::from(Tachygram::from(nf)), discriminant.at(0)).0 != side
+        classify(Fp::from(Tachygram::from(candidate_nf)), discriminant.at(0)).0 != side
     })
     .unwrap();
     let other_nf = Tachygram::from(
@@ -527,12 +533,12 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
             .unwrap()
     );
 
-    let mut held: Polynomial<Fp, ProductionRank> = monic.clone().into();
-    held.scale(scale);
-    let held = TachygramSetPoly::from_noncanonical_for_test(held);
-    let mut constant: Polynomial<Fp, ProductionRank> = empty.clone().into();
-    constant.scale(scale_inv);
-    let constant = TachygramSetPoly::from_noncanonical_for_test(constant);
+    let mut held_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    held_poly.scale(scale);
+    let held = TachygramSetPoly::from_noncanonical_for_test(held_poly);
+    let mut constant_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    constant_poly.scale(scale_inv);
+    let constant = TachygramSetPoly::from_noncanonical_for_test(constant_poly);
     let (non_residue, residue) = if side {
         (constant, held)
     } else {
@@ -580,7 +586,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     );
     let mut first: Polynomial<Fp, ProductionRank> = empty.clone().into();
     first.scale(deep_scale);
-    let mut second: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    let mut second: Polynomial<Fp, ProductionRank> = empty.into();
     second.scale(deep_cofactor);
     let (deep_sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -723,15 +729,15 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         Ok(bucket)
     };
     let held_profile = QrProfile::ROOT.descend(side);
-    let mut scaled_monic: Polynomial<Fp, ProductionRank> = monic.clone().into();
-    scaled_monic.scale(scale);
-    let scaled_monic = TachygramSetPoly::from_noncanonical_for_test(scaled_monic);
+    let mut scaled_monic_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_monic_poly.scale(scale);
+    let scaled_monic = TachygramSetPoly::from_noncanonical_for_test(scaled_monic_poly);
     let opened_scaled_held = open(0, held_profile, scaled_monic.clone()).unwrap();
     assert_eq!(*opened_scaled_held.data(), *scaled_held.data());
     let opened_honest_held = open(2, held_profile, monic.clone()).unwrap();
     assert_eq!(*opened_honest_held.data(), *honest_held.data());
     assert_matches!(
-        open(0, held_profile, monic.clone()).err(),
+        open(0, held_profile, monic).err(),
         Some(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
     );
@@ -823,6 +829,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
 }
 
 #[test]
+#[expect(clippy::cognitive_complexity, reason = "keep the test cases inline")]
 fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let rng = &mut StdRng::seed_from_u64(2);
     let epoch = EpochIndex::new(0);
@@ -1041,20 +1048,20 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let mut unspents = Vec::new();
     for (held, stray) in [(&duplicate_held, &scaled_stray), (&pair_held, &monic_stray)] {
         let unspent = exclude_and_bind(rng, held, note, pak);
-        let (spendable, ()) = PROOF_SYSTEM
+        let (held_spendable, ()) = PROOF_SYSTEM
             .fuse(rng, QrSpendableInit, (), unspent.clone(), held.clone())
             .unwrap();
         assert!(
             PROOF_SYSTEM
-                .verify_differential(&spendable, &mut *rng)
+                .verify_differential(&held_spendable, &mut *rng)
                 .unwrap()
         );
-        let (spendable, ()) = PROOF_SYSTEM
+        let (stray_spendable, ()) = PROOF_SYSTEM
             .fuse(rng, QrSpendableInit, (), unspent.clone(), stray.clone())
             .unwrap();
         assert!(
             PROOF_SYSTEM
-                .verify_differential(&spendable, &mut *rng)
+                .verify_differential(&stray_spendable, &mut *rng)
                 .unwrap()
         );
         let (segment, ()) = PROOF_SYSTEM
