@@ -122,7 +122,6 @@ impl AnchorSetCommit {
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
-#[cfg_attr(test, derive(From))]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
@@ -156,6 +155,12 @@ impl FromIterator<Anchor> for AnchorSetPoly {
 }
 
 impl TachygramSetPoly {
+    /// Skip set encoding for tests of non-canonical polynomials.
+    #[cfg(test)]
+    pub(crate) fn from_noncanonical_for_test(poly: Polynomial<Fp, ProductionRank>) -> Self {
+        Self(poly)
+    }
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> TachygramSetCommit {

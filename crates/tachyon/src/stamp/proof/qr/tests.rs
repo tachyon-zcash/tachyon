@@ -75,7 +75,7 @@ fn bootstrap() -> Pcd<Pasta, ProductionRank, ()> {
 fn scaled(poly: &TachygramSetPoly, by: Fp) -> TachygramSetPoly {
     let mut inner: Polynomial<Fp, ProductionRank> = poly.clone().into();
     inner.scale(by);
-    TachygramSetPoly::from(inner)
+    TachygramSetPoly::from_noncanonical_for_test(inner)
 }
 
 fn nonzero_coeffs(poly: &TachygramSetPoly) -> Vec<(usize, Fp)> {
