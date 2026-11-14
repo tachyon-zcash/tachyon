@@ -521,7 +521,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let note = wallet.random_note(200);
     let (stamp, plan, fee_descriptor) = build_output_stamp(rng, app, pool.anchor(), note);
     let stamped_at = pool.height();
-    pool.advance(2, |_| random_block(rng, 1, 4));
+    pool.advance(2, |_| random_block(rng, 1, 1));
     let lifted_to = pool.height();
     let fees = BTreeSet::from([fee_descriptor]);
     let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
@@ -578,7 +578,7 @@ fn merge_after_lift() {
     let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, app, pool.anchor(), note_a);
     let height_a = pool.height();
 
-    pool.advance(3, |_| random_block(rng, 1, 4));
+    pool.advance(3, |_| random_block(rng, 1, 1));
     let note_b = user_b.random_note(300);
     let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, app, pool.anchor(), note_b);
     let height_b = pool.height();

@@ -499,7 +499,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         )
         .unwrap();
 
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
     let lifted = left
         .lift(

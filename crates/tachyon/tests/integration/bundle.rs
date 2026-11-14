@@ -316,7 +316,7 @@ fn based_aggregate_with_two_adjuncts() {
     let b_spend = wallet.random_note(500);
     let b_output = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.mine(random_block_with(
         rng,
         &[
@@ -324,12 +324,10 @@ fn based_aggregate_with_two_adjuncts() {
             vec![a_spend.commitment()],
             vec![b_spend.commitment()],
         ],
-        50,
+        3,
     ));
     let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    pool.mine_through(rng, BlockHeight(EPOCH_SIZE));
 
     let spend_epoch = cm_height.epoch().next().unwrap();
     let based_sp = wallet.spendable_at(rng, app, &pool, &based_spend, spend_epoch);
@@ -952,7 +950,7 @@ fn bundle_lift_preserves_coverage() {
             if reason.to_string() == "no anchor span proof for no anchor advance"
     );
 
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
 
     let lifted = bundle.lift(rng, app, &[], vec![span]).unwrap();
@@ -973,16 +971,14 @@ fn bundle_lift_over_an_aggregate() {
     let spend_b = wallet.random_note(500);
     let output_b = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.mine(random_block_with(
         rng,
         &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
-        50,
+        2,
     ));
     let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE - 1) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    pool.mine_through(rng, BlockHeight(EPOCH_SIZE - 1));
 
     let sp_a = wallet.spendable_at(rng, app, &pool, &spend_a, cm_height.epoch().next().unwrap());
     let sp_b = wallet.spendable_at(rng, app, &pool, &spend_b, cm_height.epoch().next().unwrap());
@@ -1055,7 +1051,7 @@ fn bundle_lift_over_an_aggregate() {
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
     pool.advance(1, |_| vec![]);
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
 
     let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();
