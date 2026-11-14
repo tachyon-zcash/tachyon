@@ -1,0 +1,13 @@
+[book]
+authors = ["The Tachyon contributors"]
+language = "en"
+src = "src"
+title = "The Tachyon Study Guide"
+
+[preprocessor.katex]
+after = ["links"]
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "rust"
+hash-files = true

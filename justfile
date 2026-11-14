@@ -37,6 +37,10 @@ _book_setup: _install_binstall
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
 
+# locally [build | serve | watch] the Tachyon study guide
+study_guide COMMAND *ARGS: _book_setup
+    mdbook {{COMMAND}} ./study-guide {{ARGS}}
+
 # the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
 ci_local:
     cargo +{{_nightly}} fmt --all -- --check
