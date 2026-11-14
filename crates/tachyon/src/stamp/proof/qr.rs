@@ -635,7 +635,7 @@ impl Step<Pasta> for QrIntakeMerge {
 ///
 /// The product pins a factorization, up to reciprocal nonzero scaling.
 /// The empty-intake and equal-side checks constrain canonical forms only;
-/// bucket consumers depend only on roots. [`QrSideSelect`] checks the
+/// the tested bucket openings depend only on roots. [`QrSideSelect`] checks the
 /// exceptional-value assignment, and [`QrSideDescend`] attests each child's
 /// sibling. The contents and both sides open once at the product challenge.
 #[derive(Debug)]
