@@ -89,10 +89,10 @@ impl Header<Fp> for NoteSpendable {
 /// # Soundness
 ///
 /// `anchor_prev`, `creation_epoch` and the creation set close through
-/// consensus anchor membership: the fold absorbs the epoch and the set commit,
-/// a genuine chain node is `H(prev || epoch || commit)` under the stamp
-/// domain, and preimage resistance forces all three once the eventual spend's
-/// anchor is consensus-checked, a wrong epoch landing off the published
+/// consensus anchor membership: the fold absorbs the epoch and O1's bridge hash
+/// $B$, a genuine chain node is `H(prev || epoch || x(B) || y(B))` under the
+/// stamp domain, and preimage resistance forces all three once the eventual
+/// spend's anchor is consensus-checked, a wrong epoch landing off the published
 /// sequence.
 ///
 /// The step tests no exclusion. The spendable sits immediately after the
