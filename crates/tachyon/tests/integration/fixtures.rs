@@ -7,7 +7,7 @@ use ragu::{
     header::Header,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_circuits::polynomials::{ProductionRank, Rank as _, sparse::Polynomial};
 use ragu_core::{
     PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
@@ -524,11 +524,13 @@ pub(crate) fn build_lift_span<RNG: CryptoRng>(
     build_anchor_span_pcd(rng, pool, range).0
 }
 
+#[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
     pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
+#[derive(Clone)]
 pub(crate) struct QrBucketEntry {
     pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrBucket>,
     pub members: Vec<Tachygram>,
@@ -682,35 +684,64 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
     intake: QrIntakeEntry,
 ) -> (QrIntakeEntry, QrIntakeEntry) {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *intake.pcd.data();
-    let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
+    let (residue, non_residue) = intake
+        .members
+        .iter()
+        .copied()
+        .partition(|&member| qr::classify(Fp::from(member), discriminant.at(profile.depth)).0);
+    split_qr_intake_with_factors(
+        rng,
+        intake,
+        [false, true],
+        &[(non_residue, Fp::ONE), (residue, Fp::ONE)],
+    )
+    .into()
+}
+
+pub(crate) fn scaled_qr_contents(members: &[Tachygram], scale: Fp) -> TachygramSetPoly {
+    let monic: TachygramSetPoly = members.iter().copied().collect();
+    let mut poly: Polynomial<Fp, ProductionRank> = monic.into();
+    poly.scale(scale);
+    TachygramSetPoly::arbitrary(poly)
+}
+
+/// Explicit factors in non-residue/residue order, including their scalar
+/// factors.
+pub(crate) fn split_qr_intake_with_factors<RNG: CryptoRng, const N: usize>(
+    rng: &mut RNG,
+    intake: QrIntakeEntry,
+    kept: [bool; N],
+    factors: &[(Vec<Tachygram>, Fp); 2],
+) -> [QrIntakeEntry; N] {
+    let polynomials = factors
+        .each_ref()
+        .map(|factor| scaled_qr_contents(&factor.0, factor.1));
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            split_witness,
+            polynomials.into(),
             intake.pcd,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
-    let mut descend = |side: bool| {
+    kept.map(|side| {
+        let sibling = &factors[usize::from(!side)];
+        let (interpolant, quotient) =
+            witness::qr_side_select((*sides.data(), ()), &sibling.0, side);
+        let mut scaled_quotient: Polynomial<Fp, ProductionRank> = quotient.into();
+        scaled_quotient.scale(sibling.1.invert().unwrap());
         let (selection, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 qr::QrSideSelect,
-                witness::qr_side_select((*sides.data(), ()), &intake.members, side),
+                (interpolant, scaled_quotient.into()),
                 sides.clone(),
                 PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let members = intake
-            .members
-            .iter()
-            .copied()
-            .filter(|&member| {
-                qr::classify(Fp::from(member), discriminant.at(profile.depth)).0 == side
-            })
-            .collect::<Vec<_>>();
+        let members = factors[usize::from(side)].0.clone();
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -721,10 +752,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             )
             .unwrap();
         QrIntakeEntry { pcd, members }
-    };
-    let non_residue = descend(false);
-    let residue = descend(true);
-    (non_residue, residue)
+    })
 }
 
 pub(crate) fn build_qr_partition<RNG: CryptoRng>(
@@ -756,6 +784,7 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     layer
 }
 
+#[derive(Clone)]
 pub(crate) struct EvidenceLeaf {
     pub profile: QrProfile,
     pub contents: TachygramSetPoly,
@@ -770,9 +799,19 @@ pub(crate) struct EvidenceTreeEntry {
 
 pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
+    buckets: Vec<QrBucketEntry>,
+) -> EvidenceTreeEntry {
+    let scales = vec![Fp::ONE; buckets.len()];
+    build_evidence_tree_with_scales(rng, buckets, scales)
+}
+
+pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
+    rng: &mut RNG,
     mut buckets: Vec<QrBucketEntry>,
+    mut scales: Vec<Fp>,
 ) -> EvidenceTreeEntry {
     assert!(!buckets.is_empty());
+    assert_eq!(buckets.len(), scales.len());
 
     let mut width = EVIDENCE_TREE_ARITY;
     let mut depth = 1;
@@ -786,14 +825,16 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
             pcd: last.pcd.clone(),
             members: last.members.clone(),
         });
+        scales.push(*scales.last().unwrap());
     }
 
     let (proofs, held): (Vec<_>, Vec<_>) = buckets
         .into_iter()
-        .map(|bucket| {
+        .zip(scales)
+        .map(|(bucket, scale)| {
             let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, _) =
                 *bucket.pcd.data();
-            let contents = bucket.members.iter().copied().collect::<TachygramSetPoly>();
+            let contents = scaled_qr_contents(&bucket.members, scale);
             (bucket.pcd, (profile, contents, bucket.members))
         })
         .unzip();
@@ -902,37 +943,44 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
     tree: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
 ) -> QrBucketEntry {
+    try_open_evidence_tree(rng, tree, leaf).unwrap()
+}
+
+pub(crate) fn try_open_evidence_tree<RNG: CryptoRng>(
+    rng: &mut RNG,
+    tree: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+    leaf: &EvidenceLeaf,
+) -> ragu_core::Result<QrBucketEntry> {
     let mut node = tree;
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-        let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
+        let path =
+            <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).map_err(|_error| {
+                ragu_core::Error::InvalidWitness("incomplete evidence path".into())
+            })?;
         let witness = witness::evidence_tree_descend((*node.data(), ()), path);
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                evidence::EvidenceTreeDescend,
-                witness,
-                node,
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .unwrap();
+        let (pcd, ()) = PROOF_SYSTEM.fuse(
+            rng,
+            evidence::EvidenceTreeDescend,
+            witness,
+            node,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )?;
         node = pcd;
     }
 
     let witness =
         witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents.clone());
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            evidence::EvidenceTreeOpen,
-            witness,
-            node,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    QrBucketEntry {
+    let (pcd, ()) = PROOF_SYSTEM.fuse(
+        rng,
+        evidence::EvidenceTreeOpen,
+        witness,
+        node,
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+    )?;
+    Ok(QrBucketEntry {
         pcd,
         members: leaf.members.clone(),
-    }
+    })
 }
 
 pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {

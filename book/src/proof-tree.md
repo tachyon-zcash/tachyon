@@ -237,7 +237,7 @@ A profile is the string of sides on the path to a bucket.
 
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, `QrEmptyIntakeSeed` starts an empty one over an epoch that published no stamp, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
 `QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
-It rejects an empty intake, so an empty side stays a bucket at the depth it reaches.
+It rejects constant-one contents, so a canonical empty side stays a bucket.
 The split's discriminant at this depth is defined by the progression:
 
 $$R = R_0 + \mathsf{depth}$$
@@ -250,7 +250,7 @@ $$q_0(-R) \neq 0$$
 
 `QrSideDescend` takes the split and selection as inputs and matches every copied source field.
 The matching bridge hashes bind the same q0.
-It rejects a split whose two sides agree at $\zeta$, as the two sides of a split into the same set do.
+It rejects equal openings at $\zeta$, as produced by canonical sides of the same set.
 Its witness bit chooses the child, sibling and class multiplier.
 The multiplier is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
 It pins the sibling to the split and the hints to the selection, then checks the identity with $s$ for the sibling and $c$ for its multiplier:
@@ -305,6 +305,22 @@ The sequence's one member is checked at $\zeta$, with $x$ staged; the sequence a
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable on the segment's `(epoch_next, anchor_next)`, the next epoch's entry anchor.
 Membership needs no profile: every bucket divides the epoch's stamp polynomials, so a root of any bucket is a tachygram published in its span, and the span equality closes the bucket's anchors through the lineage the segment already joins.
+
+#### Scaled splits: observed behavior and limits
+
+A scaled split replaces non-residue and residue factors $(N, Q)$ with $(kN, Q/k)$ for nonzero $k$.
+The product and roots stay the same; nontrivial scaling changes the commitments.
+The characterization tests in `crates/tachyon/tests/integration/qr.rs` record these cases:
+
+- `QrIntakeSplit` accepts reciprocal factors because their product is unchanged. Its empty-intake check rejects contents opening to one, not every rootless polynomial: after routing into a constant $1/7$ side, a further split into $11$ and $1/77$ passes.
+- `QrSideSelect` checks a nonzero exceptional-value opening, which nonzero scaling preserves. In `QrSideDescend`, scaling the sibling by $k$ and its quotient by $1/k$ preserves the class identity. The separate equal-opening check rejects identical monic sides of $(X-m)^2$, but accepts $7(X-m)$ and $(X-m)/7$ in the tested case, even when the selected child holds $m$ under the opposite class profile.
+- `QrBucketSeal` and evidence admission accept the tested scaled buckets. `EvidenceTreeOpen` still requires the exact leaf: replay with a different scaling is rejected because the contents commitment is part of the leaf digest.
+- The tested `QrUnspentInit` and `QrSpendableInit` queries distinguish zero from nonzero, unchanged by scaling. Bound exclusion through `UnspentBind`, inclusion, and `SpendBind` give matching answers for the compared scaled and monic buckets; wrong-profile exclusions still reject. A monic split with a stray member gives the same queried outcomes as the scaled duplicate split.
+
+Canonical-form rejection, membership/profile checks, and exact leaf replay are intended controls.
+Acceptance of the non-canonical empty and equal-root splits is only pinned behavior, not a requirement to retain it.
+A normalization or rejection rule changes those expectations and calls for reviewing the characterization.
+These finite comparisons do not establish the broader safety of non-canonical set polynomials; that remains an open question.
 
 ### Evidence trees
 
