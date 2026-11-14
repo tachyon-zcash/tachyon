@@ -12,7 +12,6 @@ use crate::{
     pasta,
     pasta::{EpAffine, Eq, Fp},
     serialization,
-    stamp::proof::PROOF_SYSTEM,
 };
 
 /// Pedersen commitment to a stamp's tachygram set.
@@ -24,17 +23,6 @@ pub struct TachygramSetCommit(Eq);
 pub struct TachygramSetBridge(EpAffine);
 
 impl TachygramSetCommit {
-    /// Hashes this commitment through the application's bridge-hash stage.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the commitment is the identity.
-    pub fn bridge(self) -> ragu_core::Result<TachygramSetBridge> {
-        Ok(TachygramSetBridge(
-            PROOF_SYSTEM.bridge_hash(self.0.to_affine())?,
-        ))
-    }
-
     /// Read as an affine point from the consensus wire format.
     ///
     /// # Errors

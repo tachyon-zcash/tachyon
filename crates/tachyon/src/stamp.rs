@@ -17,7 +17,7 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use proof::{
-    HEADER_SIZE, PROOF_SYSTEM, output,
+    HEADER_SIZE, PROOF_SYSTEM, bridge_hash, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
@@ -287,7 +287,8 @@ impl Proof for Uncompressed {
         rng: &mut RNG,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let pcd = self.clone().carry::<Stamp>((header.1.bridge()?, header.2));
+        let bridge = bridge_hash(header.1.as_ref().to_affine());
+        let pcd = self.clone().carry::<Stamp>((bridge.into(), header.2));
         let [action_slot, tachygram_slot] = pcd.commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
@@ -327,7 +328,8 @@ impl Proof for Compressed {
         {
             return Ok(false);
         }
-        PROOF_SYSTEM.verify_compressed(&self.clone().carry::<Stamp>((header.1.bridge()?, header.2)))
+        let bridge = bridge_hash(header.1.as_ref().to_affine());
+        PROOF_SYSTEM.verify_compressed(&self.clone().carry::<Stamp>((bridge.into(), header.2)))
     }
 }
 
@@ -1020,9 +1022,10 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let left_pcd = left_proof.carry::<Stamp>((left_tg_poly.commit().bridge()?, left_anchor));
-        let right_pcd =
-            right_proof.carry::<Stamp>((right_tg_poly.commit().bridge()?, right_anchor));
+        let left_bridge = bridge_hash(left_tg_poly.commit().as_ref().to_affine());
+        let right_bridge = bridge_hash(right_tg_poly.commit().as_ref().to_affine());
+        let left_pcd = left_proof.carry::<Stamp>((left_bridge.into(), left_anchor));
+        let right_pcd = right_proof.carry::<Stamp>((right_bridge.into(), right_anchor));
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
@@ -1071,12 +1074,8 @@ impl ProofStamp<Uncompressed> {
         }
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let mut stamp_pcd = self.proof.carry::<Stamp>((
-            self.tachygram_set
-                .bridge()
-                .map_err(ProveError::ProofFailed)?,
-            self.anchor,
-        ));
+        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
+        let mut stamp_pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
         for span in spans {
             stamp_pcd = PROOF_SYSTEM
                 .fuse(
@@ -1208,7 +1207,7 @@ impl ProofStamp<Uncompressed> {
         let proof = PROOF_SYSTEM
             .rerandomize(
                 merged_proof.carry::<Stamp>((
-                    tachygram_set.bridge().map_err(ProveError::ProofFailed)?,
+                    bridge_hash(tachygram_set.as_ref().to_affine()).into(),
                     anchor,
                 )),
                 rng,
@@ -1282,20 +1281,14 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_pcd = self.proof.carry::<Stamp>((
-            dividend_tachygram_set
-                .commit()
-                .bridge()
-                .map_err(ProveError::ProofFailed)?,
-            self.anchor,
-        ));
-        let divisor_pcd = divisor_stamp.proof.carry::<Stamp>((
-            divisor_tachygram_set
-                .commit()
-                .bridge()
-                .map_err(ProveError::ProofFailed)?,
-            divisor_stamp.anchor,
-        ));
+        let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().as_ref().to_affine());
+        let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().as_ref().to_affine());
+        let dividend_pcd = self
+            .proof
+            .carry::<Stamp>((dividend_bridge.into(), self.anchor));
+        let divisor_pcd = divisor_stamp
+            .proof
+            .carry::<Stamp>((divisor_bridge.into(), divisor_stamp.anchor));
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -1349,12 +1342,8 @@ impl ProofStamp<Uncompressed> {
         self,
         rng: &mut RNG,
     ) -> Result<ProofStamp<Compressed>, ProveError> {
-        let pcd = self.proof.carry::<Stamp>((
-            self.tachygram_set
-                .bridge()
-                .map_err(ProveError::ProofFailed)?,
-            self.anchor,
-        ));
+        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
+        let pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
         let (compressed, _) = PROOF_SYSTEM
             .compress(&pcd, rng)
             .map_err(ProveError::ProofFailed)?

@@ -15,7 +15,7 @@ use ragu_core::{
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
     Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -255,14 +255,20 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd = stamp_a
-        .proof
-        .clone()
-        .carry::<Stamp>((left_tg.commit().bridge().unwrap(), stamp_a.anchor));
-    let right_pcd = stamp_b
-        .proof
-        .clone()
-        .carry::<Stamp>((right_tg.commit().bridge().unwrap(), stamp_b.anchor));
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
+        PROOF_SYSTEM
+            .bridge_hash(left_tg.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        stamp_a.anchor,
+    ));
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
+        PROOF_SYSTEM
+            .bridge_hash(right_tg.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        stamp_b.anchor,
+    ));
 
     let merged_acts = descriptors_a
         .iter()

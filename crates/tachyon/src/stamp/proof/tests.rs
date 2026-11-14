@@ -1,0 +1,27 @@
+use udon::curve::Projective as _;
+
+use super::bridge_hash;
+use crate::{
+    pasta::{Eq, Fp},
+    primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly},
+    stamp::proof::PROOF_SYSTEM,
+};
+
+#[test]
+fn bridge_hash_matches_application() {
+    for commitment in [
+        TachygramSetCommit::default(),
+        TachygramSetPoly::from_iter([Tachygram::from(Fp::from(7))]).commit(),
+        TachygramSetPoly::from_iter([Tachygram::from(Fp::from(3)), Tachygram::from(Fp::from(19))])
+            .commit(),
+    ] {
+        let point = commitment.as_ref().to_affine();
+        assert_eq!(bridge_hash(point), PROOF_SYSTEM.bridge_hash(point).unwrap());
+    }
+}
+
+#[test]
+#[should_panic(expected = "tachygram set commitment is not the identity")]
+fn bridge_hash_panics_on_the_identity() {
+    let _bridge = bridge_hash(Eq::identity().to_affine());
+}

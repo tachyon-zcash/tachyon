@@ -7,7 +7,7 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetCommit, TachygramSetPoly,
+    TachygramSetBridge, TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     nullifier::Nullifier,
     pasta::{Eq, Fp},
@@ -116,13 +116,16 @@ fn qr_intake_split_partitions_the_contents_by_class() {
         )
         .unwrap();
 
-    let non_residue_hash = non_residue
+    let non_residue_commit = non_residue
         .iter()
         .copied()
         .collect::<TachygramSetPoly>()
-        .commit()
-        .bridge()
-        .unwrap();
+        .commit();
+    let non_residue_hash = TachygramSetBridge::from(
+        PROOF_SYSTEM
+            .bridge_hash(non_residue_commit.as_ref().to_affine())
+            .unwrap(),
+    );
     let stamp_commit = members
         .iter()
         .copied()
@@ -1267,9 +1270,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
             discriminant,
             profile,
-            TachygramSetCommit::from(Eq::from(contents))
-                .bridge()
-                .unwrap(),
+            TachygramSetBridge::from(PROOF_SYSTEM.bridge_hash(contents).unwrap()),
         )
     );
     assert_eq!(bucket.pcd.commitments()[0], contents);
