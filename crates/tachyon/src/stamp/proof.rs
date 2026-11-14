@@ -2,8 +2,8 @@
 //!
 //! Registers all PCD step types.
 //!
-//! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
-//! steps in that order; `ApplicationBuilder` rejects any other sequence.
+//! `Step::INDEX` runs from zero without gaps, and [`new_application`] registers
+//! the steps in that order; `ApplicationBuilder` rejects any other sequence.
 //! `Header::SUFFIX` runs from zero without gaps too.
 //!
 //! A step is named "noun + verb", where the noun is the header it **emits**,
@@ -26,7 +26,6 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-use lazy_static::lazy_static;
 use ragu::{Application, ApplicationBuilder, RegistryTags};
 use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
@@ -42,8 +41,9 @@ use crate::{
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
-/// Computes the value `Application::bridge_hash` returns, without an application.
-/// The test in `proof/tests.rs` pins it to the application's result.
+/// Computes the value `Application::bridge_hash` returns, without an
+/// application. The test in `proof/tests.rs` pins it to the application's
+/// result.
 ///
 /// # Panics
 ///
@@ -56,7 +56,8 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     let (x, y) = commitment
         .coordinates()
         .expect("tachygram set commitment is not the identity");
-    // The bridge stage starts after the endoscalar values, rounded up to whole gates.
+    // The bridge stage starts after the endoscalar values, rounded up to whole
+    // gates.
     let x_wire = (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).next_multiple_of(2);
     let y_wire = x_wire + 1;
     let generators = Pasta::nested_generators(pasta::baked()).g();
@@ -74,8 +75,19 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     (g_x.to_projective() * x + g_y.to_projective() * y).to_affine()
 }
 
-fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
-{
+/// The Tachyon Ragu application.
+pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
+
+/// Builds the Tachyon application with the baked setup and fixed registry tags.
+///
+/// Building runs the full setup, so a caller builds one application per
+/// worker, keeps it on that worker and lends `&app` to each proof
+/// operation.
+///
+/// # Errors
+///
+/// Returns an error if step registration or application finalization fails.
+pub fn new_application() -> Result<App<'static>, ragu_core::Error> {
     // Registry tags use the fixed Tachyon beacon and configuration digest.
     let manifest = blake2b_simd::Params::new()
         .hash_length(32)
@@ -123,17 +135,6 @@ fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
-}
-
-lazy_static! {
-    /// A static ref to the ragu application.
-    pub static ref PROOF_SYSTEM: Application<'static, Pasta, ProductionRank, HEADER_SIZE> = {
-        #[expect(
-            clippy::expect_used,
-            reason = "hardcoded step ordering must register cleanly"
-        )]
-        make_app().expect("registration of fixed step list must succeed")
-    };
 }
 
 #[cfg(test)]

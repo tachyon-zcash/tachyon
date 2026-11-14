@@ -9,14 +9,12 @@ use zcash_tachyon::{
     ActionSetPoly, Anchor, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
     stamp::{
         self, ProofStamp, ProveError,
-        proof::{
-            PROOF_SYSTEM,
-            stamp::{Stamp, StampUnmerge},
-        },
+        proof::stamp::{Stamp, StampUnmerge},
     },
     value, witness,
 };
 
+use super::fixtures::application;
 use crate::fixtures::{
     PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
     shared_sk,
@@ -24,18 +22,20 @@ use crate::fixtures::{
 
 #[test]
 fn unmerge_removes_a_divisor_across_merge_boundaries() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
-    let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let carol = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    let alice = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
+    let bob = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
+    let carol = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
 
     let all_three = alice
         .stamp
         .clone()
         .merge(
             rng,
+            app,
             (
                 alice.descriptors().collect(),
                 [alice.fee_descriptor()].into(),
@@ -49,6 +49,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         .unwrap()
         .merge(
             rng,
+            app,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
@@ -78,6 +79,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                 .clone()
                 .merge(
                     rng,
+                    app,
                     (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
                     (
                         carol.stamp.clone(),
@@ -96,6 +98,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             .clone()
             .unmerge(
                 rng,
+                app,
                 (
                     alice
                         .descriptors()
@@ -120,6 +123,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         unmerged
             .verify(
                 rng,
+                app,
                 &mock_sighash(unmerged.commitment()),
                 &wtxid.into(),
                 &stripped.iter().collect::<Vec<_>>(),
@@ -130,6 +134,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
 
 #[test]
 fn unmerge_keeps_the_dividend_fee() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -139,13 +144,14 @@ fn unmerge_keeps_the_dividend_fee() {
     let [alice, bob, mut carol] = [alice_fee, bob_fee, carol_fee].map(|fee| {
         let (plan, signed, spend_pcds) = wallet.signed(
             rng,
+            app,
             vec![],
             vec![wallet.random_note(500)],
             wallet.random_note(100),
         );
         signed.stamp(
             plan.stamp_plan(anchor, fee)
-                .prove(rng, &wallet.pak, spend_pcds)
+                .prove(rng, app, &wallet.pak, spend_pcds)
                 .unwrap(),
         )
     });
@@ -155,6 +161,7 @@ fn unmerge_keeps_the_dividend_fee() {
         .clone()
         .merge(
             rng,
+            app,
             (
                 alice.descriptors().collect(),
                 [alice.fee_descriptor()].into(),
@@ -172,6 +179,7 @@ fn unmerge_keeps_the_dividend_fee() {
         .clone()
         .unmerge(
             rng,
+            app,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
@@ -186,6 +194,7 @@ fn unmerge_keeps_the_dividend_fee() {
     let kept_wtxid = mock_wtxid(&kept);
     kept.verify(
         rng,
+        app,
         &mock_sighash(kept.commitment()),
         &kept_wtxid.into(),
         &[],
@@ -196,6 +205,7 @@ fn unmerge_keeps_the_dividend_fee() {
     hostless.stamp = on_alice
         .unmerge(
             rng,
+            app,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
@@ -212,6 +222,7 @@ fn unmerge_keeps_the_dividend_fee() {
     assert_matches!(
         hostless.verify(
             rng,
+            app,
             &mock_sighash(hostless.commitment()),
             &hostless_wtxid.into(),
             &[],
@@ -226,6 +237,7 @@ fn unmerge_keeps_the_dividend_fee() {
         .clone()
         .merge(
             rng,
+            app,
             (
                 carol.descriptors().collect(),
                 [carol.fee_descriptor()].into(),
@@ -241,6 +253,7 @@ fn unmerge_keeps_the_dividend_fee() {
     carol
         .verify(
             rng,
+            app,
             &mock_sighash(carol.commitment()),
             &carol_wtxid.into(),
             &[&bob.strip(carol_wtxid)],
@@ -250,23 +263,37 @@ fn unmerge_keeps_the_dividend_fee() {
 
 #[test]
 fn unmerge_by_a_lifted_divisor() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
 
     pool.advance(3, |_| random_block(rng, 1, 4));
-    let bob = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+    let bob = wallet.autonome(
+        rng,
+        app,
+        pool.anchor(),
+        vec![],
+        vec![wallet.random_note(300)],
+    );
     let stamped_at = pool.height();
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let mut alice = wallet.autonome(rng, pool.anchor(), vec![], vec![wallet.random_note(300)]);
+    let mut alice = wallet.autonome(
+        rng,
+        app,
+        pool.anchor(),
+        vec![],
+        vec![wallet.random_note(300)],
+    );
 
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(rng, app, &pool, stamped_at.next().unwrap()..=pool.height());
     let lifted_bob = bob
         .stamp
         .clone()
         .lift(
             rng,
+            app,
             &bob.descriptors().collect(),
             &[bob.fee_descriptor()].into(),
             vec![span],
@@ -278,6 +305,7 @@ fn unmerge_by_a_lifted_divisor() {
         .clone()
         .merge(
             rng,
+            app,
             (
                 alice.descriptors().collect(),
                 [alice.fee_descriptor()].into(),
@@ -293,6 +321,7 @@ fn unmerge_by_a_lifted_divisor() {
     assert_matches!(
         alice_bob.clone().unmerge(
             rng,
+            app,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
@@ -310,6 +339,7 @@ fn unmerge_by_a_lifted_divisor() {
     alice.stamp = alice_bob
         .unmerge(
             rng,
+            app,
             (
                 alice.descriptors().chain(bob.descriptors()).collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
@@ -323,22 +353,30 @@ fn unmerge_by_a_lifted_divisor() {
         .unwrap();
     let wtxid = mock_wtxid(&alice);
     alice
-        .verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[])
+        .verify(
+            rng,
+            app,
+            &mock_sighash(alice.commitment()),
+            &wtxid.into(),
+            &[],
+        )
         .unwrap();
 }
 
 #[test]
 fn unmerge_by_itself_leaves_no_leaves() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
-    let mut alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    let mut alice = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
 
     let quotient = alice
         .stamp
         .clone()
         .unmerge(
             rng,
+            app,
             (
                 alice.descriptors().collect(),
                 [alice.fee_descriptor()].into(),
@@ -351,12 +389,18 @@ fn unmerge_by_itself_leaves_no_leaves() {
         )
         .unwrap();
     assert!(quotient.tachygrams.is_empty());
-    assert!(quotient.verify_proof(rng, []).unwrap());
+    assert!(quotient.verify_proof(rng, app, []).unwrap());
 
     alice.stamp = quotient;
     let wtxid = mock_wtxid(&alice);
     assert_matches!(
-        alice.verify(rng, &mock_sighash(alice.commitment()), &wtxid.into(), &[]),
+        alice.verify(
+            rng,
+            app,
+            &mock_sighash(alice.commitment()),
+            &wtxid.into(),
+            &[]
+        ),
         Err(VerificationError::Coverage(
             VerifyCoverageError::StampActionsMismatch
         ))
@@ -365,6 +409,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
 
 #[test]
 fn unmerge_splitting_a_bundle() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -386,7 +431,7 @@ fn unmerge_splitting_a_bundle() {
         .unwrap()
         .stamp(
             plan.stamp_plan(anchor, value::Positive::ZERO)
-                .prove(rng, &wallet.pak, vec![])
+                .prove(rng, app, &wallet.pak, vec![])
                 .unwrap(),
         );
 
@@ -397,7 +442,7 @@ fn unmerge_splitting_a_bundle() {
         max_fee_note,
         value::Positive::ZERO,
     )
-    .prove(rng, &wallet.pak, vec![])
+    .prove(rng, app, &wallet.pak, vec![])
     .unwrap();
 
     let quotient = whole
@@ -405,6 +450,7 @@ fn unmerge_splitting_a_bundle() {
         .clone()
         .unmerge(
             rng,
+            app,
             (
                 whole.descriptors().collect(),
                 [whole.fee_descriptor()].into(),
@@ -418,14 +464,20 @@ fn unmerge_splitting_a_bundle() {
         .unwrap();
     assert!(
         quotient
-            .verify_proof(rng, [kept_descriptor.digest().unwrap()])
+            .verify_proof(rng, app, [kept_descriptor.digest().unwrap()])
             .unwrap()
     );
 
     whole.stamp = quotient;
     let wtxid = mock_wtxid(&whole);
     assert_matches!(
-        whole.verify(rng, &mock_sighash(whole.commitment()), &wtxid.into(), &[]),
+        whole.verify(
+            rng,
+            app,
+            &mock_sighash(whole.commitment()),
+            &wtxid.into(),
+            &[]
+        ),
         Err(VerificationError::Coverage(
             VerifyCoverageError::StampActionsMismatch
         ))
@@ -434,16 +486,18 @@ fn unmerge_splitting_a_bundle() {
 
 #[test]
 fn unmerge_binds_its_sets() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
-    let alice = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
-    let bob = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    let alice = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
+    let bob = wallet.autonome(rng, app, anchor, vec![], vec![wallet.random_note(300)]);
     let alice_bob = alice
         .stamp
         .clone()
         .merge(
             rng,
+            app,
             (
                 alice.descriptors().collect(),
                 [alice.fee_descriptor()].into(),
@@ -470,15 +524,13 @@ fn unmerge_binds_its_sets() {
         .collect();
     let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
     let dividend_header = (
-        PROOF_SYSTEM
-            .bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
+        app.bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
             .unwrap()
             .into(),
         alice_bob.anchor,
     );
     let divisor_header = (
-        PROOF_SYSTEM
-            .bridge_hash(bob_tachygrams.commit().as_ref().to_affine())
+        app.bridge_hash(bob_tachygrams.commit().as_ref().to_affine())
             .unwrap()
             .into(),
         bob.stamp.anchor,
@@ -516,7 +568,7 @@ fn unmerge_binds_its_sets() {
         ),
     ] {
         assert_matches!(
-            PROOF_SYSTEM
+            app
                 .fuse(
                     rng,
                     StampUnmerge,
