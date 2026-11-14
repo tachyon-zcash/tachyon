@@ -955,6 +955,7 @@ dependencies = [
  "zakura-pasta-curves",
  "zakura-reddsa",
  "zakura-udon",
+ "zcash_tachyon",
 ]
 
 [[package]]

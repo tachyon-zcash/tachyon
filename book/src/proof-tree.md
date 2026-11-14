@@ -237,7 +237,6 @@ A profile is the string of sides on the path to a bucket.
 
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, `QrEmptyIntakeSeed` starts an empty one over an epoch that published no stamp, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
 `QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
-The product admits reciprocal nonzero scalings; their observed effects are described [below](#scaled-splits-observed-behavior-and-limits).
 It rejects constant-one contents, so a canonical empty side stays a bucket.
 The split's discriminant at this depth is defined by the progression:
 
@@ -311,7 +310,7 @@ Membership needs no profile: every bucket divides the epoch's stamp polynomials,
 
 A scaled split replaces non-residue and residue factors $(N, Q)$ with $(kN, Q/k)$ for nonzero $k$.
 The product and roots stay the same; nontrivial scaling changes the commitments.
-The characterization tests in `stamp/proof/qr/tests.rs` record these cases:
+The characterization tests in `crates/tachyon/tests/integration/qr.rs` record these cases:
 
 - `QrIntakeSplit` accepts reciprocal factors because their product is unchanged. Its empty-intake check rejects contents opening to one, not every rootless polynomial: after routing into a constant $1/7$ side, a further split into $11$ and $1/77$ passes.
 - `QrSideSelect` checks a nonzero exceptional-value opening, which nonzero scaling preserves. In `QrSideDescend`, scaling the sibling by $k$ and its quotient by $1/k$ preserves the class identity. The separate equal-opening check rejects identical monic sides of $(X-m)^2$, but accepts $7(X-m)$ and $(X-m)/7$ in the tested case, even when the selected child holds $m$ under the opposite class profile.

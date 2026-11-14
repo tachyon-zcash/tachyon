@@ -155,9 +155,11 @@ impl FromIterator<Anchor> for AnchorSetPoly {
 }
 
 impl TachygramSetPoly {
-    /// Wraps an arbitrary polynomial, skipping set encoding, for tests.
-    #[cfg(test)]
-    pub(crate) const fn arbitrary(poly: Polynomial<Fp, ProductionRank>) -> Self {
+    /// Wraps an arbitrary polynomial, skipping set encoding, to exercise step
+    /// inputs.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use]
+    pub const fn arbitrary(poly: Polynomial<Fp, ProductionRank>) -> Self {
         Self(poly)
     }
 

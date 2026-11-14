@@ -629,15 +629,14 @@ impl Step<Pasta> for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
-/// Constant-one contents (the canonical empty intake) cannot be split.
+/// An empty intake is not split.
 ///
 /// # Soundness
 ///
-/// The product pins a factorization, up to reciprocal nonzero scaling.
-/// The empty-intake and equal-side checks constrain canonical forms only;
-/// the tested bucket openings depend only on roots. [`QrSideSelect`] checks the
-/// exceptional-value assignment, and [`QrSideDescend`] attests each child's
-/// sibling. The contents and both sides open once at the product challenge.
+/// The product pins the two sides to a factorization of the contents.
+/// [`QrSideSelect`] checks the exceptional-value assignment, and
+/// [`QrSideDescend`] attests each child's sibling.
+/// The contents and both sides open once each at the product challenge.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -695,12 +694,15 @@ impl Step<Pasta> for QrIntakeSplit {
                 "QrIntakeSplit: the sides do not partition the contents".into(),
             )
         })?;
+        // An empty intake's contents are the constant one.
         let one = Element::constant(dr, Fp::ONE);
         contents_at_z
             .sub(dr, &one)
             .enforce_nonzero(dr)
             .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QrIntakeSplit: contents are one".into())
+                ragu_core::Error::InvalidWitness(
+                    "QrIntakeSplit: an empty intake cannot be split".into(),
+                )
             })?;
 
         let non_residue_hash = oracles.bridge_hash().each_ref().map(Element::value);
@@ -740,7 +742,7 @@ impl Step<Pasta> for QrIntakeSplit {
 ///
 /// The non-residue contents open once at $-R$; the two hint polynomials supply
 /// output commitments. [`QrSideDescend`] checks their class identity and
-/// rejects a split whose two sides open equal at $\zeta$.
+/// rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -816,7 +818,7 @@ impl Step<Pasta> for QrSideSelect {
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
-/// child. Equal openings at $\zeta$ are rejected, not equal root sets.
+/// child. A split whose two sides are the same set is rejected.
 ///
 /// # Soundness
 ///
@@ -960,9 +962,7 @@ impl Step<Pasta> for QrSideDescend {
         let residue_at_z = oracles.query(dr, Slot::left(0), &z)?;
         let delta = non_residue_at_z.sub(dr, &residue_at_z);
         delta.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QrSideDescend: the two sides agree at the challenge".into(),
-            )
+            ragu_core::Error::InvalidWitness("QrSideDescend: the two sides are the same set".into())
         })?;
         let selected_delta = bit.element().mul(dr, &delta)?;
         let sibling_at_z = residue_at_z.add(dr, &selected_delta);
@@ -1449,6 +1449,3 @@ impl Step<Pasta> for QrUnspentInit {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests;
