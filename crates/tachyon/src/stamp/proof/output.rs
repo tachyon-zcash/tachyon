@@ -2,15 +2,15 @@
 
 extern crate alloc;
 
-use ragu::{
-    header::{Header, Suffix},
-    step::{Encoded, Index, Oracles, Step},
-};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe as _,
     pasta::Pasta,
+};
+use ragu_pcd::{
+    header::{Header, Suffix},
+    step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;

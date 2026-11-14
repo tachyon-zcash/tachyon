@@ -24,12 +24,12 @@ use crate::fixtures::{
     build_qr_partition, build_unspent_pcd_over_epochs, epoch_bucket, open_evidence_tree,
     qr_bucket_at, qr_bucket_segment, qr_epoch_unspent, qr_profile_of, random_block,
     random_block_with, scaled_qr_contents, seal_qr_intake, seed_qr_empty_intake, shared_sk,
-    small_epoch, split_qr_intake, split_qr_intake_with_factors, try_open_evidence_tree,
+    small_epoch, split_qr_intake, split_qr_intake_with_factors,
 };
 
 #[test]
 fn qr_summary_intake_starts_a_root_from_a_summary() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -60,11 +60,12 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
         (epoch, start, anchor_end, discriminant, QrProfile::ROOT)
     );
     assert_eq!(root.commitments()[0], acc_commit);
+    assert!(app.verify_uncompressed(&root, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor_prev = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
@@ -88,7 +89,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
 
 #[test]
 fn qr_intake_split_partitions_the_contents_by_class() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -165,11 +166,12 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             .to_affine(),
         ]
     );
+    assert!(app.verify_uncompressed(&split, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_intake_split_rejects_a_forged_partition() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -186,24 +188,24 @@ fn qr_intake_split_rejects_a_forged_partition() {
 
     let mut split_witness = witness::qr_intake_split((*root.data(), ()), &members);
     split_witness.1 = split_witness.0.clone();
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                qr::QrIntakeSplit,
-                split_witness,
-                root,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrIntakeSplit: the sides do not partition the contents"
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            split_witness,
+            root,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrIntakeSplit: the sides do not partition the contents"
     );
 }
 
 #[test]
 fn qr_intake_split_rejects_an_empty_intake() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
@@ -226,7 +228,7 @@ fn qr_intake_split_rejects_an_empty_intake() {
 
 #[test]
 fn qr_side_descend_rejects_a_split_into_the_same_set() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -261,6 +263,8 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
+    assert!(app.verify_uncompressed(&sides, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&selection, &mut *rng).unwrap());
 
     assert_matches!(
         app
@@ -283,7 +287,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
 
 #[test]
 fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(278);
     let zero = Anchor::from(Fp::ZERO);
     let disc = QrDiscriminant::random(rng);
@@ -298,7 +302,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
         .unwrap();
     let factors = [(vec![member], scale), (vec![member], inverse)];
     let [child] = split_qr_intake_with_factors(rng, app, root, [!side], &factors);
-    assert!(app.verify_differential(&child.pcd, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&child.pcd, &mut *rng).unwrap());
     assert_eq!(child.members, [member]);
     assert_eq!(child.pcd.data().4, QrProfile::ROOT.descend(!side));
 
@@ -315,7 +319,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
         [occupied, empty]
     };
     let [rootless] = split_qr_intake_with_factors(rng, app, root_single, [!side], &split);
-    assert!(app.verify_differential(&rootless.pcd, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&rootless.pcd, &mut *rng).unwrap());
     assert_ne!(
         rootless.pcd.commitments()[0],
         Eq::from(scaled_qr_contents(&[], Fp::ONE).commit()).to_affine()
@@ -327,7 +331,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     ];
     let [deeper] = split_qr_intake_with_factors(rng, app, rootless, [false], &factors_deep);
     let sealed = seal_qr_intake(rng, app, deeper, zero);
-    assert!(app.verify_differential(&sealed.pcd, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&sealed.pcd, &mut *rng).unwrap());
     assert_eq!(
         sealed.pcd.data().4,
         QrProfile::ROOT.descend(!side).descend(false)
@@ -336,7 +340,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
 
 #[test]
 fn scaled_qr_buckets_answer_as_honest_buckets() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(279);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(400);
@@ -377,12 +381,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let root = build_qr_partition(rng, app, &pool, span, disc, 1, 0)
         .pop()
         .unwrap();
-    let (honest_non_residue, honest_residue) = split_qr_intake(rng, app, root.clone());
-    let honest = if side {
-        [honest_residue, honest_non_residue]
-    } else {
-        [honest_non_residue, honest_residue]
-    };
+    let honest = split_qr_intake(rng, app, root.clone(), [side, !side]);
     let factors = if side {
         [(vec![], inverse), (vec![cm], scale)]
     } else {
@@ -419,10 +418,8 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     for (index, wrong_scale) in [(0, Fp::ONE), (2, scale)] {
         let mut leaf = tree.leaves[index].clone();
         leaf.contents = scaled_qr_contents(&leaf.members, wrong_scale);
-        assert_matches!(
-            try_open_evidence_tree(rng, app, tree.pcd.clone(), &leaf).err(),
-            Some(ragu_core::Error::InvalidWitness(_))
-        );
+        let forged = open_evidence_tree(rng, app, tree.pcd.clone(), &leaf);
+        assert!(!app.verify_uncompressed(&forged.pcd, &mut *rng).unwrap());
     }
     let rcv = value::Trapdoor::random(rng);
     let mut spends = Vec::new();
@@ -450,57 +447,46 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         let (bind, ()) = app
             .fuse(rng, spend::SpendBind, bind_witness, spendable, secret)
             .unwrap();
-        assert!(app.verify_differential(&bind, &mut *rng).unwrap());
+        assert!(app.verify_uncompressed(&bind, &mut *rng).unwrap());
         let (bound_cm, current, next, anchor, pk, _) = *bind.data();
         spends.push((bound_cm, current, next, anchor, Fp::from(pk)));
         for empty in [&honest_empty, &scaled_empty, &deep_bucket] {
-            assert_matches!(
-                app.fuse(
+            let (forged, ()) = app
+                .fuse(
                     rng,
                     spendable::QrSpendableInit,
                     (),
                     unspent.clone(),
-                    empty.pcd.clone()
+                    empty.pcd.clone(),
                 )
-                .err(),
-                Some(ragu_core::Error::InvalidWitness(_))
-            );
+                .unwrap();
+            assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
         }
     }
     assert_eq!(spends[0], spends[1]);
     for empty in [&honest_empty, &scaled_empty, &deep_bucket] {
         let unspent = qr_epoch_unspent(rng, app, &user, &other, empty);
-        assert!(app.verify_differential(&unspent, &mut *rng).unwrap());
+        assert!(app.verify_uncompressed(&unspent, &mut *rng).unwrap());
         for bucket in [&honest_held, &scaled_held, empty] {
-            assert_matches!(
-                app.fuse(
+            let (forged, ()) = app
+                .fuse(
                     rng,
                     spendable::QrSpendableInit,
                     (),
                     unspent.clone(),
-                    bucket.pcd.clone()
+                    bucket.pcd.clone(),
                 )
-                .err(),
-                Some(ragu_core::Error::InvalidWitness(_))
-            );
+                .unwrap();
+            assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
         }
-        assert_matches!(
-            app.fuse(
-                rng,
-                qr::QrUnspentInit,
-                witness::qr_unspent_init((*empty.pcd.data(), ()), nf.into()),
-                empty.pcd.clone(),
-                app.bootstrap_proof().clone().carry::<()>(())
-            )
-            .err(),
-            Some(ragu_core::Error::InvalidWitness(_))
-        );
+        let wrong_profile = qr_bucket_segment(rng, app, empty, |_| nf);
+        assert!(!app.verify_uncompressed(&wrong_profile, &mut *rng).unwrap());
     }
 }
 
 #[test]
 fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(280);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(400);
@@ -528,26 +514,16 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         let root = build_qr_partition(rng, app, &pool, span, disc, 2, 0)
             .pop()
             .unwrap();
-        let held = (root.members.clone(), Fp::ONE);
-        let empty = (vec![], Fp::ONE);
-        let honest_factors = if side { [empty, held] } else { [held, empty] };
-        let [held_intake] =
-            split_qr_intake_with_factors(rng, app, root.clone(), [side], &honest_factors);
+        let [held] = split_qr_intake(rng, app, root.clone(), [side]);
         let child = (vec![cm], scale);
         let other = (vec![sibling], scale.invert().unwrap());
         let factors = if side { [child, other] } else { [other, child] };
         let [stray] = split_qr_intake_with_factors(rng, app, root, [!side], &factors);
-        let [held_bucket, stray_bucket] = [held_intake, stray]
-            .map(|entry| seal_qr_intake(rng, app, entry, Anchor::from(Fp::ZERO)));
+        let [held_bucket, stray_bucket] =
+            [held, stray].map(|entry| seal_qr_intake(rng, app, entry, Anchor::from(Fp::ZERO)));
         assert_eq!(stray_bucket.pcd.data().4, QrProfile::ROOT.descend(!side));
         let unspent = qr_epoch_unspent(rng, app, &user, &note, &held_bucket);
-        for (bucket, rejection) in [
-            (&held_bucket, "QrUnspentInit: found nullifier in the bucket"),
-            (
-                &stray_bucket,
-                "QR profile: value does not take the bucket's profile",
-            ),
-        ] {
+        for bucket in [&held_bucket, &stray_bucket] {
             let (included, ()) = app
                 .fuse(
                     rng,
@@ -557,23 +533,24 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
                     bucket.pcd.clone(),
                 )
                 .unwrap();
-            assert!(app.verify_differential(&included, &mut *rng).unwrap());
+            assert!(app.verify_uncompressed(&included, &mut *rng).unwrap());
             assert_matches!(
                 app.fuse(
                     rng, qr::QrUnspentInit, witness::qr_unspent_init((*bucket.pcd.data(), ()), cm),
                     bucket.pcd.clone(), app.bootstrap_proof().clone().carry::<()>(()),
                 ).err(),
-                Some(ragu_core::Error::InvalidWitness(error)) if error.to_string() == rejection
+                Some(ragu_core::Error::InvalidWitness(error))
+                    if error.to_string() == "QrUnspentInit: found nullifier in the bucket"
             );
         }
         let segment = qr_bucket_segment(rng, app, &stray_bucket, |_| Nullifier::from(absent));
-        assert!(app.verify_differential(&segment, &mut *rng).unwrap());
+        assert!(app.verify_uncompressed(&segment, &mut *rng).unwrap());
     }
 }
 
 #[test]
 fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     for depth in [0, 1, 31] {
         let epoch = EpochIndex::new(3);
@@ -597,8 +574,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
         let mut intake = QrIntakeEntry { pcd: root, members };
         for level in 0..depth {
             let side = qr::classify(value, discriminant.at(level)).0;
-            let (non_residue_side, residue_side) = split_qr_intake(rng, app, intake);
-            intake = if side { residue_side } else { non_residue_side };
+            [intake] = split_qr_intake(rng, app, intake, [side]);
         }
         let (honest_sides, ()) = app
             .fuse(
@@ -610,14 +586,16 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             )
             .unwrap();
         for side in [false, true] {
-            app.fuse(
-                rng,
-                qr::QrSideSelect,
-                witness::qr_side_select((*honest_sides.data(), ()), &intake.members, side),
-                honest_sides.clone(),
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .unwrap();
+            let (selection, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideSelect,
+                    witness::qr_side_select((*honest_sides.data(), ()), &intake.members, side),
+                    honest_sides.clone(),
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            assert!(app.verify_uncompressed(&selection, &mut *rng).unwrap());
         }
 
         let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) =
@@ -652,7 +630,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
 
 #[test]
 fn qr_side_descend_carries_each_side_one_level_down() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -734,13 +712,14 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 )
                 .to_affine()
             );
+            assert!(app.verify_uncompressed(&child, &mut *rng).unwrap());
         }
     }
 }
 
 #[test]
 fn qr_side_select_defers_hint_validation_to_descent() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -774,23 +753,25 @@ fn qr_side_select_defers_hint_validation_to_descent() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        assert_matches!(
-            app.fuse(
+        let (forged, ()) = app
+            .fuse(
                 rng,
                 qr::QrSideDescend,
                 witness::qr_side_descend((*sides.data(), *selection.data()), side),
                 sides.clone(),
                 selection,
-            ).err(),
-            Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == "QrSideDescend: the sibling fails its class decomposition"
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "QrSideDescend: the sibling fails its class decomposition"
         );
     }
 }
 
 #[test]
 fn qr_side_descend_matches_selection_metadata() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -877,15 +858,18 @@ fn qr_side_descend_matches_selection_metadata() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        assert_matches!(
-            app.fuse(
+        let (forged, ()) = app
+            .fuse(
                 rng,
                 qr::QrSideDescend,
                 witness::qr_side_descend((*sides.data(), *selection.data()), false),
                 sides.clone(),
                 selection,
-            ).err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
     // A genuine foreign split can share all scalar metadata yet have another q0.
@@ -909,15 +893,24 @@ fn qr_side_descend_matches_selection_metadata() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    assert_matches!(app.fuse(
-        rng, qr::QrSideDescend, witness::qr_side_descend((*sides.data(), *selection.data()), false), sides, selection,
-    ).err(), Some(ragu_core::Error::InvalidWitness(err))
-        if err.to_string() == "QrSideDescend: selection non-residue hash does not match sides");
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            qr::QrSideDescend,
+            witness::qr_side_descend((*sides.data(), *selection.data()), false),
+            sides,
+            selection,
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrSideDescend: selection non-residue hash does not match sides"
+    );
 }
 
 #[test]
 fn qr_side_descend_rejects_a_child_short_of_a_member() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -961,18 +954,18 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    qr::QrSideDescend,
-                    witness::qr_side_descend((*sides.data(), *selection.data()), true),
-                    sides.clone(),
-                    selection,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == "QrSideDescend: the sibling fails its class decomposition"
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                witness::qr_side_descend((*sides.data(), *selection.data()), true),
+                sides.clone(),
+                selection,
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "QrSideDescend: the sibling fails its class decomposition"
         );
     }
 
@@ -999,6 +992,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             selection,
         )
         .unwrap();
+    assert!(app.verify_uncompressed(&child, &mut *rng).unwrap());
     let (.., child_profile) = *child.data();
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
     assert_eq!(
@@ -1016,7 +1010,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
 
 #[test]
 fn qr_side_descend_refuses_a_full_register() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
@@ -1037,12 +1031,8 @@ fn qr_side_descend_refuses_a_full_register() {
     };
     let followed = Fp::from(members[0]);
     for level in 0..u32::BITS {
-        let (non_residue, residue) = split_qr_intake(rng, app, intake);
-        intake = if qr::classify(followed, discriminant.at(level)).0 {
-            residue
-        } else {
-            non_residue
-        };
+        let side = qr::classify(followed, discriminant.at(level)).0;
+        [intake] = split_qr_intake(rng, app, intake, [side]);
     }
     let (.., profile) = *intake.pcd.data();
     assert_eq!(profile, qr_profile_of(followed, discriminant, u32::BITS));
@@ -1066,6 +1056,7 @@ fn qr_side_descend_refuses_a_full_register() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
+    assert!(app.verify_uncompressed(&selection, &mut *rng).unwrap());
     assert_matches!(
         app
             .fuse(
@@ -1083,7 +1074,7 @@ fn qr_side_descend_refuses_a_full_register() {
 
 #[test]
 fn qr_intake_merge_joins_two_spans() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::random(rng);
@@ -1127,11 +1118,12 @@ fn qr_intake_merge_joins_two_spans() {
         merged.commitments()[0],
         Eq::from(union.commit()).to_affine()
     );
+    assert!(app.verify_uncompressed(&merged, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_intake_merge_rejects_mismatched_inputs() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::random(rng);
@@ -1180,21 +1172,22 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                 ),
             )
             .unwrap();
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    qr::QrIntakeMerge,
-                    witness::qr_intake_merge(
-                        (*left.data(), *right.data()),
-                        &left_members,
-                        &right_members,
-                    ),
-                    left.clone(),
-                    right,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                qr::QrIntakeMerge,
+                witness::qr_intake_merge(
+                    (*left.data(), *right.data()),
+                    &left_members,
+                    &right_members,
+                ),
+                left.clone(),
+                right,
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 
@@ -1237,28 +1230,28 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .copied()
         .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
         .collect();
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                qr::QrIntakeMerge,
-                witness::qr_intake_merge(
-                    (*deeper.data(), *right.data()),
-                    &deeper_members,
-                    &right_members,
-                ),
-                deeper,
-                right,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrIntakeMerge: inputs sit at different depths"
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            qr::QrIntakeMerge,
+            witness::qr_intake_merge(
+                (*deeper.data(), *right.data()),
+                &deeper_members,
+                &right_members,
+            ),
+            deeper,
+            right,
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrIntakeMerge: inputs sit at different depths"
     );
 }
 
 #[test]
 fn qr_bucket_seal_seals_a_fully_routed_intake() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
@@ -1289,11 +1282,12 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
         )
     );
     assert_eq!(bucket.pcd.commitments()[0], contents);
+    assert!(app.verify_uncompressed(&bucket.pcd, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, _) = small_epoch(rng);
     let final_anchor = pool.block(BlockHeight(2)).anchor();
@@ -1303,24 +1297,24 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let routed = build_qr_partition(rng, app, &pool, (start, final_anchor), discriminant, 12, 1);
     let intake = routed.into_iter().next().unwrap();
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                qr::QrBucketSeal,
-                witness,
-                intake.pcd,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
-            == "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            qr::QrBucketSeal,
+            witness,
+            intake.pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
     );
 }
 
 #[test]
 fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let witness = witness::qr_empty_intake_seed(
         ((), ()),
@@ -1328,26 +1322,31 @@ fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
         EpochIndex::new(0),
         QrDiscriminant::random(rng),
     );
-    assert_matches!(
-        app.seed(
+    let (forged, ()) = app
+        .seed(
             rng,
-            WithPolynomials(qr::QrEmptyIntakeSeed, [vec![Fp::ONE, Fp::ONE], vec![Fp::ONE]]),
+            WithPolynomials(
+                qr::QrEmptyIntakeSeed,
+                [vec![Fp::ONE, Fp::ONE], vec![Fp::ONE]],
+            ),
             witness,
-        ).err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrEmptyIntakeSeed: contents must be one"
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrEmptyIntakeSeed: contents must be one"
     );
 }
 
 #[test]
 fn qr_empty_intake_seed_spans_a_stampless_epoch() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.advance(epoch0.last_block().0, |_| Vec::new());
     pool.advance(EPOCH_SIZE, |_| Vec::new());
     pool.mine(random_block(rng, 1, 1));
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
@@ -1399,11 +1398,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         fused.commitments()[0],
         Eq::from(NfSeqPoly::new(epoch0, &[nf0, nf1]).commit()).to_affine()
     );
+    assert!(app.verify_uncompressed(&fused, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(400);
@@ -1411,11 +1411,25 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
-    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 1));
+    let cm = Fp::from(Tachygram::from(note.commitment()));
+    let nf = Fp::from(mk.derive_nullifier(epoch0));
+    let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
+        .find(|&discriminant| {
+            qr_profile_of(cm, discriminant, 2) != qr_profile_of(nf, discriminant, 2)
+        })
+        .unwrap();
+    let nf_neighbour = iter::repeat_with(|| Tachygram::random(rng))
+        .find(|&tg| {
+            qr_profile_of(Fp::from(tg), discriminant, 2) == qr_profile_of(nf, discriminant, 2)
+        })
+        .unwrap();
+    let mut pool = PoolSim::genesis_with(vec![
+        vec![Tachygram::from(note.commitment())],
+        vec![nf_neighbour],
+    ]);
+    pool.mine_through(rng, epoch2.first_block());
 
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
-    let discriminant = QrDiscriminant::random(rng);
     let bucket = qr_bucket_at(
         rng,
         app,
@@ -1424,7 +1438,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         discriminant,
         EPOCH_SIZE as usize,
         2,
-        Fp::from(Tachygram::from(note.commitment())),
+        cm,
         Anchor::from(Fp::ZERO),
     );
     let nf_bucket = qr_bucket_at(
@@ -1435,7 +1449,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         discriminant,
         EPOCH_SIZE as usize,
         2,
-        Fp::from(mk.derive_nullifier(epoch0)),
+        nf,
         Anchor::from(Fp::ZERO),
     );
     assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
@@ -1469,11 +1483,12 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
             mk.derive_nullifier(EpochIndex::new(u32::from(epoch2) + 1))
         )
     );
+    assert!(app.verify_uncompressed(&bind, &mut *rng).unwrap());
 }
 
 #[test]
 fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(196);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
@@ -1508,15 +1523,14 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         *spendable.data(),
         (note.commitment(), epoch_next, unpublished)
     );
+    assert!(app.verify_uncompressed(&spendable, &mut *rng).unwrap());
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)
             .iter()
             .all(|entry| entry.3 != unpublished)
     );
 
-    pool.advance(epoch_next.last_block().0 - pool.height().0, |_| {
-        random_block(rng, 1, 1)
-    });
+    pool.mine_through(rng, epoch_next.last_block());
     let next = build_unspent_pcd_over_epochs(
         rng,
         app,
@@ -1531,25 +1545,26 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     );
     let bound_next = user.unspent_bind(rng, app, next, &note);
     assert_ne!(bound_next.data().1, unpublished);
-    assert_matches!(
-        app
-            .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "SpendableLift: unspent not adjacent to spendable"
+    let (forged, ()) = app
+        .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "SpendableLift: unspent not adjacent to spendable"
     );
 }
 
 #[test]
 fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    pool.advance(2, |_| random_block(rng, 1, 1));
+    pool.mine_through(rng, epoch1.last_block());
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
     let discriminant = QrDiscriminant::random(rng);
@@ -1604,7 +1619,7 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
         fake_anchor_final_prev,
     );
 
-    for (unspent, bucket, expected) in [
+    for (unspent, bucket, expected) in vec![
         (
             unspent0.clone(),
             qr_bucket_at(
@@ -1630,31 +1645,28 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
             elsewhere,
             "QrSpendableInit: segment does not open where the bucket does",
         ),
-    ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    spendable::QrSpendableInit,
-                    (),
-                    unspent,
-                    bucket.pcd,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+    ]
+    .into_boxed_slice()
+    {
+        let (forged, ()) = app
+            .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 }
 
 #[test]
 fn qr_spendable_init_rejects_an_absent_commitment() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.mine_through(rng, epoch0.last_block());
 
     let discriminant = QrDiscriminant::random(rng);
     let bucket = qr_bucket_at(
@@ -1670,24 +1682,18 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     );
     let unspent = qr_epoch_unspent(rng, app, &user, &note, &bucket);
 
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                spendable::QrSpendableInit,
-                (),
-                unspent,
-                bucket.pcd,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "QrSpendableInit: commitment not in bucket"
+    let (forged, ()) = app
+        .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "QrSpendableInit: commitment not in bucket"
     );
 }
 
 #[test]
 fn qr_unspent_init_rejects_corrupted_inputs() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
@@ -1706,7 +1712,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
 
-    for (bucket_pcd, init_witness, expected) in [
+    for (bucket_pcd, init_witness, expected) in vec![
         (
             bucket.pcd.clone(),
             {
@@ -1745,11 +1751,6 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
         ),
         (
             bucket.pcd.clone(),
-            witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(Fp::ZERO)),
-            "QrUnspentInit: tested value is zero",
-        ),
-        (
-            bucket.pcd.clone(),
             {
                 let mut forged = witness;
                 forged.3 = NfSeqPoly::new(
@@ -1759,11 +1760,6 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 forged
             },
             "QrUnspentInit: sequence does not match the tested pair",
-        ),
-        (
-            bucket.pcd.clone(),
-            witness::qr_unspent_init((*bucket.pcd.data(), ()), bucket.members[0]),
-            "QrUnspentInit: found nullifier in the bucket",
         ),
         (
             bucket.pcd.clone(),
@@ -1777,7 +1773,38 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             ),
             "QR profile: value does not take the bucket's profile",
         ),
-    ] {
+    ]
+    .into_boxed_slice()
+    {
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                qr::QrUnspentInit,
+                init_witness,
+                bucket_pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
+        );
+    }
+
+    for (bucket_pcd, init_witness, expected) in vec![
+        (
+            bucket.pcd.clone(),
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(Fp::ZERO)),
+            "QrUnspentInit: tested value is zero",
+        ),
+        (
+            bucket.pcd.clone(),
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), bucket.members[0]),
+            "QrUnspentInit: found nullifier in the bucket",
+        ),
+    ]
+    .into_boxed_slice()
+    {
         assert_matches!(
             app
                 .fuse(
@@ -1795,7 +1822,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
 
 #[test]
 fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
@@ -1827,14 +1854,16 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         honest_roots[usize::try_from(position).unwrap()],
         QrClassRoot(true, Fp::ZERO)
     );
-    app.fuse(
-        rng,
-        qr::QrUnspentInit,
-        witness.clone(),
-        bucket.pcd.clone(),
-        app.bootstrap_proof().clone().carry::<()>(()),
-    )
-    .unwrap();
+    let (accepted, ()) = app
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness.clone(),
+            bucket.pcd.clone(),
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
 
     let (_, ref mut roots, ..) = witness;
     let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
@@ -1856,7 +1885,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
 
 #[test]
 fn qr_bucket_seal_refuses_the_final_epoch() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let discriminant = QrDiscriminant::random(rng);
     let final_epoch = EpochIndex::new(EPOCH_MAX);
@@ -1886,7 +1915,7 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
 
 #[test]
 fn qr_unspent_init_accepts_buckets_at_every_depth() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (mut pool, _) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
@@ -1906,51 +1935,69 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     pool.mine(vec![vec![Tachygram::from(member)]]);
     let final_anchor = pool.block(pool.height()).anchor();
 
-    for depth in [0, 1, 31, u32::BITS] {
-        let bucket = qr_bucket_at(
-            rng,
-            app,
-            &pool,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            32,
-            depth,
-            value,
-            Anchor::from(Fp::ZERO),
-        );
-        assert!(bucket.members.contains(&Tachygram::from(member)));
-        let nf = Nullifier::from(value);
-        let segment = qr_bucket_segment(rng, app, &bucket, |_| nf);
-        assert_eq!(
-            *segment.data(),
-            (
-                Anchor::default(),
-                epoch,
-                epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
-            )
-        );
-        assert_eq!(
-            segment.commitments()[0],
-            Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
-        );
+    let nf = Nullifier::from(value);
+    let mut roots = build_qr_partition(
+        rng,
+        app,
+        &pool,
+        (Anchor::default(), final_anchor),
+        discriminant,
+        32,
+        0,
+    );
+    assert_eq!(roots.len(), 1);
+    let mut intake = roots.pop().unwrap();
+    for depth in 0..=u32::BITS {
+        if [0, 1, 31, u32::BITS].contains(&depth) {
+            assert_eq!(
+                intake.pcd.data().4,
+                qr_profile_of(value, discriminant, depth)
+            );
+            assert!(intake.members.contains(&Tachygram::from(member)));
+            let bucket = seal_qr_intake(
+                rng,
+                app,
+                QrIntakeEntry {
+                    pcd: intake.pcd.clone(),
+                    members: intake.members.clone(),
+                },
+                Anchor::from(Fp::ZERO),
+            );
+            let segment = qr_bucket_segment(rng, app, &bucket, |_| nf);
+            assert_eq!(
+                *segment.data(),
+                (
+                    Anchor::default(),
+                    epoch,
+                    epoch_next,
+                    final_anchor.next_epoch(epoch_next).unwrap()
+                )
+            );
+            assert_eq!(
+                segment.commitments()[0],
+                Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
+            );
+            assert!(app.verify_uncompressed(&segment, &mut *rng).unwrap());
+        }
+        if depth < u32::BITS {
+            let side = qr::classify(value, discriminant.at(depth)).0;
+            [intake] = split_qr_intake(rng, app, intake, [side]);
+        }
     }
 }
 
 #[test]
 fn unspent_lift_carries_a_spendable() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 2));
-    pool.advance(epoch3.first_block().0 - pool.height().0, |_| {
-        random_block(rng, 1, 2)
-    });
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 1));
+    pool.mine_through(rng, epoch3.first_block());
 
     let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
     let first = epoch_bucket(rng, app, &pool, epoch1);
@@ -1975,17 +2022,16 @@ fn unspent_lift_carries_a_spendable() {
             pool.block(epoch3.first_block()).prev
         )
     );
+    assert!(app.verify_uncompressed(&carried, &mut *rng).unwrap());
 }
 
 #[test]
 fn unspent_lift_rejects_invalid_extensions() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(EpochIndex::new(3).first_block().0, |_| {
-        random_block(rng, 1, 2)
-    });
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.mine_through(rng, EpochIndex::new(3).first_block());
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 
@@ -2001,15 +2047,6 @@ fn unspent_lift_rejects_invalid_extensions() {
             &past,
             witness::unspent_lift((*segment.data(), *past.pcd.data()), nf1.into(), &[nf0]),
             "UnspentLift: the bucket does not start where the segment ends",
-        ),
-        (
-            &bucket,
-            witness::unspent_lift(
-                (*segment.data(), *bucket.pcd.data()),
-                bucket.members[0],
-                &[nf0],
-            ),
-            "UnspentLift: found nullifier in the bucket",
         ),
         (
             &bucket,
@@ -2042,17 +2079,36 @@ fn unspent_lift_rejects_invalid_extensions() {
             "QR profile: root does not square to the claimed class",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    UnspentLift,
-                    lift,
-                    segment.clone(),
-                    lift_bucket.pcd.clone(),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                UnspentLift,
+                lift,
+                segment.clone(),
+                lift_bucket.pcd.clone(),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
+
+    assert_matches!(
+        app
+            .fuse(
+                rng,
+                UnspentLift,
+                witness::unspent_lift(
+                    (*segment.data(), *bucket.pcd.data()),
+                    bucket.members[0],
+                    &[nf0],
+                ),
+                segment,
+                bucket.pcd,
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "UnspentLift: found nullifier in the bucket"
+    );
 }

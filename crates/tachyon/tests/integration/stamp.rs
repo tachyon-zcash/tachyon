@@ -16,14 +16,14 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
-    stamp_coverage,
+    PoolSim, WalletSim, build_lift_span, build_output_plan, build_output_stamp,
+    forge_overlapping_merge, random_action, random_block, random_block_with, shared_autonome,
+    shared_sk, stamp_coverage,
 };
 
 #[test]
 fn plan_prove_rejects_invalid_inputs() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let other = WalletSim::random(rng);
@@ -136,7 +136,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
 #[test]
 fn plan_prove_lifts_a_spend_along_spans() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
@@ -220,16 +220,18 @@ fn plan_prove_lifts_a_spend_along_spans() {
         build_lift_span(rng, app, &pool, cm_height..=cm_height),
         build_lift_span(rng, app, &pool, plan_height..=plan_height),
     ];
-    assert_matches!(
-        plan.prove(rng, app, &user.pak, vec![(secret, spendable, gapped)]),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) if err.to_string()
-            == "ActionLift: actions anchor is neither the span's start nor a member"
+    let forged = plan
+        .prove(rng, app, &user.pak, vec![(secret, spendable, gapped)])
+        .unwrap();
+    assert!(
+        !forged.verify_proof(rng, app, digests).unwrap(),
+        "ActionLift: actions anchor is neither the span's start nor a member"
     );
 }
 
 #[test]
 fn overlapping_stamps_cannot_aggregate() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let output = wallet.random_note(200);
@@ -297,16 +299,29 @@ fn overlapping_stamps_cannot_aggregate() {
             "StampMerge: merged action set must be the product of left and right action sets",
         ),
     ] {
-        assert_matches!(
-            left.clone().merge(
+        let descriptors: Vec<action::Descriptor> = left_descriptors
+            .iter()
+            .chain(&right_descriptors)
+            .copied()
+            .collect();
+        let fees: Vec<fee::Descriptor> = left_fees.iter().chain(&right_fees).copied().collect();
+        let digests: Vec<ActionDigest> = descriptors
+            .iter()
+            .map(|desc| desc.digest().unwrap())
+            .chain(fees.iter().map(|descriptor| descriptor.digest().unwrap()))
+            .collect();
+
+        let merged = left
+            .clone()
+            .merge(
                 rng,
                 app,
                 (left_descriptors.clone(), left_fees.clone()),
                 (right.clone(), right_descriptors.clone(), right_fees.clone()),
-            ),
-            Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
-                if err.to_string() == expected
-        );
+            )
+            .unwrap();
+        let union: BTreeSet<ActionDigest> = digests.iter().copied().collect();
+        assert!(!merged.verify_proof(rng, app, union).unwrap(), "{expected}");
 
         let forged = forge_overlapping_merge(
             rng,
@@ -322,12 +337,6 @@ fn overlapping_stamps_cannot_aggregate() {
                 &right_fees.iter().copied().collect::<Vec<_>>(),
             ),
         );
-        let descriptors: Vec<action::Descriptor> = left_descriptors
-            .iter()
-            .chain(&right_descriptors)
-            .copied()
-            .collect();
-        let fees: Vec<fee::Descriptor> = left_fees.iter().chain(&right_fees).copied().collect();
         let tachygrams: BTreeSet<Tachygram> =
             left.tachygrams.union(&right.tachygrams).copied().collect();
         let stamp = ProofStamp {
@@ -342,21 +351,15 @@ fn overlapping_stamps_cannot_aggregate() {
             proof: Box::new(forged.proof().clone()),
             fee: left.fee,
         };
-        let digests: Vec<ActionDigest> = descriptors
-            .iter()
-            .map(|desc| desc.digest().unwrap())
-            .chain(fees.iter().map(|descriptor| descriptor.digest().unwrap()))
-            .collect();
         assert!(!stamp.verify_proof(rng, app, digests).unwrap());
     }
 }
 
 #[test]
 fn verify_proof_action_multiset_invariants() {
-    let app = &application();
+    let stamped = shared_autonome();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, app, &wallet, 1000, 700);
 
     let digests: Vec<ActionDigest> = stamped
         .actions
@@ -428,7 +431,7 @@ fn read_rejects_malformed_tachygram_lists() {
 
 #[test]
 fn read_rejects_wrong_proof_size() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
@@ -480,7 +483,7 @@ fn read_rejects_wrong_proof_size() {
 
 #[test]
 fn output_stamp_round_trips_and_binds_its_tachygram_set() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
@@ -513,7 +516,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
 #[test]
 fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
@@ -521,7 +524,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let note = wallet.random_note(200);
     let (stamp, plan, fee_descriptor) = build_output_stamp(rng, app, pool.anchor(), note);
     let stamped_at = pool.height();
-    pool.advance(2, |_| random_block(rng, 1, 4));
+    pool.advance(2, |_| random_block(rng, 1, 1));
     let lifted_to = pool.height();
     let fees = BTreeSet::from([fee_descriptor]);
     let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
@@ -558,16 +561,24 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
     assert!(lifted_decoded.verify_proof(rng, app, digests).unwrap());
 
-    let foreign = BTreeSet::from([random_action(rng).descriptor()]);
-    assert_matches!(
-        stamp.lift(rng, app, &foreign, &fees, vec![span]),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    let foreign = random_action(rng).descriptor();
+    let mismatched = stamp
+        .lift(rng, app, &BTreeSet::from([foreign]), &fees, vec![span])
+        .unwrap();
+    assert!(
+        !mismatched
+            .verify_proof(
+                rng,
+                app,
+                [foreign.digest().unwrap(), fee_descriptor.digest().unwrap()],
+            )
+            .unwrap()
     );
 }
 
 #[test]
 fn merge_after_lift() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user_a = WalletSim::random(rng);
     let user_b = WalletSim::random(rng);
@@ -578,7 +589,7 @@ fn merge_after_lift() {
     let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, app, pool.anchor(), note_a);
     let height_a = pool.height();
 
-    pool.advance(3, |_| random_block(rng, 1, 4));
+    pool.advance(3, |_| random_block(rng, 1, 1));
     let note_b = user_b.random_note(300);
     let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, app, pool.anchor(), note_b);
     let height_b = pool.height();
@@ -589,15 +600,24 @@ fn merge_after_lift() {
     );
     let (fee_set_a, fee_set_b) = (BTreeSet::from([fee_a]), BTreeSet::from([fee_b]));
 
-    assert_matches!(
-        stamp_a.clone().merge(
+    let digests = [
+        plan_a.digest().unwrap(),
+        plan_b.digest().unwrap(),
+        fee_a.digest().unwrap(),
+        fee_b.digest().unwrap(),
+    ];
+    let unlifted = stamp_a
+        .clone()
+        .merge(
             rng,
             app,
             (desc_a.clone(), fee_set_a.clone()),
             (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
-        ),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
-            if err.to_string() == "StampMerge: anchors must match"
+        )
+        .unwrap();
+    assert!(
+        !unlifted.verify_proof(rng, app, digests).unwrap(),
+        "StampMerge: anchors must match"
     );
 
     let span = build_lift_span(rng, app, &pool, height_a.next().unwrap()..=height_b);
@@ -606,14 +626,15 @@ fn merge_after_lift() {
         .unwrap();
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    lifted_a
+    let merged = lifted_a
         .merge(rng, app, (desc_a, fee_set_a), (stamp_b, desc_b, fee_set_b))
         .unwrap();
+    assert!(merged.verify_proof(rng, app, digests).unwrap());
 }
 
 #[test]
 fn mismatched_merge_descriptors_fail_verification() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user_a = WalletSim::random(rng);
     let user_b = WalletSim::random(rng);
@@ -638,8 +659,10 @@ fn mismatched_merge_descriptors_fail_verification() {
         )
         .collect();
 
-    assert_matches!(
-        bundle_a.stamp.clone().merge(
+    let mismatched = bundle_a
+        .stamp
+        .clone()
+        .merge(
             rng,
             app,
             (descriptors_a.clone(), fees_a.clone()),
@@ -648,8 +671,24 @@ fn mismatched_merge_descriptors_fail_verification() {
                 BTreeSet::from([foreign]),
                 fees_b.clone(),
             ),
-        ),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+        )
+        .unwrap();
+    let mismatched_digests: Vec<ActionDigest> = descriptors_a
+        .iter()
+        .chain([&foreign])
+        .map(|desc| desc.digest().unwrap())
+        .chain(
+            fees_a
+                .iter()
+                .chain(&fees_b)
+                .copied()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
+        .collect();
+    assert!(
+        !mismatched
+            .verify_proof(rng, app, mismatched_digests)
+            .unwrap()
     );
 
     let honest = bundle_a

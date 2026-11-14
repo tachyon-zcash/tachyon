@@ -23,9 +23,9 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::wire;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::pasta::Pasta;
+use ragu_pcd::wire;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -325,7 +325,7 @@ impl Proof for Compressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let [action_slot, tachygram_slot] = self.online_commitments();
+        let [action_slot, tachygram_slot] = self.oracle_commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
         {
@@ -607,9 +607,9 @@ impl Plan {
         app: &App<'_>,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let fee_descriptor = fee::Descriptor {
@@ -802,10 +802,10 @@ pub enum ProveError {
 }
 
 /// An uncompressed Ragu proof.
-pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+pub type Uncompressed = ragu_pcd::Proof<Pasta, ProductionRank>;
 
 /// A compressed Ragu proof.
-pub type Compressed = ragu::CompressedProof<Pasta>;
+pub type Compressed = ragu_pcd::CompressedProof<Pasta>;
 
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.
 ///
@@ -938,7 +938,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
+        bind_pcd: ragu_pcd::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
@@ -1073,7 +1073,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         if spans.is_empty() {
             return Err(ProveError::MissingPcd(
@@ -1127,7 +1127,7 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         descriptors: &BTreeSet<action::Descriptor>,
         fee_descriptors: &BTreeSet<fee::Descriptor>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
         let action_digests = descriptors
             .iter()

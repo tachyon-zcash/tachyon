@@ -72,7 +72,7 @@ fn fee_less_output_bundle(
 
 #[test]
 fn fee_fuse_binds_its_sets() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
@@ -98,15 +98,23 @@ fn fee_fuse_binds_its_sets() {
         &left.stamp.tachygrams,
     );
 
+    let mut over_maximum = valid.clone();
+    over_maximum.1 = value::Positive::try_from(301).unwrap();
+    assert_matches!(
+        app
+            .fuse(
+                rng,
+                FeeFuse,
+                over_maximum,
+                left.stamp.proof.clone().carry::<Actions>(anchor),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "FeeFuse: change is out of range"
+    );
+
     for (corrupt, expected) in [
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.1 = value::Positive::try_from(301).unwrap();
-                corrupt
-            },
-            "FeeFuse: change is out of range",
-        ),
         (
             {
                 let mut corrupt = valid.clone();
@@ -124,24 +132,25 @@ fn fee_fuse_binds_its_sets() {
             "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    FeeFuse,
-                    corrupt,
-                    left.stamp.proof.clone().carry::<Actions>(anchor),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                FeeFuse,
+                corrupt,
+                left.stamp.proof.clone().carry::<Actions>(anchor),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 }
 
 #[test]
 fn fee_fuse_slack_boundaries() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -181,13 +190,15 @@ fn fee_fuse_slack_boundaries() {
             let mut corrupt = witness;
             corrupt.1 = value::Positive::try_from(maximum + 1).unwrap();
             assert_matches!(
-                app.fuse(
-                    rng,
-                    FeeFuse,
-                    corrupt,
-                    left_pcd.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                ).err(),
+                app
+                    .fuse(
+                        rng,
+                        FeeFuse,
+                        corrupt,
+                        left_pcd.clone(),
+                        app.bootstrap_proof().clone().carry::<()>(()),
+                    )
+                    .err(),
                 Some(ragu_core::Error::InvalidWitness(err))
                     if err.to_string() == "FeeFuse: change is out of range"
             );
@@ -197,7 +208,7 @@ fn fee_fuse_slack_boundaries() {
 
 #[test]
 fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
@@ -233,17 +244,16 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         &digests,
         &once.stamp.tachygrams,
     );
-    assert_matches!(
-        app.fuse(
+    let (repeated, ()) = app
+        .fuse(
             rng,
             FeeFuse,
             repeated_witness.clone(),
             once.stamp.proof.clone().carry::<Actions>(anchor),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
-        .err(),
-        Some(ragu_core::Error::InvalidWitness(_))
-    );
+        .unwrap();
+    assert!(!app.verify_uncompressed(&repeated, &mut *rng).unwrap());
     let mut twice_stamp = once.stamp.clone();
     twice_stamp.tachygram_set = repeated_witness.2.1.commit();
     twice_stamp
@@ -280,7 +290,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
 
 #[test]
 fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let (bundle_plan, signed, spend_pcds, anchor, _) = wallet.fee_bundle(rng, app, 1000, 700, 300);
@@ -330,7 +340,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
 #[test]
 fn verify_rejects_a_stamp_without_its_fee() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
@@ -372,7 +382,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
 
 #[test]
 fn fee_applies_over_a_fee_bearing_adjunct() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
@@ -432,7 +442,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
 
 #[test]
 fn fee_bearing_aggregates_merge_and_lift() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let notes: Vec<Note> = [1000, 900, 800, 700]
@@ -499,7 +509,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         )
         .unwrap();
 
-    pool.mine(random_block(rng, 1, 2));
+    pool.mine(random_block(rng, 1, 1));
     let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
     let lifted = left
         .lift(
@@ -528,7 +538,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
 
 #[test]
 fn zero_action_fee_seed_round_trips_and_verifies() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -548,7 +558,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
 
 #[test]
 fn innocent_seed_merges_and_strips() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -607,7 +617,7 @@ fn innocent_seed_merges_and_strips() {
 
 #[test]
 fn fee_seed_binds_its_singletons_and_header() {
-    let app = &application();
+    let app = &*application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -641,9 +651,10 @@ fn fee_seed_binds_its_singletons_and_header() {
             "FeeSeed: fee tachygram set does not commit to the fee change note",
         ),
     ] {
-        assert_matches!(
-            app.seed(rng, FeeSeed, corrupt).err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app.seed(rng, FeeSeed, corrupt).unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 
