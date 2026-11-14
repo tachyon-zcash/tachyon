@@ -1,6 +1,22 @@
 //! Non-monic QR splits must preserve bucket membership answers.
 
-#![allow(clippy::too_many_lines, reason = "test module")]
+#![allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::indexing_slicing,
+    clippy::integer_division_remainder_used,
+    clippy::integer_division,
+    clippy::missing_assert_message,
+    clippy::must_use_candidate,
+    clippy::panic,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::type_complexity,
+    missing_debug_implementations,
+    missing_docs,
+    unreachable_pub,
+    reason = "test code"
+)]
 
 extern crate alloc;
 
