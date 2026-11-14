@@ -6,21 +6,21 @@ use core::{array, assert_matches};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    Anchor, EpochIndex, Tachygram, TachygramSetPoly,
-    pasta::Eq,
-    stamp::proof::{PROOF_SYSTEM, summary},
-    witness,
+    Anchor, EpochIndex, Tachygram, TachygramSetPoly, pasta::Eq, stamp::proof::summary, witness,
 };
+
+use super::fixtures::application;
 
 #[test]
 fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
     let stamp_a: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
     let stamp_b: [Tachygram; 2] = array::from_fn(|_| Tachygram::random(rng));
 
-    let (seeded, ()) = PROOF_SYSTEM
+    let (seeded, ()) = app
         .seed(
             rng,
             summary::SummarySeed,
@@ -55,26 +55,26 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         ),
     ] {
         assert_matches!(
-            PROOF_SYSTEM
+            app
                 .fuse(
                     rng,
                     summary::SummaryAdvance,
                     advance_witness,
                     seeded.clone(),
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                    app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
         );
     }
 
-    let (advanced, ()) = PROOF_SYSTEM
+    let (advanced, ()) = app
         .fuse(
             rng,
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
             seeded,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
@@ -100,11 +100,12 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
 
 #[test]
 fn summary_seed_rejects_empty_stamp() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
 
     assert_matches!(
-        PROOF_SYSTEM
+        app
             .seed(
                 rng,
                 summary::SummarySeed,

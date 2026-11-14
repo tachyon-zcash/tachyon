@@ -4,11 +4,12 @@ use super::bridge_hash;
 use crate::{
     pasta::{Eq, Fp},
     primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly},
-    stamp::proof::PROOF_SYSTEM,
+    stamp::proof::new_application,
 };
 
 #[test]
 fn bridge_hash_matches_application() {
+    let app = new_application().unwrap();
     for commitment in [
         TachygramSetCommit::default(),
         TachygramSetPoly::from_iter([Tachygram::from(Fp::from(7))]).commit(),
@@ -16,7 +17,7 @@ fn bridge_hash_matches_application() {
             .commit(),
     ] {
         let point = commitment.as_ref().to_affine();
-        assert_eq!(bridge_hash(point), PROOF_SYSTEM.bridge_hash(point).unwrap());
+        assert_eq!(bridge_hash(point), app.bridge_hash(point).unwrap());
     }
 }
 

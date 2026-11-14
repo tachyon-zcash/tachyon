@@ -33,13 +33,17 @@ use zcash_tachyon::{
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
-            PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
+            App, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
             summary,
         },
     },
     value, witness,
 };
+
+pub fn application() -> App<'static> {
+    stamp::proof::new_application().unwrap()
+}
 
 pub(crate) struct WithPolynomials<S>(pub S, pub [Vec<Fp>; 2]);
 
@@ -167,6 +171,7 @@ pub fn build_output_plan<RNG: CryptoRng>(
 
 pub fn build_output_stamp<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     anchor: Anchor,
     note: Note,
 ) -> (
@@ -174,7 +179,7 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     action::Plan<effect::Output>,
     fee::Descriptor,
 ) {
-    let (stamp, plan, max_fee_note) = build_output_stamp_with_fee(rng, anchor, note);
+    let (stamp, plan, max_fee_note) = build_output_stamp_with_fee(rng, app, anchor, note);
     (
         stamp,
         plan,
@@ -187,6 +192,7 @@ pub fn build_output_stamp<RNG: CryptoRng>(
 
 pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     anchor: Anchor,
     note: Note,
 ) -> (
@@ -204,13 +210,14 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
         max_fee_note,
         value::Positive::ZERO,
     )
-    .prove(rng, &pak, vec![])
+    .prove(rng, app, &pak, vec![])
     .unwrap();
     (stamp, plan, max_fee_note)
 }
 
 pub fn build_autonome<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
@@ -221,10 +228,11 @@ pub fn build_autonome<RNG: CryptoRng>(
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
-    let spendable_pcd = wallet.spendable_init(rng, &spend_note, &pool, height);
+    let spendable_pcd = wallet.spendable_init(rng, app, &spend_note, &pool, height);
     let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
+        app,
         anchor,
         vec![(spend_note, spendable_pcd)],
         vec![output_note],
@@ -233,6 +241,7 @@ pub fn build_autonome<RNG: CryptoRng>(
 
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     (stamp_a, descriptors_a, fee_descriptors_a): (
         &ProofStamp<stamp::Uncompressed>,
         &Vec<action::Descriptor>,
@@ -256,15 +265,13 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .collect::<TachygramSetPoly>();
 
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
-        PROOF_SYSTEM
-            .bridge_hash(left_tg.commit().as_ref().to_affine())
+        app.bridge_hash(left_tg.commit().as_ref().to_affine())
             .unwrap()
             .into(),
         stamp_a.anchor,
     ));
     let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
-        PROOF_SYSTEM
-            .bridge_hash(right_tg.commit().as_ref().to_affine())
+        app.bridge_hash(right_tg.commit().as_ref().to_affine())
             .unwrap()
             .into(),
         stamp_b.anchor,
@@ -289,7 +296,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let (pcd, ()) = PROOF_SYSTEM
+    let (pcd, ()) = app
         .fuse(
             rng,
             StampMerge,
@@ -468,6 +475,7 @@ impl PoolSim {
 
 pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
 ) -> (
@@ -493,9 +501,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
         {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
             let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::AnchorSpanSeed, witness)
-                .unwrap();
+            let (seed, ()) = app.seed(rng, pool::AnchorSpanSeed, witness).unwrap();
             span = Some(match span.take() {
                 None => seed,
                 Some(left) => {
@@ -504,7 +510,7 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
                         &members,
                         &[next_state],
                     );
-                    let (fused, ()) = PROOF_SYSTEM
+                    let (fused, ()) = app
                         .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, seed)
                         .unwrap();
                     fused
@@ -524,10 +530,11 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
 
 pub(crate) fn build_lift_span<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
 ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
-    build_anchor_span_pcd(rng, pool, range).0
+    build_anchor_span_pcd(rng, app, pool, range).0
 }
 
 #[derive(Clone)]
@@ -544,17 +551,18 @@ pub(crate) struct QrBucketEntry {
 
 pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     intake: QrIntakeEntry,
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), anchor_final_prev);
-    let (pcd, ()) = PROOF_SYSTEM
+    let (pcd, ()) = app
         .fuse(
             rng,
             qr::QrBucketSeal,
             witness,
             intake.pcd,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     QrBucketEntry {
@@ -565,6 +573,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
 
 fn build_qr_roots<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
     discriminant: QrDiscriminant,
@@ -597,16 +606,14 @@ fn build_qr_roots<RNG: CryptoRng>(
         if run.len() == 1 && first.1.len() > capacity {
             let witness =
                 witness::qr_stamp_intake_seed(((), ()), first.0, epoch, discriminant, &first.1);
-            let (pcd, ()) = PROOF_SYSTEM
-                .seed(rng, qr::QrStampIntakeSeed, witness)
-                .unwrap();
+            let (pcd, ()) = app.seed(rng, qr::QrStampIntakeSeed, witness).unwrap();
             roots.push(QrIntakeEntry {
                 pcd,
                 members: first.1.clone(),
             });
             continue;
         }
-        let (mut summary, ()) = PROOF_SYSTEM
+        let (mut summary, ()) = app
             .seed(
                 rng,
                 summary::SummarySeed,
@@ -615,26 +622,26 @@ fn build_qr_roots<RNG: CryptoRng>(
             .unwrap();
         let mut members = first.1.clone();
         for entry in &run[1..] {
-            let (advanced, ()) = PROOF_SYSTEM
+            let (advanced, ()) = app
                 .fuse(
                     rng,
                     summary::SummaryAdvance,
                     witness::summary_advance((*summary.data(), ()), &members, &entry.1),
                     summary,
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                    app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .unwrap();
             members.extend(entry.1.iter().copied());
             summary = advanced;
         }
         let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .fuse(
                 rng,
                 qr::QrSummaryIntake,
                 witness,
                 summary,
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
         roots.push(QrIntakeEntry { pcd, members });
@@ -644,6 +651,7 @@ fn build_qr_roots<RNG: CryptoRng>(
 
 fn merge_qr_run<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     intakes: Vec<QrIntakeEntry>,
     capacity: usize,
 ) -> Vec<QrIntakeEntry> {
@@ -674,7 +682,7 @@ fn merge_qr_run<RNG: CryptoRng>(
                     .chain(&right.members)
                     .copied()
                     .collect::<Vec<_>>();
-                let (pcd, ()) = PROOF_SYSTEM
+                let (pcd, ()) = app
                     .fuse(rng, qr::QrIntakeMerge, witness, left.pcd, right.pcd)
                     .unwrap();
                 Some(QrIntakeEntry { pcd, members })
@@ -687,6 +695,7 @@ fn merge_qr_run<RNG: CryptoRng>(
 
 pub(crate) fn split_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     intake: QrIntakeEntry,
 ) -> (QrIntakeEntry, QrIntakeEntry) {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *intake.pcd.data();
@@ -697,6 +706,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
         .partition(|&member| qr::classify(Fp::from(member), discriminant.at(profile.depth)).0);
     split_qr_intake_with_factors(
         rng,
+        app,
         intake,
         [false, true],
         &[(non_residue, Fp::ONE), (residue, Fp::ONE)],
@@ -715,6 +725,7 @@ pub(crate) fn scaled_qr_contents(members: &[Tachygram], scale: Fp) -> TachygramS
 /// factors.
 pub(crate) fn split_qr_intake_with_factors<RNG: CryptoRng, const N: usize>(
     rng: &mut RNG,
+    app: &App<'_>,
     intake: QrIntakeEntry,
     kept: [bool; N],
     factors: &[(Vec<Tachygram>, Fp); 2],
@@ -722,13 +733,13 @@ pub(crate) fn split_qr_intake_with_factors<RNG: CryptoRng, const N: usize>(
     let polynomials = factors
         .each_ref()
         .map(|factor| scaled_qr_contents(&factor.0, factor.1));
-    let (sides, ()) = PROOF_SYSTEM
+    let (sides, ()) = app
         .fuse(
             rng,
             qr::QrIntakeSplit,
             polynomials.into(),
             intake.pcd,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
@@ -738,17 +749,17 @@ pub(crate) fn split_qr_intake_with_factors<RNG: CryptoRng, const N: usize>(
             witness::qr_side_select((*sides.data(), ()), &sibling.0, side);
         let mut scaled_quotient: Polynomial<Fp, ProductionRank> = quotient.into();
         scaled_quotient.scale(sibling.1.invert().unwrap());
-        let (selection, ()) = PROOF_SYSTEM
+        let (selection, ()) = app
             .fuse(
                 rng,
                 qr::QrSideSelect,
                 (interpolant, scaled_quotient.into()),
                 sides.clone(),
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
         let members = factors[usize::from(side)].0.clone();
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .fuse(
                 rng,
                 qr::QrSideDescend,
@@ -763,13 +774,14 @@ pub(crate) fn split_qr_intake_with_factors<RNG: CryptoRng, const N: usize>(
 
 pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
     discriminant: QrDiscriminant,
     capacity: usize,
     depth: u32,
 ) -> Vec<QrIntakeEntry> {
-    let mut layer = build_qr_roots(rng, pool, (start, end), discriminant, capacity);
+    let mut layer = build_qr_roots(rng, app, pool, (start, end), discriminant, capacity);
     for _ in 0..depth {
         let mut residue = Vec::new();
         let mut non_residue = Vec::new();
@@ -779,12 +791,12 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
                 empty.push(intake);
                 continue;
             }
-            let (nqr_side, qr_side) = split_qr_intake(rng, intake);
+            let (nqr_side, qr_side) = split_qr_intake(rng, app, intake);
             non_residue.push(nqr_side);
             residue.push(qr_side);
         }
-        layer = merge_qr_run(rng, residue, capacity);
-        layer.extend(merge_qr_run(rng, non_residue, capacity));
+        layer = merge_qr_run(rng, app, residue, capacity);
+        layer.extend(merge_qr_run(rng, app, non_residue, capacity));
         layer.extend(empty);
     }
     layer
@@ -805,14 +817,16 @@ pub(crate) struct EvidenceTreeEntry {
 
 pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     buckets: Vec<QrBucketEntry>,
 ) -> EvidenceTreeEntry {
     let scales = vec![Fp::ONE; buckets.len()];
-    build_evidence_tree_with_scales(rng, buckets, scales)
+    build_evidence_tree_with_scales(rng, app, buckets, scales)
 }
 
 pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     mut buckets: Vec<QrBucketEntry>,
     mut scales: Vec<Fp>,
 ) -> EvidenceTreeEntry {
@@ -848,7 +862,7 @@ pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
     let mut pairs = Vec::with_capacity(width / 2);
     let mut admitted = proofs.into_iter();
     while let (Some(first), Some(second)) = (admitted.next(), admitted.next()) {
-        let (pair, ()) = PROOF_SYSTEM
+        let (pair, ()) = app
             .fuse(rng, evidence::EvidenceTreeLeafPair, (), first, second)
             .unwrap();
         pairs.push(pair);
@@ -863,7 +877,7 @@ pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
     let mut layer = Vec::with_capacity(pairs.len() / 2);
     let mut halves = pairs.into_iter();
     while let (Some(left), Some(right)) = (halves.next(), halves.next()) {
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
             .unwrap();
         layer.push(pcd);
@@ -879,13 +893,13 @@ pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
             children.next(),
             children.next(),
         ) {
-            let (left, ()) = PROOF_SYSTEM
+            let (left, ()) = app
                 .fuse(rng, evidence::EvidenceTreePairFuse, (), first, second)
                 .unwrap();
-            let (right, ()) = PROOF_SYSTEM
+            let (right, ()) = app
                 .fuse(rng, evidence::EvidenceTreePairFuse, (), third, fourth)
                 .unwrap();
-            let (pcd, ()) = PROOF_SYSTEM
+            let (pcd, ()) = app
                 .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
                 .unwrap();
             parents.push(pcd);
@@ -898,13 +912,13 @@ pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
     let mut caps = Vec::new();
     while (depth + caps.len()) % evidence::EvidenceTreeDescend::LEVELS != 0 {
         caps.push(root.data().4);
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .fuse(
                 rng,
                 evidence::EvidenceTreeCap,
                 (),
                 root,
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
         root = pcd;
@@ -946,14 +960,16 @@ pub(crate) fn build_evidence_tree_with_scales<RNG: CryptoRng>(
 
 pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     tree: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
 ) -> QrBucketEntry {
-    try_open_evidence_tree(rng, tree, leaf).unwrap()
+    try_open_evidence_tree(rng, app, tree, leaf).unwrap()
 }
 
 pub(crate) fn try_open_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     tree: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
 ) -> ragu_core::Result<QrBucketEntry> {
@@ -964,24 +980,24 @@ pub(crate) fn try_open_evidence_tree<RNG: CryptoRng>(
                 ragu_core::Error::InvalidWitness("incomplete evidence path".into())
             })?;
         let witness = witness::evidence_tree_descend((*node.data(), ()), path);
-        let (pcd, ()) = PROOF_SYSTEM.fuse(
+        let (pcd, ()) = app.fuse(
             rng,
             evidence::EvidenceTreeDescend,
             witness,
             node,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )?;
         node = pcd;
     }
 
     let witness =
         witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents.clone());
-    let (pcd, ()) = PROOF_SYSTEM.fuse(
+    let (pcd, ()) = app.fuse(
         rng,
         evidence::EvidenceTreeOpen,
         witness,
         node,
-        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        app.bootstrap_proof().clone().carry::<()>(()),
     )?;
     Ok(QrBucketEntry {
         pcd,
@@ -999,11 +1015,12 @@ pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32)
 
 pub(crate) fn seed_qr_empty_intake<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     anchor: Anchor,
     epoch: EpochIndex,
     discriminant: QrDiscriminant,
 ) -> QrIntakeEntry {
-    let (pcd, ()) = PROOF_SYSTEM
+    let (pcd, ()) = app
         .seed(
             rng,
             qr::QrEmptyIntakeSeed,
@@ -1018,6 +1035,7 @@ pub(crate) fn seed_qr_empty_intake<RNG: CryptoRng>(
 
 pub(crate) fn epoch_bucket<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     epoch: EpochIndex,
 ) -> QrBucketEntry {
@@ -1029,10 +1047,11 @@ pub(crate) fn epoch_bucket<RNG: CryptoRng>(
     );
     let discriminant = QrDiscriminant::random(rng);
     let intake = if entry == final_anchor {
-        seed_qr_empty_intake(rng, entry, epoch, discriminant)
+        seed_qr_empty_intake(rng, app, entry, epoch, discriminant)
     } else {
         let mut roots = build_qr_partition(
             rng,
+            app,
             pool,
             (entry, final_anchor),
             discriminant,
@@ -1042,7 +1061,7 @@ pub(crate) fn epoch_bucket<RNG: CryptoRng>(
         assert_eq!(roots.len(), 1);
         roots.pop().unwrap()
     };
-    seal_qr_intake(rng, intake, anchor_final_prev)
+    seal_qr_intake(rng, app, intake, anchor_final_prev)
 }
 
 pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
@@ -1056,6 +1075,7 @@ pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
 
 pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     (start, final_anchor): (Anchor, Anchor),
     discriminant: QrDiscriminant,
@@ -1065,51 +1085,60 @@ pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
     let profile = qr_profile_of(value, discriminant, depth);
-    let mut branch = build_qr_roots(rng, pool, (start, final_anchor), discriminant, capacity);
+    let mut branch = build_qr_roots(
+        rng,
+        app,
+        pool,
+        (start, final_anchor),
+        discriminant,
+        capacity,
+    );
     for level in 0..depth {
         let side = qr::classify(value, discriminant.at(level)).0;
         let mut kept = Vec::with_capacity(branch.len());
         for intake in branch {
-            let (non_residue, residue) = split_qr_intake(rng, intake);
+            let (non_residue, residue) = split_qr_intake(rng, app, intake);
             kept.push(if side { residue } else { non_residue });
         }
-        branch = merge_qr_run(rng, kept, capacity);
+        branch = merge_qr_run(rng, app, kept, capacity);
     }
     assert_eq!(branch.len(), 1);
     let intake = branch.pop().unwrap();
     assert_eq!(intake.pcd.data().4, profile);
-    seal_qr_intake(rng, intake, anchor_final_prev)
+    seal_qr_intake(rng, app, intake, anchor_final_prev)
 }
 
 pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     user: &WalletSim,
     note: &Note,
     bucket: &QrBucketEntry,
 ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
-    let arbitrary = qr_bucket_segment(rng, bucket, |epoch| {
+    let arbitrary = qr_bucket_segment(rng, app, bucket, |epoch| {
         user.pak
             .nk
             .derive_note_private(note.psi)
             .derive_nullifier(epoch)
     });
-    user.unspent_bind(rng, arbitrary, note)
+    user.unspent_bind(rng, app, arbitrary, note)
 }
 
 pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     bucket: &QrBucketEntry,
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into());
-    let (segment, ()) = PROOF_SYSTEM
+    let (segment, ()) = app
         .fuse(
             rng,
             qr::QrUnspentInit,
             witness,
             bucket.pcd.clone(),
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     segment
@@ -1117,6 +1146,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
 
 pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     pool: &PoolSim,
     nf: impl Fn(EpochIndex) -> Nullifier,
     (epoch_start, epoch_next): (EpochIndex, EpochIndex),
@@ -1124,17 +1154,18 @@ pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     assert!(u32::from(epoch_start) < u32::from(epoch_next));
     let mut segments = Vec::new();
     for epoch in (u32::from(epoch_start)..u32::from(epoch_next)).map(EpochIndex::new) {
-        let bucket = epoch_bucket(rng, pool, epoch);
-        segments.push(qr_bucket_segment(rng, &bucket, &nf));
+        let bucket = epoch_bucket(rng, app, pool, epoch);
+        segments.push(qr_bucket_segment(rng, app, &bucket, &nf));
     }
     let members: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-    fuse_unspent_tree(rng, &members, epoch_start, segments)
+    fuse_unspent_tree(rng, app, &members, epoch_start, segments)
 }
 
 fn fuse_unspent_tree<RNG: CryptoRng>(
     rng: &mut RNG,
+    app: &App<'_>,
     nf: &[Nullifier],
     base: EpochIndex,
     mut chains: Vec<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>>,
@@ -1144,8 +1175,8 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
         return chains.pop().unwrap();
     }
     let right_chains = chains.split_off(chains.len() / 2);
-    let left = fuse_unspent_tree(rng, nf, base, chains);
-    let right = fuse_unspent_tree(rng, nf, base, right_chains);
+    let left = fuse_unspent_tree(rng, app, nf, base, chains);
+    let right = fuse_unspent_tree(rng, app, nf, base, right_chains);
 
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(u64::from(lo - base)).unwrap();
@@ -1158,7 +1189,7 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
     let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
     assert_eq!(u32::from(right_epoch_start), u32::from(left_epoch_next));
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
-    let (fused, ()) = PROOF_SYSTEM
+    let (fused, ()) = app
         .fuse(rng, pool::UnspentFuse, witness, left, right)
         .unwrap();
     fused
@@ -1236,13 +1267,14 @@ impl WalletSim {
     pub fn secret_pcd<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         note: Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
         let cm = Tachygram::from(note.commitment());
         if let Some(pcd) = self.secrets.borrow().get(&cm) {
             return pcd.clone();
         }
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .seed(
                 rng,
                 delegation::NoteSeed,
@@ -1257,6 +1289,7 @@ impl WalletSim {
     pub fn derivation_pcd<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         note: Note,
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
@@ -1268,7 +1301,7 @@ impl WalletSim {
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
-        let secret = self.secret_pcd(rng, note);
+        let secret = self.secret_pcd(rng, app, note);
         let mk = self.pak.nk.derive_note_private(note.psi);
 
         let mut merged: Option<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> = None;
@@ -1276,13 +1309,13 @@ impl WalletSim {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
             let chunk_end =
                 EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
-            let (leaf, ()) = PROOF_SYSTEM
+            let (leaf, ()) = app
                 .fuse(
                     rng,
                     delegation::NullifierDerive,
                     witness::nullifier_derive((*secret.data(), ()), chunk_start),
                     secret.clone(),
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                    app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .unwrap();
             merged = Some(match merged {
@@ -1294,7 +1327,7 @@ impl WalletSim {
                     let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)..=u32::from(chunk_end))
                         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
                         .collect();
-                    let (fused, ()) = PROOF_SYSTEM
+                    let (fused, ()) = app
                         .fuse(
                             rng,
                             delegation::NullifierFuse,
@@ -1320,6 +1353,7 @@ impl WalletSim {
     pub fn spendable_init<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         note: &Note,
         pool: &PoolSim,
         init_height: BlockHeight,
@@ -1346,15 +1380,15 @@ impl WalletSim {
 
             (anchor_prev, stamps[cm_idx].clone())
         };
-        let deriv = self.derivation_pcd(rng, *note, epoch, epoch);
+        let deriv = self.derivation_pcd(rng, app, *note, epoch, epoch);
 
-        let (spendable, ()) = PROOF_SYSTEM
+        let (spendable, ()) = app
             .fuse(
                 rng,
                 spendable::SpendableInit,
                 witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
                 deriv,
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
         spendable
@@ -1363,16 +1397,17 @@ impl WalletSim {
     pub fn unspent_bind<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let (_, epoch_start, epoch_next, _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
+        let range = self.derivation_pcd(rng, app, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
             .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
             .collect();
-        let (unspent, ()) = PROOF_SYSTEM
+        let (unspent, ()) = app
             .fuse(
                 rng,
                 pool::UnspentBind,
@@ -1391,12 +1426,13 @@ impl WalletSim {
     pub fn lift<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
         arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
-        let unspent = self.unspent_bind(rng, arbitrary, note);
-        let (lifted, ()) = PROOF_SYSTEM
+        let unspent = self.unspent_bind(rng, app, arbitrary, note);
+        let (lifted, ()) = app
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
             .unwrap();
         lifted
@@ -1405,6 +1441,7 @@ impl WalletSim {
     pub fn lift_to_epoch<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         pool: &PoolSim,
         note: &Note,
         spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
@@ -1417,16 +1454,18 @@ impl WalletSim {
         }
         let unspent = build_unspent_pcd_over_epochs(
             rng,
+            app,
             pool,
             |covered| mk.derive_nullifier(covered),
             (epoch, target),
         );
-        self.lift(rng, spendable, unspent, note)
+        self.lift(rng, app, spendable, unspent, note)
     }
 
     pub fn spendable_at<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         pool: &PoolSim,
         note: &Note,
         target: EpochIndex,
@@ -1442,19 +1481,20 @@ impl WalletSim {
             })
             .unwrap();
         let creation = BlockHeight::from(creation_height).epoch();
-        let bucket = epoch_bucket(rng, pool, creation);
+        let bucket = epoch_bucket(rng, app, pool, creation);
         let mk = self.pak.nk.derive_note_private(note.psi);
-        let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| mk.derive_nullifier(epoch));
-        let unspent = self.unspent_bind(rng, arbitrary, note);
-        let (spendable, ()) = PROOF_SYSTEM
+        let arbitrary = qr_bucket_segment(rng, app, &bucket, |epoch| mk.derive_nullifier(epoch));
+        let unspent = self.unspent_bind(rng, app, arbitrary, note);
+        let (spendable, ()) = app
             .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
             .unwrap();
-        self.lift_to_epoch(rng, pool, note, spendable, target)
+        self.lift_to_epoch(rng, app, pool, note, spendable, target)
     }
 
     pub fn autonome<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         anchor: Anchor,
         spends: Vec<(
             Note,
@@ -1463,9 +1503,9 @@ impl WalletSim {
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
         let (bundle_plan, unproven, spend_pcds) =
-            self.signed(rng, spends, output_notes, self.random_note(0));
+            self.signed(rng, app, spends, output_notes, self.random_note(0));
         let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);
-        let stamp = stamp_plan.prove(rng, &self.pak, spend_pcds).unwrap();
+        let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
 
         unproven.stamp(stamp)
     }
@@ -1473,6 +1513,7 @@ impl WalletSim {
     pub fn signed<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         spends: Vec<(
             Note,
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
@@ -1499,7 +1540,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, vec![]));
+            spend_pcds.push((self.secret_pcd(rng, app, note), spendable_pcd, vec![]));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1521,6 +1562,7 @@ impl WalletSim {
     pub fn fee_bundle<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         spend_value: u64,
         output_value: u64,
         feemax: u64,
@@ -1542,11 +1584,12 @@ impl WalletSim {
         let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
         pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
         let height = pool.height();
-        let spendable_pcd = self.spendable_init(rng, &spend_note, &pool, height);
+        let spendable_pcd = self.spendable_init(rng, app, &spend_note, &pool, height);
         let anchor = spendable_pcd.data().2;
 
         let (bundle_plan, signed, spend_pcds) = self.signed(
             rng,
+            app,
             vec![(spend_note, spendable_pcd)],
             vec![output_note],
             max_fee_note,
