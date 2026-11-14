@@ -54,17 +54,18 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             "SummaryAdvance: extended accumulator must fold the stamp",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    summary::SummaryAdvance,
-                    advance_witness,
-                    seeded.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                summary::SummaryAdvance,
+                advance_witness,
+                seeded.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 
@@ -96,6 +97,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap();
     assert_eq!(*advanced.data(), (epoch, start, expected_end));
     assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());
+    assert!(app.verify_uncompressed(&advanced, rng).unwrap());
 }
 
 #[test]

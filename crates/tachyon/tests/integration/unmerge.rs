@@ -285,15 +285,19 @@ fn unmerge_by_a_lifted_divisor() {
         .collect();
     let all_fees = BTreeMap::from([(later.fee, later.fee_auth), (earlier.fee, earlier.fee_auth)]);
 
-    assert_matches!(
-        dividend.clone().unmerge(
+    let unaligned = dividend
+        .clone()
+        .unmerge(
             rng,
             app,
             (&all_desc, &all_fees),
             (earlier.stamp, earlier_txid, &early_desc, &early_fees),
-        ),
-        Err(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "StampUnmerge: anchors must match"
+        )
+        .unwrap();
+    assert!(
+        !unaligned
+            .verify_proof(rng, app, later.verify_covered(&[]).unwrap().0)
+            .unwrap()
     );
 
     later.stamp = dividend
@@ -488,8 +492,11 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         .map(|(&desc, &(_, pair))| (desc, pair))
         .collect();
     let divisor_fees = BTreeMap::from([(reproven.fee, reproven.fee_auth)]);
-    assert_matches!(
-        dividend.unmerge(
+    let (original_digests, _) = original.verify_covered(&[]).unwrap();
+    let (_, original_action_digests) = original_digests.split_last().unwrap();
+    let (other_digests, _) = other.verify_covered(&[]).unwrap();
+    let quotient = dividend
+        .unmerge(
             rng,
             app,
             (
@@ -506,11 +513,19 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                 &BTreeMap::from([
                     (original.fee, original.fee_auth),
                     (other.fee, other.fee_auth),
-                ])
+                ]),
             ),
             (reproven.stamp, divisor_txid, &divisor_desc, &divisor_fees),
-        ),
-        Err(ragu_core::Error::InvalidWitness(_))
+        )
+        .unwrap();
+    assert!(
+        !quotient
+            .verify_proof(
+                rng,
+                app,
+                original_action_digests.iter().copied().chain(other_digests),
+            )
+            .unwrap()
     );
 }
 
@@ -578,17 +593,18 @@ fn unmerge_binds_its_sets() {
             "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    StampUnmerge,
-                    corrupt,
-                    alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-                    bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                StampUnmerge,
+                corrupt,
+                alice_bob.proof.clone().carry::<Stamp>(dividend_header),
+                bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 }

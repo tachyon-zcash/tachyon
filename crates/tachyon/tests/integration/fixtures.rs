@@ -1,16 +1,16 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::ops::Deref;
 use std::{sync::Mutex, thread};
 
-use ragu::{
-    header::Header,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
-};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     pasta::Pasta,
+};
+use ragu_pcd::{
+    header::Header,
+    step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -24,18 +24,18 @@ pub mod qr;
 pub mod wallet;
 
 /// Applications that are not currently leased.
-static APPLICATIONS: Mutex<Vec<App<'static>>> = Mutex::new(Vec::new());
+static APPLICATIONS: Mutex<Vec<Box<App<'static>>>> = Mutex::new(Vec::new());
 
 /// An application borrowed from the pool until it is dropped.
 /// A test that panics mid-proof may leave its application in a state the next
 /// test should not inherit.
-pub struct ApplicationLease(Option<App<'static>>);
+pub struct ApplicationLease(Option<Box<App<'static>>>);
 
 impl Deref for ApplicationLease {
     type Target = App<'static>;
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_ref().unwrap()
+        self.0.as_deref().unwrap()
     }
 }
 

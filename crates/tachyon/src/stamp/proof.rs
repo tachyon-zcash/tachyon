@@ -26,9 +26,11 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-use ragu::{Application, ApplicationBuilder, RegistryTags};
+use alloc::boxed::Box;
+
 use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
+use ragu_pcd::{Application, ApplicationBuilder, RegistryTags};
 use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS};
 use udon::curve::{Affine as _, Projective as _};
 
@@ -87,7 +89,8 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-pub fn new_application() -> Result<App<'static>, ragu_core::Error> {
+#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
+pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
     // Registry tags use the fixed Tachyon beacon and configuration digest.
     let manifest = blake2b_simd::Params::new()
         .hash_length(32)
@@ -135,6 +138,7 @@ pub fn new_application() -> Result<App<'static>, ragu_core::Error> {
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
+        .map(Box::new)
 }
 
 #[cfg(test)]

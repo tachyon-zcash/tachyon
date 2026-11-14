@@ -30,9 +30,9 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::wire;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::pasta::Pasta;
+use ragu_pcd::wire;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -212,7 +212,7 @@ impl Proof for Compressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let [action_slot, tachygram_slot] = self.online_commitments();
+        let [action_slot, tachygram_slot] = self.oracle_commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
         {
@@ -461,9 +461,9 @@ impl Plan {
         app: &App<'_>,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<
         (
@@ -658,10 +658,10 @@ pub enum ProveError {
 }
 
 /// An uncompressed Ragu proof.
-pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+pub type Uncompressed = ragu_pcd::Proof<Pasta, ProductionRank>;
 
 /// A compressed Ragu proof.
-pub type Compressed = ragu::CompressedProof<Pasta>;
+pub type Compressed = ragu_pcd::CompressedProof<Pasta>;
 
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
@@ -785,7 +785,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
+        bind_pcd: ragu_pcd::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
@@ -925,7 +925,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
@@ -970,7 +970,7 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);

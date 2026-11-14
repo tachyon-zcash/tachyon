@@ -80,13 +80,13 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
 
 #[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrIntake>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 #[derive(Clone)]
 pub(crate) struct QrBucketEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrBucket>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, qr::QrBucket>,
     pub members: Vec<Tachygram>,
 }
 
@@ -260,7 +260,7 @@ impl EvidenceLeaf {
 
 #[derive(Clone)]
 pub(crate) struct EvidenceTreeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
     pub real_leaves: usize,
 }
@@ -292,9 +292,9 @@ impl EvidenceTreeEntry {
             buckets: &[&QrBucketEntry],
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+        ) -> ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
             let [first, second] = <[_; 2]>::try_from(buckets).unwrap();
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
@@ -317,13 +317,13 @@ impl EvidenceTreeEntry {
             rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
-            left: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
-            right: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            left: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            right: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+        ) -> ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
                 return pcd.clone();
@@ -341,11 +341,14 @@ impl EvidenceTreeEntry {
             buckets: &[&QrBucketEntry],
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-            trees: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>>,
+            trees: &mut BTreeMap<
+                Vec<u8>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            >,
         ) -> (
-            ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
             Vec<EvidenceLeaf>,
         ) {
             let (left, right, leaves) = if buckets.len() == EVIDENCE_TREE_ARITY {
@@ -529,7 +532,7 @@ impl QrBucketEntry {
         rng: &mut RNG,
         app: &App<'_>,
         nf: impl Fn(EpochIndex) -> Nullifier,
-    ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
         let (epoch, ..) = *self.pcd.data();
         let witness = witness::qr_unspent_init((*self.pcd.data(), ()), nf(epoch).into());
         let (segment, ()) = app

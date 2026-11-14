@@ -489,6 +489,35 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
 }
 
 #[test]
+fn verify_rejects_a_note_output_twice_under_different_thetas() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let note = wallet.random_note(200);
+    let anchor = Anchor::random(rng);
+    let outputs = [(), ()].map(|()| output_plan(rng, note).2).to_vec();
+    let bundle_plan = Plan::new(vec![], outputs, wallet.random_note(0));
+    let signed = bundle_plan
+        .sign(
+            rng,
+            &mock_sighash(bundle_plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let proof = bundle_plan
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(rng, app, &wallet.pak, vec![])
+        .unwrap();
+    let bundle = bundle_plan.assemble(signed, proof);
+    assert_matches!(
+        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::DuplicateTachygrams
+        ))
+    );
+}
+
+#[test]
 fn stamped_bundle_round_trips() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);

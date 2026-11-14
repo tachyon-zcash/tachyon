@@ -650,7 +650,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);
