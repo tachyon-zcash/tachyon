@@ -12,8 +12,8 @@ foundational design decision in Tachyon’s key structure: the separation of con
 The [Zcash Spec](https://zips.z.cash/protocol/protocol.pdf) is most illustrious
 for its sedimentary layers of meticulous notations and its evolving key
 structures across network upgrades.
-We marvel at the sophistication of the key designs, at the laborious effort
-behind to strive for efficiency, security, and rich functionalities all at once.
+We marvel at the sophistication of the key designs, striving for efficiency,
+security, and rich functionalities all at once.
 But why such growing complexity? After all, the Sprout upgrade, following the
 original [Zerocash](https://eprint.iacr.org/2014/349.pdf), only requires one
 payment key and one encryption key.
