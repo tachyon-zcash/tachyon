@@ -224,10 +224,10 @@ fn qr_split_rules_test_canonical_form_only() {
 
     let mut non_residue_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
     non_residue_poly.scale(scale);
-    let scaled_non_residue = TachygramSetPoly::from_noncanonical_for_test(non_residue_poly);
+    let scaled_non_residue = TachygramSetPoly::arbitrary(non_residue_poly);
     let mut residue_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
     residue_poly.scale(scale_inv);
-    let scaled_residue = TachygramSetPoly::from_noncanonical_for_test(residue_poly);
+    let scaled_residue = TachygramSetPoly::arbitrary(residue_poly);
     for (poly, factor) in [(&scaled_non_residue, scale), (&scaled_residue, scale_inv)] {
         assert_eq!(
             poly.as_ref()
@@ -267,10 +267,10 @@ fn qr_split_rules_test_canonical_form_only() {
     let single = [member];
     let mut held_poly: Polynomial<Fp, ProductionRank> = monic.into();
     held_poly.scale(scale);
-    let held = TachygramSetPoly::from_noncanonical_for_test(held_poly);
+    let held = TachygramSetPoly::arbitrary(held_poly);
     let mut constant_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
     constant_poly.scale(scale_inv);
-    let constant = TachygramSetPoly::from_noncanonical_for_test(constant_poly);
+    let constant = TachygramSetPoly::arbitrary(constant_poly);
     assert_eq!(
         held.as_ref()
             .iter_stored_coeffs()
@@ -338,10 +338,10 @@ fn qr_split_rules_test_canonical_form_only() {
 
     let mut first_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
     first_poly.scale(deep_scale);
-    let first = TachygramSetPoly::from_noncanonical_for_test(first_poly);
+    let first = TachygramSetPoly::arbitrary(first_poly);
     let mut second_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
     second_poly.scale(deep_cofactor);
-    let second = TachygramSetPoly::from_noncanonical_for_test(second_poly);
+    let second = TachygramSetPoly::arbitrary(second_poly);
     assert_eq!(
         first
             .as_ref()
@@ -551,10 +551,10 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
 
     let mut held_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
     held_poly.scale(scale);
-    let held = TachygramSetPoly::from_noncanonical_for_test(held_poly);
+    let held = TachygramSetPoly::arbitrary(held_poly);
     let mut constant_poly: Polynomial<Fp, ProductionRank> = empty.clone().into();
     constant_poly.scale(scale_inv);
-    let constant = TachygramSetPoly::from_noncanonical_for_test(constant_poly);
+    let constant = TachygramSetPoly::arbitrary(constant_poly);
     let (non_residue, residue) = if side {
         (constant, held)
     } else {
@@ -609,8 +609,8 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
             rng,
             QrIntakeSplit,
             (
-                TachygramSetPoly::from_noncanonical_for_test(first),
-                TachygramSetPoly::from_noncanonical_for_test(second),
+                TachygramSetPoly::arbitrary(first),
+                TachygramSetPoly::arbitrary(second),
             ),
             scaled_empty_intake,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
@@ -747,7 +747,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let held_profile = QrProfile::ROOT.descend(side);
     let mut scaled_monic_poly: Polynomial<Fp, ProductionRank> = monic.clone().into();
     scaled_monic_poly.scale(scale);
-    let scaled_monic = TachygramSetPoly::from_noncanonical_for_test(scaled_monic_poly);
+    let scaled_monic = TachygramSetPoly::arbitrary(scaled_monic_poly);
     let opened_scaled_held = open(0, held_profile, scaled_monic.clone()).unwrap();
     assert_eq!(*opened_scaled_held.data(), *scaled_held.data());
     let opened_honest_held = open(2, held_profile, monic.clone()).unwrap();
@@ -936,8 +936,8 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
             rng,
             QrIntakeSplit,
             (
-                TachygramSetPoly::from_noncanonical_for_test(scaled_non_residue),
-                TachygramSetPoly::from_noncanonical_for_test(scaled_residue),
+                TachygramSetPoly::arbitrary(scaled_non_residue),
+                TachygramSetPoly::arbitrary(scaled_residue),
             ),
             duplicate_intake,
             PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
