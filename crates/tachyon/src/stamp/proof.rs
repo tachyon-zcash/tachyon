@@ -42,24 +42,12 @@ use crate::{
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
-/// Native mirror of Ragu's `Application::bridge_hash` using its baked setup.
-/// Anchor folding and stamp verification need this without building an
-/// application, including during `Step::polynomials`. A test pins the result
-/// to the application's hash so layout changes cannot silently diverge.
-///
-/// Mirrors Ragu's crate-private
-/// `ragu_pcd::internal::nested::stages::bridge_hash::digest`
-/// (`crates/ragu_pcd/src/internal/nested/stages/bridge_hash.rs:83-103` at
-/// `a1395401`). That function commits an unblinded stage polynomial holding
-/// the point's two coordinates under the nested generators, giving
-/// `x · G_i + y · G_j` (same file, line 9). The mock application computes the
-/// same layout (`src/mock/application.rs:32, 270-279`).
+/// Computes the value `Application::bridge_hash` returns, without an application.
+/// The test in `proof/tests.rs` pins it to the application's result.
 ///
 /// # Panics
 ///
-/// Panics if `commitment` is the identity, which has no affine coordinates
-/// to hash. Every caller hashes a tachygram-set commitment, and no set
-/// polynomial commits to the identity.
+/// Panics if `commitment` is the identity.
 pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     #[expect(
         clippy::expect_used,
@@ -68,21 +56,9 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     let (x, y) = commitment
         .coordinates()
         .expect("tachygram set commitment is not the identity");
-    // The bridge stage's parent is the endoscalar stage (`bridge_hash.rs:50`),
-    // which reserves `ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS` values after the
-    // SYSTEM gate (`ragu_pcd/src/internal/endoscalar.rs:99-103`). Stage values
-    // pack two per gate (`ragu_circuits/src/staging/mod.rs:471-475`), and a
-    // stage's first reservation index is `2 · (skip_gates - 1)`
-    // (`ragu_circuits/src/staging/layout.rs:128-130`). So the bridge stage
-    // starts at the endoscalar value count rounded up to whole gates.
+    // The bridge stage starts after the endoscalar values, rounded up to whole gates.
     let x_wire = (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).next_multiple_of(2);
-    // The stage holds exactly the two coordinates (`bridge_hash.rs:54-56`),
-    // x first, then y at the next reservation index.
     let y_wire = x_wire + 1;
-    // `wire_degree` maps a reservation index to the polynomial degree that
-    // carries it: an even index on its gate's a wire, an odd one on its d wire
-    // (`ragu_circuits/src/staging/layout.rs:136-149`). The degree depends on
-    // the rank, and Tachyon's application uses `ProductionRank`.
     let generators = Pasta::nested_generators(pasta::baked()).g();
     #[expect(
         clippy::expect_used,
@@ -95,9 +71,6 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     };
     let g_x = generator(x_wire);
     let g_y = generator(y_wire);
-    // The commitment is the inner product of the stage polynomial with the
-    // nested (Pallas) generators. Its only nonzero coefficients are the
-    // Vesta point's coordinates, which are Pallas scalars.
     (g_x.to_projective() * x + g_y.to_projective() * y).to_affine()
 }
 
