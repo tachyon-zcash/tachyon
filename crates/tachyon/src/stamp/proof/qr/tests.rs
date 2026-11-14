@@ -21,7 +21,7 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{assert_matches, iter};
 
-use ragu::{Pcd, header::Header};
+use ragu::Pcd;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -41,88 +41,17 @@ use crate::{
     primitives::{Anchor, EpochIndex, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly},
     stamp::proof::{
         PROOF_SYSTEM,
-        delegation::{NoteSecret, NoteSeed, NullifierDerive},
+        delegation::{NoteSeed, NullifierDerive},
         evidence::{
             EvidenceTreeCap, EvidenceTreeDescend, EvidenceTreeFuse, EvidenceTreeLeafPair,
             EvidenceTreeOpen,
         },
-        pool::{ArbitraryUnspent, NoteUnspent, UnspentBind},
+        pool::{NoteUnspent, UnspentBind},
         spend::SpendBind,
-        spendable::{NoteSpendable, QrSpendableInit},
+        spendable::QrSpendableInit,
     },
     value, witness,
 };
-
-fn verified<H: Header<Fp>>(
-    rng: &mut StdRng,
-    pcd: Pcd<Pasta, ProductionRank, H>,
-) -> Pcd<Pasta, ProductionRank, H> {
-    assert!(PROOF_SYSTEM.verify_differential(&pcd, &mut *rng).unwrap());
-    pcd
-}
-
-fn rejects<T>(result: ragu_core::Result<T>, message: &str) {
-    assert_matches!(
-        result.err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == message
-    );
-}
-
-fn bootstrap() -> Pcd<Pasta, ProductionRank, ()> {
-    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(())
-}
-
-fn scaled(poly: &TachygramSetPoly, by: Fp) -> TachygramSetPoly {
-    let mut inner: Polynomial<Fp, ProductionRank> = poly.clone().into();
-    inner.scale(by);
-    TachygramSetPoly::from_noncanonical_for_test(inner)
-}
-
-fn nonzero_coeffs(poly: &TachygramSetPoly) -> Vec<(usize, Fp)> {
-    poly.as_ref()
-        .iter_stored_coeffs()
-        .filter(|&(_, coeff)| *coeff != Fp::ZERO)
-        .map(|(degree, &coeff)| (degree, coeff))
-        .collect()
-}
-
-/// A root intake over one stamp, opening epoch zero at its entry anchor.
-fn seed_stamp(
-    rng: &mut StdRng,
-    discriminant: QrDiscriminant,
-    members: &[Tachygram],
-) -> Pcd<Pasta, ProductionRank, QrIntake> {
-    let (intake, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(
-                ((), ()),
-                Anchor::default(),
-                EpochIndex::new(0),
-                discriminant,
-                members,
-            ),
-        )
-        .unwrap();
-    verified(rng, intake)
-}
-
-fn split(
-    rng: &mut StdRng,
-    intake: &Pcd<Pasta, ProductionRank, QrIntake>,
-    non_residue: TachygramSetPoly,
-    residue: TachygramSetPoly,
-) -> ragu_core::Result<Pcd<Pasta, ProductionRank, QrIntakeSides>> {
-    let (sides, ()) = PROOF_SYSTEM.fuse(
-        rng,
-        QrIntakeSplit,
-        (non_residue, residue),
-        intake.clone(),
-        bootstrap(),
-    )?;
-    Ok(verified(rng, sides))
-}
 
 /// Select and descend into side `bit`. The sibling is `sibling_scale` times
 /// the monic polynomial over `sibling_members`, so the honest hints carry the
@@ -148,65 +77,16 @@ fn descend(
         QrSideSelect,
         (interpolant.into(), quotient.into()),
         sides.clone(),
-        bootstrap(),
+        PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
     )?;
-    let selection = verified(rng, selected);
-    let (child, ()) = PROOF_SYSTEM.fuse(rng, QrSideDescend, (bit,), sides.clone(), selection)?;
-    Ok(verified(rng, child))
-}
-
-fn seal(
-    rng: &mut StdRng,
-    intake: &Pcd<Pasta, ProductionRank, QrIntake>,
-) -> Pcd<Pasta, ProductionRank, QrBucket> {
-    let (bucket, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            QrBucketSeal,
-            witness::qr_bucket_seal((*intake.data(), ()), Anchor::from(Fp::ZERO)),
-            intake.clone(),
-            bootstrap(),
-        )
-        .unwrap();
-    verified(rng, bucket)
-}
-
-/// Descend as [`descend`] and seal the child.
-fn descend_to_bucket(
-    rng: &mut StdRng,
-    sides: &Pcd<Pasta, ProductionRank, QrIntakeSides>,
-    bit: bool,
-    sibling_members: &[Tachygram],
-    sibling_scale: Fp,
-) -> Pcd<Pasta, ProductionRank, QrBucket> {
-    let child = descend(rng, sides, bit, sibling_members, sibling_scale).unwrap();
-    seal(rng, &child)
-}
-
-fn exclude(
-    rng: &mut StdRng,
-    bucket: &Pcd<Pasta, ProductionRank, QrBucket>,
-    value: Tachygram,
-) -> ragu_core::Result<Pcd<Pasta, ProductionRank, ArbitraryUnspent>> {
-    let (segment, ()) = PROOF_SYSTEM.fuse(
-        rng,
-        QrUnspentInit,
-        witness::qr_unspent_init((*bucket.data(), ()), value),
-        bucket.clone(),
-        bootstrap(),
-    )?;
-    Ok(verified(rng, segment))
-}
-
-fn note_secret(
-    rng: &mut StdRng,
-    note: Note,
-    pak: ProofAuthorizingKey,
-) -> Pcd<Pasta, ProductionRank, NoteSecret> {
-    let (secret, ()) = PROOF_SYSTEM
-        .seed(rng, NoteSeed, witness::note_seed(((), ()), note, pak))
-        .unwrap();
-    verified(rng, secret)
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&selected, &mut *rng)
+            .unwrap()
+    );
+    let (child, ()) = PROOF_SYSTEM.fuse(rng, QrSideDescend, (bit,), sides.clone(), selected)?;
+    assert!(PROOF_SYSTEM.verify_differential(&child, &mut *rng).unwrap());
+    Ok(child)
 }
 
 /// Exclude `note`'s epoch-zero nullifier from `bucket` and bind the segment to
@@ -219,51 +99,64 @@ fn exclude_and_bind(
 ) -> Pcd<Pasta, ProductionRank, NoteUnspent> {
     let epoch = EpochIndex::new(0);
     let mk = pak.nk.derive_note_private(note.psi);
-    let segment = exclude(rng, bucket, Tachygram::from(mk.derive_nullifier(epoch))).unwrap();
-    let secret = note_secret(rng, note, pak);
+    let (segment, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrUnspentInit,
+            witness::qr_unspent_init(
+                (*bucket.data(), ()),
+                Tachygram::from(mk.derive_nullifier(epoch)),
+            ),
+            bucket.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&segment, &mut *rng)
+            .unwrap()
+    );
+    let (secret, ()) = PROOF_SYSTEM
+        .seed(rng, NoteSeed, witness::note_seed(((), ()), note, pak))
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&secret, &mut *rng)
+            .unwrap()
+    );
     let (derived, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             NullifierDerive,
             witness::nullifier_derive((*secret.data(), ()), epoch),
             secret,
-            bootstrap(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let range = verified(rng, derived);
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&derived, &mut *rng)
+            .unwrap()
+    );
     let (unspent, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             UnspentBind,
             witness::unspent_bind(
-                (*segment.data(), *range.data()),
+                (*segment.data(), *derived.data()),
                 &mk.derive_window(epoch),
                 &[mk.derive_nullifier(epoch)],
             ),
             segment,
-            range,
+            derived,
         )
         .unwrap();
-    verified(rng, unspent)
-}
-
-fn include(
-    rng: &mut StdRng,
-    unspent: &Pcd<Pasta, ProductionRank, NoteUnspent>,
-    bucket: &Pcd<Pasta, ProductionRank, QrBucket>,
-) -> ragu_core::Result<Pcd<Pasta, ProductionRank, NoteSpendable>> {
-    let (spendable, ()) =
-        PROOF_SYSTEM.fuse(rng, QrSpendableInit, (), unspent.clone(), bucket.clone())?;
-    Ok(verified(rng, spendable))
-}
-
-fn random_note(rng: &mut StdRng, sk: &private::SpendingKey) -> Note {
-    Note {
-        pk: sk.derive_payment_key(),
-        value: value::Positive::try_from(400u64).unwrap(),
-        psi: nullifier::Trapdoor::random(rng),
-        rcm: note::CommitmentTrapdoor::random(rng),
-    }
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&unspent, &mut *rng)
+            .unwrap()
+    );
+    unspent
 }
 
 /// Characterizes the scope of the canonical-form rules. `QrIntakeSplit`
@@ -295,23 +188,71 @@ fn qr_split_rules_test_canonical_form_only() {
 
     // Duplicated member: contents (X - m)^2.
     let doubled = [member, member];
-    let intake = seed_stamp(rng, discriminant, &doubled);
-    let honest_sides = split(rng, &intake, monic.clone(), monic.clone()).unwrap();
-    rejects(
-        descend(rng, &honest_sides, bit, &[member], Fp::ONE),
-        "QrSideDescend: the two sides agree at the challenge",
+    let (intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                Anchor::default(),
+                EpochIndex::new(0),
+                discriminant,
+                &doubled,
+            ),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&intake, &mut *rng)
+            .unwrap()
+    );
+    let (honest_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (monic.clone(), monic.clone()),
+            intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest_sides, &mut *rng)
+            .unwrap()
+    );
+    assert_matches!(
+        descend(rng, &honest_sides, bit, &[member], Fp::ONE).err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSideDescend: the two sides agree at the challenge"
     );
 
-    let scaled_non_residue = scaled(&monic, scale);
-    let scaled_residue = scaled(&monic, scale_inv);
+    let mut scaled_non_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_non_residue.scale(scale);
+    let scaled_non_residue = TachygramSetPoly::from_noncanonical_for_test(scaled_non_residue);
+    let mut scaled_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_residue.scale(scale_inv);
+    let scaled_residue = TachygramSetPoly::from_noncanonical_for_test(scaled_residue);
     for (poly, factor) in [(&scaled_non_residue, scale), (&scaled_residue, scale_inv)] {
         assert_eq!(
-            nonzero_coeffs(poly),
+            poly.as_ref()
+                .iter_stored_coeffs()
+                .filter(|&(_, coeff)| *coeff != Fp::ZERO)
+                .map(|(degree, &coeff)| (degree, coeff))
+                .collect::<Vec<_>>(),
             vec![(0, -(factor * member_fp)), (1, factor)]
         );
         assert_eq!(poly.eval(member_fp), Fp::ZERO);
     }
-    let sides = split(rng, &intake, scaled_non_residue, scaled_residue).unwrap();
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (scaled_non_residue, scaled_residue),
+            intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(PROOF_SYSTEM.verify_differential(&sides, &mut *rng).unwrap());
     assert_ne!(sides.commitments()[0], sides.commitments()[1]);
     let sibling_scale = if bit { scale } else { scale_inv };
     let child = descend(rng, &sides, bit, &[member], sibling_scale).unwrap();
@@ -329,21 +270,67 @@ fn qr_split_rules_test_canonical_form_only() {
 
     // Empty side: contents {m}, descending into the side that holds nothing.
     let single = [member];
-    let held = scaled(&monic, scale);
-    let constant = scaled(&empty, scale_inv);
+    let mut held: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    held.scale(scale);
+    let held = TachygramSetPoly::from_noncanonical_for_test(held);
+    let mut constant: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    constant.scale(scale_inv);
+    let constant = TachygramSetPoly::from_noncanonical_for_test(constant);
     assert_eq!(
-        nonzero_coeffs(&held),
+        held.as_ref()
+            .iter_stored_coeffs()
+            .filter(|&(_, coeff)| *coeff != Fp::ZERO)
+            .map(|(degree, &coeff)| (degree, coeff))
+            .collect::<Vec<_>>(),
         vec![(0, -(scale * member_fp)), (1, scale)]
     );
     assert_eq!(held.eval(member_fp), Fp::ZERO);
-    assert_eq!(nonzero_coeffs(&constant), vec![(0, scale_inv)]);
+    assert_eq!(
+        constant
+            .as_ref()
+            .iter_stored_coeffs()
+            .filter(|&(_, coeff)| *coeff != Fp::ZERO)
+            .map(|(degree, &coeff)| (degree, coeff))
+            .collect::<Vec<_>>(),
+        vec![(0, scale_inv)]
+    );
     let (non_residue, residue) = if side {
         (constant, held)
     } else {
         (held, constant)
     };
-    let single_intake = seed_stamp(rng, discriminant, &single);
-    let single_sides = split(rng, &single_intake, non_residue, residue).unwrap();
+    let (single_intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                Anchor::default(),
+                EpochIndex::new(0),
+                discriminant,
+                &single,
+            ),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&single_intake, &mut *rng)
+            .unwrap()
+    );
+    let (single_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (non_residue, residue),
+            single_intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&single_sides, &mut *rng)
+            .unwrap()
+    );
     let empty_child = descend(rng, &single_sides, bit, &single, scale).unwrap();
     assert_eq!(
         empty_child.commitments()[0],
@@ -354,19 +341,74 @@ fn qr_split_rules_test_canonical_form_only() {
         PROOF_SYSTEM.commit(&[Fp::ONE]).unwrap()
     );
 
-    let first = scaled(&empty, deep_scale);
-    let second = scaled(&empty, deep_cofactor);
-    assert_eq!(nonzero_coeffs(&first), vec![(0, deep_scale)]);
-    assert_eq!(nonzero_coeffs(&second), vec![(0, deep_cofactor)]);
-    split(rng, &empty_child, first, second).unwrap();
+    let mut first: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    first.scale(deep_scale);
+    let first = TachygramSetPoly::from_noncanonical_for_test(first);
+    let mut second: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    second.scale(deep_cofactor);
+    let second = TachygramSetPoly::from_noncanonical_for_test(second);
+    assert_eq!(
+        first
+            .as_ref()
+            .iter_stored_coeffs()
+            .filter(|&(_, coeff)| *coeff != Fp::ZERO)
+            .map(|(degree, &coeff)| (degree, coeff))
+            .collect::<Vec<_>>(),
+        vec![(0, deep_scale)]
+    );
+    assert_eq!(
+        second
+            .as_ref()
+            .iter_stored_coeffs()
+            .filter(|&(_, coeff)| *coeff != Fp::ZERO)
+            .map(|(degree, &coeff)| (degree, coeff))
+            .collect::<Vec<_>>(),
+        vec![(0, deep_cofactor)]
+    );
+    let (deep_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (first, second),
+            empty_child,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&deep_sides, &mut *rng)
+            .unwrap()
+    );
 
     let (honest_non_residue, honest_residue) =
         witness::qr_intake_split((*single_intake.data(), ()), &single);
-    let honest = split(rng, &single_intake, honest_non_residue, honest_residue).unwrap();
+    let (honest, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (honest_non_residue, honest_residue),
+            single_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest, &mut *rng)
+            .unwrap()
+    );
     let honest_empty_child = descend(rng, &honest, bit, &single, Fp::ONE).unwrap();
-    rejects(
-        split(rng, &honest_empty_child, empty.clone(), empty.clone()),
-        "QrIntakeSplit: contents are one",
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                QrIntakeSplit,
+                (empty.clone(), empty.clone()),
+                honest_empty_child,
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrIntakeSplit: contents are one"
     );
     let (seeded, ()) = PROOF_SYSTEM
         .seed(
@@ -380,9 +422,18 @@ fn qr_split_rules_test_canonical_form_only() {
             ),
         )
         .unwrap();
-    rejects(
-        split(rng, &seeded, empty.clone(), empty),
-        "QrIntakeSplit: contents are one",
+    assert_matches!(
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                QrIntakeSplit,
+                (empty.clone(), empty),
+                seeded,
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrIntakeSplit: contents are one"
     );
 }
 
@@ -400,11 +451,14 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let epoch = EpochIndex::new(0);
     let sk = private::SpendingKey::random(rng);
     let pak = sk.derive_proof_private();
-    let nullifier_of =
-        |note: &Note| Tachygram::from(pak.nk.derive_note_private(note.psi).derive_nullifier(epoch));
-    let note = random_note(rng, &sk);
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: value::Positive::try_from(400u64).unwrap(),
+        psi: nullifier::Trapdoor::random(rng),
+        rcm: note::CommitmentTrapdoor::random(rng),
+    };
     let cm = Tachygram::from(note.commitment());
-    let nf = nullifier_of(&note);
+    let nf = Tachygram::from(pak.nk.derive_note_private(note.psi).derive_nullifier(epoch));
     let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
         .find(|discriminant| {
             classify(Fp::from(nf), discriminant.at(0)).0
@@ -412,10 +466,25 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         })
         .unwrap();
     let side = classify(Fp::from(cm), discriminant.at(0)).0;
-    let other_note = iter::repeat_with(|| random_note(rng, &sk))
-        .find(|candidate| classify(Fp::from(nullifier_of(candidate)), discriminant.at(0)).0 != side)
-        .unwrap();
-    let other_nf = nullifier_of(&other_note);
+    let other_note = iter::repeat_with(|| Note {
+        pk: sk.derive_payment_key(),
+        value: value::Positive::try_from(400u64).unwrap(),
+        psi: nullifier::Trapdoor::random(rng),
+        rcm: note::CommitmentTrapdoor::random(rng),
+    })
+    .find(|candidate| {
+        let nf = pak
+            .nk
+            .derive_note_private(candidate.psi)
+            .derive_nullifier(epoch);
+        classify(Fp::from(Tachygram::from(nf)), discriminant.at(0)).0 != side
+    })
+    .unwrap();
+    let other_nf = Tachygram::from(
+        pak.nk
+            .derive_note_private(other_note.psi)
+            .derive_nullifier(epoch),
+    );
     let deep_bit = classify(Fp::from(other_nf), discriminant.at(1)).0;
 
     let scale = Fp::from(7u64);
@@ -426,33 +495,159 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let empty = TachygramSetPoly::from_iter(iter::empty());
     let single = [cm];
 
-    let intake = seed_stamp(rng, discriminant, &single);
+    let (intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                Anchor::default(),
+                epoch,
+                discriminant,
+                &single,
+            ),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&intake, &mut *rng)
+            .unwrap()
+    );
     let (honest_non_residue, honest_residue) =
         witness::qr_intake_split((*intake.data(), ()), &single);
-    let honest_sides = split(rng, &intake, honest_non_residue, honest_residue).unwrap();
-    let honest_held = descend_to_bucket(rng, &honest_sides, side, &[], Fp::ONE);
-    let honest_empty = descend_to_bucket(rng, &honest_sides, !side, &single, Fp::ONE);
+    let (honest_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (honest_non_residue, honest_residue),
+            intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest_sides, &mut *rng)
+            .unwrap()
+    );
+    let honest_held_intake = descend(rng, &honest_sides, side, &[], Fp::ONE).unwrap();
+    let (honest_held, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*honest_held_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            honest_held_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest_held, &mut *rng)
+            .unwrap()
+    );
+    let honest_empty_intake = descend(rng, &honest_sides, !side, &single, Fp::ONE).unwrap();
+    let (honest_empty, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*honest_empty_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            honest_empty_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest_empty, &mut *rng)
+            .unwrap()
+    );
 
-    let held = scaled(&monic, scale);
-    let constant = scaled(&empty, scale_inv);
+    let mut held: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    held.scale(scale);
+    let held = TachygramSetPoly::from_noncanonical_for_test(held);
+    let mut constant: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    constant.scale(scale_inv);
+    let constant = TachygramSetPoly::from_noncanonical_for_test(constant);
     let (non_residue, residue) = if side {
         (constant, held)
     } else {
         (held, constant)
     };
-    let sides = split(rng, &intake, non_residue, residue).unwrap();
-    let scaled_held = descend_to_bucket(rng, &sides, side, &[], scale_inv);
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (non_residue, residue),
+            intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(PROOF_SYSTEM.verify_differential(&sides, &mut *rng).unwrap());
+    let scaled_held_intake = descend(rng, &sides, side, &[], scale_inv).unwrap();
+    let (scaled_held, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*scaled_held_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            scaled_held_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&scaled_held, &mut *rng)
+            .unwrap()
+    );
     let scaled_empty_intake = descend(rng, &sides, !side, &single, scale).unwrap();
-    let scaled_empty = seal(rng, &scaled_empty_intake);
-    let deep_sides = split(
-        rng,
-        &scaled_empty_intake,
-        scaled(&empty, deep_scale),
-        scaled(&empty, deep_cofactor),
-    )
-    .unwrap();
+    let (scaled_empty, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*scaled_empty_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            scaled_empty_intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&scaled_empty, &mut *rng)
+            .unwrap()
+    );
+    let mut first: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    first.scale(deep_scale);
+    let mut second: Polynomial<Fp, ProductionRank> = empty.clone().into();
+    second.scale(deep_cofactor);
+    let (deep_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (
+                TachygramSetPoly::from_noncanonical_for_test(first),
+                TachygramSetPoly::from_noncanonical_for_test(second),
+            ),
+            scaled_empty_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&deep_sides, &mut *rng)
+            .unwrap()
+    );
     let deep_sibling_scale = if deep_bit { deep_scale } else { deep_cofactor };
-    let scaled_deep = descend_to_bucket(rng, &deep_sides, deep_bit, &[], deep_sibling_scale);
+    let scaled_deep_intake = descend(rng, &deep_sides, deep_bit, &[], deep_sibling_scale).unwrap();
+    let (scaled_deep, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*scaled_deep_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            scaled_deep_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&scaled_deep, &mut *rng)
+            .unwrap()
+    );
 
     for (honest, scaled_bucket) in [(&honest_held, &scaled_held), (&honest_empty, &scaled_empty)] {
         let (.., honest_profile, honest_hash) = *honest.data();
@@ -476,7 +671,12 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
             scaled_empty.clone(),
         )
         .unwrap();
-    let scaled_pair = verified(rng, admitted_scaled);
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&admitted_scaled, &mut *rng)
+            .unwrap()
+    );
+    let scaled_pair = admitted_scaled;
     let (admitted_honest, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -486,7 +686,12 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
             honest_empty.clone(),
         )
         .unwrap();
-    let honest_pair = verified(rng, admitted_honest);
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&admitted_honest, &mut *rng)
+            .unwrap()
+    );
+    let honest_pair = admitted_honest;
     let leaves = [
         scaled_pair.data().4,
         scaled_pair.data().5,
@@ -496,14 +701,26 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let (fused, ()) = PROOF_SYSTEM
         .fuse(rng, EvidenceTreeFuse, (), scaled_pair, honest_pair)
         .unwrap();
-    let mut tree = verified(rng, fused);
+    assert!(PROOF_SYSTEM.verify_differential(&fused, &mut *rng).unwrap());
+    let mut tree = fused;
     let mut caps = Vec::new();
     while caps.len() + 1 < EvidenceTreeDescend::LEVELS {
         caps.push(tree.data().4);
         let (raised, ()) = PROOF_SYSTEM
-            .fuse(rng, EvidenceTreeCap, (), tree, bootstrap())
+            .fuse(
+                rng,
+                EvidenceTreeCap,
+                (),
+                tree,
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
             .unwrap();
-        tree = verified(rng, raised);
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&raised, &mut *rng)
+                .unwrap()
+        );
+        tree = raised;
     }
     let mut open = |index: usize, profile: QrProfile, contents: TachygramSetPoly| {
         let mut path = [([index & 2 != 0, index & 1 != 0], leaves); EvidenceTreeDescend::LEVELS];
@@ -516,31 +733,46 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
                 EvidenceTreeDescend,
                 witness::evidence_tree_descend((*tree.data(), ()), path),
                 tree.clone(),
-                bootstrap(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let leaf = verified(rng, descended);
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&descended, &mut *rng)
+                .unwrap()
+        );
+        let leaf = descended;
         let (bucket, ()) = PROOF_SYSTEM.fuse(
             rng,
             EvidenceTreeOpen,
             witness::evidence_tree_open((*leaf.data(), ()), profile, contents),
             leaf,
-            bootstrap(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
         )?;
-        Ok(verified(rng, bucket))
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&bucket, &mut *rng)
+                .unwrap()
+        );
+        Ok(bucket)
     };
     let held_profile = QrProfile::ROOT.descend(side);
-    let opened_scaled_held = open(0, held_profile, scaled(&monic, scale)).unwrap();
+    let mut scaled_monic: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_monic.scale(scale);
+    let scaled_monic = TachygramSetPoly::from_noncanonical_for_test(scaled_monic);
+    let opened_scaled_held = open(0, held_profile, scaled_monic.clone()).unwrap();
     assert_eq!(*opened_scaled_held.data(), *scaled_held.data());
     let opened_honest_held = open(2, held_profile, monic.clone()).unwrap();
     assert_eq!(*opened_honest_held.data(), *honest_held.data());
-    rejects(
-        open(0, held_profile, monic.clone()),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+    assert_matches!(
+        open(0, held_profile, monic.clone()).err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
     );
-    rejects(
-        open(2, held_profile, scaled(&monic, scale)),
-        "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+    assert_matches!(
+        open(2, held_profile, scaled_monic).err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
     );
 
     // Exclusion of the note's absent nullifier, bound to its derivation, then
@@ -549,16 +781,37 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let mut spends = Vec::new();
     for bucket in [&opened_honest_held, &opened_scaled_held] {
         let unspent = exclude_and_bind(rng, bucket, note, pak);
-        rejects(
-            exclude(rng, bucket, cm),
-            "QrUnspentInit: found nullifier in the bucket",
+        assert_matches!(
+            PROOF_SYSTEM.fuse(
+                rng,
+                QrUnspentInit,
+                witness::qr_unspent_init((*bucket.data(), ()), cm),
+                bucket.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            ).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "QrUnspentInit: found nullifier in the bucket"
         );
-        let spendable = include(rng, &unspent, bucket).unwrap();
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(rng, QrSpendableInit, (), unspent.clone(), bucket.clone())
+            .unwrap();
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&spendable, &mut *rng)
+                .unwrap()
+        );
         assert_eq!(
             *spendable.data(),
             (note.commitment(), epoch.next().unwrap(), bucket.data().2)
         );
-        let secret = note_secret(rng, note, pak);
+        let (secret, ()) = PROOF_SYSTEM
+            .seed(rng, NoteSeed, witness::note_seed(((), ()), note, pak))
+            .unwrap();
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&secret, &mut *rng)
+                .unwrap()
+        );
         let (spend, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -568,13 +821,15 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
                 secret,
             )
             .unwrap();
-        let (spend_cm, nf_current, nf_next, anchor, pk, _) = *verified(rng, spend).data();
+        assert!(PROOF_SYSTEM.verify_differential(&spend, &mut *rng).unwrap());
+        let (spend_cm, nf_current, nf_next, anchor, pk, _) = *spend.data();
         spends.push((spend_cm, nf_current, nf_next, anchor, Fp::from(pk)));
 
         for empty_bucket in [&honest_empty, &scaled_empty, &scaled_deep] {
-            rejects(
-                include(rng, &unspent, empty_bucket),
-                "QrSpendableInit: commitment not in bucket",
+            assert_matches!(
+                PROOF_SYSTEM.fuse(rng, QrSpendableInit, (), unspent.clone(), empty_bucket.clone()).err(),
+                Some(ragu_core::Error::InvalidWitness(err))
+                    if err.to_string() == "QrSpendableInit: commitment not in bucket"
             );
         }
     }
@@ -585,14 +840,22 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     for empty_bucket in [&honest_empty, &scaled_empty, &scaled_deep] {
         let unspent = exclude_and_bind(rng, empty_bucket, other_note, pak);
         for bucket in [&honest_held, &scaled_held, empty_bucket] {
-            rejects(
-                include(rng, &unspent, bucket),
-                "QrSpendableInit: commitment not in bucket",
+            assert_matches!(
+                PROOF_SYSTEM.fuse(rng, QrSpendableInit, (), unspent.clone(), bucket.clone()).err(),
+                Some(ragu_core::Error::InvalidWitness(err))
+                    if err.to_string() == "QrSpendableInit: commitment not in bucket"
             );
         }
-        rejects(
-            exclude(rng, empty_bucket, nf),
-            "QR profile: value does not take the bucket's profile",
+        assert_matches!(
+            PROOF_SYSTEM.fuse(
+                rng,
+                QrUnspentInit,
+                witness::qr_unspent_init((*empty_bucket.data(), ()), nf),
+                empty_bucket.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            ).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "QR profile: value does not take the bucket's profile"
         );
     }
 }
@@ -608,11 +871,14 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let epoch = EpochIndex::new(0);
     let sk = private::SpendingKey::random(rng);
     let pak = sk.derive_proof_private();
-    let nullifier_of =
-        |note: &Note| Tachygram::from(pak.nk.derive_note_private(note.psi).derive_nullifier(epoch));
-    let note = random_note(rng, &sk);
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: value::Positive::try_from(400u64).unwrap(),
+        psi: nullifier::Trapdoor::random(rng),
+        rcm: note::CommitmentTrapdoor::random(rng),
+    };
     let cm = Tachygram::from(note.commitment());
-    let nf = nullifier_of(&note);
+    let nf = Tachygram::from(pak.nk.derive_note_private(note.psi).derive_nullifier(epoch));
     let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
         .find(|discriminant| {
             classify(Fp::from(nf), discriminant.at(0)).0
@@ -633,60 +899,265 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
 
     // The duplicated stamp {cm, cm}, scaled into a stray bucket.
     let doubled = [cm, cm];
-    let duplicate_intake = seed_stamp(rng, discriminant, &doubled);
+    let (duplicate_intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                Anchor::default(),
+                epoch,
+                discriminant,
+                &doubled,
+            ),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&duplicate_intake, &mut *rng)
+            .unwrap()
+    );
     let (honest_non_residue, honest_residue) =
         witness::qr_intake_split((*duplicate_intake.data(), ()), &doubled);
-    let duplicate_sides =
-        split(rng, &duplicate_intake, honest_non_residue, honest_residue).unwrap();
-    let duplicate_held = descend_to_bucket(rng, &duplicate_sides, side, &[], Fp::ONE);
-    let scaled_sides = split(
-        rng,
-        &duplicate_intake,
-        scaled(&monic, scale),
-        scaled(&monic, scale_inv),
-    )
-    .unwrap();
+    let (duplicate_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (honest_non_residue, honest_residue),
+            duplicate_intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&duplicate_sides, &mut *rng)
+            .unwrap()
+    );
+    let duplicate_held_intake = descend(rng, &duplicate_sides, side, &[], Fp::ONE).unwrap();
+    let (duplicate_held, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*duplicate_held_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            duplicate_held_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&duplicate_held, &mut *rng)
+            .unwrap()
+    );
+    let mut scaled_non_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_non_residue.scale(scale);
+    let mut scaled_residue: Polynomial<Fp, ProductionRank> = monic.clone().into();
+    scaled_residue.scale(scale_inv);
+    let (scaled_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (
+                TachygramSetPoly::from_noncanonical_for_test(scaled_non_residue),
+                TachygramSetPoly::from_noncanonical_for_test(scaled_residue),
+            ),
+            duplicate_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&scaled_sides, &mut *rng)
+            .unwrap()
+    );
     let sibling_scale = if side { scale_inv } else { scale };
-    let scaled_stray = descend_to_bucket(rng, &scaled_sides, !side, &[cm], sibling_scale);
+    let scaled_stray_intake = descend(rng, &scaled_sides, !side, &[cm], sibling_scale).unwrap();
+    let (scaled_stray, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*scaled_stray_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            scaled_stray_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&scaled_stray, &mut *rng)
+            .unwrap()
+    );
 
     // The stamp {cm, companion}, filing cm on the wrong side with monic sides.
     let pair = [cm, companion];
-    let pair_intake = seed_stamp(rng, discriminant, &pair);
+    let (pair_intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), Anchor::default(), epoch, discriminant, &pair),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&pair_intake, &mut *rng)
+            .unwrap()
+    );
     let (pair_non_residue, pair_residue) =
         witness::qr_intake_split((*pair_intake.data(), ()), &pair);
-    let honest_pair_sides = split(rng, &pair_intake, pair_non_residue, pair_residue).unwrap();
-    let pair_held = descend_to_bucket(rng, &honest_pair_sides, side, &[], Fp::ONE);
-    let pair_empty = descend_to_bucket(rng, &honest_pair_sides, !side, &pair, Fp::ONE);
+    let (honest_pair_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (pair_non_residue, pair_residue),
+            pair_intake.clone(),
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&honest_pair_sides, &mut *rng)
+            .unwrap()
+    );
+    let pair_held_intake = descend(rng, &honest_pair_sides, side, &[], Fp::ONE).unwrap();
+    let (pair_held, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*pair_held_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            pair_held_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&pair_held, &mut *rng)
+            .unwrap()
+    );
+    let pair_empty_intake = descend(rng, &honest_pair_sides, !side, &pair, Fp::ONE).unwrap();
+    let (pair_empty, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*pair_empty_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            pair_empty_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&pair_empty, &mut *rng)
+            .unwrap()
+    );
     let (stray_non_residue, stray_residue) = if side {
         (monic, TachygramSetPoly::from_iter([companion]))
     } else {
         (TachygramSetPoly::from_iter([companion]), monic)
     };
-    let stray_sides = split(rng, &pair_intake, stray_non_residue, stray_residue).unwrap();
-    let monic_stray = descend_to_bucket(rng, &stray_sides, !side, &[companion], Fp::ONE);
+    let (stray_sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrIntakeSplit,
+            (stray_non_residue, stray_residue),
+            pair_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&stray_sides, &mut *rng)
+            .unwrap()
+    );
+    let monic_stray_intake = descend(rng, &stray_sides, !side, &[companion], Fp::ONE).unwrap();
+    let (monic_stray, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrBucketSeal,
+            witness::qr_bucket_seal((*monic_stray_intake.data(), ()), Anchor::from(Fp::ZERO)),
+            monic_stray_intake,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&monic_stray, &mut *rng)
+            .unwrap()
+    );
     assert_eq!(scaled_stray.data().4, monic_stray.data().4);
 
     let mut unspents = Vec::new();
     for (held, stray) in [(&duplicate_held, &scaled_stray), (&pair_held, &monic_stray)] {
         let unspent = exclude_and_bind(rng, held, note, pak);
-        include(rng, &unspent, held).unwrap();
-        include(rng, &unspent, stray).unwrap();
-        exclude(rng, stray, absent).unwrap();
-        rejects(
-            exclude(rng, held, cm),
-            "QrUnspentInit: found nullifier in the bucket",
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(rng, QrSpendableInit, (), unspent.clone(), held.clone())
+            .unwrap();
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&spendable, &mut *rng)
+                .unwrap()
         );
-        rejects(
-            exclude(rng, stray, cm),
-            "QR profile: value does not take the bucket's profile",
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(rng, QrSpendableInit, (), unspent.clone(), stray.clone())
+            .unwrap();
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&spendable, &mut *rng)
+                .unwrap()
+        );
+        let (segment, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                QrUnspentInit,
+                witness::qr_unspent_init((*stray.data(), ()), absent),
+                stray.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            PROOF_SYSTEM
+                .verify_differential(&segment, &mut *rng)
+                .unwrap()
+        );
+        assert_matches!(
+            PROOF_SYSTEM.fuse(
+                rng,
+                QrUnspentInit,
+                witness::qr_unspent_init((*held.data(), ()), cm),
+                held.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            ).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "QrUnspentInit: found nullifier in the bucket"
+        );
+        assert_matches!(
+            PROOF_SYSTEM.fuse(
+                rng,
+                QrUnspentInit,
+                witness::qr_unspent_init((*stray.data(), ()), cm),
+                stray.clone(),
+                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            ).err(),
+            Some(ragu_core::Error::InvalidWitness(err))
+                if err.to_string() == "QR profile: value does not take the bucket's profile"
         );
         unspents.push(unspent);
     }
 
     // The canonical bucket of the stray's profile holds nothing.
-    rejects(
-        include(rng, &unspents[1], &pair_empty),
-        "QrSpendableInit: commitment not in bucket",
+    assert_matches!(
+        PROOF_SYSTEM.fuse(rng, QrSpendableInit, (), unspents[1].clone(), pair_empty.clone()).err(),
+        Some(ragu_core::Error::InvalidWitness(err))
+            if err.to_string() == "QrSpendableInit: commitment not in bucket"
     );
-    exclude(rng, &pair_empty, absent).unwrap();
+    let (segment, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            QrUnspentInit,
+            witness::qr_unspent_init((*pair_empty.data(), ()), absent),
+            pair_empty,
+            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        PROOF_SYSTEM
+            .verify_differential(&segment, &mut *rng)
+            .unwrap()
+    );
 }
