@@ -1,8 +1,8 @@
 //! Tachygram accumulators over consecutive stamps of one epoch.
 //!
 //! A summary folds each stamp's tachygram set into one set polynomial while
-//! the anchor absorbs the same commitments. Consensus forbids republishing a
-//! tachygram within two epochs. The accumulator is therefore square-free.
+//! the anchor absorbs each stamp's bridge hash. Consensus forbids republishing
+//! a tachygram within two epochs. The accumulator is therefore square-free.
 //! The prover chooses where a summary starts and stops. A consumer joins
 //! summaries whose anchors are equal. The joined chain contains every stamp
 //! absorption.
@@ -182,8 +182,8 @@ impl Step<Pasta> for SummarySeed {
     }
 }
 
-/// Fold the next stamp into the accumulator while the anchor absorbs the same
-/// commitment.
+/// Fold the next stamp into the accumulator while the anchor absorbs O1's
+/// bridge hash.
 /// L0/O0 hold the accumulated sets; O1 holds the stamp, each opened once.
 #[derive(Debug)]
 pub struct SummaryAdvance;
