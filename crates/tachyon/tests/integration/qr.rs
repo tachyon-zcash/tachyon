@@ -1346,8 +1346,8 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.mine_through(rng, epoch0.last_block());
     pool.advance(EPOCH_SIZE, |_| Vec::new());
     pool.mine(random_block(rng, 1, 1));
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
@@ -1411,11 +1411,25 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
-    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 1));
+    let cm = Fp::from(Tachygram::from(note.commitment()));
+    let nf = Fp::from(mk.derive_nullifier(epoch0));
+    let discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
+        .find(|&discriminant| {
+            qr_profile_of(cm, discriminant, 2) != qr_profile_of(nf, discriminant, 2)
+        })
+        .unwrap();
+    let nf_neighbour = iter::repeat_with(|| Tachygram::random(rng))
+        .find(|&tg| {
+            qr_profile_of(Fp::from(tg), discriminant, 2) == qr_profile_of(nf, discriminant, 2)
+        })
+        .unwrap();
+    let mut pool = PoolSim::genesis_with(vec![
+        vec![Tachygram::from(note.commitment())],
+        vec![nf_neighbour],
+    ]);
+    pool.mine_through(rng, epoch2.first_block());
 
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
-    let discriminant = QrDiscriminant::random(rng);
     let bucket = qr_bucket_at(
         rng,
         app,
@@ -1424,7 +1438,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         discriminant,
         EPOCH_SIZE as usize,
         2,
-        Fp::from(Tachygram::from(note.commitment())),
+        cm,
         Anchor::from(Fp::ZERO),
     );
     let nf_bucket = qr_bucket_at(
@@ -1435,7 +1449,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         discriminant,
         EPOCH_SIZE as usize,
         2,
-        Fp::from(mk.derive_nullifier(epoch0)),
+        nf,
         Anchor::from(Fp::ZERO),
     );
     assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
@@ -1514,9 +1528,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
             .all(|entry| entry.3 != unpublished)
     );
 
-    pool.advance(epoch_next.last_block().0 - pool.height().0, |_| {
-        random_block(rng, 1, 1)
-    });
+    pool.mine_through(rng, epoch_next.last_block());
     let next = build_unspent_pcd_over_epochs(
         rng,
         app,
@@ -1549,7 +1561,8 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
     let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    pool.advance(2, |_| random_block(rng, 1, 1));
+    pool.mine_through(rng, epoch1.last_block());
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
     let discriminant = QrDiscriminant::random(rng);
@@ -1653,8 +1666,8 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.mine_through(rng, epoch0.last_block());
 
     let discriminant = QrDiscriminant::random(rng);
     let bucket = qr_bucket_at(
@@ -1906,34 +1919,49 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     pool.mine(vec![vec![Tachygram::from(member)]]);
     let final_anchor = pool.block(pool.height()).anchor();
 
-    for depth in [0, 1, 31, u32::BITS] {
-        let bucket = qr_bucket_at(
-            rng,
-            app,
-            &pool,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            32,
-            depth,
-            value,
-            Anchor::from(Fp::ZERO),
-        );
-        assert!(bucket.members.contains(&Tachygram::from(member)));
-        let nf = Nullifier::from(value);
-        let segment = qr_bucket_segment(rng, app, &bucket, |_| nf);
-        assert_eq!(
-            *segment.data(),
-            (
-                Anchor::default(),
-                epoch,
-                epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
-            )
-        );
-        assert_eq!(
-            segment.commitments()[0],
-            Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
-        );
+    let nf = Nullifier::from(value);
+    let mut roots = build_qr_partition(
+        rng,
+        app,
+        &pool,
+        (Anchor::default(), final_anchor),
+        discriminant,
+        32,
+        0,
+    );
+    assert_eq!(roots.len(), 1);
+    let mut intake = roots.pop().unwrap();
+    for depth in 0..=u32::BITS {
+        if [0, 1, 31, u32::BITS].contains(&depth) {
+            assert_eq!(
+                intake.pcd.data().4,
+                qr_profile_of(value, discriminant, depth)
+            );
+            assert!(intake.members.contains(&Tachygram::from(member)));
+            let bucket = seal_qr_intake(rng, app, intake.clone(), Anchor::from(Fp::ZERO));
+            let segment = qr_bucket_segment(rng, app, &bucket, |_| nf);
+            assert_eq!(
+                *segment.data(),
+                (
+                    Anchor::default(),
+                    epoch,
+                    epoch_next,
+                    final_anchor.next_epoch(epoch_next).unwrap()
+                )
+            );
+            assert_eq!(
+                segment.commitments()[0],
+                Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
+            );
+        }
+        if depth < u32::BITS {
+            let (non_residue, residue) = split_qr_intake(rng, app, intake);
+            intake = if qr::classify(value, discriminant.at(depth)).0 {
+                residue
+            } else {
+                non_residue
+            };
+        }
     }
 }
 
@@ -1946,11 +1974,9 @@ fn unspent_lift_carries_a_spendable() {
     let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 2));
-    pool.advance(epoch3.first_block().0 - pool.height().0, |_| {
-        random_block(rng, 1, 2)
-    });
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 1));
+    pool.mine_through(rng, epoch3.first_block());
 
     let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
     let first = epoch_bucket(rng, app, &pool, epoch1);
@@ -1982,10 +2008,8 @@ fn unspent_lift_rejects_invalid_extensions() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(EpochIndex::new(3).first_block().0, |_| {
-        random_block(rng, 1, 2)
-    });
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 2));
+    pool.mine_through(rng, EpochIndex::new(3).first_block());
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 

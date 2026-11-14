@@ -1,7 +1,12 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
+use core::{
+    cell::RefCell,
+    iter, mem,
+    ops::{Deref, RangeInclusive},
+};
+use std::sync::{Mutex, OnceLock};
 
 use ragu::{
     header::Header,
@@ -41,8 +46,30 @@ use zcash_tachyon::{
     value, witness,
 };
 
-pub fn application() -> App<'static> {
-    stamp::proof::new_application().unwrap()
+static APPLICATIONS: Mutex<Vec<App<'static>>> = Mutex::new(Vec::new());
+
+/// An application leased from [`APPLICATIONS`], returned on drop.
+pub struct ApplicationLease(Option<App<'static>>);
+
+impl Deref for ApplicationLease {
+    type Target = App<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl Drop for ApplicationLease {
+    fn drop(&mut self) {
+        APPLICATIONS.lock().unwrap().extend(self.0.take());
+    }
+}
+
+pub fn application() -> ApplicationLease {
+    let pooled = APPLICATIONS.lock().unwrap().pop();
+    ApplicationLease(Some(
+        pooled.unwrap_or_else(|| stamp::proof::new_application().unwrap()),
+    ))
 }
 
 pub(crate) struct WithPolynomials<S>(pub S, pub [Vec<Fp>; 2]);
@@ -461,6 +488,18 @@ impl PoolSim {
         }
     }
 
+    /// Mines through `height`, with a random block opening each epoch and
+    /// empty blocks elsewhere.
+    pub fn mine_through<RNG: CryptoRng>(&mut self, rng: &mut RNG, height: BlockHeight) {
+        self.advance(height.0.saturating_sub(self.height().0), |pool| {
+            if pool.height().next().unwrap().is_first_in_epoch() {
+                random_block(rng, 1, 2)
+            } else {
+                Vec::new()
+            }
+        });
+    }
+
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
         let new_height = BlockHeight::from(self.history.len());
         let old_tip = self.anchor();
@@ -810,6 +849,7 @@ pub(crate) struct EvidenceLeaf {
     pub path: Vec<([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY])>,
 }
 
+#[derive(Clone)]
 pub(crate) struct EvidenceTreeEntry {
     pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
@@ -1071,6 +1111,45 @@ pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
     }
     let final_anchor = pool.block(pool.height()).anchor();
     (pool, final_anchor)
+}
+
+/// The [`small_epoch`] depth-2 partition at capacity 24, sealed and built
+/// into an evidence tree, proved once per process from seed 0; each caller
+/// gets a clone of the final anchor, discriminant, buckets and tree.
+pub(crate) fn small_epoch_evidence() -> (
+    Anchor,
+    QrDiscriminant,
+    Vec<QrBucketEntry>,
+    EvidenceTreeEntry,
+) {
+    static EVIDENCE: OnceLock<(
+        Anchor,
+        QrDiscriminant,
+        Vec<QrBucketEntry>,
+        EvidenceTreeEntry,
+    )> = OnceLock::new();
+    EVIDENCE
+        .get_or_init(|| {
+            let app = &application();
+            let rng = &mut StdRng::seed_from_u64(0);
+            let (pool, final_anchor) = small_epoch(rng);
+            let discriminant = QrDiscriminant::random(rng);
+            let sealed = build_qr_partition(
+                rng,
+                app,
+                &pool,
+                (Anchor::default(), final_anchor),
+                discriminant,
+                24,
+                2,
+            )
+            .into_iter()
+            .map(|intake| seal_qr_intake(rng, app, intake, Anchor::from(Fp::ZERO)))
+            .collect::<Vec<_>>();
+            let tree = build_evidence_tree(rng, app, sealed.clone());
+            (final_anchor, discriminant, sealed, tree)
+        })
+        .clone()
 }
 
 pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
