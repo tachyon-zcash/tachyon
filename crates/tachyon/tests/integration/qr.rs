@@ -33,12 +33,12 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
     let app = &application();
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
     let summary = pool.summary(app, span0);
     let (_, _, anchor_end) = *summary.data();
     let acc_commit = summary.commitments()[0];
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
 
     assert_eq!(
         *root.pcd.data(),
@@ -76,9 +76,9 @@ fn qr_intake_split_partitions_the_contents_by_class() {
     let app = &application();
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
     let members = root.members;
 
     let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
@@ -138,9 +138,9 @@ fn qr_intake_split_rejects_a_forged_partition() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
     let members = root.members;
 
     let mut split_witness = witness::qr_intake_split((*root.pcd.data(), ()), &members);
@@ -641,9 +641,9 @@ fn qr_side_descend_carries_each_side_one_level_down() {
         .unwrap();
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
     let split0 = pool.qr_split(app, span0, disc, Fp::ZERO, 0);
     for (data, split, members) in [
         (exceptional_data, exceptional_split, exceptional_members),
@@ -714,9 +714,9 @@ fn qr_side_select_defers_hint_validation_to_descent() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
     let sides = pool.qr_split(app, span0, disc, Fp::ZERO, 0);
     let members = root.members;
 
@@ -878,9 +878,9 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let root = pool.qr_intake(app, span0, disc, Fp::ZERO, 0);
+    let root = pool.qr_root(app, span0, disc);
     let members = root.members;
 
     let (mut short_residue, mut padded_non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
@@ -1212,7 +1212,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
     let app = &application();
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
     let value = Fp::from(Tachygram::from(PoolSim::shared_note(500).commitment()));
     let intake = pool.qr_intake(app, span0, disc, value, 2);
@@ -1241,7 +1241,7 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let pool = PoolSim::shared();
     let span = (pool.mint_anchor(), pool.block(BlockHeight(1)).anchor());
     let disc = shared_discriminant();
-    let intake = pool.qr_intake(app, span, disc, Fp::ZERO, 0);
+    let intake = pool.qr_root(app, span, disc);
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
     assert_matches!(
         app
@@ -1342,7 +1342,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let epoch2 = epoch1.next().unwrap();
     let pool = PoolSim::shared();
 
-    let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span = pool.epoch_span(epoch0);
     let discriminant = shared_discriminant();
     let bucket = pool.qr_bucket(
         app,
@@ -1554,7 +1554,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
     let cm = Tachygram::from(PoolSim::shared_note(500).commitment());
     let nf = iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
@@ -1659,7 +1659,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
+    let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
     let position = 1;
     let value = -disc.at(position);

@@ -186,7 +186,7 @@ impl PoolSim {
         key
     }
 
-    fn qr_root(
+    pub(crate) fn qr_root(
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
@@ -337,6 +337,26 @@ impl PoolSim {
             layer.extend(carried);
         }
         layer
+    }
+
+    pub fn evidence_buckets(&self, app: &App<'_>) -> Vec<QrBucketEntry> {
+        let epoch0 = EpochIndex::new(0);
+        let span = self.epoch_span(epoch0);
+        let discriminant = shared_discriminant();
+        let (empty, occupied): (Vec<_>, Vec<_>) = self
+            .qr_intakes(app, span, discriminant, 5)
+            .into_iter()
+            .partition(|intake| intake.members.is_empty());
+        let anchor_final_prev = Anchor::from(Fp::ZERO);
+        empty
+            .into_iter()
+            .chain(occupied)
+            .map(|intake| {
+                let mut key = Self::qr_profile_key(span, discriminant, intake.pcd.data().4);
+                key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
+                Self::seal_intake(app, &key, intake, anchor_final_prev)
+            })
+            .collect()
     }
 
     pub(crate) fn qr_bucket(
@@ -574,6 +594,13 @@ impl PoolSim {
             })
     }
 
+    pub fn epoch_span(&self, epoch: EpochIndex) -> (Anchor, Anchor) {
+        (
+            self.entry_anchor(epoch),
+            self.block(epoch.last_block()).anchor(),
+        )
+    }
+
     pub(crate) fn epoch_discriminant(&self, epoch: EpochIndex) -> QrDiscriminant {
         if u32::from(epoch) == 0 {
             return shared_discriminant();
@@ -584,12 +611,11 @@ impl PoolSim {
     }
 
     fn epoch_bucket_anchors(&self, epoch: EpochIndex) -> [Anchor; 3] {
-        let final_anchor = self.block(epoch.last_block()).anchor();
+        let (entry, final_anchor) = self.epoch_span(epoch);
         let anchor_final_prev = u32::from(epoch).checked_sub(1).map_or_else(
             || Anchor::from(Fp::ZERO),
             |prev| self.block(EpochIndex::new(prev).last_block()).anchor(),
         );
-        let entry = self.entry_anchor(epoch);
         [entry, final_anchor, anchor_final_prev]
     }
 
