@@ -6,17 +6,39 @@ use core::iter;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
-    pasta::{EpAffine, Fp},
+    pasta::{EpAffine, Eq, Fp},
     stamp::proof::{App, evidence, pool, qr},
     witness,
 };
 
 use super::{Proved, keyed_rng, pool::PoolSim, wallet::shared_sk};
+
+/// The root, one level down, the last level with a bit to spare, and a full
+/// register.
+pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
+
+pub(crate) fn qr_twins() -> [Fp; 2] {
+    let discriminant = shared_discriminant();
+    // An element `n - discriminant` takes the quadratic character of `n + level`
+    // at each level, and the 32 consecutive characters from 40621 match those
+    // from 126676, so the member shares the absent value's whole profile.
+    let absent = Fp::from(40_621u64) - Fp::from(discriminant);
+    let member = Fp::from(126_676u64) - Fp::from(discriminant);
+    assert_ne!(absent, member);
+    assert_eq!(
+        qr_profile_of(absent, discriminant, u32::BITS),
+        qr_profile_of(member, discriminant, u32::BITS)
+    );
+    [absent, member]
+}
 
 /// The first keyed shared discriminant whose depth-two profiles differ for the
 /// shared 500-value note's commitment and epoch-zero nullifier under the shared
@@ -76,6 +98,23 @@ impl QrIntakeEntry {
         })
     }
 
+    /// Reads a seal kept for the process.
+    pub fn sealed(&self, app: &App<'_>, anchor_final_prev: Anchor) -> QrBucketEntry {
+        static SEALED: Proved<QrBucketEntry> = Proved::new("qr_sealed");
+
+        let (epoch, start, end, discriminant, profile) = *self.pcd.data();
+        let mut key = u32::from(epoch).to_le_bytes().to_vec();
+        for value in [Fp::from(start), Fp::from(end), Fp::from(discriminant)] {
+            key.extend_from_slice(&value.to_bytes());
+        }
+        key.extend_from_slice(&profile.depth.to_le_bytes());
+        key.extend_from_slice(&profile.bits.to_le_bytes());
+        key.extend_from_slice(&Eq::from(self.pcd.commitments()[0]).to_affine().to_bytes());
+        key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
+        SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
+    }
+
+    /// Proves a seal with the caller's rng.
     pub(crate) fn seal<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -98,7 +137,12 @@ impl QrIntakeEntry {
         }
     }
 
-    pub(crate) fn split<RNG: CryptoRng>(self, rng: &mut RNG, app: &App<'_>) -> (Self, Self) {
+    pub(crate) fn split<RNG: CryptoRng, const N: usize>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        kept: [bool; N],
+    ) -> [Self; N] {
         let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *self.pcd.data();
         let (residue, non_residue) =
             self.members.iter().copied().partition(|&member| {
@@ -107,10 +151,9 @@ impl QrIntakeEntry {
         self.split_with_factors(
             rng,
             app,
-            [false, true],
+            kept,
             &[(non_residue, Fp::ONE), (residue, Fp::ONE)],
         )
-        .into()
     }
 
     /// Explicit factors in non-residue/residue order, including their scalar

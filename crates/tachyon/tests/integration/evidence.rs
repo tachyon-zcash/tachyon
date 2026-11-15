@@ -116,13 +116,8 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         len.next_multiple_of(4)..len.next_multiple_of(16),
         len.next_multiple_of(16)..64,
     ] {
-        if range.is_empty() {
-            continue;
-        }
-        for index in [range.start, range.end - 1]
-            .into_iter()
-            .take(range.len().min(2))
-        {
+        assert!(!range.is_empty());
+        for index in [range.start, range.end - 1].into_iter().take(range.len()) {
             let replayed = tree.open(rng, app, &tree.leaves[index]).unwrap();
             assert_eq!(*replayed.pcd.data(), *last.pcd.data());
         }

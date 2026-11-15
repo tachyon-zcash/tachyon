@@ -21,9 +21,10 @@ use zcash_tachyon::{
 use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
-    pool::{PoolSim, small_epoch},
+    pool::PoolSim,
     qr::{
-        EvidenceTreeEntry, QrIntakeEntry, qr_profile_of, scaled_qr_contents, shared_discriminant,
+        EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_twins, scaled_qr_contents,
+        shared_discriminant,
     },
     wallet::{WalletSim, shared_sk},
 };
@@ -335,7 +336,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let pool = PoolSim::genesis_with(vec![vec![cm]]);
     let span = (Anchor::default(), pool.anchor());
     let root = pool.qr_intakes(app, span, disc, 0).pop().unwrap();
-    let (honest_non_residue, honest_residue) = root.clone().split(rng, app);
+    let [honest_non_residue, honest_residue] = root.clone().split(rng, app, [false, true]);
     let honest = if side {
         [honest_residue, honest_non_residue]
     } else {
@@ -555,8 +556,8 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
         let mut intake = QrIntakeEntry { pcd: root, members };
         for level in 0..depth {
             let side = qr::classify(value, discriminant.at(level)).0;
-            let (non_residue_side, residue_side) = intake.split(rng, app);
-            intake = if side { residue_side } else { non_residue_side };
+            let [next] = intake.split(rng, app, [side]);
+            intake = next;
         }
         let (honest_sides, ()) = app
             .fuse(
@@ -969,34 +970,14 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
 fn qr_side_descend_refuses_a_full_register() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(3);
-    let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
-    let members: [Tachygram; 2] = array::from_fn(|_| Tachygram::random(rng));
-
-    let (root, ()) = app
-        .seed(
-            rng,
-            qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
-        )
-        .unwrap();
-
-    let mut intake = QrIntakeEntry {
-        pcd: root,
-        members: members.to_vec(),
-    };
-    let followed = Fp::from(members[0]);
-    for level in 0..u32::BITS {
-        let (non_residue, residue) = intake.split(rng, app);
-        intake = if qr::classify(followed, discriminant.at(level)).0 {
-            residue
-        } else {
-            non_residue
-        };
-    }
+    let pool = PoolSim::shared();
+    let epoch0 = EpochIndex::new(0);
+    let span0 = pool.epoch_span(epoch0);
+    let disc = shared_discriminant();
+    let [absent, _] = qr_twins();
+    let [_, _, _, intake] = pool.qr_descent(app, span0, disc, absent);
     let (.., profile) = *intake.pcd.data();
-    assert_eq!(profile, qr_profile_of(followed, discriminant, u32::BITS));
+    assert_eq!(profile, qr_profile_of(absent, disc, u32::BITS));
 
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = app
@@ -1739,48 +1720,31 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
 fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let (mut pool, _) = small_epoch(rng);
-    let epoch = BlockHeight(0).epoch();
-    let epoch_next = epoch.next().unwrap();
-    let discriminant = QrDiscriminant::random(rng);
-
-    // An element `n - discriminant` takes the quadratic character of `n + level`
-    // at each level, and the 32 consecutive characters from 40621 match those
-    // from 126676, so the member shares the absent value's whole profile.
-    let value = Fp::from(40_621u64) - Fp::from(discriminant);
-    let member = Fp::from(126_676u64) - Fp::from(discriminant);
-    assert_ne!(value, member);
-    assert_eq!(
-        qr_profile_of(value, discriminant, u32::BITS),
-        qr_profile_of(member, discriminant, u32::BITS)
-    );
-    pool.mine(vec![vec![Tachygram::from(member)]]);
-    let final_anchor = pool.block(pool.height()).anchor();
-
-    for depth in [0, 1, 31, u32::BITS] {
-        let bucket = pool.qr_bucket(
-            app,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            value,
-            depth,
-            Anchor::from(Fp::ZERO),
-        );
+    let pool = PoolSim::shared();
+    let epoch0 = EpochIndex::new(0);
+    let epoch1 = epoch0.next().unwrap();
+    let span0 = pool.epoch_span(epoch0);
+    let disc = shared_discriminant();
+    let [absent, member] = qr_twins();
+    let intakes = pool.qr_descent(app, span0, disc, absent);
+    for (depth, intake) in QR_DEPTHS.into_iter().zip(intakes) {
+        assert_eq!(intake.pcd.data().4, qr_profile_of(absent, disc, depth));
+        let bucket = intake.sealed(app, Anchor::from(Fp::ZERO));
         assert!(bucket.members.contains(&Tachygram::from(member)));
-        let nf = Nullifier::from(value);
+        let nf = Nullifier::from(absent);
         let segment = bucket.segment(rng, app, |_| nf);
         assert_eq!(
             *segment.data(),
             (
                 Anchor::default(),
-                epoch,
-                epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
+                epoch0,
+                epoch1,
+                span0.1.next_epoch(epoch1).unwrap()
             )
         );
         assert_eq!(
             segment.commitments()[0],
-            Eq::from(NfSeqPoly::new(epoch, &[nf]).commit()).to_affine()
+            Eq::from(NfSeqPoly::new(epoch0, &[nf]).commit()).to_affine()
         );
     }
 }
