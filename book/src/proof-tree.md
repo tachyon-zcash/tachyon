@@ -322,6 +322,40 @@ Acceptance of the non-canonical empty and equal-root splits is only pinned behav
 A normalization or rejection rule changes those expectations and calls for reviewing the characterization.
 These finite comparisons do not establish the broader safety of non-canonical set polynomials; that remains an open question.
 
+#### Oversized buckets: observed behavior
+
+A builder splits an intake that holds more than its capacity, and `QrSideDescend` requires a depth below 32.
+No step reads a capacity, which is the builder's policy.
+Two tachygrams that take the same side at all 32 levels can never be separated, so a bucket holding both stays over any capacity below two.
+Call that an oversized bucket.
+
+Such pairs can be searched for.
+Under discriminant $R_0$ the class of a tachygram $x$ at level $j$ is the quadratic character of the shifted value
+
+$$x + R_0 + j$$
+
+with zero filed on the residue side.
+Choose the tachygram as an integer $n$ less the discriminant, and the shifted value at level $j$ is
+
+$$n + j$$
+
+so the profile is the characters of 32 consecutive integers starting at $n$ and depends on $n$ alone.
+Two integers whose runs of 32 characters agree therefore give a colliding pair under whichever discriminant they are offset by.
+The characterization uses the integer $-31$ and the two smallest positive integers whose runs match its run, found by exhaustive search.
+The shifted value of $-31$ is zero at level 31, which is the one level where the zero rule decides a side.
+For two tachygrams chosen without regard to the discriminant, modelling the characters as independent and uniform gives the pair a collision probability of $2^{-32}$ over the 32 levels.
+
+The characterization tests in `crates/tachyon/tests/integration/qr.rs` record these outcomes for a bucket of two such members at depth 32:
+
+- `QrSideDescend` refuses a further level.
+- `QrBucketSeal` seals the bucket.
+- `QrUnspentInit` accepts an absent value with the same profile and rejects each member.
+- An evidence tree admits the bucket, and `EvidenceTreeOpen` replays it.
+
+Exclusion against the bucket stays exact, which is the intended control.
+That a builder cannot bound such a bucket by splitting is only pinned behavior, not a requirement to retain it.
+A rule that bounds it calls for reviewing the characterization.
+
 ### Evidence trees
 
 A bucket is complete evidence on its own, so a builder needs every bucket's proof only until it has something that vouches for them all at once.
