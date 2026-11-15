@@ -13,8 +13,12 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, QrIntakeEntry, WithPolynomials, build_evidence_tree, build_qr_partition,
-    open_evidence_tree, qr_bucket_at, random_block, seal_qr_intake, small_epoch,
+    WithPolynomials,
+    pool::{PoolSim, random_block, small_epoch},
+    qr::{
+        QrIntakeEntry, build_evidence_tree, build_qr_partition, open_evidence_tree, qr_bucket_at,
+        seal_qr_intake,
+    },
 };
 
 #[test]

@@ -20,11 +20,18 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, QrIntakeEntry, WalletSim, WithPolynomials, build_evidence_tree_with_scales,
-    build_qr_partition, build_unspent_pcd_over_epochs, epoch_bucket, open_evidence_tree,
-    qr_bucket_at, qr_bucket_segment, qr_epoch_unspent, qr_profile_of, random_block,
-    random_block_with, scaled_qr_contents, seal_qr_intake, seed_qr_empty_intake, shared_sk,
-    small_epoch, split_qr_intake, split_qr_intake_with_factors, try_open_evidence_tree,
+    WithPolynomials,
+    pool::{
+        PoolSim, build_unspent_pcd_over_epochs, epoch_bucket, random_block, random_block_with,
+        small_epoch,
+    },
+    qr::{
+        QrIntakeEntry, build_evidence_tree_with_scales, build_qr_partition, open_evidence_tree,
+        qr_bucket_at, qr_bucket_segment, qr_profile_of, scaled_qr_contents, seal_qr_intake,
+        seed_qr_empty_intake, split_qr_intake, split_qr_intake_with_factors,
+        try_open_evidence_tree,
+    },
+    wallet::{WalletSim, qr_epoch_unspent, shared_sk},
 };
 
 #[test]

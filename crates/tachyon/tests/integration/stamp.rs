@@ -5,21 +5,107 @@ use core::assert_matches;
 
 use corez::io;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
+use rand_core::CryptoRng;
+use udon::curve::Projective as _;
 use zcash_tachyon::{
-    ActionDigest, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
+    action,
     entropy::ActionEntropy,
     fee,
-    stamp::{self, ProveError},
-    value,
+    stamp::{
+        self, ProveError,
+        proof::{
+            App,
+            stamp::{Stamp, StampMerge},
+        },
+    },
+    value, witness,
 };
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
+    pool::{PoolSim, build_lift_span, random_block, random_block_with},
     stamp_coverage,
+    wallet::{
+        WalletSim, build_autonome, build_output_plan, build_output_stamp, random_action, shared_sk,
+    },
 };
+
+fn forge_overlapping_merge<RNG: CryptoRng>(
+    rng: &mut RNG,
+    app: &App<'_>,
+    (stamp_a, descriptors_a, fee_descriptors_a): (
+        &ProofStamp<stamp::Uncompressed>,
+        &Vec<action::Descriptor>,
+        &[fee::Descriptor],
+    ),
+    (stamp_b, descriptors_b, fee_descriptors_b): (
+        &ProofStamp<stamp::Uncompressed>,
+        &Vec<action::Descriptor>,
+        &[fee::Descriptor],
+    ),
+) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
+    let left_tg = stamp_a
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+    let right_tg = stamp_b
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
+        app.bridge_hash(left_tg.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        stamp_a.anchor,
+    ));
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
+        app.bridge_hash(right_tg.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        stamp_b.anchor,
+    ));
+
+    let merged_acts = descriptors_a
+        .iter()
+        .chain(descriptors_b.iter())
+        .map(|desc| desc.digest().unwrap())
+        .chain(
+            fee_descriptors_a
+                .iter()
+                .chain(fee_descriptors_b)
+                .copied()
+                .map(|descriptor| descriptor.digest().unwrap()),
+        )
+        .collect::<ActionSetPoly>();
+    let merged_tg = stamp_a
+        .tachygrams
+        .iter()
+        .chain(stamp_b.tachygrams.iter())
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let (pcd, ()) = app
+        .fuse(
+            rng,
+            StampMerge,
+            witness::stamp_merge(
+                (*left_pcd.data(), *right_pcd.data()),
+                merged_acts,
+                merged_tg,
+            ),
+            left_pcd,
+            right_pcd,
+        )
+        .unwrap();
+
+    pcd
+}
 
 #[test]
 fn plan_prove_rejects_invalid_inputs() {

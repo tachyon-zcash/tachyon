@@ -16,8 +16,9 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
-    shared_sk,
+    mock_sighash, mock_wtxid,
+    pool::{PoolSim, build_lift_span, random_block},
+    wallet::{WalletSim, build_output_plan, shared_sk},
 };
 
 #[test]

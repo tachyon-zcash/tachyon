@@ -25,9 +25,12 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
-    build_output_stamp_with_fee, mock_sighash, mock_wtxid, random_block, random_block_with,
-    shared_sk, stamp_coverage,
+    mock_sighash, mock_wtxid,
+    pool::{PoolSim, build_lift_span, random_block, random_block_with},
+    stamp_coverage,
+    wallet::{
+        WalletSim, build_autonome, build_output_plan, build_output_stamp_with_fee, shared_sk,
+    },
 };
 
 #[test]
