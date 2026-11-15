@@ -444,7 +444,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
     let commitments: Vec<_> = notes.iter().map(Note::commitment).collect();
     pool.mine(random_block_with(rng, &[commitments], 1));
     let [mut left, left_auto, mut right, right_auto] = [0, 1, 2, 3].map(|i| {
-        let spendable = wallet.spendable_init(rng, app, &notes[i], &pool, pool.height());
+        let spendable = wallet.spendable_init(app, &pool, &notes[i], pool.height());
         let anchor = spendable.data().2;
         let (plan, signed, pcds) = wallet.signed(
             rng,

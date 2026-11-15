@@ -222,7 +222,7 @@ fn duplicated_spend_cannot_inflate() {
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
-    let spendable = wallet.spendable_init(rng, app, &note, &pool, pool.height());
+    let spendable = wallet.spendable_init(app, &pool, &note, pool.height());
     let anchor = spendable.data().2;
 
     let rcv = value::Trapdoor::random(rng);
@@ -231,7 +231,7 @@ fn duplicated_spend_cannot_inflate() {
         wallet.pak.ak.derive_action_public(&alpha)
     });
     let descriptor = plan.descriptor();
-    let secret = wallet.note_secret(rng, app, note);
+    let secret = wallet.note_secret(app, note);
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
     let honest_stamp = Plan::new(vec![plan], vec![], max_fee_note)
@@ -936,7 +936,7 @@ fn bundle_lift_preserves_coverage() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
     let cm_height = pool.height();
-    let spendable_pcd = wallet.spendable_init(rng, app, &spend_note, &pool, cm_height);
+    let spendable_pcd = wallet.spendable_init(app, &pool, &spend_note, cm_height);
     let bundle = wallet.autonome(
         rng,
         app,

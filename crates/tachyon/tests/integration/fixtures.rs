@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use core::ops::Deref;
 use std::{sync::Mutex, thread};
 
@@ -12,6 +12,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     pasta::Pasta,
 };
+use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     action,
     bundle::Bundle,
@@ -54,6 +55,53 @@ pub fn application() -> ApplicationLease {
     ApplicationLease(Some(
         application.unwrap_or_else(|| stamp::proof::new_application().unwrap()),
     ))
+}
+
+pub(crate) fn keyed_rng(name: &str, key: &[u8]) -> StdRng {
+    let digest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"Tachyon-FixtRng")
+        .to_state()
+        .update(name.as_bytes())
+        .update(&[0])
+        .update(key)
+        .finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(digest.as_bytes());
+    StdRng::from_seed(seed)
+}
+
+/// Values that their key determines, each proved once for the process.
+pub(crate) struct Proved<V> {
+    name: &'static str,
+    slots: Mutex<BTreeMap<Vec<u8>, Arc<Mutex<Option<V>>>>>,
+}
+
+impl<V: Clone> Proved<V> {
+    pub(crate) const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            slots: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// The value under `key`. The first caller proves it, with an rng seeded
+    /// from this fixture's name and the key. A caller that asks while it is
+    /// being proved waits. If proving panicked, every later caller panics too.
+    pub(crate) fn get(&self, key: &[u8], prove: impl FnOnce(&mut StdRng) -> V) -> V {
+        let slot = {
+            let mut slots = self.slots.lock().unwrap();
+            Arc::clone(slots.entry(key.to_vec()).or_default())
+        };
+        let name = self.name;
+        let mut stored = slot
+            .lock()
+            .unwrap_or_else(|_| panic!("{name} failed to prove"));
+        if stored.is_none() {
+            *stored = Some(prove(&mut keyed_rng(name, key)));
+        }
+        stored.as_ref().unwrap().clone()
+    }
 }
 
 pub(crate) struct WithPolynomials<S>(pub S, pub [Vec<Fp>; 2]);

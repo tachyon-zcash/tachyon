@@ -71,7 +71,7 @@ fn honest_spend_bind(
     note: &Note,
     spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
 ) -> ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader> {
-    let secret = user.note_secret(rng, app, *note);
+    let secret = user.note_secret(app, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = app
         .fuse(
@@ -92,7 +92,7 @@ fn spendable_init_rejects_tg_absent() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let nf_header = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let nf_header = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
     let absent_tg = Tachygram::random(rng);
 
     assert_matches!(
@@ -318,14 +318,14 @@ fn spend_rejects_invalid_note() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let note = user.random_note(500);
     let height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable_pcd = user.spendable_init(rng, app, &note, &pool, height);
+    let spendable_pcd = user.spendable_init(app, &pool, &note, height);
 
     let phantom = Note {
         value: value::Positive::try_from(999_999u64).unwrap(),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    let secret = user.note_secret(rng, app, phantom);
+    let secret = user.note_secret(app, phantom);
     let rcv = value::Trapdoor::random(rng);
     assert_matches!(
         app
@@ -392,7 +392,7 @@ fn step_accepts_zero_value_note() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let zero_spend = user.random_note(0);
     let height = mine_cm_block(rng, &mut pool, zero_spend.commitment());
-    let spendable_pcd = user.spendable_init(rng, app, &zero_spend, &pool, height);
+    let spendable_pcd = user.spendable_init(app, &pool, &zero_spend, height);
     let spend_bind = honest_spend_bind(rng, app, &user, &zero_spend, spendable_pcd);
     app.fuse(
         rng,
@@ -417,8 +417,8 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
 
-    let spendable = user.spendable_init(rng, app, &note, &pool, height);
-    let secret = user.note_secret(rng, app, note);
+    let spendable = user.spendable_init(app, &pool, &note, height);
+    let secret = user.note_secret(app, note);
     let (bind_pcd, ()) = app
         .fuse(
             rng,
@@ -544,7 +544,7 @@ fn unspent_bind_rejects_a_forged_member() {
     let unspent = pool.unspent(rng, app, (epoch0, epoch1), nf);
 
     let (_, _, unspent_end, _) = *unspent.data();
-    let range = user.note_nullifiers(rng, app, note, epoch0, unspent_end);
+    let range = user.note_nullifiers(app, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -563,14 +563,13 @@ fn unspent_bind_rejects_a_forged_member() {
 #[test]
 fn unspent_bind_window_may_end_at_the_final_epoch() {
     let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
     let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let epoch_end = EpochIndex::new(EPOCH_MAX);
-    let range = user.note_nullifiers(rng, app, note, epoch_start, epoch_end);
+    let range = user.note_nullifiers(app, note, epoch_start, epoch_end);
 
     let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
@@ -611,9 +610,9 @@ fn unspent_bind_rejects_mismatched_sequences() {
     );
     let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
-    let range = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
-    let wide = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(1));
-    let later = user.note_nullifiers(rng, app, note, EpochIndex::new(64), EpochIndex::new(64));
+    let range = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let wide = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(1));
+    let later = user.note_nullifiers(app, note, EpochIndex::new(64), EpochIndex::new(64));
     let honest = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -689,7 +688,7 @@ fn unspent_bind_rejects_uncovered_end() {
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32);
     let unspent = detached_segment(rng, app, last, |epoch| mk.derive_nullifier(epoch));
 
-    let range = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let range = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
     let mut witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -798,7 +797,7 @@ fn nullifier_derive_rejects_invalid_windows() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
     let other = user.random_note(700);
-    let secret = user.note_secret(rng, app, note);
+    let secret = user.note_secret(app, note);
     let (cm, ..) = *secret.data();
     let past_the_end = EpochIndex::new(EPOCH_MAX - 3);
 
@@ -867,8 +866,8 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             "NullifierFuse: note commitments differ",
         ),
     ] {
-        let left = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
-        let right = user.note_nullifiers(rng, app, right_note, right_start, right_end);
+        let left = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(15));
+        let right = user.note_nullifiers(app, right_note, right_start, right_end);
         let fuse_witness = witness::nullifier_fuse(
             (*left.data(), *right.data()),
             &user.covering_window(&note, &left),
@@ -896,7 +895,7 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
     assert_eq!(epoch, EpochIndex::new(3));
-    let spendable = user.spendable_init(rng, app, &note, &pool, init_height);
+    let spendable = user.spendable_init(app, &pool, &note, init_height);
     let anchor = spendable.data().2;
 
     let bind_pcd = honest_spend_bind(rng, app, &user, &note, spendable);
@@ -1021,8 +1020,8 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
-    let left = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
-    let right = user.note_nullifiers(rng, app, note, EpochIndex::new(16), EpochIndex::new(31));
+    let left = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(15));
+    let right = user.note_nullifiers(app, note, EpochIndex::new(16), EpochIndex::new(31));
     let members: Vec<Nullifier> = (0..32)
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
@@ -1077,7 +1076,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
 
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = pool.unspent(rng, app, (epoch1, EpochIndex::new(2)), nf);
-    let range = user.note_nullifiers(rng, app, note, epoch0, epoch1);
+    let range = user.note_nullifiers(app, note, epoch0, epoch1);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],

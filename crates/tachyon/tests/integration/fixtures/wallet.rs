@@ -30,7 +30,7 @@ use zcash_tachyon::{
 };
 
 use super::{
-    mock_sighash,
+    Proved, mock_sighash,
     pool::{PoolSim, random_block, random_block_with},
     qr::QrBucketEntry,
 };
@@ -119,7 +119,7 @@ pub fn build_autonome<RNG: CryptoRng>(
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
-    let spendable_pcd = wallet.spendable_init(rng, app, &spend_note, &pool, height);
+    let spendable_pcd = wallet.spendable_init(app, &pool, &spend_note, height);
     let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
@@ -138,17 +138,21 @@ pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
-    pub secrets:
-        RefCell<BTreeMap<Tachygram, ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>>>,
-    pub derivations: RefCell<
-        BTreeMap<
-            (Tachygram, u32, u32),
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
-        >,
-    >,
 }
 
 impl WalletSim {
+    pub fn new(sk: private::SpendingKey) -> Self {
+        Self {
+            sk,
+            pak: sk.derive_proof_private(),
+            notes: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self::new(private::SpendingKey::random(rng))
+    }
+
     pub(crate) fn bucket_unspent<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -163,20 +167,6 @@ impl WalletSim {
                 .derive_nullifier(epoch)
         });
         self.unspent_bind(rng, app, arbitrary, note)
-    }
-
-    pub fn new(sk: private::SpendingKey) -> Self {
-        Self {
-            sk,
-            pak: sk.derive_proof_private(),
-            notes: RefCell::new(BTreeMap::new()),
-            secrets: RefCell::new(BTreeMap::new()),
-            derivations: RefCell::new(BTreeMap::new()),
-        }
-    }
-
-    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self::new(private::SpendingKey::random(rng))
     }
 
     pub fn random_note(&self, value_amount: u64) -> Note {
@@ -215,103 +205,115 @@ impl WalletSim {
             .collect()
     }
 
-    pub fn note_secret<RNG: CryptoRng>(
+    pub fn note_secret(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
         note: Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
-        let cm = Tachygram::from(note.commitment());
-        if let Some(pcd) = self.secrets.borrow().get(&cm) {
-            return pcd.clone();
-        }
-        let (pcd, ()) = app
-            .seed(
-                rng,
-                delegation::NoteSeed,
-                witness::note_seed(((), ()), note, self.pak),
-            )
-            .unwrap();
+        static SECRETS: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>> =
+            Proved::new("note_secret");
 
-        self.secrets.borrow_mut().insert(cm, pcd.clone());
-        pcd
+        let key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(note.commitment()).to_bytes(),
+        ]
+        .concat();
+        SECRETS.get(&key, |rng| {
+            let (pcd, ()) = app
+                .seed(
+                    rng,
+                    delegation::NoteSeed,
+                    witness::note_seed(((), ()), note, self.pak),
+                )
+                .unwrap();
+            pcd
+        })
     }
 
-    pub fn note_nullifiers<RNG: CryptoRng>(
+    pub fn note_nullifiers(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
         note: Note,
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
     ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers> {
+        static WINDOWS: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
+            Proved::new("note_nullifiers_window");
+        static RANGES: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
+            Proved::new("note_nullifiers_range");
+
         let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
         let windows = (u32::from(epoch_end) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_end = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
-        let key = (Tachygram::from(note.commitment()), base, cover_end);
-        if let Some(pcd) = self.derivations.borrow().get(&key) {
-            return pcd.clone();
-        }
-        let secret = self.note_secret(rng, app, note);
-        let mk = self.pak.nk.derive_note_private(note.psi);
-
-        let mut merged: Option<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> = None;
-        for window in 0..windows {
-            let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
-            let chunk_end =
-                EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
-            let (leaf, ()) = app
-                .fuse(
-                    rng,
-                    delegation::NullifierDerive,
-                    witness::nullifier_derive((*secret.data(), ()), chunk_start),
-                    secret.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .unwrap();
-            merged = Some(match merged {
-                None => leaf,
-                Some(left) => {
-                    let left_nfs: Vec<Nullifier> = (base..u32::from(chunk_start))
-                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
-                        .collect();
-                    let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)..=u32::from(chunk_end))
-                        .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
-                        .collect();
-                    let (fused, ()) = app
-                        .fuse(
-                            rng,
-                            delegation::NullifierFuse,
-                            witness::nullifier_fuse(
-                                (*left.data(), *leaf.data()),
-                                &left_nfs,
-                                &right_nfs,
-                            ),
-                            left,
-                            leaf,
-                        )
-                        .unwrap();
-                    fused
-                },
+        let mut key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(note.commitment()).to_bytes(),
+        ]
+        .concat();
+        key.extend_from_slice(&base.to_le_bytes());
+        if windows == 1 {
+            return WINDOWS.get(&key, |rng| {
+                let secret = self.note_secret(app, note);
+                let (leaf, ()) = app
+                    .fuse(
+                        rng,
+                        delegation::NullifierDerive,
+                        witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(base)),
+                        secret,
+                        app.bootstrap_proof().clone().carry::<()>(()),
+                    )
+                    .unwrap();
+                leaf
             });
         }
-        let pcd = merged.unwrap();
-
-        self.derivations.borrow_mut().insert(key, pcd.clone());
-        pcd
+        key.extend_from_slice(&windows.to_le_bytes());
+        RANGES.get(&key, |rng| {
+            let chunk_start = base + (windows - 1) * NF_DERIVATION_WIDTH as u32;
+            let left = self.note_nullifiers(
+                app,
+                note,
+                EpochIndex::new(base),
+                EpochIndex::new(chunk_start - 1),
+            );
+            let leaf = self.note_nullifiers(
+                app,
+                note,
+                EpochIndex::new(chunk_start),
+                EpochIndex::new(cover_end),
+            );
+            let mk = self.pak.nk.derive_note_private(note.psi);
+            let left_nfs: Vec<Nullifier> = (base..chunk_start)
+                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                .collect();
+            let right_nfs: Vec<Nullifier> = (chunk_start..=cover_end)
+                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
+                .collect();
+            let (fused, ()) = app
+                .fuse(
+                    rng,
+                    delegation::NullifierFuse,
+                    witness::nullifier_fuse((*left.data(), *leaf.data()), &left_nfs, &right_nfs),
+                    left,
+                    leaf,
+                )
+                .unwrap();
+            fused
+        })
     }
 
-    pub fn spendable_init<RNG: CryptoRng>(
+    pub fn spendable_init(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
-        note: &Note,
         pool: &PoolSim,
+        note: &Note,
         init_height: BlockHeight,
     ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
+        static SPENDABLE: Proved<ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
+            Proved::new("spendable_init");
+
         let cm = note.commitment();
         let epoch = init_height.epoch();
-        let (anchor_prev, creation_tgs) = {
+        let (anchor_prev, anchor_after, creation_tgs) = {
             let stamps = pool
                 .block(init_height)
                 .stamps
@@ -329,20 +331,32 @@ impl WalletSim {
                     anchor.next_stamp(init_height.epoch(), &stamp.2).unwrap()
                 });
 
-            (anchor_prev, stamps[cm_idx].clone())
-        };
-        let deriv = self.note_nullifiers(rng, app, *note, epoch, epoch);
-
-        let (spendable, ()) = app
-            .fuse(
-                rng,
-                spendable::SpendableInit,
-                witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
-                deriv,
-                app.bootstrap_proof().clone().carry::<()>(()),
+            (
+                anchor_prev,
+                pool.block(init_height).stamps[cm_idx].3,
+                stamps[cm_idx].clone(),
             )
-            .unwrap();
-        spendable
+        };
+        let key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(cm).to_bytes(),
+            Fp::from(anchor_prev).to_bytes(),
+            Fp::from(anchor_after).to_bytes(),
+        ]
+        .concat();
+        SPENDABLE.get(&key, |rng| {
+            let deriv = self.note_nullifiers(app, *note, epoch, epoch);
+            let (spendable, ()) = app
+                .fuse(
+                    rng,
+                    spendable::SpendableInit,
+                    witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
+                    deriv,
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            spendable
+        })
     }
 
     pub fn unspent_bind<RNG: CryptoRng>(
@@ -353,7 +367,7 @@ impl WalletSim {
         note: &Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let (_, epoch_start, epoch_next, _) = *arbitrary.data();
-        let range = self.note_nullifiers(rng, app, *note, epoch_start, epoch_next);
+        let range = self.note_nullifiers(app, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
             .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
@@ -487,7 +501,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.note_secret(rng, app, note), spendable_pcd, vec![]));
+            spend_pcds.push((self.note_secret(app, note), spendable_pcd, vec![]));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -531,7 +545,7 @@ impl WalletSim {
         let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
         pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
         let height = pool.height();
-        let spendable_pcd = self.spendable_init(rng, app, &spend_note, &pool, height);
+        let spendable_pcd = self.spendable_init(app, &pool, &spend_note, height);
         let anchor = spendable_pcd.data().2;
 
         let (bundle_plan, signed, spend_pcds) = self.signed(

@@ -445,7 +445,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
                 bucket.pcd.data().2
             )
         );
-        let secret = user.note_secret(rng, app, note);
+        let secret = user.note_secret(app, note);
         let bind_witness = witness::spend_bind((*spendable.data(), *secret.data()), rcv);
         let (bind, ()) = app
             .fuse(rng, spend::SpendBind, bind_witness, spendable, secret)
@@ -1447,7 +1447,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     assert_eq!(*spendable.data(), (note.commitment(), epoch1, anchor_next));
 
     let lifted = user.lift_to_epoch(rng, app, &pool, &note, spendable, epoch2);
-    let secret = user.note_secret(rng, app, note);
+    let secret = user.note_secret(app, note);
     let rcv = value::Trapdoor::random(rng);
     let (bind, ()) = app
         .fuse(

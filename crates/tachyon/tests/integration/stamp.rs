@@ -124,8 +124,8 @@ fn plan_prove_rejects_invalid_inputs() {
     ));
     let height = pool.height();
 
-    let sp_a = user.spendable_init(rng, app, &note_a, &pool, height);
-    let sp_b = user.spendable_init(rng, app, &note_b, &pool, height);
+    let sp_a = user.spendable_init(app, &pool, &note_a, height);
+    let sp_b = user.spendable_init(app, &pool, &note_b, height);
     let anchor = sp_a.data().2;
 
     let (rcv_a, theta_a) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -143,8 +143,8 @@ fn plan_prove_rejects_invalid_inputs() {
     }
     .digest()
     .unwrap();
-    let secret_a = user.note_secret(rng, app, note_a);
-    let secret_b = user.note_secret(rng, app, note_b);
+    let secret_a = user.note_secret(app, note_a);
+    let secret_b = user.note_secret(app, note_b);
     let plan = stamp::Plan::new(
         vec![
             (plan_a.descriptor(), theta_a, rcv_a),
@@ -234,7 +234,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let plan_height = pool.height();
     let middle = cm_height.next().unwrap();
 
-    let spendable = user.spendable_init(rng, app, &note, &pool, cm_height);
+    let spendable = user.spendable_init(app, &pool, &note, cm_height);
     let plan_anchor = pool.block(plan_height).anchor();
 
     let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -242,7 +242,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         user.pak.ak.derive_action_public(&alpha)
     });
     let (out_rcv, out_theta, output) = output_plan(rng, user.random_note(200));
-    let secret = user.note_secret(rng, app, note);
+    let secret = user.note_secret(app, note);
     let max_fee_note = user.random_note(0);
     let plan = stamp::Plan::new(
         vec![(spend.descriptor(), theta, rcv)],
@@ -322,7 +322,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let spend = wallet.random_note(1000);
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.mine(random_block_with(rng, &[vec![spend.commitment()]], 50));
-    let spendable = wallet.spendable_init(rng, app, &spend, &pool, pool.height());
+    let spendable = wallet.spendable_init(app, &pool, &spend, pool.height());
     let anchor = spendable.data().2;
 
     let (output_a, plan_a, fee_a) = build_output_stamp(rng, app, anchor, output);
