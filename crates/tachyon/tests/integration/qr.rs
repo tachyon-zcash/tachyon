@@ -22,7 +22,7 @@ use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
     pool::{PoolSim, random_block, random_block_with, small_epoch},
-    qr::{EvidenceTreeEntry, QrIntakeEntry, qr_bucket_at, qr_profile_of, scaled_qr_contents},
+    qr::{EvidenceTreeEntry, QrIntakeEntry, qr_profile_of, scaled_qr_contents},
     wallet::{WalletSim, shared_sk},
 };
 
@@ -206,7 +206,7 @@ fn qr_intake_split_rejects_an_empty_intake() {
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let intake = QrIntakeEntry::empty(rng, app, start, EpochIndex::new(3), discriminant);
+    let intake = QrIntakeEntry::empty(app, start, EpochIndex::new(3), discriminant);
 
     assert_matches!(
         app
@@ -292,10 +292,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     let inverse = scale.invert().unwrap();
     let duplicate = PoolSim::genesis_with(vec![vec![member, member]]);
     let span = (Anchor::default(), duplicate.anchor());
-    let root = duplicate
-        .qr_intakes(rng, app, span, disc, 2, 0)
-        .pop()
-        .unwrap();
+    let root = duplicate.qr_intakes(app, span, disc, 0).pop().unwrap();
     let factors = [(vec![member], scale), (vec![member], inverse)];
     let [child] = root.split_with_factors(rng, app, [!side], &factors);
     assert!(app.verify_differential(&child.pcd, &mut *rng).unwrap());
@@ -304,10 +301,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
 
     let single = PoolSim::genesis_with(vec![vec![member]]);
     let single_span = (Anchor::default(), single.anchor());
-    let root_single = single
-        .qr_intakes(rng, app, single_span, disc, 1, 0)
-        .pop()
-        .unwrap();
+    let root_single = single.qr_intakes(app, single_span, disc, 0).pop().unwrap();
     let occupied = (vec![member], scale);
     let empty = (Vec::new(), inverse);
     let split = if side {
@@ -375,7 +369,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let inverse = scale.invert().unwrap();
     let pool = PoolSim::genesis_with(vec![vec![cm]]);
     let span = (Anchor::default(), pool.anchor());
-    let root = pool.qr_intakes(rng, app, span, disc, 1, 0).pop().unwrap();
+    let root = pool.qr_intakes(app, span, disc, 0).pop().unwrap();
     let (honest_non_residue, honest_residue) = root.clone().split(rng, app);
     let honest = if side {
         [honest_residue, honest_non_residue]
@@ -525,7 +519,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     for (sibling, scale) in [(cm, Fp::from(7u64)), (companion, Fp::ONE)] {
         let pool = PoolSim::genesis_with(vec![vec![cm, sibling]]);
         let span = (Anchor::default(), pool.anchor());
-        let root = pool.qr_intakes(rng, app, span, disc, 2, 0).pop().unwrap();
+        let root = pool.qr_intakes(app, span, disc, 0).pop().unwrap();
         let held = (root.members.clone(), Fp::ONE);
         let empty = (vec![], Fp::ONE);
         let honest_factors = if side { [empty, held] } else { [held, empty] };
@@ -1262,14 +1256,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
 
-    let routed = pool.qr_intakes(
-        rng,
-        app,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        2,
-    );
+    let routed = pool.qr_intakes(app, (Anchor::default(), final_anchor), discriminant, 2);
     let intake = routed.into_iter().next().unwrap();
     let (epoch, anchor_prev, _, _, profile) = *intake.pcd.data();
     let contents = intake.pcd.commitments()[0];
@@ -1298,7 +1285,7 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let discriminant = QrDiscriminant::random(rng);
     let start = pool.block(BlockHeight(0)).anchor();
 
-    let routed = pool.qr_intakes(rng, app, (start, final_anchor), discriminant, 12, 1);
+    let routed = pool.qr_intakes(app, (start, final_anchor), discriminant, 1);
     let intake = routed.into_iter().next().unwrap();
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
     assert_matches!(
@@ -1356,7 +1343,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(pool.block(epoch1.last_block()).anchor(), entry1);
 
     let discriminant = QrDiscriminant::random(rng);
-    let intake = QrIntakeEntry::empty(rng, app, entry1, epoch1, discriminant);
+    let intake = QrIntakeEntry::empty(app, entry1, epoch1, discriminant);
     let bucket = intake.seal(rng, app, final0);
     let (epoch, anchor_start, anchor_next, _, profile, _) = *bucket.pcd.data();
     assert_eq!((epoch, anchor_start, anchor_next), (epoch1, entry1, entry2));
@@ -1366,15 +1353,12 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         Eq::from(iter::empty().collect::<TachygramSetPoly>().commit()).to_affine()
     );
 
-    let bucket0 = qr_bucket_at(
-        rng,
+    let bucket0 = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final0),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         Fp::from(nf0),
+        0,
         Anchor::from(Fp::ZERO),
     );
     let left = bucket0.segment(rng, app, |_| nf0);
@@ -1414,26 +1398,20 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
 
     let span = (Anchor::default(), pool.block(epoch0.last_block()).anchor());
     let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
+    let bucket = pool.qr_bucket(
         app,
-        &pool,
         span,
         discriminant,
-        EPOCH_SIZE as usize,
-        2,
         Fp::from(Tachygram::from(note.commitment())),
+        2,
         Anchor::from(Fp::ZERO),
     );
-    let nf_bucket = qr_bucket_at(
-        rng,
+    let nf_bucket = pool.qr_bucket(
         app,
-        &pool,
         span,
         discriminant,
-        EPOCH_SIZE as usize,
-        2,
         Fp::from(mk.derive_nullifier(epoch0)),
+        2,
         Anchor::from(Fp::ZERO),
     );
     assert_ne!(bucket.pcd.data().4, nf_bucket.pcd.data().4);
@@ -1446,7 +1424,13 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         .unwrap();
     assert_eq!(*spendable.data(), (note.commitment(), epoch1, anchor_next));
 
-    let lifted = user.lift_to_epoch(rng, app, &pool, &note, spendable, epoch2);
+    let lifted = user.lift(
+        rng,
+        app,
+        spendable,
+        pool.unspent(app, (epoch1, epoch2), |epoch| mk.derive_nullifier(epoch)),
+        &note,
+    );
     let secret = user.note_secret(app, note);
     let rcv = value::Trapdoor::random(rng);
     let (bind, ()) = app
@@ -1484,15 +1468,12 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert_eq!(pool.height().epoch(), epoch);
 
     let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
+    let bucket = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), short_anchor),
         discriminant,
-        1,
-        0,
         Fp::from(Tachygram::from(note.commitment())),
+        0,
         Anchor::from(Fp::ZERO),
     );
     let epoch_next = epoch.next().unwrap();
@@ -1515,17 +1496,12 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     pool.advance(epoch_next.last_block().0 - pool.height().0, |_| {
         random_block(rng, 1, 1)
     });
-    let next = pool.unspent(
-        rng,
-        app,
-        (epoch_next, epoch_next.next().unwrap()),
-        |covered| {
-            user.pak
-                .nk
-                .derive_note_private(note.psi)
-                .derive_nullifier(covered)
-        },
-    );
+    let next = pool.unspent(app, (epoch_next, epoch_next.next().unwrap()), |covered| {
+        user.pak
+            .nk
+            .derive_note_private(note.psi)
+            .derive_nullifier(covered)
+    });
     let bound_next = user.unspent_bind(rng, app, next, &note);
     assert_ne!(bound_next.data().1, unpublished);
     assert_matches!(
@@ -1551,27 +1527,21 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
     let final1 = pool.block(epoch1.last_block()).anchor();
     let discriminant = QrDiscriminant::random(rng);
 
-    let bucket0 = qr_bucket_at(
-        rng,
+    let bucket0 = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final0),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         Fp::from(mk.derive_nullifier(epoch0)),
+        0,
         Anchor::from(Fp::ZERO),
     );
     let unspent0 = user.bucket_unspent(rng, app, &bucket0, &note);
-    let bucket1 = qr_bucket_at(
-        rng,
+    let bucket1 = pool.qr_bucket(
         app,
-        &pool,
         (final0.next_epoch(epoch1).unwrap(), final1),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         Fp::from(mk.derive_nullifier(epoch1)),
+        0,
         final0,
     );
     let unspent1 = user.bucket_unspent(rng, app, &bucket1, &note);
@@ -1600,15 +1570,12 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
     for (unspent, bucket, expected) in [
         (
             unspent0.clone(),
-            qr_bucket_at(
-                rng,
+            pool.qr_bucket(
                 app,
-                &pool,
                 (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
                 discriminant,
-                EPOCH_SIZE as usize,
-                0,
                 Fp::from(Tachygram::from(note.commitment())),
+                0,
                 Anchor::from(Fp::ZERO),
             ),
             "QrSpendableInit: segment does not close where the bucket does",
@@ -1650,15 +1617,12 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
 
     let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
+    let bucket = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), pool.block(epoch0.last_block()).anchor()),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         Fp::from(Tachygram::from(note.commitment())),
+        0,
         Anchor::from(Fp::ZERO),
     );
     let unspent = user.bucket_unspent(rng, app, &bucket, &note);
@@ -1685,15 +1649,12 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let (pool, final_anchor) = small_epoch(rng);
     let nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let discriminant = QrDiscriminant::random(rng);
-    let bucket = qr_bucket_at(
-        rng,
+    let bucket = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final_anchor),
         discriminant,
-        24,
-        2,
         Fp::from(nf),
+        2,
         Anchor::from(Fp::ZERO),
     );
     let (epoch, ..) = *bucket.pcd.data();
@@ -1797,15 +1758,12 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     assert_ne!(value, Fp::ZERO);
     let nf = Nullifier::from(value);
 
-    let bucket = qr_bucket_at(
-        rng,
+    let bucket = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final_anchor),
         discriminant,
-        24,
-        2,
         value,
+        2,
         Anchor::from(Fp::ZERO),
     );
     assert!(
@@ -1855,7 +1813,6 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
     let intake = QrIntakeEntry::empty(
-        rng,
         app,
         anchor_final_prev.next_epoch(final_epoch).unwrap(),
         final_epoch,
@@ -1900,15 +1857,12 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let final_anchor = pool.block(pool.height()).anchor();
 
     for depth in [0, 1, 31, u32::BITS] {
-        let bucket = qr_bucket_at(
-            rng,
+        let bucket = pool.qr_bucket(
             app,
-            &pool,
             (Anchor::default(), final_anchor),
             discriminant,
-            32,
-            depth,
             value,
+            depth,
             Anchor::from(Fp::ZERO),
         );
         assert!(bucket.members.contains(&Tachygram::from(member)));
@@ -1945,10 +1899,10 @@ fn unspent_lift_carries_a_spendable() {
         random_block(rng, 1, 2)
     });
 
-    let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
-    let first = pool.epoch_bucket(rng, app, epoch1);
+    let spendable = user.spendable_at(app, &pool, &note, epoch1);
+    let first = pool.epoch_bucket(app, epoch1);
     let segment = first.segment(rng, app, |epoch| mk.derive_nullifier(epoch));
-    let bucket = pool.epoch_bucket(rng, app, epoch2);
+    let bucket = pool.epoch_bucket(app, epoch2);
     let lift = witness::unspent_lift(
         (*segment.data(), *bucket.pcd.data()),
         mk.derive_nullifier(epoch2).into(),
@@ -1982,10 +1936,10 @@ fn unspent_lift_rejects_invalid_extensions() {
     let [nf0, nf1] = array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
     let nf = |epoch: EpochIndex| if epoch == epoch0 { nf0 } else { nf1 };
 
-    let first = pool.epoch_bucket(rng, app, epoch0);
+    let first = pool.epoch_bucket(app, epoch0);
     let segment = first.segment(rng, app, nf);
-    let bucket = pool.epoch_bucket(rng, app, epoch1);
-    let past = pool.epoch_bucket(rng, app, epoch2);
+    let bucket = pool.epoch_bucket(app, epoch1);
+    let past = pool.epoch_bucket(app, epoch2);
     let honest = witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf0]);
     let (_, _, _, discriminant, ..) = *bucket.pcd.data();
 

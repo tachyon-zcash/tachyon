@@ -5,7 +5,7 @@ use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetPoly,
-    constants::{EPOCH_SIZE, EVIDENCE_TREE_ARITY},
+    constants::EVIDENCE_TREE_ARITY,
     pasta::Fp,
     stamp::proof::{evidence, qr},
     witness,
@@ -15,7 +15,7 @@ use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
     pool::{PoolSim, random_block, small_epoch},
-    qr::{EvidenceTreeEntry, QrIntakeEntry, qr_bucket_at},
+    qr::{EvidenceTreeEntry, QrIntakeEntry},
 };
 
 #[test]
@@ -25,14 +25,7 @@ fn evidence_tree_admission_rejects_substituted_contents() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
     let intake = pool
-        .qr_intakes(
-            rng,
-            app,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            24,
-            0,
-        )
+        .qr_intakes(app, (Anchor::default(), final_anchor), discriminant, 0)
         .pop()
         .unwrap();
     let intake_pcd = intake.pcd.clone();
@@ -84,14 +77,7 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let discriminant = QrDiscriminant::random(rng);
 
     for depth in [2, 6] {
-        let routed = pool.qr_intakes(
-            rng,
-            app,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            24,
-            depth,
-        );
+        let routed = pool.qr_intakes(app, (Anchor::default(), final_anchor), discriminant, depth);
         let ragged = routed
             .iter()
             .any(|intake| intake.pcd.data().4.depth < depth);
@@ -131,14 +117,7 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
 
-    let routed = pool.qr_intakes(
-        rng,
-        app,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        3,
-    );
+    let routed = pool.qr_intakes(app, (Anchor::default(), final_anchor), discriminant, 3);
     let sealed = routed
         .into_iter()
         .take(5)
@@ -171,26 +150,20 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let discriminant = QrDiscriminant::random(rng);
     let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
-    let bucket0 = qr_bucket_at(
-        rng,
+    let bucket0 = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final0),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         value,
+        0,
         Anchor::from(Fp::ZERO),
     );
-    let bucket1 = qr_bucket_at(
-        rng,
+    let bucket1 = pool.qr_bucket(
         app,
-        &pool,
         (final0.next_epoch(epoch1).unwrap(), final1),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         value,
+        0,
         final0,
     );
     assert_matches!(
@@ -210,26 +183,20 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let tree1 = EvidenceTreeEntry::build(rng, app, vec![bucket1]).pcd;
 
     let other_discriminant = QrDiscriminant::random(rng);
-    let foreign = qr_bucket_at(
-        rng,
+    let foreign = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), final0),
         other_discriminant,
-        EPOCH_SIZE as usize,
-        0,
         value,
+        0,
         Anchor::from(Fp::ZERO),
     );
-    let short = qr_bucket_at(
-        rng,
+    let short = pool.qr_bucket(
         app,
-        &pool,
         (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
         discriminant,
-        EPOCH_SIZE as usize,
-        0,
         value,
+        0,
         Anchor::from(Fp::ZERO),
     );
     let fake_anchor_final_prev = Anchor::from(Fp::ONE);
@@ -319,14 +286,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
     let sealed = pool
-        .qr_intakes(
-            rng,
-            app,
-            (Anchor::default(), final_anchor),
-            discriminant,
-            24,
-            2,
-        )
+        .qr_intakes(app, (Anchor::default(), final_anchor), discriminant, 2)
         .into_iter()
         .map(|intake| intake.seal(rng, app, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();

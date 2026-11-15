@@ -3,20 +3,23 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{iter, ops::RangeInclusive};
 
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, QrDiscriminant, Tachygram, TachygramSetCommit,
+    Anchor, BlockHeight, EpochIndex, QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit,
     TachygramSetPoly, note,
     nullifier::Nullifier,
     pasta::Fp,
-    stamp::proof::{App, pool},
+    stamp::proof::{App, pool, qr, summary},
     witness,
 };
 
-use super::qr::{QrBucketEntry, QrIntakeEntry, build_qr_roots, merge_qr_run};
+use super::{
+    Proved, keyed_rng,
+    qr::{QrBucketEntry, QrIntakeEntry},
+};
 
 pub fn random_block<RNG: CryptoRng>(
     rng: &mut RNG,
@@ -90,34 +93,191 @@ pub struct PoolSim {
 }
 
 impl PoolSim {
-    pub(crate) fn qr_intakes<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        (start, end): (Anchor, Anchor),
+    fn qr_key((start, end): (Anchor, Anchor), discriminant: QrDiscriminant) -> Vec<u8> {
+        [
+            Fp::from(start).to_bytes(),
+            Fp::from(end).to_bytes(),
+            Fp::from(discriminant).to_bytes(),
+        ]
+        .concat()
+    }
+
+    fn qr_profile_key(
+        span: (Anchor, Anchor),
         discriminant: QrDiscriminant,
-        capacity: usize,
+        profile: QrProfile,
+    ) -> Vec<u8> {
+        let mut key = Self::qr_key(span, discriminant);
+        key.extend_from_slice(&profile.depth.to_le_bytes());
+        key.extend_from_slice(&profile.bits.to_le_bytes());
+        key
+    }
+
+    fn qr_root(
+        &self,
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+    ) -> QrIntakeEntry {
+        static ROOTS: Proved<QrIntakeEntry> = Proved::new("qr_root");
+
+        ROOTS.get(&Self::qr_key(span, discriminant), |rng| {
+            let summary = self.summary(app, span);
+            let members = self
+                .stamps_between(span.0, span.1)
+                .iter()
+                .flat_map(|stamp| stamp.1.iter().copied())
+                .collect();
+            let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSummaryIntake,
+                    witness,
+                    summary,
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            QrIntakeEntry { pcd, members }
+        })
+    }
+
+    fn qr_sides(
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+        parent: &QrIntakeEntry,
+    ) -> ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides> {
+        static SIDES: Proved<ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides>> =
+            Proved::new("qr_sides");
+
+        let key = Self::qr_profile_key(span, discriminant, parent.pcd.data().4);
+        SIDES.get(&key, |rng| {
+            let witness = witness::qr_intake_split((*parent.pcd.data(), ()), &parent.members);
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrIntakeSplit,
+                    witness,
+                    parent.pcd.clone(),
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            pcd
+        })
+    }
+
+    fn qr_child(
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+        parent: &QrIntakeEntry,
+        side: bool,
+    ) -> QrIntakeEntry {
+        static CHILDREN: Proved<QrIntakeEntry> = Proved::new("qr_child");
+
+        let profile = parent.pcd.data().4;
+        let key = Self::qr_profile_key(span, discriminant, profile.descend(side));
+        CHILDREN.get(&key, |rng| {
+            let sides = Self::qr_sides(app, span, discriminant, parent);
+            let witness = witness::qr_side_select((*sides.data(), ()), &parent.members, side);
+            let (selection, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideSelect,
+                    witness,
+                    sides.clone(),
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideDescend,
+                    witness::qr_side_descend((*sides.data(), *selection.data()), side),
+                    sides,
+                    selection,
+                )
+                .unwrap();
+            let members = parent
+                .members
+                .iter()
+                .copied()
+                .filter(|member| {
+                    qr::classify(Fp::from(*member), discriminant.at(profile.depth)).0 == side
+                })
+                .collect();
+            QrIntakeEntry { pcd, members }
+        })
+    }
+
+    pub(crate) fn qr_intake(
+        &self,
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+        value: Fp,
+        depth: u32,
+    ) -> QrIntakeEntry {
+        let mut intake = self.qr_root(app, span, discriminant);
+        for level in 0..depth {
+            let side = qr::classify(value, discriminant.at(level)).0;
+            intake = Self::qr_child(app, span, discriminant, &intake, side);
+        }
+        intake
+    }
+
+    pub(crate) fn qr_intakes(
+        &self,
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
         depth: u32,
     ) -> Vec<QrIntakeEntry> {
-        let mut layer = build_qr_roots(rng, app, self, (start, end), discriminant, capacity);
+        let mut layer = vec![self.qr_root(app, span, discriminant)];
         for _ in 0..depth {
             let mut residue = Vec::new();
             let mut non_residue = Vec::new();
-            let mut empty = Vec::new();
+            let mut carried = Vec::new();
             for intake in layer {
                 if intake.members.is_empty() {
-                    empty.push(intake);
+                    carried.push(intake);
                     continue;
                 }
-                let (nqr_side, qr_side) = intake.split(rng, app);
-                non_residue.push(nqr_side);
-                residue.push(qr_side);
+                residue.push(Self::qr_child(app, span, discriminant, &intake, true));
+                non_residue.push(Self::qr_child(app, span, discriminant, &intake, false));
             }
-            layer = merge_qr_run(rng, app, residue, capacity);
-            layer.extend(merge_qr_run(rng, app, non_residue, capacity));
-            layer.extend(empty);
+            layer = residue;
+            layer.extend(non_residue);
+            layer.extend(carried);
         }
         layer
+    }
+
+    pub(crate) fn qr_bucket(
+        &self,
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+        value: Fp,
+        depth: u32,
+        anchor_final_prev: Anchor,
+    ) -> QrBucketEntry {
+        let intake = self.qr_intake(app, span, discriminant, value, depth);
+        let mut key = Self::qr_profile_key(span, discriminant, intake.pcd.data().4);
+        key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
+        Self::seal_intake(app, &key, intake, anchor_final_prev)
+    }
+
+    fn seal_intake(
+        app: &App<'_>,
+        key: &[u8],
+        intake: QrIntakeEntry,
+        anchor_final_prev: Anchor,
+    ) -> QrBucketEntry {
+        static BUCKETS: Proved<QrBucketEntry> = Proved::new("qr_bucket");
+
+        BUCKETS.get(key, |rng| intake.seal(rng, app, anchor_final_prev))
     }
 
     pub fn genesis_with(stamps: Vec<Vec<Tachygram>>) -> Self {
@@ -207,108 +367,227 @@ impl PoolSim {
         self.push_block(prev, stamps);
     }
 
-    pub(crate) fn anchor_span<RNG: CryptoRng>(
+    pub(crate) fn anchors_in(&self, range: RangeInclusive<BlockHeight>) -> Vec<Anchor> {
+        (range.start().0..=range.end().0)
+            .flat_map(|height| {
+                self.block(BlockHeight(height))
+                    .stamps
+                    .iter()
+                    .map(|stamp| stamp.3)
+            })
+            .collect()
+    }
+
+    pub(crate) fn anchor_span(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
         range: RangeInclusive<BlockHeight>,
-    ) -> (
-        ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>,
-        Vec<Anchor>,
-    ) {
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
+        static SEEDS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> =
+            Proved::new("anchor_span_seed");
+        static SPANS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> =
+            Proved::new("anchor_span");
+
+        fn prove(
+            app: &App<'_>,
+            epoch: EpochIndex,
+            stamps: &[&StampEntry],
+        ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
+            let (last, prefix) = stamps.split_last().unwrap();
+            if prefix.is_empty() {
+                let key = [Fp::from(last.0).to_bytes(), Fp::from(last.3).to_bytes()].concat();
+                return SEEDS.get(&key, |rng| {
+                    let witness = witness::anchor_span_seed(((), ()), last.0, epoch, &last.1);
+                    let (seed, ()) = app.seed(rng, pool::AnchorSpanSeed, witness).unwrap();
+                    seed
+                });
+            }
+            let key = [
+                Fp::from(prefix[0].0).to_bytes(),
+                Fp::from(last.3).to_bytes(),
+            ]
+            .concat();
+            SPANS.get(&key, |rng| {
+                let left = prove(app, epoch, prefix);
+                let right = prove(app, epoch, &stamps[stamps.len() - 1..]);
+                let members = prefix.iter().map(|stamp| stamp.3).collect::<Vec<_>>();
+                let witness =
+                    witness::anchor_span_fuse((*left.data(), *right.data()), &members, &[last.3]);
+                let (fused, ()) = app
+                    .fuse(rng, pool::AnchorSpanFuse, witness, left, right)
+                    .unwrap();
+                fused
+            })
+        }
+
         let start = *range.start();
         let end = *range.end();
         assert_eq!(start.epoch(), end.epoch());
         assert!(start <= end);
-
-        let mut state = self.block(start).prev;
-        let mut span: Option<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> = None;
-        let mut members = Vec::new();
-        let mut height = start;
-        loop {
-            for tgs in &self
-                .block(height)
-                .stamps
-                .iter()
-                .map(|stamp| stamp.1.clone())
-                .collect::<Vec<_>>()
-            {
-                let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-                let next_state = state.next_stamp(witness.1, &witness.2.commit()).unwrap();
-                let (seed, ()) = app.seed(rng, pool::AnchorSpanSeed, witness).unwrap();
-                span = Some(match span.take() {
-                    None => seed,
-                    Some(left) => {
-                        let fuse_witness = witness::anchor_span_fuse(
-                            (*left.data(), *seed.data()),
-                            &members,
-                            &[next_state],
-                        );
-                        let (fused, ()) = app
-                            .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, seed)
-                            .unwrap();
-                        fused
-                    },
-                });
-                members.push(next_state);
-                state = next_state;
-            }
-            if height >= end {
-                break;
-            }
-            height = height.next().unwrap();
-        }
-
-        (span.unwrap(), members)
+        let stamps = (start.0..=end.0)
+            .flat_map(|height| &self.block(BlockHeight(height)).stamps)
+            .collect::<Vec<_>>();
+        prove(app, start.epoch(), &stamps)
     }
 
-    pub(crate) fn epoch_bucket<RNG: CryptoRng>(
+    pub(crate) fn summary(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
-        epoch: EpochIndex,
-    ) -> QrBucketEntry {
-        let entry = self.block(epoch.first_block()).prev;
+        (start, end): (Anchor, Anchor),
+    ) -> ragu::Pcd<Pasta, ProductionRank, summary::Summary> {
+        static SUMMARIES: Proved<ragu::Pcd<Pasta, ProductionRank, summary::Summary>> =
+            Proved::new("summary");
+
+        let stamps = self.stamps_between(start, end);
+        let key = [Fp::from(start).to_bytes(), Fp::from(end).to_bytes()].concat();
+        SUMMARIES.get(&key, |rng| {
+            let (last, prefix) = stamps.split_last().unwrap();
+            if prefix.is_empty() {
+                let epoch = self.anchor_index[&start].0.epoch();
+                let (seed, ()) = app
+                    .seed(
+                        rng,
+                        summary::SummarySeed,
+                        witness::summary_seed(((), ()), start, epoch, &last.1),
+                    )
+                    .unwrap();
+                seed
+            } else {
+                let previous = self.summary(app, (start, last.0));
+                let held = prefix
+                    .iter()
+                    .flat_map(|stamp| stamp.1.iter().copied())
+                    .collect::<Vec<_>>();
+                let witness = witness::summary_advance((*previous.data(), ()), &held, &last.1);
+                let (advanced, ()) = app
+                    .fuse(
+                        rng,
+                        summary::SummaryAdvance,
+                        witness,
+                        previous,
+                        app.bootstrap_proof().clone().carry::<()>(()),
+                    )
+                    .unwrap();
+                advanced
+            }
+        })
+    }
+
+    pub(super) fn entry_anchor(&self, epoch: EpochIndex) -> Anchor {
+        u32::from(epoch)
+            .checked_sub(1)
+            .map_or_else(Anchor::default, |previous| {
+                self.block(EpochIndex::new(previous).last_block())
+                    .anchor()
+                    .next_epoch(epoch)
+                    .unwrap()
+            })
+    }
+
+    pub(crate) fn epoch_discriminant(&self, epoch: EpochIndex) -> QrDiscriminant {
+        let mut key = u32::from(epoch).to_le_bytes().to_vec();
+        key.extend_from_slice(&Fp::from(self.entry_anchor(epoch)).to_bytes());
+        QrDiscriminant::random(&mut keyed_rng("epoch discriminant", &key))
+    }
+
+    fn epoch_bucket_anchors(&self, epoch: EpochIndex) -> [Anchor; 3] {
         let final_anchor = self.block(epoch.last_block()).anchor();
         let anchor_final_prev = u32::from(epoch).checked_sub(1).map_or_else(
             || Anchor::from(Fp::ZERO),
             |prev| self.block(EpochIndex::new(prev).last_block()).anchor(),
         );
-        let discriminant = QrDiscriminant::random(rng);
-        let intake = if entry == final_anchor {
-            QrIntakeEntry::empty(rng, app, entry, epoch, discriminant)
-        } else {
-            let mut roots = self.qr_intakes(
-                rng,
-                app,
-                (entry, final_anchor),
-                discriminant,
-                (1 << ProductionRank::RANK) - 1,
-                0,
-            );
-            assert_eq!(roots.len(), 1);
-            roots.pop().unwrap()
-        };
-        intake.seal(rng, app, anchor_final_prev)
+        let entry = self.entry_anchor(epoch);
+        [entry, final_anchor, anchor_final_prev]
     }
 
-    pub(crate) fn unspent<RNG: CryptoRng>(
+    fn epoch_bucket_key(epoch: EpochIndex, anchors: [Anchor; 3]) -> Vec<u8> {
+        let mut key = u32::from(epoch).to_le_bytes().to_vec();
+        for anchor in anchors {
+            key.extend_from_slice(&Fp::from(anchor).to_bytes());
+        }
+        key
+    }
+
+    pub(crate) fn epoch_bucket(&self, app: &App<'_>, epoch: EpochIndex) -> QrBucketEntry {
+        let [entry, final_anchor, anchor_final_prev] = self.epoch_bucket_anchors(epoch);
+        let discriminant = self.epoch_discriminant(epoch);
+        let (intake, mut key) = if entry == final_anchor {
+            let intake = QrIntakeEntry::empty(app, entry, epoch, discriminant);
+            let mut key = Fp::from(entry).to_bytes().to_vec();
+            key.extend_from_slice(&u32::from(epoch).to_le_bytes());
+            key.extend_from_slice(&Fp::from(discriminant).to_bytes());
+            (intake, key)
+        } else {
+            let span = (entry, final_anchor);
+            let intake = self.qr_root(app, span, discriminant);
+            let key = Self::qr_profile_key(span, discriminant, intake.pcd.data().4);
+            (intake, key)
+        };
+        key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
+        Self::seal_intake(app, &key, intake, anchor_final_prev)
+    }
+
+    pub(crate) fn unspent(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
         (epoch_start, epoch_next): (EpochIndex, EpochIndex),
         nf: impl Fn(EpochIndex) -> Nullifier,
     ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
-        assert!(u32::from(epoch_start) < u32::from(epoch_next));
-        let mut segments = Vec::new();
-        for epoch in (u32::from(epoch_start)..u32::from(epoch_next)).map(EpochIndex::new) {
-            let bucket = self.epoch_bucket(rng, app, epoch);
-            segments.push(bucket.segment(rng, app, &nf));
+        static SEGMENTS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>> =
+            Proved::new("unspent_segment");
+        static RANGES: Proved<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>> =
+            Proved::new("unspent_range");
+
+        fn prove(
+            pool: &PoolSim,
+            app: &App<'_>,
+            (lo, hi): (EpochIndex, EpochIndex),
+            members: &[Nullifier],
+        ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+            if let &[nf] = members {
+                let mut key = PoolSim::epoch_bucket_key(lo, pool.epoch_bucket_anchors(lo));
+                key.extend_from_slice(&Fp::from(nf).to_bytes());
+                return SEGMENTS.get(&key, |rng| {
+                    let bucket = pool.epoch_bucket(app, lo);
+                    bucket.segment(rng, app, |_| nf)
+                });
+            }
+            let first = pool.entry_anchor(lo);
+            let last = EpochIndex::new(u32::from(hi) - 1);
+            let final_anchor = pool.block(last.last_block()).anchor();
+            let mut key = [
+                Fp::from(first).to_bytes(),
+                Fp::from(final_anchor).to_bytes(),
+            ]
+            .concat();
+            key.extend_from_slice(&u32::from(lo).to_le_bytes());
+            key.extend_from_slice(&u32::from(hi).to_le_bytes());
+            key.extend_from_slice(&u32::try_from(members.len()).unwrap().to_le_bytes());
+            for member in members {
+                key.extend_from_slice(&Fp::from(*member).to_bytes());
+            }
+            RANGES.get(&key, |rng| {
+                let split = members.len() / 2;
+                let middle = EpochIndex::new(u32::from(lo) + u32::try_from(split).unwrap());
+                let left = prove(pool, app, (lo, middle), &members[..split]);
+                let right = prove(pool, app, (middle, hi), &members[split..]);
+                let witness = witness::unspent_fuse(
+                    (*left.data(), *right.data()),
+                    &members[..split],
+                    &members[split..],
+                );
+                let (fused, ()) = app
+                    .fuse(rng, pool::UnspentFuse, witness, left, right)
+                    .unwrap();
+                fused
+            })
         }
+
+        assert!(u32::from(epoch_start) < u32::from(epoch_next));
         let members: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
             .map(|epoch| nf(EpochIndex::new(epoch)))
             .collect();
-        fuse_unspent_tree(rng, app, &members, epoch_start, segments)
+        prove(self, app, (epoch_start, epoch_next), &members)
     }
 }
 
@@ -319,36 +598,4 @@ pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
     }
     let final_anchor = pool.block(pool.height()).anchor();
     (pool, final_anchor)
-}
-
-fn fuse_unspent_tree<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    nf: &[Nullifier],
-    base: EpochIndex,
-    mut chains: Vec<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>>,
-) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
-    assert!(!chains.is_empty());
-    if chains.len() == 1 {
-        return chains.pop().unwrap();
-    }
-    let right_chains = chains.split_off(chains.len() / 2);
-    let left = fuse_unspent_tree(rng, app, nf, base, chains);
-    let right = fuse_unspent_tree(rng, app, nf, base, right_chains);
-
-    let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
-        let from = usize::try_from(u64::from(lo - base)).unwrap();
-        let to = usize::try_from(u64::from(hi - base)).unwrap();
-        &nf[from..to]
-    };
-    let (_, left_epoch_start, left_epoch_next, _) = *left.data();
-    let (_, right_epoch_start, right_epoch_next, _) = *right.data();
-    let left_el = elapsed_slice(left_epoch_start, left_epoch_next);
-    let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
-    assert_eq!(u32::from(right_epoch_start), u32::from(left_epoch_next));
-    let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
-    let (fused, ()) = app
-        .fuse(rng, pool::UnspentFuse, witness, left, right)
-        .unwrap();
-    fused
 }

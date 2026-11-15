@@ -333,9 +333,9 @@ fn based_aggregate_with_two_adjuncts() {
     }
 
     let spend_epoch = cm_height.epoch().next().unwrap();
-    let based_sp = wallet.spendable_at(rng, app, &pool, &based_spend, spend_epoch);
-    let a_sp = wallet.spendable_at(rng, app, &pool, &a_spend, spend_epoch);
-    let b_sp = wallet.spendable_at(rng, app, &pool, &b_spend, spend_epoch);
+    let based_sp = wallet.spendable_at(app, &pool, &based_spend, spend_epoch);
+    let a_sp = wallet.spendable_at(app, &pool, &a_spend, spend_epoch);
+    let b_sp = wallet.spendable_at(app, &pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
 
     let mut becomes_based = wallet.autonome(
@@ -954,7 +954,7 @@ fn bundle_lift_preserves_coverage() {
     );
 
     pool.mine(random_block(rng, 1, 2));
-    let span = pool.anchor_span(rng, app, pool.height()..=pool.height()).0;
+    let span = pool.anchor_span(app, pool.height()..=pool.height());
 
     let lifted = bundle.lift(rng, app, &[], vec![span]).unwrap();
 
@@ -985,8 +985,8 @@ fn bundle_lift_over_an_aggregate() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let sp_a = wallet.spendable_at(rng, app, &pool, &spend_a, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(rng, app, &pool, &spend_b, cm_height.epoch().next().unwrap());
+    let sp_a = wallet.spendable_at(app, &pool, &spend_a, cm_height.epoch().next().unwrap());
+    let sp_b = wallet.spendable_at(app, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor = sp_a.data().2;
 
     let autonome_a = wallet.autonome(rng, app, anchor, vec![(spend_a, sp_a)], vec![output_a]);
@@ -1057,7 +1057,7 @@ fn bundle_lift_over_an_aggregate() {
 
     pool.advance(1, |_| vec![]);
     pool.mine(random_block(rng, 1, 2));
-    let span = pool.anchor_span(rng, app, pool.height()..=pool.height()).0;
+    let span = pool.anchor_span(app, pool.height()..=pool.height());
 
     let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();
 

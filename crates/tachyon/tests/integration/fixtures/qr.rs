@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use core::mem;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
@@ -12,11 +11,11 @@ use zcash_tachyon::{
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
     pasta::Fp,
-    stamp::proof::{App, evidence, pool, qr, summary},
+    stamp::proof::{App, evidence, pool, qr},
     witness,
 };
 
-use super::pool::{PoolSim, StampEntry};
+use super::Proved;
 
 #[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
@@ -30,147 +29,31 @@ pub(crate) struct QrBucketEntry {
     pub members: Vec<Tachygram>,
 }
 
-pub(super) fn build_qr_roots<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    pool: &PoolSim,
-    (start, end): (Anchor, Anchor),
-    discriminant: QrDiscriminant,
-    capacity: usize,
-) -> Vec<QrIntakeEntry> {
-    let mut runs: Vec<Vec<&StampEntry>> = Vec::new();
-    let mut open: Vec<&StampEntry> = Vec::new();
-    let mut held = 0;
-    for entry in pool.stamps_between(start, end) {
-        let size = entry.1.len();
-        if !open.is_empty() && (held + size) > capacity {
-            runs.push(mem::take(&mut open));
-            held = 0;
-        }
-        held += size;
-        open.push(entry);
-        if size > capacity {
-            runs.push(mem::take(&mut open));
-            held = 0;
-        }
-    }
-    if !open.is_empty() {
-        runs.push(open);
-    }
-
-    let mut roots = Vec::with_capacity(runs.len());
-    for run in runs {
-        let first = run.first().unwrap();
-        let epoch = pool.anchor_index[&first.0].0.epoch();
-        if run.len() == 1 && first.1.len() > capacity {
-            let witness =
-                witness::qr_stamp_intake_seed(((), ()), first.0, epoch, discriminant, &first.1);
-            let (pcd, ()) = app.seed(rng, qr::QrStampIntakeSeed, witness).unwrap();
-            roots.push(QrIntakeEntry {
-                pcd,
-                members: first.1.clone(),
-            });
-            continue;
-        }
-        let (mut summary, ()) = app
-            .seed(
-                rng,
-                summary::SummarySeed,
-                witness::summary_seed(((), ()), first.0, epoch, &first.1),
-            )
-            .unwrap();
-        let mut members = first.1.clone();
-        for entry in &run[1..] {
-            let (advanced, ()) = app
-                .fuse(
-                    rng,
-                    summary::SummaryAdvance,
-                    witness::summary_advance((*summary.data(), ()), &members, &entry.1),
-                    summary,
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .unwrap();
-            members.extend(entry.1.iter().copied());
-            summary = advanced;
-        }
-        let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
-        let (pcd, ()) = app
-            .fuse(
-                rng,
-                qr::QrSummaryIntake,
-                witness,
-                summary,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .unwrap();
-        roots.push(QrIntakeEntry { pcd, members });
-    }
-    roots
-}
-
-pub(super) fn merge_qr_run<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    intakes: Vec<QrIntakeEntry>,
-    capacity: usize,
-) -> Vec<QrIntakeEntry> {
-    let joins = |left: &QrIntakeEntry, right: &QrIntakeEntry| {
-        let (_, _, _, _, left_profile) = *left.pcd.data();
-        let (_, _, _, _, right_profile) = *right.pcd.data();
-        left_profile == right_profile && (left.members.len() + right.members.len()) <= capacity
-    };
-
-    let mut merged: Vec<QrIntakeEntry> = Vec::new();
-    let mut acc: Option<QrIntakeEntry> = None;
-    for right in intakes {
-        acc = match acc {
-            None => Some(right),
-            Some(left) if !joins(&left, &right) => {
-                merged.push(left);
-                Some(right)
-            },
-            Some(left) => {
-                let witness = witness::qr_intake_merge(
-                    (*left.pcd.data(), *right.pcd.data()),
-                    &left.members,
-                    &right.members,
-                );
-                let members = left
-                    .members
-                    .iter()
-                    .chain(&right.members)
-                    .copied()
-                    .collect::<Vec<_>>();
-                let (pcd, ()) = app
-                    .fuse(rng, qr::QrIntakeMerge, witness, left.pcd, right.pcd)
-                    .unwrap();
-                Some(QrIntakeEntry { pcd, members })
-            },
-        };
-    }
-    merged.extend(acc);
-    merged
-}
-
 impl QrIntakeEntry {
-    pub(crate) fn empty<RNG: CryptoRng>(
-        rng: &mut RNG,
+    pub(crate) fn empty(
         app: &App<'_>,
         anchor: Anchor,
         epoch: EpochIndex,
         discriminant: QrDiscriminant,
     ) -> Self {
-        let (pcd, ()) = app
-            .seed(
-                rng,
-                qr::QrEmptyIntakeSeed,
-                witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
-            )
-            .unwrap();
-        Self {
-            pcd,
-            members: Vec::new(),
-        }
+        static EMPTY: Proved<QrIntakeEntry> = Proved::new("qr_empty_intake");
+
+        let mut key = Fp::from(anchor).to_bytes().to_vec();
+        key.extend_from_slice(&u32::from(epoch).to_le_bytes());
+        key.extend_from_slice(&Fp::from(discriminant).to_bytes());
+        EMPTY.get(&key, |rng| {
+            let (pcd, ()) = app
+                .seed(
+                    rng,
+                    qr::QrEmptyIntakeSeed,
+                    witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
+                )
+                .unwrap();
+            Self {
+                pcd,
+                members: Vec::new(),
+            }
+        })
     }
 
     pub(crate) fn seal<RNG: CryptoRng>(
@@ -470,41 +353,6 @@ pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32)
         profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
     }
     profile
-}
-
-pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    pool: &PoolSim,
-    (start, final_anchor): (Anchor, Anchor),
-    discriminant: QrDiscriminant,
-    capacity: usize,
-    depth: u32,
-    value: Fp,
-    anchor_final_prev: Anchor,
-) -> QrBucketEntry {
-    let profile = qr_profile_of(value, discriminant, depth);
-    let mut branch = build_qr_roots(
-        rng,
-        app,
-        pool,
-        (start, final_anchor),
-        discriminant,
-        capacity,
-    );
-    for level in 0..depth {
-        let side = qr::classify(value, discriminant.at(level)).0;
-        let mut kept = Vec::with_capacity(branch.len());
-        for intake in branch {
-            let (non_residue, residue) = intake.split(rng, app);
-            kept.push(if side { residue } else { non_residue });
-        }
-        branch = merge_qr_run(rng, app, kept, capacity);
-    }
-    assert_eq!(branch.len(), 1);
-    let intake = branch.pop().unwrap();
-    assert_eq!(intake.pcd.data().4, profile);
-    intake.seal(rng, app, anchor_final_prev)
 }
 
 impl QrBucketEntry {

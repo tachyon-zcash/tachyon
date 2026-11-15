@@ -288,9 +288,7 @@ fn unmerge_by_a_lifted_divisor() {
         vec![wallet.random_note(300)],
     );
 
-    let span = pool
-        .anchor_span(rng, app, stamped_at.next().unwrap()..=pool.height())
-        .0;
+    let span = pool.anchor_span(app, stamped_at.next().unwrap()..=pool.height());
     let lifted_bob = bob
         .stamp
         .clone()

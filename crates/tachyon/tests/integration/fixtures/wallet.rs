@@ -359,6 +359,38 @@ impl WalletSim {
         })
     }
 
+    pub fn note_unspent(
+        &self,
+        app: &App<'_>,
+        pool: &PoolSim,
+        note: &Note,
+        (epoch_start, epoch_next): (EpochIndex, EpochIndex),
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
+        static UNSPENT: Proved<ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent>> =
+            Proved::new("note_unspent");
+
+        assert!(u32::from(epoch_start) < u32::from(epoch_next));
+        let first = pool.entry_anchor(epoch_start);
+        let last = EpochIndex::new(u32::from(epoch_next) - 1);
+        let final_anchor = pool.block(last.last_block()).anchor();
+        let mut key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(note.commitment()).to_bytes(),
+            Fp::from(first).to_bytes(),
+            Fp::from(final_anchor).to_bytes(),
+        ]
+        .concat();
+        key.extend_from_slice(&u32::from(epoch_start).to_le_bytes());
+        key.extend_from_slice(&u32::from(epoch_next).to_le_bytes());
+        UNSPENT.get(&key, |rng| {
+            let mk = self.pak.nk.derive_note_private(note.psi);
+            let arbitrary = pool.unspent(app, (epoch_start, epoch_next), |epoch| {
+                mk.derive_nullifier(epoch)
+            });
+            self.unspent_bind(rng, app, arbitrary, note)
+        })
+    }
+
     pub fn unspent_bind<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -403,34 +435,16 @@ impl WalletSim {
         lifted
     }
 
-    pub fn lift_to_epoch<RNG: CryptoRng>(
+    pub fn spendable_at(
         &self,
-        rng: &mut RNG,
         app: &App<'_>,
         pool: &PoolSim,
         note: &Note,
-        spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
         target: EpochIndex,
     ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
-        let (_, epoch, _) = *spendable.data();
-        let mk = self.pak.nk.derive_note_private(note.psi);
-        if epoch == target {
-            return spendable;
-        }
-        let unspent = pool.unspent(rng, app, (epoch, target), |covered| {
-            mk.derive_nullifier(covered)
-        });
-        self.lift(rng, app, spendable, unspent, note)
-    }
+        static SPENDABLE: Proved<ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
+            Proved::new("spendable_at");
 
-    pub fn spendable_at<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        pool: &PoolSim,
-        note: &Note,
-        target: EpochIndex,
-    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let creation_height = pool
             .history
             .iter()
@@ -442,14 +456,32 @@ impl WalletSim {
             })
             .unwrap();
         let creation = BlockHeight::from(creation_height).epoch();
-        let bucket = pool.epoch_bucket(rng, app, creation);
-        let mk = self.pak.nk.derive_note_private(note.psi);
-        let arbitrary = bucket.segment(rng, app, |epoch| mk.derive_nullifier(epoch));
-        let unspent = self.unspent_bind(rng, app, arbitrary, note);
-        let (spendable, ()) = app
-            .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
-            .unwrap();
-        self.lift_to_epoch(rng, app, pool, note, spendable, target)
+        let first_target = creation.next().unwrap();
+        assert!(u32::from(target) >= u32::from(first_target));
+        let mut key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(note.commitment()).to_bytes(),
+        ]
+        .concat();
+        key.extend_from_slice(&u32::from(target).to_le_bytes());
+        key.extend_from_slice(&Fp::from(pool.entry_anchor(target)).to_bytes());
+        SPENDABLE.get(&key, |rng| {
+            if target == first_target {
+                let unspent = self.note_unspent(app, pool, note, (creation, first_target));
+                let bucket = pool.epoch_bucket(app, creation);
+                let (spendable, ()) = app
+                    .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
+                    .unwrap();
+                spendable
+            } else {
+                let base = self.spendable_at(app, pool, note, first_target);
+                let unspent = self.note_unspent(app, pool, note, (first_target, target));
+                let (lifted, ()) = app
+                    .fuse(rng, spendable::SpendableLift, (), base, unspent)
+                    .unwrap();
+                lifted
+            }
+        })
     }
 
     pub fn autonome<RNG: CryptoRng>(

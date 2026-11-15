@@ -263,14 +263,14 @@ fn plan_prove_lifts_a_spend_along_spans() {
     ];
 
     for spans in [
-        vec![pool.anchor_span(rng, app, cm_height..=plan_height).0],
+        vec![pool.anchor_span(app, cm_height..=plan_height)],
         vec![
-            pool.anchor_span(rng, app, cm_height..=cm_height).0,
-            pool.anchor_span(rng, app, middle..=plan_height).0,
+            pool.anchor_span(app, cm_height..=cm_height),
+            pool.anchor_span(app, middle..=plan_height),
         ],
         vec![
-            pool.anchor_span(rng, app, cm_height..=middle).0,
-            pool.anchor_span(rng, app, middle..=plan_height).0,
+            pool.anchor_span(app, cm_height..=middle),
+            pool.anchor_span(app, middle..=plan_height),
         ],
     ] {
         let stamp = plan
@@ -286,10 +286,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         assert!(stamp.verify_proof(rng, app, digests).unwrap());
     }
 
-    for spans in [
-        vec![],
-        vec![pool.anchor_span(rng, app, cm_height..=middle).0],
-    ] {
+    for spans in [vec![], vec![pool.anchor_span(app, cm_height..=middle)]] {
         assert_matches!(
             plan.clone().prove(
                 rng,
@@ -303,8 +300,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
     }
 
     let gapped = vec![
-        pool.anchor_span(rng, app, cm_height..=cm_height).0,
-        pool.anchor_span(rng, app, plan_height..=plan_height).0,
+        pool.anchor_span(app, cm_height..=cm_height),
+        pool.anchor_span(app, plan_height..=plan_height),
     ];
     assert_matches!(
         plan.prove(rng, app, &user.pak, vec![(secret, spendable, gapped)]),
@@ -612,9 +609,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let fees = BTreeSet::from([fee_descriptor]);
     let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
 
-    let span = pool
-        .anchor_span(rng, app, stamped_at.next().unwrap()..=lifted_to)
-        .0;
+    let span = pool.anchor_span(app, stamped_at.next().unwrap()..=lifted_to);
     let lifted = stamp
         .clone()
         .lift(
@@ -688,9 +683,7 @@ fn merge_after_lift() {
             if err.to_string() == "StampMerge: anchors must match"
     );
 
-    let span = pool
-        .anchor_span(rng, app, height_a.next().unwrap()..=height_b)
-        .0;
+    let span = pool.anchor_span(app, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
         .lift(rng, app, &desc_a, &fee_set_a, vec![span])
         .unwrap();

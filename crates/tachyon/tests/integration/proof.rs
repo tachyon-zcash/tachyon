@@ -54,7 +54,6 @@ fn detached_segment(
     let anchor_final_prev = Anchor::random(rng);
     let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = QrIntakeEntry::empty(
-        rng,
         app,
         anchor_final_prev.next_epoch(epoch).unwrap(),
         epoch,
@@ -126,8 +125,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
     let [nf0, nf1, nf2, nf3] = nf;
 
-    let first = pool.unspent(rng, app, (EpochIndex::new(0), EpochIndex::new(1)), at);
-    let third = pool.unspent(rng, app, (EpochIndex::new(2), EpochIndex::new(3)), at);
+    let first = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(1)), at);
+    let third = pool.unspent(app, (EpochIndex::new(2), EpochIndex::new(3)), at);
     assert_matches!(
         app
             .fuse(
@@ -142,8 +141,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
             if err.to_string() == "UnspentFuse: left.anchor_next must equal right.anchor_start"
     );
 
-    let left = pool.unspent(rng, app, (EpochIndex::new(0), EpochIndex::new(2)), at);
-    let right = pool.unspent(rng, app, (EpochIndex::new(2), EpochIndex::new(4)), at);
+    let left = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(2)), at);
+    let right = pool.unspent(app, (EpochIndex::new(2), EpochIndex::new(4)), at);
     assert_matches!(
         app
             .fuse(
@@ -188,7 +187,8 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(2, |_| random_block(rng, 1, 2));
 
-    let (span, members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(2));
+    let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
+    let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
     let (anchor_start, anchor_end) = *span.data();
 
     assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
@@ -207,7 +207,8 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(1, |_| random_block(rng, 1, 3));
 
-    let (span, members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(1));
+    let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(1));
+    let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(1));
     let (anchor_start, anchor_end) = *span.data();
     let fork = anchor_start
         .next_stamp(
@@ -264,8 +265,10 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(2, |_| random_block(rng, 1, 1));
 
-    let (left, left_members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(1));
-    let (right, right_members) = pool.anchor_span(rng, app, BlockHeight(2)..=BlockHeight(2));
+    let left = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(1));
+    let left_members = pool.anchors_in(BlockHeight(1)..=BlockHeight(1));
+    let right = pool.anchor_span(app, BlockHeight(2)..=BlockHeight(2));
+    let right_members = pool.anchors_in(BlockHeight(2)..=BlockHeight(2));
 
     let fork = left
         .data()
@@ -512,10 +515,8 @@ fn lift_crosses_a_stampless_epoch() {
     pool.advance(1, |_| random_block(rng, 1, 2));
     assert_eq!(pool.height(), epoch3.first_block());
 
-    let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
-    let arbitrary = pool.unspent(rng, app, (epoch1, epoch3), |epoch| {
-        mk.derive_nullifier(epoch)
-    });
+    let spendable = user.spendable_at(app, &pool, &note, epoch1);
+    let arbitrary = pool.unspent(app, (epoch1, epoch3), |epoch| mk.derive_nullifier(epoch));
     let lifted = user.lift(rng, app, spendable, arbitrary, &note);
     assert_eq!(lifted.data().1, epoch3);
     assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
@@ -541,7 +542,7 @@ fn unspent_bind_rejects_a_forged_member() {
                 .derive_nullifier(epoch)
         }
     };
-    let unspent = pool.unspent(rng, app, (epoch0, epoch1), nf);
+    let unspent = pool.unspent(app, (epoch0, epoch1), nf);
 
     let (_, _, unspent_end, _) = *unspent.data();
     let range = user.note_nullifiers(app, note, epoch0, unspent_end);
@@ -602,12 +603,9 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let other = user.random_note(700);
     let pool = pool_closing_epoch_zero(rng, &note);
     let mk = user.pak.nk.derive_note_private(note.psi);
-    let unspent = pool.unspent(
-        rng,
-        app,
-        (EpochIndex::new(0), EpochIndex::new(1)),
-        |epoch| mk.derive_nullifier(epoch),
-    );
+    let unspent = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(1)), |epoch| {
+        mk.derive_nullifier(epoch)
+    });
     let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
     let range = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
@@ -721,14 +719,13 @@ fn spendable_lift_rejects_mismatched_segments() {
     mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
     mine_through(rng, &mut pool, epoch2.last_block());
-    let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
+    let spendable = user.spendable_at(app, &pool, &note, epoch1);
 
     for (unspent, expected) in [
         (
             {
-                let arbitrary = pool.unspent(rng, app, (epoch1, epoch2), |epoch| {
-                    mk.derive_nullifier(epoch)
-                });
+                let arbitrary =
+                    pool.unspent(app, (epoch1, epoch2), |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &phantom)
             },
             "SpendableLift: unspent cm does not match spendable",
@@ -743,9 +740,8 @@ fn spendable_lift_rejects_mismatched_segments() {
         ),
         (
             {
-                let arbitrary = pool.unspent(rng, app, (epoch2, epoch3), |epoch| {
-                    mk.derive_nullifier(epoch)
-                });
+                let arbitrary =
+                    pool.unspent(app, (epoch2, epoch3), |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &note)
             },
             "SpendableLift: segment does not start at the lineage epoch",
@@ -1075,7 +1071,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     mine_through(rng, &mut pool, epoch1.last_block());
 
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
-    let unspent = pool.unspent(rng, app, (epoch1, EpochIndex::new(2)), nf);
+    let unspent = pool.unspent(app, (epoch1, EpochIndex::new(2)), nf);
     let range = user.note_nullifiers(app, note, epoch0, epoch1);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
@@ -1123,7 +1119,6 @@ fn multi_window_span_binds_once() {
     }
 
     let arbitrary = pool.unspent(
-        rng,
         app,
         (EpochIndex::new(0), EpochIndex::new(last_epoch)),
         |epoch| {
