@@ -1,6 +1,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::ops::Deref;
+use std::{sync::Mutex, thread};
 
 use ragu::{
     header::Header,
@@ -23,8 +25,35 @@ pub mod pool;
 pub mod qr;
 pub mod wallet;
 
-pub fn application() -> App<'static> {
-    stamp::proof::new_application().unwrap()
+/// Applications that are not currently leased.
+static APPLICATIONS: Mutex<Vec<App<'static>>> = Mutex::new(Vec::new());
+
+/// An application borrowed from the pool until it is dropped.
+/// A test that panics mid-proof may leave its application in a state the next
+/// test should not inherit.
+pub struct ApplicationLease(Option<App<'static>>);
+
+impl Deref for ApplicationLease {
+    type Target = App<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl Drop for ApplicationLease {
+    fn drop(&mut self) {
+        if !thread::panicking() {
+            APPLICATIONS.lock().unwrap().push(self.0.take().unwrap());
+        }
+    }
+}
+
+pub fn application() -> ApplicationLease {
+    let application = APPLICATIONS.lock().unwrap().pop();
+    ApplicationLease(Some(
+        application.unwrap_or_else(|| stamp::proof::new_application().unwrap()),
+    ))
 }
 
 pub(crate) struct WithPolynomials<S>(pub S, pub [Vec<Fp>; 2]);
