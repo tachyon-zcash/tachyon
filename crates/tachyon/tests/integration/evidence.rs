@@ -14,7 +14,7 @@ use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
     pool::PoolSim,
-    qr::{EvidenceTreeEntry, QrIntakeEntry, shared_discriminant},
+    qr::{QrIntakeEntry, shared_discriminant},
 };
 
 #[test]
@@ -75,16 +75,10 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let epoch0 = EpochIndex::new(0);
     let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let buckets = pool.evidence_buckets(app);
-    assert!(buckets.iter().any(|bucket| bucket.pcd.data().4.depth < 5));
-    assert!(
-        buckets
-            .iter()
-            .filter(|bucket| !bucket.members.is_empty())
-            .count()
-            > 1
-    );
-    let tree = EvidenceTreeEntry::of(app, &buckets);
+    let tree = pool.evidence_tree(app);
+    let real = &tree.leaves[..tree.real_leaves];
+    assert!(real.iter().any(|leaf| leaf.profile().depth < 5));
+    assert!(real.iter().filter(|leaf| !leaf.members.is_empty()).count() > 1);
     let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
     assert_eq!(
         (epoch, anchor_start, anchor_next, root_discriminant),
@@ -95,9 +89,9 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
             disc
         )
     );
-    for (index, bucket) in buckets.iter().enumerate() {
-        let replayed = tree.open(rng, app, &tree.leaves[index]).unwrap();
-        assert_eq!(*replayed.pcd.data(), *bucket.pcd.data());
+    for leaf in real {
+        let replayed = tree.open(rng, app, leaf).unwrap();
+        assert_eq!(*replayed.pcd.data(), leaf.header);
     }
 }
 
@@ -106,11 +100,10 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
-    let buckets = pool.evidence_buckets(app);
-    let last = buckets.last().unwrap();
+    let tree = pool.evidence_tree(app);
+    let len = tree.real_leaves;
+    let last = &tree.leaves[len - 1];
     assert_ne!(last.members, []);
-    let tree = EvidenceTreeEntry::of(app, &buckets);
-    let len = buckets.len();
     for range in [
         len..len.next_multiple_of(4),
         len.next_multiple_of(4)..len.next_multiple_of(16),
@@ -119,7 +112,7 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         assert!(!range.is_empty());
         for index in [range.start, range.end - 1].into_iter().take(range.len()) {
             let replayed = tree.open(rng, app, &tree.leaves[index]).unwrap();
-            assert_eq!(*replayed.pcd.data(), *last.pcd.data());
+            assert_eq!(*replayed.pcd.data(), last.header);
         }
     }
 }
@@ -134,8 +127,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let span0 = pool.epoch_span(epoch0);
     let span1 = pool.epoch_span(epoch1);
     let discriminant = shared_discriminant();
-    let admitted = pool.evidence_buckets(app);
-    let tree0 = EvidenceTreeEntry::of(app, &admitted).pcd;
+    let tree0 = pool.evidence_tree(app).pcd;
 
     let bucket0 = pool.epoch_bucket(app, epoch0);
     let bucket1 = pool.qr_bucket(app, span1, discriminant, Fp::ZERO, 0, span0.1);
@@ -270,19 +262,14 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
-    let buckets = pool.evidence_buckets(app);
-    let index = buckets.len() - 1;
-    let other_contents: TachygramSetPoly = buckets
+    let tree = pool.evidence_tree(app);
+    let index = tree.real_leaves - 1;
+    let other_contents = tree.leaves[..tree.real_leaves]
         .iter()
-        .enumerate()
-        .find(|&(other, bucket)| other != index && !bucket.members.is_empty())
+        .find(|leaf| leaf.index != index && !leaf.members.is_empty())
         .unwrap()
-        .1
-        .members
-        .iter()
-        .copied()
-        .collect();
-    let tree = EvidenceTreeEntry::of(app, &buckets);
+        .contents
+        .clone();
     let leaf = &tree.leaves[index];
 
     let mut path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(
@@ -306,10 +293,23 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
             if err.to_string() == "EvidenceTreeDescend: children do not hash to the node"
     );
 
-    let node = tree.descent(app, index);
-    let QrProfile { depth, bits } = leaf.profile;
+    let mut node = tree.pcd.clone();
+    for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
+        let descent_path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
+        node = app
+            .fuse(
+                rng,
+                evidence::EvidenceTreeDescend,
+                witness::evidence_tree_descend((*node.data(), ()), descent_path),
+                node,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap()
+            .0;
+    }
+    let QrProfile { depth, bits } = leaf.profile();
     for (opened, profile, contents) in [
-        (tree.pcd, leaf.profile, leaf.contents.clone()),
+        (tree.pcd, leaf.profile(), leaf.contents.clone()),
         (
             node.clone(),
             QrProfile {
@@ -326,7 +326,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
             },
             leaf.contents.clone(),
         ),
-        (node.clone(), leaf.profile, other_contents),
+        (node.clone(), leaf.profile(), other_contents),
     ] {
         assert_matches!(
             app
@@ -358,7 +358,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
                 WithPolynomials(evidence::EvidenceTreeOpen, polynomials),
                 witness::evidence_tree_open(
                     (*node.data(), ()),
-                    leaf.profile,
+                    leaf.profile(),
                     leaf.contents.clone()
                 ),
                 node.clone(),

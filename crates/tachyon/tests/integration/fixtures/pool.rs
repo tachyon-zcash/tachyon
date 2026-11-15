@@ -19,7 +19,10 @@ use zcash_tachyon::{
 
 use super::{
     Proved, keyed_rng,
-    qr::{QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of, qr_twins, shared_discriminant},
+    qr::{
+        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of, qr_twins,
+        shared_discriminant,
+    },
     wallet::shared_sk,
 };
 
@@ -114,18 +117,6 @@ impl PoolSim {
     /// quad beside real quads, and in an all-padding group of sixteen because a
     /// test opens each.
     pub fn shared() -> &'static Self {
-        fn leaves(members: &[Tachygram], discriminant: QrDiscriminant, level: u32) -> usize {
-            if level == 5 || members.is_empty() {
-                return 1;
-            }
-            let (residue, non_residue): (Vec<_>, Vec<_>) = members
-                .iter()
-                .copied()
-                .partition(|&member| qr::classify(Fp::from(member), discriminant.at(level)).0);
-            leaves(&residue, discriminant, level + 1)
-                + leaves(&non_residue, discriminant, level + 1)
-        }
-
         static SHARED: LazyLock<PoolSim> = LazyLock::new(|| {
             let mut rng = keyed_rng("shared chain", &[]);
             let [_, member] = qr_twins();
@@ -146,7 +137,7 @@ impl PoolSim {
                         .chain(&candidates[..len])
                         .copied()
                         .collect::<Vec<_>>();
-                    let leaf_count = leaves(&members, discriminant, 0);
+                    let leaf_count = PoolSim::leaves(&members, discriminant, 0);
                     leaf_count >= 17
                         && !leaf_count.is_multiple_of(4)
                         && !leaf_count.next_multiple_of(4).is_multiple_of(16)
@@ -160,7 +151,7 @@ impl PoolSim {
                 .chain(&closing_stamp)
                 .copied()
                 .collect::<Vec<_>>();
-            let count = leaves(&members, discriminant, 0);
+            let count = PoolSim::leaves(&members, discriminant, 0);
             assert!(
                 count >= 17
                     && !count.is_multiple_of(4)
@@ -190,6 +181,18 @@ impl PoolSim {
         });
 
         &SHARED
+    }
+
+    fn leaves(members: &[Tachygram], discriminant: QrDiscriminant, level: u32) -> usize {
+        if level == 5 || members.is_empty() {
+            return 1;
+        }
+        let (residue, non_residue): (Vec<_>, Vec<_>) = members
+            .iter()
+            .copied()
+            .partition(|&member| qr::classify(Fp::from(member), discriminant.at(level)).0);
+        Self::leaves(&residue, discriminant, level + 1)
+            + Self::leaves(&non_residue, discriminant, level + 1)
     }
 
     fn qr_key((start, end): (Anchor, Anchor), discriminant: QrDiscriminant) -> Vec<u8> {
@@ -361,9 +364,9 @@ impl PoolSim {
         DESCENTS.get(&key, |rng| {
             let root = self.qr_intake(app, span, discriminant, value, QR_DEPTHS[0]);
             let first = self.qr_intake(app, span, discriminant, value, QR_DEPTHS[1]);
-            let mut intake = self.qr_intake(app, span, discriminant, value, 5);
+            let mut intake = self.qr_intake(app, span, discriminant, value, 2);
             let mut penultimate = None;
-            for level in 5..u32::BITS {
+            for level in 2..u32::BITS {
                 let side = qr::classify(value, discriminant.at(level)).0;
                 let sides = Self::prove_qr_sides(rng, app, &intake);
                 intake = Self::prove_qr_child(rng, app, &intake, side, sides);
@@ -414,20 +417,47 @@ impl PoolSim {
         layer
     }
 
-    pub fn evidence_buckets(&self, app: &App<'_>) -> Vec<QrBucketEntry> {
+    pub fn evidence_tree(&self, app: &App<'_>) -> EvidenceTreeEntry {
+        static TREES: Proved<EvidenceTreeEntry> = Proved::new("pool_evidence_tree");
         let epoch0 = EpochIndex::new(0);
         let span = self.epoch_span(epoch0);
         let discriminant = shared_discriminant();
-        let (empty, occupied): (Vec<_>, Vec<_>) = self
-            .qr_intakes(app, span, discriminant, 5)
-            .into_iter()
-            .partition(|intake| intake.members.is_empty());
-        let anchor_final_prev = Anchor::from(Fp::ZERO);
-        empty
-            .into_iter()
-            .chain(occupied)
-            .map(|intake| intake.sealed(app, anchor_final_prev))
-            .collect()
+        TREES.get(&Self::qr_key(span, discriminant), |rng| {
+            let members = self
+                .stamps_between(span.0, span.1)
+                .iter()
+                .flat_map(|stamp| stamp.1.iter().copied())
+                .collect::<Vec<_>>();
+            let count = Self::leaves(&members, discriminant, 0);
+            let mut layer = self.qr_intakes(app, span, discriminant, 2);
+            for _ in 2..5 {
+                let mut residue = Vec::new();
+                let mut non_residue = Vec::new();
+                let mut carried = Vec::new();
+                for intake in layer {
+                    if intake.members.is_empty() {
+                        carried.push(intake);
+                        continue;
+                    }
+                    let sides = Self::prove_qr_sides(rng, app, &intake);
+                    residue.push(Self::prove_qr_child(rng, app, &intake, true, sides.clone()));
+                    non_residue.push(Self::prove_qr_child(rng, app, &intake, false, sides));
+                }
+                layer = residue;
+                layer.extend(non_residue);
+                layer.extend(carried);
+            }
+            assert_eq!(layer.len(), count);
+            let (empty, occupied): (Vec<_>, Vec<_>) = layer
+                .into_iter()
+                .partition(|intake| intake.members.is_empty());
+            let buckets = empty
+                .into_iter()
+                .chain(occupied)
+                .map(|intake| intake.seal(rng, app, Anchor::from(Fp::ZERO)))
+                .collect::<Vec<_>>();
+            EvidenceTreeEntry::build(rng, app, &buckets)
+        })
     }
 
     pub(crate) fn qr_bucket(
@@ -598,6 +628,39 @@ impl PoolSim {
         prove(app, start.epoch(), &stamps)
     }
 
+    fn prove_summary<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &App<'_>,
+        start: Anchor,
+        epoch: EpochIndex,
+        stamps: &[&StampEntry],
+    ) -> ragu::Pcd<Pasta, ProductionRank, summary::Summary> {
+        let (first, rest) = stamps.split_first().unwrap();
+        let (mut pcd, ()) = app
+            .seed(
+                rng,
+                summary::SummarySeed,
+                witness::summary_seed(((), ()), start, epoch, &first.1),
+            )
+            .unwrap();
+        let mut held = first.1.clone();
+        for stamp in rest {
+            let witness = witness::summary_advance((*pcd.data(), ()), &held, &stamp.1);
+            let (advanced, ()) = app
+                .fuse(
+                    rng,
+                    summary::SummaryAdvance,
+                    witness,
+                    pcd,
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            held.extend(stamp.1.iter().copied());
+            pcd = advanced;
+        }
+        pcd
+    }
+
     pub(crate) fn summary(
         &self,
         app: &App<'_>,
@@ -609,35 +672,13 @@ impl PoolSim {
         let stamps = self.stamps_between(start, end);
         let key = [Fp::from(start).to_bytes(), Fp::from(end).to_bytes()].concat();
         SUMMARIES.get(&key, |rng| {
-            let (last, prefix) = stamps.split_last().unwrap();
-            if prefix.is_empty() {
-                let epoch = self.anchor_index[&start].0.epoch();
-                let (seed, ()) = app
-                    .seed(
-                        rng,
-                        summary::SummarySeed,
-                        witness::summary_seed(((), ()), start, epoch, &last.1),
-                    )
-                    .unwrap();
-                seed
-            } else {
-                let previous = self.summary(app, (start, last.0));
-                let held = prefix
-                    .iter()
-                    .flat_map(|stamp| stamp.1.iter().copied())
-                    .collect::<Vec<_>>();
-                let witness = witness::summary_advance((*previous.data(), ()), &held, &last.1);
-                let (advanced, ()) = app
-                    .fuse(
-                        rng,
-                        summary::SummaryAdvance,
-                        witness,
-                        previous,
-                        app.bootstrap_proof().clone().carry::<()>(()),
-                    )
-                    .unwrap();
-                advanced
-            }
+            Self::prove_summary(
+                rng,
+                app,
+                start,
+                self.anchor_index[&start].0.epoch(),
+                &stamps,
+            )
         })
     }
 
@@ -686,14 +727,45 @@ impl PoolSim {
     }
 
     pub(crate) fn epoch_bucket(&self, app: &App<'_>, epoch: EpochIndex) -> QrBucketEntry {
+        static BUCKETS: Proved<QrBucketEntry> = Proved::new("epoch_bucket");
         let [entry, final_anchor, anchor_final_prev] = self.epoch_bucket_anchors(epoch);
         let discriminant = self.epoch_discriminant(epoch);
-        let intake = if entry == final_anchor {
-            QrIntakeEntry::empty(app, entry, epoch, discriminant)
-        } else {
-            self.qr_root(app, (entry, final_anchor), discriminant)
-        };
-        intake.sealed(app, anchor_final_prev)
+        // Epoch zero shares its root and seal because tests read them directly.
+        if u32::from(epoch) == 0 {
+            let intake = if entry == final_anchor {
+                QrIntakeEntry::empty(app, entry, epoch, discriminant)
+            } else {
+                self.qr_root(app, (entry, final_anchor), discriminant)
+            };
+            return intake.sealed(app, anchor_final_prev);
+        }
+        BUCKETS.get(
+            &Self::epoch_bucket_key(epoch, [entry, final_anchor, anchor_final_prev]),
+            |rng| {
+                let intake = if entry == final_anchor {
+                    QrIntakeEntry::empty(app, entry, epoch, discriminant)
+                } else {
+                    let stamps = self.stamps_between(entry, final_anchor);
+                    let summary = Self::prove_summary(rng, app, entry, epoch, &stamps);
+                    let members = stamps
+                        .iter()
+                        .flat_map(|stamp| stamp.1.iter().copied())
+                        .collect();
+                    let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
+                    let (pcd, ()) = app
+                        .fuse(
+                            rng,
+                            qr::QrSummaryIntake,
+                            witness,
+                            summary,
+                            app.bootstrap_proof().clone().carry::<()>(()),
+                        )
+                        .unwrap();
+                    QrIntakeEntry { pcd, members }
+                };
+                intake.seal(rng, app, anchor_final_prev)
+            },
+        )
     }
 
     pub(crate) fn unspent(

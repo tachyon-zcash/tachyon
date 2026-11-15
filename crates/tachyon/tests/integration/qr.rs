@@ -364,7 +364,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     let tree = EvidenceTreeEntry::build_with_scales(
         rng,
         app,
-        vec![
+        &[
             scaled_held.clone(),
             scaled_empty.clone(),
             honest_held.clone(),

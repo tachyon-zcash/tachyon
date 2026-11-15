@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::iter;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
@@ -11,7 +11,8 @@ use udon::{
     field::Field as _,
 };
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetBridge,
+    TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
     pasta::{EpAffine, Eq, Fp},
@@ -218,87 +219,127 @@ pub(crate) fn scaled_qr_contents(members: &[Tachygram], scale: Fp) -> TachygramS
 #[derive(Clone)]
 pub(crate) struct EvidenceLeaf {
     pub index: usize,
-    pub profile: QrProfile,
+    pub header: (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        QrProfile,
+        TachygramSetBridge,
+    ),
     pub contents: TachygramSetPoly,
     pub members: Vec<Tachygram>,
     pub path: Vec<([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY])>,
 }
 
+impl EvidenceLeaf {
+    pub(crate) fn profile(&self) -> QrProfile {
+        let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, _contents_hash) =
+            self.header;
+        profile
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct EvidenceTreeEntry {
     pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
+    pub real_leaves: usize,
 }
 
 impl EvidenceTreeEntry {
-    pub(crate) fn of(app: &App<'_>, buckets: &[QrBucketEntry]) -> Self {
-        static LEAF_PAIRS: Proved<ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>> =
-            Proved::new("evidence_leaf_pair");
-        static PAIR_FUSES: Proved<ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>> =
-            Proved::new("evidence_pair_fuse");
-        static TREES: Proved<ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>> =
-            Proved::new("evidence_tree_fuse");
-        static CAPS: Proved<ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>> =
-            Proved::new("evidence_cap");
-
-        fn node_key(buckets: &[&QrBucketEntry]) -> Vec<u8> {
-            let mut key = u32::try_from(buckets.len()).unwrap().to_le_bytes().to_vec();
-            for bucket in buckets {
-                let (epoch, start, next, discriminant, profile, bridge) = *bucket.pcd.data();
-                key.extend_from_slice(&u32::from(epoch).to_le_bytes());
-                for value in [Fp::from(start), Fp::from(next), Fp::from(discriminant)] {
-                    key.extend_from_slice(&value.to_bytes());
-                }
-                key.extend_from_slice(&profile.depth.to_le_bytes());
-                key.extend_from_slice(&profile.bits.to_le_bytes());
-                key.extend_from_slice(&EpAffine::from(bridge).to_bytes());
+    fn node_key(buckets: &[&QrBucketEntry]) -> Vec<u8> {
+        let mut key = u32::try_from(buckets.len()).unwrap().to_le_bytes().to_vec();
+        for bucket in buckets {
+            let (epoch, start, next, discriminant, profile, bridge) = *bucket.pcd.data();
+            key.extend_from_slice(&u32::from(epoch).to_le_bytes());
+            for value in [Fp::from(start), Fp::from(next), Fp::from(discriminant)] {
+                key.extend_from_slice(&value.to_bytes());
             }
-            key
+            key.extend_from_slice(&profile.depth.to_le_bytes());
+            key.extend_from_slice(&profile.bits.to_le_bytes());
+            key.extend_from_slice(&EpAffine::from(bridge).to_bytes());
         }
+        key
+    }
 
-        fn leaf_pair(
+    pub(super) fn build<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &App<'_>,
+        buckets: &[QrBucketEntry],
+    ) -> Self {
+        fn leaf_pair<RNG: CryptoRng>(
+            rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
+            pairs: &mut BTreeMap<
+                Vec<u8>,
+                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+            >,
         ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
             let [first, second] = <[_; 2]>::try_from(buckets).unwrap();
-            LEAF_PAIRS.get(&node_key(buckets), |rng| {
-                let (pcd, ()) = app
-                    .fuse(
-                        rng,
-                        evidence::EvidenceTreeLeafPair,
-                        (),
-                        first.pcd.clone(),
-                        second.pcd.clone(),
-                    )
-                    .unwrap();
-                pcd
-            })
+            let key = EvidenceTreeEntry::node_key(buckets);
+            if let Some(pcd) = pairs.get(&key) {
+                return pcd.clone();
+            }
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    evidence::EvidenceTreeLeafPair,
+                    (),
+                    first.pcd.clone(),
+                    second.pcd.clone(),
+                )
+                .unwrap();
+            pairs.insert(key, pcd.clone());
+            pcd
         }
 
-        fn pair_fuse(
+        fn pair_fuse<RNG: CryptoRng>(
+            rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
             left: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
             right: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            pairs: &mut BTreeMap<
+                Vec<u8>,
+                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+            >,
         ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
-            PAIR_FUSES.get(&node_key(buckets), |rng| {
-                let (pcd, ()) = app
-                    .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
-                    .unwrap();
-                pcd
-            })
+            let key = EvidenceTreeEntry::node_key(buckets);
+            if let Some(pcd) = pairs.get(&key) {
+                return pcd.clone();
+            }
+            let (pcd, ()) = app
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), left, right)
+                .unwrap();
+            pairs.insert(key, pcd.clone());
+            pcd
         }
 
-        fn node(app: &App<'_>, buckets: &[&QrBucketEntry]) -> EvidenceTreeEntry {
+        fn node<RNG: CryptoRng>(
+            rng: &mut RNG,
+            app: &App<'_>,
+            buckets: &[&QrBucketEntry],
+            pairs: &mut BTreeMap<
+                Vec<u8>,
+                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+            >,
+            trees: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>>,
+        ) -> (
+            ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            Vec<EvidenceLeaf>,
+        ) {
             let (left, right, leaves) = if buckets.len() == EVIDENCE_TREE_ARITY {
-                let left = leaf_pair(app, &buckets[..2]);
-                let right = leaf_pair(app, &buckets[2..]);
+                let left = leaf_pair(rng, app, &buckets[..2], pairs);
+                let right = leaf_pair(rng, app, &buckets[2..], pairs);
                 let roots = [left.data().4, left.data().5, right.data().4, right.data().5];
                 let leaves = buckets
                     .iter()
                     .enumerate()
                     .map(|(index, bucket)| EvidenceLeaf {
                         index,
-                        profile: bucket.pcd.data().4,
+                        header: *bucket.pcd.data(),
                         contents: scaled_qr_contents(&bucket.members, Fp::ONE),
                         members: bucket.members.clone(),
                         path: vec![([index & 2 != 0, index & 1 != 0], roots)],
@@ -309,32 +350,36 @@ impl EvidenceTreeEntry {
                 let child_width = buckets.len() / EVIDENCE_TREE_ARITY;
                 let children = buckets
                     .chunks(child_width)
-                    .map(|part| node(app, part))
+                    .map(|part| node(rng, app, part, pairs, trees))
                     .collect::<Vec<_>>();
                 let roots = [
-                    children[0].pcd.data().4,
-                    children[1].pcd.data().4,
-                    children[2].pcd.data().4,
-                    children[3].pcd.data().4,
+                    children[0].0.data().4,
+                    children[1].0.data().4,
+                    children[2].0.data().4,
+                    children[3].0.data().4,
                 ];
                 let half = buckets.len() / 2;
                 let left = pair_fuse(
+                    rng,
                     app,
                     &buckets[..half],
-                    children[0].pcd.clone(),
-                    children[1].pcd.clone(),
+                    children[0].0.clone(),
+                    children[1].0.clone(),
+                    pairs,
                 );
                 let right = pair_fuse(
+                    rng,
                     app,
                     &buckets[half..],
-                    children[2].pcd.clone(),
-                    children[3].pcd.clone(),
+                    children[2].0.clone(),
+                    children[3].0.clone(),
+                    pairs,
                 );
                 let leaves = children
                     .into_iter()
                     .enumerate()
-                    .flat_map(|(digit, child)| {
-                        child.leaves.into_iter().map(move |mut leaf| {
+                    .flat_map(|(digit, (_, leaves))| {
+                        leaves.into_iter().map(move |mut leaf| {
                             leaf.index += digit * child_width;
                             leaf.path
                                 .insert(0, ([digit & 2 != 0, digit & 1 != 0], roots));
@@ -344,13 +389,18 @@ impl EvidenceTreeEntry {
                     .collect::<Vec<_>>();
                 (left, right, leaves)
             };
-            let pcd = TREES.get(&node_key(buckets), |rng| {
-                let (pcd, ()) = app
-                    .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-                    .unwrap();
-                pcd
-            });
-            EvidenceTreeEntry { pcd, leaves }
+            let key = EvidenceTreeEntry::node_key(buckets);
+            let pcd = trees.get(&key).map_or_else(
+                || {
+                    let (pcd, ()) = app
+                        .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
+                        .unwrap();
+                    pcd
+                },
+                Clone::clone,
+            );
+            trees.insert(key, pcd.clone());
+            (pcd, leaves)
         }
 
         assert!(!buckets.is_empty());
@@ -362,201 +412,51 @@ impl EvidenceTreeEntry {
         }
         let mut padded = buckets.iter().collect::<Vec<_>>();
         padded.resize(width, buckets.last().unwrap());
-        let mut tree = node(app, &padded);
+        let mut pairs = BTreeMap::new();
+        let mut trees = BTreeMap::new();
+        let (mut pcd, mut leaves) = node(rng, app, &padded, &mut pairs, &mut trees);
         let mut cap_count = 0u32;
         while !(depth + usize::try_from(cap_count).unwrap())
             .is_multiple_of(evidence::EvidenceTreeDescend::LEVELS)
         {
-            let mut key = node_key(&padded);
-            key.extend_from_slice(&cap_count.to_le_bytes());
-            let child = tree.pcd.data().4;
-            tree.pcd = CAPS.get(&key, |rng| {
-                let (pcd, ()) = app
-                    .fuse(
-                        rng,
-                        evidence::EvidenceTreeCap,
-                        (),
-                        tree.pcd.clone(),
-                        app.bootstrap_proof().clone().carry::<()>(()),
-                    )
-                    .unwrap();
-                pcd
-            });
-            for leaf in &mut tree.leaves {
+            let child = pcd.data().4;
+            let (raised, ()) = app
+                .fuse(
+                    rng,
+                    evidence::EvidenceTreeCap,
+                    (),
+                    pcd,
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            pcd = raised;
+            for leaf in &mut leaves {
                 leaf.path
                     .insert(0, ([false, false], [child; EVIDENCE_TREE_ARITY]));
             }
             cap_count += 1;
         }
-        tree
+        Self {
+            pcd,
+            leaves,
+            real_leaves: buckets.len(),
+        }
     }
 
     pub(crate) fn build_with_scales<RNG: CryptoRng>(
         rng: &mut RNG,
         app: &App<'_>,
-        mut buckets: Vec<QrBucketEntry>,
+        buckets: &[QrBucketEntry],
         mut scales: Vec<Fp>,
     ) -> Self {
         assert!(!buckets.is_empty());
         assert_eq!(buckets.len(), scales.len());
-
-        let mut width = EVIDENCE_TREE_ARITY;
-        let mut depth = 1;
-        while width < buckets.len() {
-            width *= EVIDENCE_TREE_ARITY;
-            depth += 1;
+        let mut tree = Self::build(rng, app, buckets);
+        scales.resize(tree.leaves.len(), *scales.last().unwrap());
+        for (leaf, scale) in tree.leaves.iter_mut().zip(scales) {
+            leaf.contents = scaled_qr_contents(&leaf.members, scale);
         }
-        while buckets.len() < width {
-            let last = buckets.last().unwrap();
-            buckets.push(QrBucketEntry {
-                pcd: last.pcd.clone(),
-                members: last.members.clone(),
-            });
-            scales.push(*scales.last().unwrap());
-        }
-
-        let (proofs, held): (Vec<_>, Vec<_>) = buckets
-            .into_iter()
-            .zip(scales)
-            .map(|(bucket, scale)| {
-                let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, _) =
-                    *bucket.pcd.data();
-                let contents = scaled_qr_contents(&bucket.members, scale);
-                (bucket.pcd, (profile, contents, bucket.members))
-            })
-            .unzip();
-
-        let mut pairs = Vec::with_capacity(width / 2);
-        let mut admitted = proofs.into_iter();
-        while let (Some(first), Some(second)) = (admitted.next(), admitted.next()) {
-            let (pair, ()) = app
-                .fuse(rng, evidence::EvidenceTreeLeafPair, (), first, second)
-                .unwrap();
-            pairs.push(pair);
-        }
-
-        let mut levels = vec![
-            pairs
-                .iter()
-                .flat_map(|pair| [pair.data().4, pair.data().5])
-                .collect::<Vec<_>>(),
-        ];
-        let mut layer = Vec::with_capacity(pairs.len() / 2);
-        let mut halves = pairs.into_iter();
-        while let (Some(left), Some(right)) = (halves.next(), halves.next()) {
-            let (pcd, ()) = app
-                .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-                .unwrap();
-            layer.push(pcd);
-        }
-        levels.push(layer.iter().map(|pcd| pcd.data().4).collect());
-
-        while layer.len() > 1 {
-            let mut parents = Vec::with_capacity(layer.len() / EVIDENCE_TREE_ARITY);
-            let mut children = layer.into_iter();
-            while let (Some(first), Some(second), Some(third), Some(fourth)) = (
-                children.next(),
-                children.next(),
-                children.next(),
-                children.next(),
-            ) {
-                let (left, ()) = app
-                    .fuse(rng, evidence::EvidenceTreePairFuse, (), first, second)
-                    .unwrap();
-                let (right, ()) = app
-                    .fuse(rng, evidence::EvidenceTreePairFuse, (), third, fourth)
-                    .unwrap();
-                let (pcd, ()) = app
-                    .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
-                    .unwrap();
-                parents.push(pcd);
-            }
-            levels.push(parents.iter().map(|pcd| pcd.data().4).collect());
-            layer = parents;
-        }
-
-        let mut root = layer.pop().unwrap();
-        let mut caps = Vec::new();
-        while (depth + caps.len()) % evidence::EvidenceTreeDescend::LEVELS != 0 {
-            caps.push(root.data().4);
-            let (pcd, ()) = app
-                .fuse(
-                    rng,
-                    evidence::EvidenceTreeCap,
-                    (),
-                    root,
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .unwrap();
-            root = pcd;
-        }
-
-        let leaves = held
-            .into_iter()
-            .enumerate()
-            .map(|(index, (profile, contents, members))| {
-                let mut path: Vec<_> = caps
-                    .iter()
-                    .rev()
-                    .map(|child| ([false, false], [*child; EVIDENCE_TREE_ARITY]))
-                    .collect();
-                path.extend((0..depth).rev().map(|level| {
-                    let base = EVIDENCE_TREE_ARITY * (index >> (2 * (level + 1)));
-                    let digit = (index >> (2 * level)) & 3;
-                    (
-                        [digit & 2 != 0, digit & 1 != 0],
-                        [
-                            levels[level][base],
-                            levels[level][base + 1],
-                            levels[level][base + 2],
-                            levels[level][base + 3],
-                        ],
-                    )
-                }));
-                EvidenceLeaf {
-                    index,
-                    profile,
-                    contents,
-                    members,
-                    path,
-                }
-            })
-            .collect();
-
-        Self { pcd: root, leaves }
-    }
-
-    pub(crate) fn descent(
-        &self,
-        app: &App<'_>,
-        index: usize,
-    ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree> {
-        static DESCENTS: Proved<ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>> =
-            Proved::new("evidence_descent");
-
-        let mut key = Fp::from(self.pcd.data().4).to_bytes().to_vec();
-        key.extend_from_slice(&u32::try_from(index).unwrap().to_le_bytes());
-        DESCENTS.get(&key, |rng| {
-            let mut node = self.pcd.clone();
-            for chunk in self.leaves[index]
-                .path
-                .chunks(evidence::EvidenceTreeDescend::LEVELS)
-            {
-                let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).unwrap();
-                let witness = witness::evidence_tree_descend((*node.data(), ()), path);
-                let (pcd, ()) = app
-                    .fuse(
-                        rng,
-                        evidence::EvidenceTreeDescend,
-                        witness,
-                        node,
-                        app.bootstrap_proof().clone().carry::<()>(()),
-                    )
-                    .unwrap();
-                node = pcd;
-            }
-            node
-        })
+        tree
     }
 
     pub(crate) fn open<RNG: CryptoRng>(
@@ -565,10 +465,24 @@ impl EvidenceTreeEntry {
         app: &App<'_>,
         leaf: &EvidenceLeaf,
     ) -> ragu_core::Result<QrBucketEntry> {
-        let node = self.descent(app, leaf.index);
+        let mut node = self.pcd.clone();
+        for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
+            let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).map_err(
+                |_error| ragu_core::Error::InvalidWitness("incomplete evidence path".into()),
+            )?;
+            let witness = witness::evidence_tree_descend((*node.data(), ()), path);
+            let (pcd, ()) = app.fuse(
+                rng,
+                evidence::EvidenceTreeDescend,
+                witness,
+                node,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )?;
+            node = pcd;
+        }
 
         let witness =
-            witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents.clone());
+            witness::evidence_tree_open((*node.data(), ()), leaf.profile(), leaf.contents.clone());
         let (pcd, ()) = app.fuse(
             rng,
             evidence::EvidenceTreeOpen,
