@@ -23,9 +23,9 @@ use zcash_tachyon::{
 use super::fixtures::application;
 use crate::fixtures::{
     mock_sighash, mock_wtxid,
-    pool::{PoolSim, build_lift_span, random_block, random_block_with},
+    pool::{PoolSim, random_block, random_block_with},
     stamp_coverage,
-    wallet::{WalletSim, build_output_plan, shared_sk},
+    wallet::{WalletSim, output_plan, shared_sk},
 };
 
 fn fee_less_output_bundle(
@@ -35,7 +35,7 @@ fn fee_less_output_bundle(
     anchor: Anchor,
     max_fee_note: Note,
 ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
+    let (rcv, theta, output_plan) = output_plan(rng, wallet.random_note(500));
     let (bind_pcd, ()) = app
         .seed(
             rng,
@@ -502,7 +502,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         .unwrap();
 
     pool.mine(random_block(rng, 1, 2));
-    let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
+    let span = pool.anchor_span(rng, app, pool.height()..=pool.height()).0;
     let lifted = left
         .lift(
             rng,

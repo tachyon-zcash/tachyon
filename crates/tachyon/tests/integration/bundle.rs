@@ -26,11 +26,9 @@ use zcash_tachyon::{
 use super::fixtures::application;
 use crate::fixtures::{
     mock_sighash, mock_wtxid,
-    pool::{PoolSim, build_lift_span, random_block, random_block_with},
+    pool::{PoolSim, random_block, random_block_with},
     stamp_coverage,
-    wallet::{
-        WalletSim, build_autonome, build_output_plan, build_output_stamp_with_fee, shared_sk,
-    },
+    wallet::{WalletSim, build_autonome, build_output_stamp_with_fee, output_plan, shared_sk},
 };
 
 #[test]
@@ -51,7 +49,7 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| build_output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
                 .collect(),
             wallet.random_note(0),
         );
@@ -233,7 +231,7 @@ fn duplicated_spend_cannot_inflate() {
         wallet.pak.ak.derive_action_public(&alpha)
     });
     let descriptor = plan.descriptor();
-    let secret = wallet.secret_pcd(rng, app, note);
+    let secret = wallet.note_secret(rng, app, note);
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
     let honest_stamp = Plan::new(vec![plan], vec![], max_fee_note)
@@ -524,8 +522,8 @@ fn read_preserves_action_order() {
 
     let note_a = wallet.random_note(200);
     let note_b = wallet.random_note(300);
-    let (rcv_a, theta_a, plan_a) = build_output_plan(rng, note_a);
-    let (rcv_b, theta_b, plan_b) = build_output_plan(rng, note_b);
+    let (rcv_a, theta_a, plan_a) = output_plan(rng, note_a);
+    let (rcv_b, theta_b, plan_b) = output_plan(rng, note_b);
     let alpha_a = theta_a.randomizer::<effect::Output>(note_a.commitment());
     let alpha_b = theta_b.randomizer::<effect::Output>(note_b.commitment());
     let mut items = [
@@ -756,7 +754,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| build_output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
                 .collect(),
             wallet.random_note(0),
         );
@@ -912,7 +910,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let memo = vec![0x7Fu8; 900];
     let bundle_plan = Plan::new(
         vec![],
-        vec![build_output_plan(rng, wallet.random_note(200)).2],
+        vec![output_plan(rng, wallet.random_note(200)).2],
         wallet.random_note(0),
     )
     .with_memo(memo.clone());
@@ -956,7 +954,7 @@ fn bundle_lift_preserves_coverage() {
     );
 
     pool.mine(random_block(rng, 1, 2));
-    let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
+    let span = pool.anchor_span(rng, app, pool.height()..=pool.height()).0;
 
     let lifted = bundle.lift(rng, app, &[], vec![span]).unwrap();
 
@@ -1059,7 +1057,7 @@ fn bundle_lift_over_an_aggregate() {
 
     pool.advance(1, |_| vec![]);
     pool.mine(random_block(rng, 1, 2));
-    let span = build_lift_span(rng, app, &pool, pool.height()..=pool.height());
+    let span = pool.anchor_span(rng, app, pool.height()..=pool.height()).0;
 
     let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();
 

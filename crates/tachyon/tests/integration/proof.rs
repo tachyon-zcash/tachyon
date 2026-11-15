@@ -22,11 +22,8 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    pool::{
-        PoolSim, build_anchor_span_pcd, build_unspent_pcd_over_epochs, random_block,
-        random_block_with,
-    },
-    qr::{qr_bucket_segment, seal_qr_intake, seed_qr_empty_intake},
+    pool::{PoolSim, random_block, random_block_with},
+    qr::QrIntakeEntry,
     wallet::{WalletSim, build_output_stamp, shared_sk},
 };
 
@@ -56,15 +53,15 @@ fn detached_segment(
 ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
     let anchor_final_prev = Anchor::random(rng);
     let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
-    let intake = seed_qr_empty_intake(
+    let intake = QrIntakeEntry::empty(
         rng,
         app,
         anchor_final_prev.next_epoch(epoch).unwrap(),
         epoch,
         discriminant,
     );
-    let bucket = seal_qr_intake(rng, app, intake, anchor_final_prev);
-    qr_bucket_segment(rng, app, &bucket, nf)
+    let bucket = intake.seal(rng, app, anchor_final_prev);
+    bucket.segment(rng, app, nf)
 }
 
 fn honest_spend_bind(
@@ -74,15 +71,15 @@ fn honest_spend_bind(
     note: &Note,
     spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
 ) -> ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader> {
-    let secret_pcd = user.secret_pcd(rng, app, *note);
+    let secret = user.note_secret(rng, app, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = app
         .fuse(
             rng,
             spend::SpendBind,
-            witness::spend_bind((*spendable.data(), *secret_pcd.data()), rcv),
+            witness::spend_bind((*spendable.data(), *secret.data()), rcv),
             spendable,
-            secret_pcd,
+            secret,
         )
         .unwrap();
     bind_pcd
@@ -95,7 +92,7 @@ fn spendable_init_rejects_tg_absent() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let nf_header = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let nf_header = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
     let absent_tg = Tachygram::random(rng);
 
     assert_matches!(
@@ -129,20 +126,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
     let [nf0, nf1, nf2, nf3] = nf;
 
-    let first = build_unspent_pcd_over_epochs(
-        rng,
-        app,
-        &pool,
-        at,
-        (EpochIndex::new(0), EpochIndex::new(1)),
-    );
-    let third = build_unspent_pcd_over_epochs(
-        rng,
-        app,
-        &pool,
-        at,
-        (EpochIndex::new(2), EpochIndex::new(3)),
-    );
+    let first = pool.unspent(rng, app, (EpochIndex::new(0), EpochIndex::new(1)), at);
+    let third = pool.unspent(rng, app, (EpochIndex::new(2), EpochIndex::new(3)), at);
     assert_matches!(
         app
             .fuse(
@@ -157,20 +142,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
             if err.to_string() == "UnspentFuse: left.anchor_next must equal right.anchor_start"
     );
 
-    let left = build_unspent_pcd_over_epochs(
-        rng,
-        app,
-        &pool,
-        at,
-        (EpochIndex::new(0), EpochIndex::new(2)),
-    );
-    let right = build_unspent_pcd_over_epochs(
-        rng,
-        app,
-        &pool,
-        at,
-        (EpochIndex::new(2), EpochIndex::new(4)),
-    );
+    let left = pool.unspent(rng, app, (EpochIndex::new(0), EpochIndex::new(2)), at);
+    let right = pool.unspent(rng, app, (EpochIndex::new(2), EpochIndex::new(4)), at);
     assert_matches!(
         app
             .fuse(
@@ -215,7 +188,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(2, |_| random_block(rng, 1, 2));
 
-    let (span, members) = build_anchor_span_pcd(rng, app, &pool, BlockHeight(1)..=BlockHeight(2));
+    let (span, members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(2));
     let (anchor_start, anchor_end) = *span.data();
 
     assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
@@ -234,7 +207,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(1, |_| random_block(rng, 1, 3));
 
-    let (span, members) = build_anchor_span_pcd(rng, app, &pool, BlockHeight(1)..=BlockHeight(1));
+    let (span, members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(1));
     let (anchor_start, anchor_end) = *span.data();
     let fork = anchor_start
         .next_stamp(
@@ -291,10 +264,8 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     pool.advance(2, |_| random_block(rng, 1, 1));
 
-    let (left, left_members) =
-        build_anchor_span_pcd(rng, app, &pool, BlockHeight(1)..=BlockHeight(1));
-    let (right, right_members) =
-        build_anchor_span_pcd(rng, app, &pool, BlockHeight(2)..=BlockHeight(2));
+    let (left, left_members) = pool.anchor_span(rng, app, BlockHeight(1)..=BlockHeight(1));
+    let (right, right_members) = pool.anchor_span(rng, app, BlockHeight(2)..=BlockHeight(2));
 
     let fork = left
         .data()
@@ -354,16 +325,16 @@ fn spend_rejects_invalid_note() {
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    let secret_pcd = user.secret_pcd(rng, app, phantom);
+    let secret = user.note_secret(rng, app, phantom);
     let rcv = value::Trapdoor::random(rng);
     assert_matches!(
         app
             .fuse(
                 rng,
                 spend::SpendBind,
-                witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
+                witness::spend_bind((*spendable_pcd.data(), *secret.data()), rcv),
                 spendable_pcd.clone(),
-                secret_pcd,
+                secret,
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
@@ -447,14 +418,14 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let theta = ActionEntropy::random(rng);
 
     let spendable = user.spendable_init(rng, app, &note, &pool, height);
-    let secret_pcd = user.secret_pcd(rng, app, note);
+    let secret = user.note_secret(rng, app, note);
     let (bind_pcd, ()) = app
         .fuse(
             rng,
             spend::SpendBind,
-            witness::spend_bind((*spendable.data(), *secret_pcd.data()), rcv),
+            witness::spend_bind((*spendable.data(), *secret.data()), rcv),
             spendable,
-            secret_pcd,
+            secret,
         )
         .unwrap();
     let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
@@ -542,13 +513,9 @@ fn lift_crosses_a_stampless_epoch() {
     assert_eq!(pool.height(), epoch3.first_block());
 
     let spendable = user.spendable_at(rng, app, &pool, &note, epoch1);
-    let arbitrary = build_unspent_pcd_over_epochs(
-        rng,
-        app,
-        &pool,
-        |epoch| mk.derive_nullifier(epoch),
-        (epoch1, epoch3),
-    );
+    let arbitrary = pool.unspent(rng, app, (epoch1, epoch3), |epoch| {
+        mk.derive_nullifier(epoch)
+    });
     let lifted = user.lift(rng, app, spendable, arbitrary, &note);
     assert_eq!(lifted.data().1, epoch3);
     assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
@@ -574,10 +541,10 @@ fn unspent_bind_rejects_a_forged_member() {
                 .derive_nullifier(epoch)
         }
     };
-    let unspent = build_unspent_pcd_over_epochs(rng, app, &pool, nf, (epoch0, epoch1));
+    let unspent = pool.unspent(rng, app, (epoch0, epoch1), nf);
 
     let (_, _, unspent_end, _) = *unspent.data();
-    let range = user.derivation_pcd(rng, app, note, epoch0, unspent_end);
+    let range = user.note_nullifiers(rng, app, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -603,7 +570,7 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
 
     let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let epoch_end = EpochIndex::new(EPOCH_MAX);
-    let range = user.derivation_pcd(rng, app, note, epoch_start, epoch_end);
+    let range = user.note_nullifiers(rng, app, note, epoch_start, epoch_end);
 
     let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
@@ -636,18 +603,17 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let other = user.random_note(700);
     let pool = pool_closing_epoch_zero(rng, &note);
     let mk = user.pak.nk.derive_note_private(note.psi);
-    let unspent = build_unspent_pcd_over_epochs(
+    let unspent = pool.unspent(
         rng,
         app,
-        &pool,
-        |epoch| mk.derive_nullifier(epoch),
         (EpochIndex::new(0), EpochIndex::new(1)),
+        |epoch| mk.derive_nullifier(epoch),
     );
     let elapsed = vec![mk.derive_nullifier(EpochIndex::new(0))];
 
-    let range = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
-    let wide = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(1));
-    let later = user.derivation_pcd(rng, app, note, EpochIndex::new(64), EpochIndex::new(64));
+    let range = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let wide = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(1));
+    let later = user.note_nullifiers(rng, app, note, EpochIndex::new(64), EpochIndex::new(64));
     let honest = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -723,7 +689,7 @@ fn unspent_bind_rejects_uncovered_end() {
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32);
     let unspent = detached_segment(rng, app, last, |epoch| mk.derive_nullifier(epoch));
 
-    let range = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
+    let range = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(0));
     let mut witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -761,13 +727,9 @@ fn spendable_lift_rejects_mismatched_segments() {
     for (unspent, expected) in [
         (
             {
-                let arbitrary = build_unspent_pcd_over_epochs(
-                    rng,
-                    app,
-                    &pool,
-                    |epoch| mk.derive_nullifier(epoch),
-                    (epoch1, epoch2),
-                );
+                let arbitrary = pool.unspent(rng, app, (epoch1, epoch2), |epoch| {
+                    mk.derive_nullifier(epoch)
+                });
                 user.unspent_bind(rng, app, arbitrary, &phantom)
             },
             "SpendableLift: unspent cm does not match spendable",
@@ -782,13 +744,9 @@ fn spendable_lift_rejects_mismatched_segments() {
         ),
         (
             {
-                let arbitrary = build_unspent_pcd_over_epochs(
-                    rng,
-                    app,
-                    &pool,
-                    |epoch| mk.derive_nullifier(epoch),
-                    (epoch2, epoch3),
-                );
+                let arbitrary = pool.unspent(rng, app, (epoch2, epoch3), |epoch| {
+                    mk.derive_nullifier(epoch)
+                });
                 user.unspent_bind(rng, app, arbitrary, &note)
             },
             "SpendableLift: segment does not start at the lineage epoch",
@@ -840,7 +798,7 @@ fn nullifier_derive_rejects_invalid_windows() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
     let other = user.random_note(700);
-    let secret = user.secret_pcd(rng, app, note);
+    let secret = user.note_secret(rng, app, note);
     let (cm, ..) = *secret.data();
     let past_the_end = EpochIndex::new(EPOCH_MAX - 3);
 
@@ -909,8 +867,8 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             "NullifierFuse: note commitments differ",
         ),
     ] {
-        let left = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
-        let right = user.derivation_pcd(rng, app, right_note, right_start, right_end);
+        let left = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
+        let right = user.note_nullifiers(rng, app, right_note, right_start, right_end);
         let fuse_witness = witness::nullifier_fuse(
             (*left.data(), *right.data()),
             &user.covering_window(&note, &left),
@@ -1063,8 +1021,8 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
-    let left = user.derivation_pcd(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
-    let right = user.derivation_pcd(rng, app, note, EpochIndex::new(16), EpochIndex::new(31));
+    let left = user.note_nullifiers(rng, app, note, EpochIndex::new(0), EpochIndex::new(15));
+    let right = user.note_nullifiers(rng, app, note, EpochIndex::new(16), EpochIndex::new(31));
     let members: Vec<Nullifier> = (0..32)
         .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
         .collect();
@@ -1118,8 +1076,8 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     mine_through(rng, &mut pool, epoch1.last_block());
 
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
-    let unspent = build_unspent_pcd_over_epochs(rng, app, &pool, nf, (epoch1, EpochIndex::new(2)));
-    let range = user.derivation_pcd(rng, app, note, epoch0, epoch1);
+    let unspent = pool.unspent(rng, app, (epoch1, EpochIndex::new(2)), nf);
+    let range = user.note_nullifiers(rng, app, note, epoch0, epoch1);
     let complement_seq = NfSeqPoly::new(
         EpochIndex::new(0),
         &[mk.derive_nullifier(EpochIndex::new(0))],
@@ -1165,17 +1123,16 @@ fn multi_window_span_binds_once() {
         }
     }
 
-    let arbitrary = build_unspent_pcd_over_epochs(
+    let arbitrary = pool.unspent(
         rng,
         app,
-        &pool,
+        (EpochIndex::new(0), EpochIndex::new(last_epoch)),
         |epoch| {
             user.pak
                 .nk
                 .derive_note_private(note.psi)
                 .derive_nullifier(epoch)
         },
-        (EpochIndex::new(0), EpochIndex::new(last_epoch)),
     );
     let unspent = user.unspent_bind(rng, app, arbitrary, &note);
 

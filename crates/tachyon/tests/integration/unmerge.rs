@@ -17,8 +17,8 @@ use zcash_tachyon::{
 use super::fixtures::application;
 use crate::fixtures::{
     mock_sighash, mock_wtxid,
-    pool::{PoolSim, build_lift_span, random_block},
-    wallet::{WalletSim, build_output_plan, shared_sk},
+    pool::{PoolSim, random_block},
+    wallet::{WalletSim, output_plan, shared_sk},
 };
 
 #[test]
@@ -288,7 +288,9 @@ fn unmerge_by_a_lifted_divisor() {
         vec![wallet.random_note(300)],
     );
 
-    let span = build_lift_span(rng, app, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = pool
+        .anchor_span(rng, app, stamped_at.next().unwrap()..=pool.height())
+        .0;
     let lifted_bob = bob
         .stamp
         .clone()
@@ -415,9 +417,9 @@ fn unmerge_splitting_a_bundle() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
 
-    let (_, _, kept_plan) = build_output_plan(rng, wallet.random_note(300));
+    let (_, _, kept_plan) = output_plan(rng, wallet.random_note(300));
     let removed_note = wallet.random_note(300);
-    let (removed_rcv, removed_theta, removed_plan) = build_output_plan(rng, removed_note);
+    let (removed_rcv, removed_theta, removed_plan) = output_plan(rng, removed_note);
     let removed_descriptor = removed_plan.descriptor();
     let kept_descriptor = kept_plan.descriptor();
 

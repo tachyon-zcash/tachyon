@@ -26,10 +26,10 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    pool::{PoolSim, build_lift_span, random_block, random_block_with},
+    pool::{PoolSim, random_block, random_block_with},
     stamp_coverage,
     wallet::{
-        WalletSim, build_autonome, build_output_plan, build_output_stamp, random_action, shared_sk,
+        WalletSim, build_autonome, build_output_stamp, output_plan, random_action, shared_sk,
     },
 };
 
@@ -143,8 +143,8 @@ fn plan_prove_rejects_invalid_inputs() {
     }
     .digest()
     .unwrap();
-    let secret_a = user.secret_pcd(rng, app, note_a);
-    let secret_b = user.secret_pcd(rng, app, note_b);
+    let secret_a = user.note_secret(rng, app, note_a);
+    let secret_b = user.note_secret(rng, app, note_b);
     let plan = stamp::Plan::new(
         vec![
             (plan_a.descriptor(), theta_a, rcv_a),
@@ -241,8 +241,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let spend = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
-    let secret = user.secret_pcd(rng, app, note);
+    let (out_rcv, out_theta, output) = output_plan(rng, user.random_note(200));
+    let secret = user.note_secret(rng, app, note);
     let max_fee_note = user.random_note(0);
     let plan = stamp::Plan::new(
         vec![(spend.descriptor(), theta, rcv)],
@@ -263,14 +263,14 @@ fn plan_prove_lifts_a_spend_along_spans() {
     ];
 
     for spans in [
-        vec![build_lift_span(rng, app, &pool, cm_height..=plan_height)],
+        vec![pool.anchor_span(rng, app, cm_height..=plan_height).0],
         vec![
-            build_lift_span(rng, app, &pool, cm_height..=cm_height),
-            build_lift_span(rng, app, &pool, middle..=plan_height),
+            pool.anchor_span(rng, app, cm_height..=cm_height).0,
+            pool.anchor_span(rng, app, middle..=plan_height).0,
         ],
         vec![
-            build_lift_span(rng, app, &pool, cm_height..=middle),
-            build_lift_span(rng, app, &pool, middle..=plan_height),
+            pool.anchor_span(rng, app, cm_height..=middle).0,
+            pool.anchor_span(rng, app, middle..=plan_height).0,
         ],
     ] {
         let stamp = plan
@@ -288,7 +288,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
 
     for spans in [
         vec![],
-        vec![build_lift_span(rng, app, &pool, cm_height..=middle)],
+        vec![pool.anchor_span(rng, app, cm_height..=middle).0],
     ] {
         assert_matches!(
             plan.clone().prove(
@@ -303,8 +303,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
     }
 
     let gapped = vec![
-        build_lift_span(rng, app, &pool, cm_height..=cm_height),
-        build_lift_span(rng, app, &pool, plan_height..=plan_height),
+        pool.anchor_span(rng, app, cm_height..=cm_height).0,
+        pool.anchor_span(rng, app, plan_height..=plan_height).0,
     ];
     assert_matches!(
         plan.prove(rng, app, &user.pak, vec![(secret, spendable, gapped)]),
@@ -612,7 +612,9 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let fees = BTreeSet::from([fee_descriptor]);
     let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
 
-    let span = build_lift_span(rng, app, &pool, stamped_at.next().unwrap()..=lifted_to);
+    let span = pool
+        .anchor_span(rng, app, stamped_at.next().unwrap()..=lifted_to)
+        .0;
     let lifted = stamp
         .clone()
         .lift(
@@ -686,7 +688,9 @@ fn merge_after_lift() {
             if err.to_string() == "StampMerge: anchors must match"
     );
 
-    let span = build_lift_span(rng, app, &pool, height_a.next().unwrap()..=height_b);
+    let span = pool
+        .anchor_span(rng, app, height_a.next().unwrap()..=height_b)
+        .0;
     let lifted_a = stamp_a
         .lift(rng, app, &desc_a, &fee_set_a, vec![span])
         .unwrap();

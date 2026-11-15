@@ -15,10 +15,7 @@ use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
     pool::{PoolSim, random_block, small_epoch},
-    qr::{
-        QrIntakeEntry, build_evidence_tree, build_qr_partition, open_evidence_tree, qr_bucket_at,
-        seal_qr_intake,
-    },
+    qr::{EvidenceTreeEntry, QrIntakeEntry, qr_bucket_at},
 };
 
 #[test]
@@ -27,19 +24,19 @@ fn evidence_tree_admission_rejects_substituted_contents() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let intake = build_qr_partition(
-        rng,
-        app,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        0,
-    )
-    .pop()
-    .unwrap();
+    let intake = pool
+        .qr_intakes(
+            rng,
+            app,
+            (Anchor::default(), final_anchor),
+            discriminant,
+            24,
+            0,
+        )
+        .pop()
+        .unwrap();
     let intake_pcd = intake.pcd.clone();
-    let bucket = seal_qr_intake(rng, app, intake, Anchor::from(Fp::ZERO));
+    let bucket = intake.seal(rng, app, Anchor::from(Fp::ZERO));
     let honest = intake_pcd.polynomials()[0].clone();
     let mut substituted = honest.clone();
     substituted[0] += Fp::ONE;
@@ -87,10 +84,9 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let discriminant = QrDiscriminant::random(rng);
 
     for depth in [2, 6] {
-        let routed = build_qr_partition(
+        let routed = pool.qr_intakes(
             rng,
             app,
-            &pool,
             (Anchor::default(), final_anchor),
             discriminant,
             24,
@@ -102,14 +98,14 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         assert_eq!(ragged, depth > 2);
         let sealed = routed
             .into_iter()
-            .map(|intake| seal_qr_intake(rng, app, intake, Anchor::from(Fp::ZERO)))
+            .map(|intake| intake.seal(rng, app, Anchor::from(Fp::ZERO)))
             .collect::<Vec<_>>();
         let expected = sealed
             .iter()
             .map(|bucket| *bucket.pcd.data())
             .collect::<Vec<_>>();
 
-        let tree = build_evidence_tree(rng, app, sealed);
+        let tree = EvidenceTreeEntry::build(rng, app, sealed);
         let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
         assert_eq!(
             (epoch, anchor_start, anchor_next, root_discriminant),
@@ -122,7 +118,7 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         );
 
         for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
-            let replayed = open_evidence_tree(rng, app, tree.pcd.clone(), leaf);
+            let replayed = tree.open(rng, app, leaf).unwrap();
             assert_eq!(*replayed.pcd.data(), *bucket);
         }
     }
@@ -135,10 +131,9 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
 
-    let routed = build_qr_partition(
+    let routed = pool.qr_intakes(
         rng,
         app,
-        &pool,
         (Anchor::default(), final_anchor),
         discriminant,
         24,
@@ -147,7 +142,7 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
     let sealed = routed
         .into_iter()
         .take(5)
-        .map(|intake| seal_qr_intake(rng, app, intake, Anchor::from(Fp::ZERO)))
+        .map(|intake| intake.seal(rng, app, Anchor::from(Fp::ZERO)))
         .collect::<Vec<_>>();
     let expected = sealed
         .iter()
@@ -155,9 +150,9 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         .collect::<Vec<_>>();
     let last = *expected.last().unwrap();
 
-    let tree = build_evidence_tree(rng, app, sealed);
+    let tree = EvidenceTreeEntry::build(rng, app, sealed);
     for (index, leaf) in tree.leaves.iter().enumerate() {
-        let replayed = open_evidence_tree(rng, app, tree.pcd.clone(), leaf);
+        let replayed = tree.open(rng, app, leaf).unwrap();
         let bucket = expected.get(index).copied().unwrap_or(last);
         assert_eq!(*replayed.pcd.data(), bucket);
     }
@@ -211,8 +206,8 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         Some(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "EvidenceTreeLeafPair: inputs cover different epochs"
     );
-    let tree0 = build_evidence_tree(rng, app, vec![bucket0]).pcd;
-    let tree1 = build_evidence_tree(rng, app, vec![bucket1]).pcd;
+    let tree0 = EvidenceTreeEntry::build(rng, app, vec![bucket0]).pcd;
+    let tree1 = EvidenceTreeEntry::build(rng, app, vec![bucket1]).pcd;
 
     let other_discriminant = QrDiscriminant::random(rng);
     let foreign = qr_bucket_at(
@@ -252,15 +247,11 @@ fn evidence_tree_joins_reject_mismatched_trees() {
             ),
         )
         .unwrap();
-    let elsewhere = seal_qr_intake(
-        rng,
-        app,
-        QrIntakeEntry {
-            pcd: intake,
-            members: members.to_vec(),
-        },
-        fake_anchor_final_prev,
-    );
+    let elsewhere = QrIntakeEntry {
+        pcd: intake,
+        members: members.to_vec(),
+    }
+    .seal(rng, app, fake_anchor_final_prev);
 
     for (left, right, complaint) in [
         (
@@ -270,17 +261,17 @@ fn evidence_tree_joins_reject_mismatched_trees() {
         ),
         (
             tree0.clone(),
-            build_evidence_tree(rng, app, vec![foreign]).pcd,
+            EvidenceTreeEntry::build(rng, app, vec![foreign]).pcd,
             "inputs derive from different discriminants",
         ),
         (
             tree0,
-            build_evidence_tree(rng, app, vec![short]).pcd,
+            EvidenceTreeEntry::build(rng, app, vec![short]).pcd,
             "inputs close at different anchors",
         ),
         (
             tree1,
-            build_evidence_tree(rng, app, vec![elsewhere]).pcd,
+            EvidenceTreeEntry::build(rng, app, vec![elsewhere]).pcd,
             "inputs open at different anchors",
         ),
     ] {
@@ -327,20 +318,20 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let discriminant = QrDiscriminant::random(rng);
-    let sealed = build_qr_partition(
-        rng,
-        app,
-        &pool,
-        (Anchor::default(), final_anchor),
-        discriminant,
-        24,
-        2,
-    )
-    .into_iter()
-    .map(|intake| seal_qr_intake(rng, app, intake, Anchor::from(Fp::ZERO)))
-    .collect::<Vec<_>>();
+    let sealed = pool
+        .qr_intakes(
+            rng,
+            app,
+            (Anchor::default(), final_anchor),
+            discriminant,
+            24,
+            2,
+        )
+        .into_iter()
+        .map(|intake| intake.seal(rng, app, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
     let other_contents: TachygramSetPoly = sealed[1].members.iter().copied().collect();
-    let tree = build_evidence_tree(rng, app, sealed);
+    let tree = EvidenceTreeEntry::build(rng, app, sealed);
     let leaf = tree.leaves.first().unwrap();
 
     let mut path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(

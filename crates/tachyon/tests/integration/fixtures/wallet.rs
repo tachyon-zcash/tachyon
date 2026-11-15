@@ -31,15 +31,15 @@ use zcash_tachyon::{
 
 use super::{
     mock_sighash,
-    pool::{PoolSim, build_unspent_pcd_over_epochs, epoch_bucket, random_block, random_block_with},
-    qr::{QrBucketEntry, qr_bucket_segment},
+    pool::{PoolSim, random_block, random_block_with},
+    qr::QrBucketEntry,
 };
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
-    let (_, _, plan) = build_output_plan(rng, note);
+    let (_, _, plan) = output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
         vec![],
         vec![plan],
@@ -50,7 +50,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     unproven.actions[0]
 }
 
-pub fn build_output_plan<RNG: CryptoRng>(
+pub fn output_plan<RNG: CryptoRng>(
     rng: &mut RNG,
     note: Note,
 ) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
@@ -91,7 +91,7 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     action::Plan<effect::Output>,
     Note,
 ) {
-    let (rcv, theta, plan) = build_output_plan(rng, note);
+    let (rcv, theta, plan) = output_plan(rng, note);
     let pak = WalletSim::new(shared_sk()).pak;
     let max_fee_note = WalletSim::random(rng).random_note(0);
     let stamp = stamp::Plan::new(
@@ -130,22 +130,6 @@ pub fn build_autonome<RNG: CryptoRng>(
     )
 }
 
-pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    user: &WalletSim,
-    note: &Note,
-    bucket: &QrBucketEntry,
-) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
-    let arbitrary = qr_bucket_segment(rng, app, bucket, |epoch| {
-        user.pak
-            .nk
-            .derive_note_private(note.psi)
-            .derive_nullifier(epoch)
-    });
-    user.unspent_bind(rng, app, arbitrary, note)
-}
-
 pub(crate) fn shared_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
 }
@@ -165,6 +149,22 @@ pub struct WalletSim {
 }
 
 impl WalletSim {
+    pub(crate) fn bucket_unspent<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        bucket: &QrBucketEntry,
+        note: &Note,
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
+        let arbitrary = bucket.segment(rng, app, |epoch| {
+            self.pak
+                .nk
+                .derive_note_private(note.psi)
+                .derive_nullifier(epoch)
+        });
+        self.unspent_bind(rng, app, arbitrary, note)
+    }
+
     pub fn new(sk: private::SpendingKey) -> Self {
         Self {
             sk,
@@ -215,7 +215,7 @@ impl WalletSim {
             .collect()
     }
 
-    pub fn secret_pcd<RNG: CryptoRng>(
+    pub fn note_secret<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         app: &App<'_>,
@@ -237,7 +237,7 @@ impl WalletSim {
         pcd
     }
 
-    pub fn derivation_pcd<RNG: CryptoRng>(
+    pub fn note_nullifiers<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         app: &App<'_>,
@@ -252,7 +252,7 @@ impl WalletSim {
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
-        let secret = self.secret_pcd(rng, app, note);
+        let secret = self.note_secret(rng, app, note);
         let mk = self.pak.nk.derive_note_private(note.psi);
 
         let mut merged: Option<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> = None;
@@ -331,7 +331,7 @@ impl WalletSim {
 
             (anchor_prev, stamps[cm_idx].clone())
         };
-        let deriv = self.derivation_pcd(rng, app, *note, epoch, epoch);
+        let deriv = self.note_nullifiers(rng, app, *note, epoch, epoch);
 
         let (spendable, ()) = app
             .fuse(
@@ -353,7 +353,7 @@ impl WalletSim {
         note: &Note,
     ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let (_, epoch_start, epoch_next, _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, app, *note, epoch_start, epoch_next);
+        let range = self.note_nullifiers(rng, app, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
             .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
@@ -403,13 +403,9 @@ impl WalletSim {
         if epoch == target {
             return spendable;
         }
-        let unspent = build_unspent_pcd_over_epochs(
-            rng,
-            app,
-            pool,
-            |covered| mk.derive_nullifier(covered),
-            (epoch, target),
-        );
+        let unspent = pool.unspent(rng, app, (epoch, target), |covered| {
+            mk.derive_nullifier(covered)
+        });
         self.lift(rng, app, spendable, unspent, note)
     }
 
@@ -432,9 +428,9 @@ impl WalletSim {
             })
             .unwrap();
         let creation = BlockHeight::from(creation_height).epoch();
-        let bucket = epoch_bucket(rng, app, pool, creation);
+        let bucket = pool.epoch_bucket(rng, app, creation);
         let mk = self.pak.nk.derive_note_private(note.psi);
-        let arbitrary = qr_bucket_segment(rng, app, &bucket, |epoch| mk.derive_nullifier(epoch));
+        let arbitrary = bucket.segment(rng, app, |epoch| mk.derive_nullifier(epoch));
         let unspent = self.unspent_bind(rng, app, arbitrary, note);
         let (spendable, ()) = app
             .fuse(rng, spendable::QrSpendableInit, (), unspent, bucket.pcd)
@@ -491,7 +487,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.secret_pcd(rng, app, note), spendable_pcd, vec![]));
+            spend_pcds.push((self.note_secret(rng, app, note), spendable_pcd, vec![]));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
