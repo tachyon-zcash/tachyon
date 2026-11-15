@@ -3,8 +3,7 @@ use core::{assert_matches, iter};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     pasta::Fp,
     stamp::proof::{evidence, qr},
@@ -14,8 +13,8 @@ use zcash_tachyon::{
 use super::fixtures::application;
 use crate::fixtures::{
     WithPolynomials,
-    pool::{PoolSim, random_block, small_epoch},
-    qr::{EvidenceTreeEntry, QrIntakeEntry},
+    pool::{PoolSim, small_epoch},
+    qr::{EvidenceTreeEntry, QrIntakeEntry, shared_discriminant},
 };
 
 #[test]
@@ -143,11 +142,10 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    let pool = PoolSim::shared();
     let final0 = pool.block(epoch0.last_block()).anchor();
     let final1 = pool.block(epoch1.last_block()).anchor();
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = shared_discriminant();
     let value = Fp::random(|bytes| rng.fill_bytes(bytes));
 
     let bucket0 = pool.qr_bucket(
@@ -160,7 +158,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     );
     let bucket1 = pool.qr_bucket(
         app,
-        (final0.next_epoch(epoch1).unwrap(), final1),
+        (pool.entry_anchor(epoch1), final1),
         discriminant,
         value,
         0,
@@ -193,7 +191,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     );
     let short = pool.qr_bucket(
         app,
-        (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
+        (Anchor::default(), pool.mint_anchor()),
         discriminant,
         value,
         0,

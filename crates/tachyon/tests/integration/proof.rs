@@ -10,7 +10,7 @@ use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
     TachygramSetPoly, action,
-    constants::{EPOCH_MAX, EPOCH_SIZE},
+    constants::EPOCH_MAX,
     digest::poseidon,
     entropy::ActionEntropy,
     note,
@@ -30,19 +30,6 @@ use crate::fixtures::{
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
     pool.mine(random_block_with(rng, &[vec![cm]], 4));
     pool.height()
-}
-
-fn mine_through(rng: &mut StdRng, pool: &mut PoolSim, height: BlockHeight) {
-    while pool.height() < height {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-}
-
-fn pool_closing_epoch_zero(rng: &mut StdRng, note: &Note) -> PoolSim {
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    mine_cm_block(rng, &mut pool, note.commitment());
-    mine_through(rng, &mut pool, EpochIndex::new(1).first_block());
-    pool
 }
 
 fn detached_segment(
@@ -118,10 +105,12 @@ fn spendable_init_rejects_tg_absent() {
 fn unspent_fuse_joins_only_adjacent_matching_segments() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    mine_through(rng, &mut pool, EpochIndex::new(3).last_block());
+    let pool = PoolSim::shared();
+    let user = WalletSim::new(shared_sk());
+    let note = PoolSim::shared_note(500);
+    let mk = user.pak.nk.derive_note_private(note.psi);
     let nf: [Nullifier; 4] =
-        array::from_fn(|_| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))));
+        array::from_fn(|epoch| mk.derive_nullifier(EpochIndex::new(u32::try_from(epoch).unwrap())));
     let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
     let [nf0, nf1, nf2, nf3] = nf;
 
@@ -161,15 +150,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     );
 
     let (start, end) = (left.data().0, right.data().3);
-    let (fused, ()) = app
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1], &[nf2, nf3]),
-            left,
-            right,
-        )
-        .unwrap();
+    let fused = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(4)), at);
     assert_eq!(
         *fused.data(),
         (start, EpochIndex::new(0), EpochIndex::new(4), end)
@@ -502,24 +483,20 @@ fn lift_crosses_a_stampless_epoch() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(300);
+    let pool = PoolSim::shared();
+    let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
-    mine_cm_block(rng, &mut pool, note.commitment());
-    let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
+    let (epoch2, epoch3, epoch4) = (EpochIndex::new(2), EpochIndex::new(3), EpochIndex::new(4));
+    assert_eq!(
+        pool.block(epoch3.last_block()).anchor(),
+        pool.entry_anchor(epoch3)
+    );
 
-    mine_through(rng, &mut pool, epoch1.last_block());
-    while pool.height() < epoch2.last_block() {
-        pool.advance(1, |_| Vec::new());
-    }
-    pool.advance(1, |_| random_block(rng, 1, 2));
-    assert_eq!(pool.height(), epoch3.first_block());
-
-    let spendable = user.spendable_at(app, &pool, &note, epoch1);
-    let arbitrary = pool.unspent(app, (epoch1, epoch3), |epoch| mk.derive_nullifier(epoch));
+    let spendable = user.spendable_at(app, pool, &note, epoch2);
+    let arbitrary = pool.unspent(app, (epoch2, epoch4), |epoch| mk.derive_nullifier(epoch));
     let lifted = user.lift(rng, app, spendable, arbitrary, &note);
-    assert_eq!(lifted.data().1, epoch3);
-    assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
+    assert_eq!(lifted.data().1, epoch4);
+    assert_eq!(lifted.data().2, pool.entry_anchor(epoch4));
 }
 
 #[test]
@@ -527,8 +504,8 @@ fn unspent_bind_rejects_a_forged_member() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let pool = pool_closing_epoch_zero(rng, &note);
+    let note = PoolSim::shared_note(500);
+    let pool = PoolSim::shared();
 
     let forged = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
@@ -599,9 +576,9 @@ fn unspent_bind_rejects_mismatched_sequences() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let other = user.random_note(700);
-    let pool = pool_closing_epoch_zero(rng, &note);
+    let note = PoolSim::shared_note(500);
+    let other = PoolSim::shared_note(700);
+    let pool = PoolSim::shared();
     let mk = user.pak.nk.derive_note_private(note.psi);
     let unspent = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(1)), |epoch| {
         mk.derive_nullifier(epoch)
@@ -681,10 +658,13 @@ fn unspent_bind_rejects_uncovered_end() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
+    let note = PoolSim::shared_note(500);
+    let pool = PoolSim::shared();
     let mk = user.pak.nk.derive_note_private(note.psi);
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32);
-    let unspent = detached_segment(rng, app, last, |epoch| mk.derive_nullifier(epoch));
+    let unspent = pool.unspent(app, (last, last.next().unwrap()), |epoch| {
+        mk.derive_nullifier(epoch)
+    });
 
     let range = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
     let mut witness = witness::unspent_bind(
@@ -708,18 +688,16 @@ fn spendable_lift_rejects_mismatched_segments() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
+    let pool = PoolSim::shared();
+    let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let phantom = Note {
         value: value::Positive::try_from(700u64).unwrap(),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
-    mine_through(rng, &mut pool, epoch2.last_block());
-    let spendable = user.spendable_at(app, &pool, &note, epoch1);
+    let spendable = user.spendable_at(app, pool, &note, epoch1);
 
     for (unspent, expected) in [
         (
@@ -739,11 +717,7 @@ fn spendable_lift_rejects_mismatched_segments() {
             "SpendableLift: unspent not adjacent to spendable",
         ),
         (
-            {
-                let arbitrary =
-                    pool.unspent(app, (epoch2, epoch3), |epoch| mk.derive_nullifier(epoch));
-                user.unspent_bind(rng, app, arbitrary, &note)
-            },
+            user.note_unspent(app, pool, &note, (epoch2, epoch3)),
             "SpendableLift: segment does not start at the lineage epoch",
         ),
     ] {
@@ -887,7 +861,9 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
     let mk = user.pak.nk.derive_note_private(note.psi);
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    mine_through(rng, &mut pool, EpochIndex::new(3).first_block());
+    while pool.height() < EpochIndex::new(3).first_block() {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
     assert_eq!(epoch, EpochIndex::new(3));
@@ -1063,12 +1039,10 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
+    let pool = PoolSim::shared();
+    let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
-    mine_cm_block(rng, &mut pool, note.commitment());
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
-    mine_through(rng, &mut pool, epoch1.last_block());
 
     let nf = |epoch: EpochIndex| mk.derive_nullifier(if epoch == epoch1 { epoch0 } else { epoch });
     let unspent = pool.unspent(app, (epoch1, EpochIndex::new(2)), nf);
@@ -1103,20 +1077,10 @@ fn multi_window_span_binds_once() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let note = user.random_note(500);
-    mine_cm_block(rng, &mut pool, note.commitment());
+    let pool = PoolSim::shared();
+    let note = PoolSim::shared_note(500);
 
     let last_epoch = NF_DERIVATION_WIDTH as u32 + 1;
-    let target_height = BlockHeight(last_epoch * EPOCH_SIZE);
-    while pool.height() < target_height {
-        let publish = pool.height().0 % EPOCH_SIZE == EPOCH_SIZE - 1;
-        if publish {
-            pool.advance(1, |_| random_block(rng, 1, 2));
-        } else {
-            pool.advance(1, |_| Vec::new());
-        }
-    }
 
     let arbitrary = pool.unspent(
         app,

@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use core::iter;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_core::pasta::Pasta;
@@ -15,7 +16,26 @@ use zcash_tachyon::{
     witness,
 };
 
-use super::Proved;
+use super::{Proved, keyed_rng, pool::PoolSim, wallet::shared_sk};
+
+/// The first keyed shared discriminant whose depth-two profiles differ for the
+/// shared 500-value note's commitment and epoch-zero nullifier under the shared
+/// key.
+pub(crate) fn shared_discriminant() -> QrDiscriminant {
+    let note = PoolSim::shared_note(500);
+    let nf = shared_sk()
+        .derive_proof_private()
+        .nk
+        .derive_note_private(note.psi)
+        .derive_nullifier(EpochIndex::new(0));
+    let mut rng = keyed_rng("shared discriminant", &[]);
+    iter::repeat_with(|| QrDiscriminant::random(&mut rng))
+        .find(|&discriminant| {
+            qr_profile_of(Fp::from(note.commitment()), discriminant, 2)
+                != qr_profile_of(Fp::from(nf), discriminant, 2)
+        })
+        .unwrap()
+}
 
 #[derive(Clone)]
 pub(crate) struct QrIntakeEntry {

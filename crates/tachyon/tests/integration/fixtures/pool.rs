@@ -1,24 +1,26 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::{iter, ops::RangeInclusive};
+use core::{array, iter, ops::RangeInclusive};
+use std::sync::LazyLock;
 
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, note,
-    nullifier::Nullifier,
+    Anchor, BlockHeight, EpochIndex, Note, QrDiscriminant, QrProfile, Tachygram,
+    TachygramSetCommit, TachygramSetPoly, note,
+    nullifier::{self, Nullifier},
     pasta::Fp,
     stamp::proof::{App, pool, qr, summary},
-    witness,
+    value, witness,
 };
 
 use super::{
     Proved, keyed_rng,
-    qr::{QrBucketEntry, QrIntakeEntry},
+    qr::{QrBucketEntry, QrIntakeEntry, shared_discriminant},
+    wallet::shared_sk,
 };
 
 pub fn random_block<RNG: CryptoRng>(
@@ -93,6 +95,77 @@ pub struct PoolSim {
 }
 
 impl PoolSim {
+    pub fn shared_note(value: u64) -> Note {
+        assert!([500, 700, 800, 900, 1000].contains(&value));
+        let mut rng = keyed_rng("shared note", &value.to_le_bytes());
+        Note {
+            pk: shared_sk().derive_payment_key(),
+            value: value::Positive::try_from(value).unwrap(),
+            psi: nullifier::Trapdoor::random(&mut rng),
+            rcm: note::CommitmentTrapdoor::random(&mut rng),
+        }
+    }
+
+    /// Epoch zero's QR tree must have at least 17 leaves at depth five so its
+    /// evidence tree has three levels. The stamp after the mint stamp puts
+    /// the mint anchor inside its block. Epoch three has no stamps because
+    /// the lift tests cross a stampless epoch.
+    pub fn shared() -> &'static Self {
+        fn leaves(members: &[Tachygram], discriminant: QrDiscriminant, level: u32) -> usize {
+            if level == 5 || members.is_empty() {
+                return 1;
+            }
+            let (residue, non_residue): (Vec<_>, Vec<_>) = members
+                .iter()
+                .copied()
+                .partition(|&member| qr::classify(Fp::from(member), discriminant.at(level)).0);
+            leaves(&residue, discriminant, level + 1)
+                + leaves(&non_residue, discriminant, level + 1)
+        }
+
+        static SHARED: LazyLock<PoolSim> = LazyLock::new(|| {
+            let mut rng = keyed_rng("shared chain", &[]);
+            let genesis = vec![Tachygram::random(&mut rng)];
+            let mint = [500, 700, 800, 900, 1000]
+                .into_iter()
+                .map(|value| Tachygram::from(PoolSim::shared_note(value).commitment()))
+                .collect::<Vec<_>>();
+            let fillers: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(&mut rng));
+            let discriminant = shared_discriminant();
+            let members = genesis
+                .iter()
+                .chain(&mint)
+                .chain(&fillers)
+                .copied()
+                .collect::<Vec<_>>();
+            let count = leaves(&members, discriminant, 0);
+            assert!(count >= 17);
+            let mut pool = PoolSim::genesis_with(vec![genesis]);
+            pool.mine(vec![mint, vec![fillers[0]]]);
+            pool.mine(vec![vec![fillers[1]], vec![fillers[2]]]);
+            pool.mine(vec![vec![fillers[3]]]);
+            pool.advance(EpochIndex::new(0).last_block().0 - pool.height().0, |_| {
+                Vec::new()
+            });
+            for epoch in 1..=16 {
+                let stamp_count = match epoch {
+                    1 => 2,
+                    3 => 0,
+                    _ => 1,
+                };
+                pool.mine(random_block(&mut rng, 1, stamp_count));
+                pool.advance(
+                    EpochIndex::new(epoch).last_block().0 - pool.height().0,
+                    |_| Vec::new(),
+                );
+            }
+            pool.mine(Vec::new());
+            pool
+        });
+
+        &SHARED
+    }
+
     fn qr_key((start, end): (Anchor, Anchor), discriminant: QrDiscriminant) -> Vec<u8> {
         [
             Fp::from(start).to_bytes(),
@@ -227,6 +300,18 @@ impl PoolSim {
         intake
     }
 
+    pub fn qr_split(
+        &self,
+        app: &App<'_>,
+        span: (Anchor, Anchor),
+        discriminant: QrDiscriminant,
+        value: Fp,
+        depth: u32,
+    ) -> ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides> {
+        let intake = self.qr_intake(app, span, discriminant, value, depth);
+        Self::qr_sides(app, span, discriminant, &intake)
+    }
+
     pub(crate) fn qr_intakes(
         &self,
         app: &App<'_>,
@@ -291,6 +376,11 @@ impl PoolSim {
 
     pub fn block(&self, height: BlockHeight) -> &PoolSimBlock {
         &self.history[usize::try_from(height).unwrap()]
+    }
+
+    /// The anchor after the stamp that mints the shared notes.
+    pub fn mint_anchor(&self) -> Anchor {
+        self.block(BlockHeight(1)).stamps[0].3
     }
 
     fn push_block(&mut self, prev: Anchor, stamps: Vec<Vec<Tachygram>>) {
@@ -473,7 +563,7 @@ impl PoolSim {
         })
     }
 
-    pub(super) fn entry_anchor(&self, epoch: EpochIndex) -> Anchor {
+    pub fn entry_anchor(&self, epoch: EpochIndex) -> Anchor {
         u32::from(epoch)
             .checked_sub(1)
             .map_or_else(Anchor::default, |previous| {
@@ -485,6 +575,9 @@ impl PoolSim {
     }
 
     pub(crate) fn epoch_discriminant(&self, epoch: EpochIndex) -> QrDiscriminant {
+        if u32::from(epoch) == 0 {
+            return shared_discriminant();
+        }
         let mut key = u32::from(epoch).to_le_bytes().to_vec();
         key.extend_from_slice(&Fp::from(self.entry_anchor(epoch)).to_bytes());
         QrDiscriminant::random(&mut keyed_rng("epoch discriminant", &key))

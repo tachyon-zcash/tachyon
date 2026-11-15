@@ -11,9 +11,9 @@ use core::{assert_matches, cmp::Reverse};
 use corez::io;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    BlockHeight, SignatureError, Tachygram, action,
+    SignatureError, Tachygram, action,
     bundle::{Plan, PlanError, Signature},
-    constants::{EPOCH_SIZE, MAX_MONEY},
+    constants::MAX_MONEY,
     digest::blake2b,
     effect,
     entropy::ActionEntropy,
@@ -310,32 +310,18 @@ fn based_aggregate_with_two_adjuncts() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
-    let based_spend = wallet.random_note(800);
+    let based_spend = PoolSim::shared_note(800);
     let based_output = wallet.random_note(400);
-    let a_spend = wallet.random_note(1000);
+    let a_spend = PoolSim::shared_note(1000);
     let a_output = wallet.random_note(700);
-    let b_spend = wallet.random_note(500);
+    let b_spend = PoolSim::shared_note(500);
     let b_output = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(
-        rng,
-        &[
-            vec![based_spend.commitment()],
-            vec![a_spend.commitment()],
-            vec![b_spend.commitment()],
-        ],
-        50,
-    ));
-    let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-
-    let spend_epoch = cm_height.epoch().next().unwrap();
-    let based_sp = wallet.spendable_at(app, &pool, &based_spend, spend_epoch);
-    let a_sp = wallet.spendable_at(app, &pool, &a_spend, spend_epoch);
-    let b_sp = wallet.spendable_at(app, &pool, &b_spend, spend_epoch);
+    let pool = PoolSim::shared();
+    let spend_epoch = EpochIndex::new(1);
+    let based_sp = wallet.spendable_at(app, pool, &based_spend, spend_epoch);
+    let a_sp = wallet.spendable_at(app, pool, &a_spend, spend_epoch);
+    let b_sp = wallet.spendable_at(app, pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
 
     let mut becomes_based = wallet.autonome(
@@ -969,24 +955,15 @@ fn bundle_lift_over_an_aggregate() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
-    let spend_a = wallet.random_note(1000);
+    let spend_a = PoolSim::shared_note(1000);
     let output_a = wallet.random_note(700);
-    let spend_b = wallet.random_note(500);
+    let spend_b = PoolSim::shared_note(500);
     let output_b = wallet.random_note(200);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(
-        rng,
-        &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
-        50,
-    ));
-    let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE - 1) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-
-    let sp_a = wallet.spendable_at(app, &pool, &spend_a, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(app, &pool, &spend_b, cm_height.epoch().next().unwrap());
+    let pool = PoolSim::shared();
+    let epoch1 = EpochIndex::new(1);
+    let sp_a = wallet.spendable_at(app, pool, &spend_a, epoch1);
+    let sp_b = wallet.spendable_at(app, pool, &spend_b, epoch1);
     let anchor = sp_a.data().2;
 
     let autonome_a = wallet.autonome(rng, app, anchor, vec![(spend_a, sp_a)], vec![output_a]);
@@ -1055,13 +1032,12 @@ fn bundle_lift_over_an_aggregate() {
         .unwrap();
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
-    pool.advance(1, |_| vec![]);
-    pool.mine(random_block(rng, 1, 2));
-    let span = pool.anchor_span(app, pool.height()..=pool.height());
+    let first = epoch1.first_block();
+    let span = pool.anchor_span(app, first..=first);
 
     let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();
 
-    assert_eq!(lifted.stamp.anchor, pool.anchor());
+    assert_eq!(lifted.stamp.anchor, pool.block(first).anchor());
 
     let adjunct_descs: Vec<action::Descriptor> =
         adjuncts.iter().flat_map(|adj| adj.descriptors()).collect();
