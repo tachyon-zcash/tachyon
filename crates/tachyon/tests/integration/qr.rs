@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{array, assert_matches, iter, mem};
+use core::{array, assert_matches, iter, mem, slice};
 
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
@@ -23,8 +23,8 @@ use crate::fixtures::{
     WithPolynomials,
     pool::PoolSim,
     qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_twins, scaled_qr_contents,
-        shared_discriminant,
+        EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
+        scaled_qr_contents, shared_discriminant,
     },
     wallet::{WalletSim, shared_sk},
 };
@@ -530,11 +530,53 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     }
 }
 
+// Oversized-bucket characterization: book/src/proof-tree.md,
+// "Oversized buckets: observed behavior". Acceptance here is pinned, not
+// endorsed.
+
+#[test]
+fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let pool = PoolSim::shared();
+    let epoch0 = EpochIndex::new(0);
+    let span0 = pool.epoch_span(epoch0);
+    let disc = shared_discriminant();
+    let [absent, exceptional, companion] = qr_profile_triplet();
+    let [_, _, _, full] = pool.qr_descent(app, span0, disc, absent);
+    let members = [Tachygram::from(exceptional), Tachygram::from(companion)];
+    assert_eq!(full.members, members);
+    let (.., profile) = *full.pcd.data();
+    assert_eq!(profile.depth, u32::BITS);
+    let bucket = full.sealed(app, Anchor::from(Fp::ZERO));
+    let (_epoch, _start, _next, _discriminant, bucket_profile, _contents_hash) = *bucket.pcd.data();
+    assert_eq!(bucket_profile.depth, u32::BITS);
+    assert_eq!(
+        bucket.pcd.commitments()[0],
+        Eq::from(members.into_iter().collect::<TachygramSetPoly>().commit()).to_affine()
+    );
+    for member in [exceptional, companion] {
+        let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(member));
+        assert_matches!(
+            app.fuse(rng, qr::QrUnspentInit, witness, bucket.pcd.clone(), app.bootstrap_proof().clone().carry::<()>(())).err(),
+            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "QrUnspentInit: found nullifier in the bucket"
+        );
+    }
+    let tree = EvidenceTreeEntry::build(rng, app, slice::from_ref(&bucket));
+    let opened = tree.open(rng, app, &tree.leaves[0]).unwrap();
+    assert_eq!(*opened.pcd.data(), *bucket.pcd.data());
+}
+
 #[test]
 fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    for depth in [0, 1, 31] {
+    let pool = PoolSim::shared();
+    let epoch0 = EpochIndex::new(0);
+    let span0 = pool.epoch_span(epoch0);
+    let disc = shared_discriminant();
+    let [absent, exceptional_value, _] = qr_profile_triplet();
+    let [root_case, child_case] = [0, 1].map(|depth| {
         let epoch = EpochIndex::new(3);
         let start = Anchor::random(rng);
         let discriminant = QrDiscriminant::random(rng);
@@ -559,6 +601,17 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             let [next] = intake.split(rng, app, [side]);
             intake = next;
         }
+        (intake, discriminant, value)
+    });
+    let [_, _, deep_intake, _] = pool.qr_descent(app, span0, disc, absent);
+    for (intake, discriminant, value) in [
+        root_case,
+        child_case,
+        (deep_intake, disc, exceptional_value),
+    ] {
+        let (.., profile) = *intake.pcd.data();
+        let depth = profile.depth;
+        let exceptional = Tachygram::from(value);
         let (honest_sides, ()) = app
             .fuse(
                 rng,
@@ -974,7 +1027,7 @@ fn qr_side_descend_refuses_a_full_register() {
     let epoch0 = EpochIndex::new(0);
     let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let [absent, _] = qr_twins();
+    let [absent, _, _] = qr_profile_triplet();
     let [_, _, _, intake] = pool.qr_descent(app, span0, disc, absent);
     let (.., profile) = *intake.pcd.data();
     assert_eq!(profile, qr_profile_of(absent, disc, u32::BITS));
@@ -1725,12 +1778,13 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let epoch1 = epoch0.next().unwrap();
     let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
-    let [absent, member] = qr_twins();
+    let [absent, exceptional, companion] = qr_profile_triplet();
     let intakes = pool.qr_descent(app, span0, disc, absent);
     for (depth, intake) in QR_DEPTHS.into_iter().zip(intakes) {
         assert_eq!(intake.pcd.data().4, qr_profile_of(absent, disc, depth));
         let bucket = intake.sealed(app, Anchor::from(Fp::ZERO));
-        assert!(bucket.members.contains(&Tachygram::from(member)));
+        assert!(bucket.members.contains(&Tachygram::from(exceptional)));
+        assert!(bucket.members.contains(&Tachygram::from(companion)));
         let nf = Nullifier::from(absent);
         let segment = bucket.segment(rng, app, |_| nf);
         assert_eq!(

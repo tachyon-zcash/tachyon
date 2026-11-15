@@ -20,8 +20,8 @@ use zcash_tachyon::{
 use super::{
     Proved, keyed_rng,
     qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of, qr_twins,
-        shared_discriminant,
+        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of,
+        qr_profile_triplet, shared_discriminant,
     },
     wallet::shared_sk,
 };
@@ -119,8 +119,8 @@ impl PoolSim {
     pub fn shared() -> &'static Self {
         static SHARED: LazyLock<PoolSim> = LazyLock::new(|| {
             let mut rng = keyed_rng("shared chain", &[]);
-            let [_, member] = qr_twins();
-            let genesis = vec![Tachygram::from(member)];
+            let [_, exceptional, companion] = qr_profile_triplet();
+            let genesis = vec![Tachygram::from(exceptional), Tachygram::from(companion)];
             let mint = [500, 700, 800, 900, 1000]
                 .into_iter()
                 .map(|value| Tachygram::from(PoolSim::shared_note(value).commitment()))

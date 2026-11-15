@@ -26,19 +26,37 @@ use super::{Proved, keyed_rng, pool::PoolSim, wallet::shared_sk};
 /// register.
 pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 
-pub(crate) fn qr_twins() -> [Fp; 2] {
+/// `[absent, exceptional, companion]`: three values that take the same side
+/// at all 32 levels under the shared discriminant.
+///
+/// Under discriminant $R$ the class of $n - R$ at level $j$ is the quadratic
+/// character of $n + j$, so a profile depends on $n$ alone. The exceptional
+/// value is $n = -31$, whose shifted value is zero at level 31, where
+/// selection files it on the residue side. The absent value and the
+/// companion are the two smallest positive $n$ whose characters match those
+/// of $-31, -30, \dots, -1$ at levels 0 to 30 and are a square's at level 31.
+/// An exhaustive scan upward from 1, one Jacobi symbol per integer, found
+/// them.
+///
+/// A change to `QrDiscriminant::at` or `qr::classify` would invalidate the
+/// two constants, and the assertions here would fail.
+pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
     let discriminant = shared_discriminant();
-    // An element `n - discriminant` takes the quadratic character of `n + level`
-    // at each level, and the 32 consecutive characters from 40621 match those
-    // from 126676, so the member shares the absent value's whole profile.
-    let absent = Fp::from(40_621u64) - Fp::from(discriminant);
-    let member = Fp::from(126_676u64) - Fp::from(discriminant);
-    assert_ne!(absent, member);
+    let absent = Fp::from(1_915_239_271u64) - Fp::from(discriminant);
+    let exceptional = -Fp::from(discriminant) - Fp::from(31u64);
+    let companion = Fp::from(5_828_521_534u64) - Fp::from(discriminant);
+    assert_ne!(absent, exceptional);
+    assert_ne!(absent, companion);
+    assert_ne!(exceptional, companion);
     assert_eq!(
         qr_profile_of(absent, discriminant, u32::BITS),
-        qr_profile_of(member, discriminant, u32::BITS)
+        qr_profile_of(exceptional, discriminant, u32::BITS)
     );
-    [absent, member]
+    assert_eq!(
+        qr_profile_of(absent, discriminant, u32::BITS),
+        qr_profile_of(companion, discriminant, u32::BITS)
+    );
+    [absent, exceptional, companion]
 }
 
 /// The first keyed shared discriminant whose depth-two profiles differ for the
@@ -263,7 +281,7 @@ impl EvidenceTreeEntry {
         key
     }
 
-    pub(super) fn build<RNG: CryptoRng>(
+    pub(crate) fn build<RNG: CryptoRng>(
         rng: &mut RNG,
         app: &App<'_>,
         buckets: &[QrBucketEntry],
