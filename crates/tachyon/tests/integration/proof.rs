@@ -24,7 +24,7 @@ use super::fixtures::application;
 use crate::fixtures::{
     pool::{PoolSim, random_block, random_block_with},
     qr::QrIntakeEntry,
-    wallet::{WalletSim, build_output_stamp, shared_sk},
+    wallet::{WalletSim, alice, later_output, shared_sk},
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -185,11 +185,9 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(1, |_| random_block(rng, 1, 3));
-
-    let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(1));
-    let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(1));
+    let pool = PoolSim::shared();
+    let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
+    let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
     let (anchor_start, anchor_end) = *span.data();
     let fork = anchor_start
         .next_stamp(
@@ -198,17 +196,37 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         )
         .unwrap();
 
-    for (stamp_anchor, expected) in [
-        (anchor_start, None),
-        (members[0], None),
-        (anchor_end, None),
+    let (_, start_bundle) = user.bundle(
+        app,
+        anchor_start,
+        &[],
+        &[user.random_note(200)],
+        user.random_note(0),
+        value::Positive::ZERO,
+    );
+    let (_, fork_bundle) = user.bundle(
+        app,
+        fork,
+        &[],
+        &[user.random_note(200)],
+        user.random_note(0),
+        value::Positive::ZERO,
+    );
+    let (_, inner_bundle) = alice(app);
+    let (_, end_bundle) = later_output(app);
+    for (stamp_anchor, bundle, expected) in [
+        (anchor_start, start_bundle, None),
+        (members[0], inner_bundle, None),
+        (anchor_end, end_bundle, None),
         (
             fork,
+            fork_bundle,
             Some("StampLift: stamp anchor is neither the span's start nor a member"),
         ),
     ] {
-        let (stamp, plan, fee_descriptor) =
-            build_output_stamp(rng, app, stamp_anchor, user.random_note(200));
+        let descriptor = bundle.descriptors().next().unwrap();
+        let fee_descriptor = bundle.fee_descriptor();
+        let stamp = bundle.stamp;
         let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
             app.bridge_hash(stamp.tachygram_set.as_ref().to_affine())
                 .unwrap()
@@ -221,7 +239,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             witness::stamp_lift(
                 (*stamp_pcd.data(), *span.data()),
                 ActionSetPoly::from_iter([
-                    plan.digest().unwrap(),
+                    descriptor.digest().unwrap(),
                     fee_descriptor.digest().unwrap(),
                 ]),
             ),

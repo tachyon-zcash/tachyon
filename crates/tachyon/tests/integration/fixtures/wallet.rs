@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::cell::RefCell;
+use core::{cell::RefCell, ops::RangeInclusive};
 
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
@@ -17,23 +17,18 @@ use zcash_tachyon::{
     bundle::{self, Bundle},
     effect,
     entropy::ActionEntropy,
-    fee,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
     stamp::{
-        self, ProofStamp, Unproven,
+        self, ProofStamp,
         proof::{App, delegation, pool, spendable},
     },
     value, witness,
 };
 
-use super::{
-    Proved, mock_sighash,
-    pool::{PoolSim, random_block, random_block_with},
-    qr::QrBucketEntry,
-};
+use super::{Proved, keyed_rng, mock_sighash, pool::PoolSim, qr::QrBucketEntry};
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let wallet = WalletSim::random(rng);
@@ -60,78 +55,222 @@ pub fn output_plan<RNG: CryptoRng>(
     (rcv, theta, plan)
 }
 
-pub fn build_output_stamp<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    anchor: Anchor,
-    note: Note,
-) -> (
-    ProofStamp<stamp::Uncompressed>,
-    action::Plan<effect::Output>,
-    fee::Descriptor,
-) {
-    let (stamp, plan, max_fee_note) = build_output_stamp_with_fee(rng, app, anchor, note);
-    (
-        stamp,
-        plan,
-        fee::Descriptor {
-            cv_feemax: max_fee_note.cv_feemax(),
-            v_fee: value::Positive::ZERO,
-        },
-    )
-}
-
-pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    anchor: Anchor,
-    note: Note,
-) -> (
-    ProofStamp<stamp::Uncompressed>,
-    action::Plan<effect::Output>,
-    Note,
-) {
-    let (rcv, theta, plan) = output_plan(rng, note);
-    let pak = WalletSim::new(shared_sk()).pak;
-    let max_fee_note = WalletSim::random(rng).random_note(0);
-    let stamp = stamp::Plan::new(
-        vec![],
-        vec![(plan.descriptor(), theta, note, rcv)],
-        anchor,
-        max_fee_note,
-        value::Positive::ZERO,
-    )
-    .prove(rng, app, &pak, vec![])
-    .unwrap();
-    (stamp, plan, max_fee_note)
-}
-
-pub fn build_autonome<RNG: CryptoRng>(
-    rng: &mut RNG,
-    app: &App<'_>,
-    wallet: &WalletSim,
-    spend_value: u64,
-    output_value: u64,
-) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    let spend_note = wallet.random_note(spend_value);
-    let output_note = wallet.random_note(output_value);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let stamps_cms = vec![vec![spend_note.commitment()]];
-    pool.mine(random_block_with(rng, &stamps_cms, 50));
-    let height = pool.height();
-    let spendable_pcd = wallet.spendable_init(app, &pool, &spend_note, height);
-    let anchor = spendable_pcd.data().2;
-    wallet.autonome(
-        rng,
-        app,
-        anchor,
-        vec![(spend_note, spendable_pcd)],
-        vec![output_note],
-    )
-}
-
 pub(crate) fn shared_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
+}
+
+pub(crate) fn other_sk() -> private::SpendingKey {
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0B0B_05EE_D000_0001))
+}
+
+fn stamp_key(stamp: &ProofStamp<stamp::Uncompressed>) -> Vec<u8> {
+    let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
+    key.extend_from_slice(&stamp.coverage);
+    key.extend_from_slice(&u32::try_from(stamp.tachygrams.len()).unwrap().to_le_bytes());
+    for member in &stamp.tachygrams {
+        key.extend_from_slice(&Fp::from(*member).to_bytes());
+    }
+    key
+}
+
+pub(crate) fn merged(
+    app: &App<'_>,
+    left: &Bundle<ProofStamp<stamp::Uncompressed>>,
+    right: &Bundle<ProofStamp<stamp::Uncompressed>>,
+) -> Bundle<ProofStamp<stamp::Uncompressed>> {
+    static MERGES: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
+    let mut key = stamp_key(&left.stamp);
+    key.extend_from_slice(&stamp_key(&right.stamp));
+    let stamp = MERGES.get(&key, |rng| {
+        left.stamp
+            .clone()
+            .merge(
+                rng,
+                app,
+                (left.descriptors().collect(), [left.fee_descriptor()].into()),
+                (
+                    right.stamp.clone(),
+                    right.descriptors().collect(),
+                    [right.fee_descriptor()].into(),
+                ),
+            )
+            .unwrap()
+    });
+    Bundle {
+        stamp,
+        ..left.clone()
+    }
+}
+
+pub(crate) fn lifted(
+    app: &App<'_>,
+    bundle: &Bundle<ProofStamp<stamp::Uncompressed>>,
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> Bundle<ProofStamp<stamp::Uncompressed>> {
+    static LIFTS: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("lifted_bundle");
+    let span = pool.anchor_span(app, range);
+    let mut key = stamp_key(&bundle.stamp);
+    key.extend_from_slice(&Fp::from(span.data().0).to_bytes());
+    key.extend_from_slice(&Fp::from(span.data().1).to_bytes());
+    let stamp = LIFTS.get(&key, |rng| {
+        bundle
+            .stamp
+            .clone()
+            .lift(
+                rng,
+                app,
+                &bundle.descriptors().collect(),
+                &[bundle.fee_descriptor()].into(),
+                vec![span],
+            )
+            .unwrap()
+    });
+    Bundle {
+        stamp,
+        ..bundle.clone()
+    }
+}
+
+pub(crate) fn spend_max_fee_note() -> Note {
+    WalletSim::new(shared_sk()).labelled_note("spend fee", 0)
+}
+
+pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    let pool = PoolSim::shared();
+    let wallet = WalletSim::new(shared_sk());
+    wallet.bundle(
+        app,
+        pool.mint_anchor(),
+        &[(PoolSim::shared_note(1000), pool)],
+        &[wallet.labelled_note("spend output", 700)],
+        spend_max_fee_note(),
+        value::Positive::ZERO,
+    )
+}
+
+pub(crate) fn spend_with_fee_max_fee_note() -> Note {
+    WalletSim::new(shared_sk()).labelled_note("spend with fee maximum", 300)
+}
+
+pub(crate) fn spend_with_fee(
+    app: &App<'_>,
+) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    let pool = PoolSim::shared();
+    let wallet = WalletSim::new(shared_sk());
+    wallet.bundle(
+        app,
+        pool.mint_anchor(),
+        &[(PoolSim::shared_note(1000), pool)],
+        &[wallet.labelled_note("spend with fee output", 700)],
+        spend_with_fee_max_fee_note(),
+        value::Positive::try_from(120u64).unwrap(),
+    )
+}
+
+pub(crate) fn alice_max_fee_note() -> Note {
+    WalletSim::new(shared_sk()).labelled_note("alice fee", 0)
+}
+
+pub(crate) fn alice_output_note() -> Note {
+    WalletSim::new(shared_sk()).labelled_note("alice output", 300)
+}
+
+pub(crate) fn alice(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    WalletSim::new(shared_sk()).bundle(
+        app,
+        PoolSim::shared().mint_anchor(),
+        &[],
+        &[alice_output_note()],
+        alice_max_fee_note(),
+        value::Positive::ZERO,
+    )
+}
+
+pub(crate) fn bob(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    let wallet = WalletSim::new(other_sk());
+    wallet.bundle(
+        app,
+        PoolSim::shared().mint_anchor(),
+        &[],
+        &[wallet.labelled_note("bob output", 300)],
+        wallet.labelled_note("bob fee", 0),
+        value::Positive::ZERO,
+    )
+}
+
+/// The three fees differ because unmerge_keeps_the_dividend_fee depends on
+/// that.
+pub(crate) fn outputs_with_fees(
+    app: &App<'_>,
+) -> [(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>); 3] {
+    [
+        ("fee output first", "fee maximum first", 40u64),
+        ("fee output second", "fee maximum second", 70),
+        ("fee output third", "fee maximum third", 90),
+    ]
+    .map(|(output, maximum, fee)| {
+        let wallet = WalletSim::new(shared_sk());
+        wallet.bundle(
+            app,
+            PoolSim::shared().mint_anchor(),
+            &[],
+            &[wallet.labelled_note(output, 500)],
+            wallet.labelled_note(maximum, 100),
+            value::Positive::try_from(fee).unwrap(),
+        )
+    })
+}
+
+pub(crate) fn zero_action(
+    app: &App<'_>,
+    anchor: Anchor,
+) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    let wallet = WalletSim::new(shared_sk());
+    wallet.bundle(
+        app,
+        anchor,
+        &[],
+        &[],
+        wallet.labelled_note("zero action fee", 0),
+        value::Positive::ZERO,
+    )
+}
+
+pub(crate) fn entry_spends(
+    app: &App<'_>,
+) -> [(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>); 3] {
+    let pool = PoolSim::shared();
+    [
+        (1000, 700, "entry first output", "entry first fee"),
+        (500, 200, "entry second output", "entry second fee"),
+        (800, 400, "entry third output", "entry third fee"),
+    ]
+    .map(|(input, output, label, fee)| {
+        let wallet = WalletSim::new(shared_sk());
+        wallet.bundle(
+            app,
+            pool.entry_anchor(EpochIndex::new(1)),
+            &[(PoolSim::shared_note(input), pool)],
+            &[wallet.labelled_note(label, output)],
+            wallet.labelled_note(fee, 0),
+            value::Positive::ZERO,
+        )
+    })
+}
+
+pub(crate) fn later_output(
+    app: &App<'_>,
+) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+    let wallet = WalletSim::new(shared_sk());
+    wallet.bundle(
+        app,
+        PoolSim::shared().block(BlockHeight(2)).anchor(),
+        &[],
+        &[wallet.labelled_note("later output", 400)],
+        wallet.labelled_note("later fee", 0),
+        value::Positive::ZERO,
+    )
 }
 
 pub struct WalletSim {
@@ -141,6 +280,87 @@ pub struct WalletSim {
 }
 
 impl WalletSim {
+    pub fn bundle(
+        &self,
+        app: &App<'_>,
+        anchor: Anchor,
+        spends: &[(Note, &PoolSim)],
+        outputs: &[Note],
+        max_fee_note: Note,
+        fee: value::Positive,
+    ) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+        static BUNDLES: Proved<(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>)> =
+            Proved::new("bundle");
+        let mut key = [
+            Fp::from(self.pak.derive_payment_key()).to_bytes(),
+            Fp::from(anchor).to_bytes(),
+        ]
+        .concat();
+        key.extend_from_slice(&u32::try_from(spends.len()).unwrap().to_le_bytes());
+        for &(note, _) in spends {
+            key.extend_from_slice(&Fp::from(note.commitment()).to_bytes());
+        }
+        key.extend_from_slice(&u32::try_from(outputs.len()).unwrap().to_le_bytes());
+        for note in outputs {
+            key.extend_from_slice(&Fp::from(note.commitment()).to_bytes());
+        }
+        key.extend_from_slice(&Fp::from(max_fee_note.commitment()).to_bytes());
+        key.extend_from_slice(&u64::from(fee).to_le_bytes());
+        BUNDLES.get(&key, |rng| {
+            let mut spend_plans = Vec::new();
+            let mut spend_pcds = Vec::new();
+            for &(note, pool) in spends {
+                let cm = Tachygram::from(note.commitment());
+                let creation = pool
+                    .history
+                    .iter()
+                    .enumerate()
+                    .find(|&(_, block)| {
+                        block
+                            .stamps
+                            .iter()
+                            .any(|stamp| stamp.3 == anchor && stamp.1.contains(&cm))
+                    })
+                    .map(|(height, _)| BlockHeight::from(height));
+                let spendable = creation.map_or_else(
+                    || {
+                        let epoch = (0..=u32::from(pool.height().epoch()) + 1)
+                            .map(EpochIndex::new)
+                            .find(|&epoch| pool.entry_anchor(epoch) == anchor)
+                            .unwrap();
+                        self.spendable_at(app, pool, &note, epoch)
+                    },
+                    |height| self.spendable_init(app, pool, &note, height),
+                );
+                let rcv = value::Trapdoor::random(rng);
+                let theta = ActionEntropy::random(rng);
+                spend_plans.push(action::Plan::spend(note, theta, rcv, |alpha| {
+                    self.pak.ak.derive_action_public(&alpha)
+                }));
+                spend_pcds.push((self.note_secret(app, note), spendable, vec![]));
+            }
+            let output_plans = outputs
+                .iter()
+                .copied()
+                .map(|note| {
+                    let rcv = value::Trapdoor::random(rng);
+                    let theta = ActionEntropy::random(rng);
+                    action::Plan::output(note, theta, rcv)
+                })
+                .collect();
+            let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
+            let sighash = mock_sighash(plan.commitment().unwrap());
+            let signed = plan
+                .sign(rng, &sighash, &self.sk.derive_auth_private())
+                .unwrap();
+            let stamp = plan
+                .stamp_plan(anchor, fee)
+                .prove(rng, app, &self.pak, spend_pcds)
+                .unwrap();
+            (plan, signed.stamp(stamp))
+        })
+    }
+
     pub fn new(sk: private::SpendingKey) -> Self {
         Self {
             sk,
@@ -167,6 +387,21 @@ impl WalletSim {
                 .derive_nullifier(epoch)
         });
         self.unspent_bind(rng, app, arbitrary, note)
+    }
+
+    /// Family notes are distinct because stamps that share a tachygram cannot
+    /// merge.
+    pub fn labelled_note(&self, label: &str, value: u64) -> Note {
+        let mut key = u32::try_from(label.len()).unwrap().to_le_bytes().to_vec();
+        key.extend_from_slice(label.as_bytes());
+        key.extend_from_slice(&value.to_le_bytes());
+        let mut rng = keyed_rng("labelled note", &key);
+        Note {
+            pk: self.sk.derive_payment_key(),
+            value: value::Positive::try_from(value).unwrap(),
+            psi: nullifier::Trapdoor::random(&mut rng),
+            rcm: note::CommitmentTrapdoor::random(&mut rng),
+        }
     }
 
     pub fn random_note(&self, value_amount: u64) -> Note {
@@ -482,111 +717,5 @@ impl WalletSim {
                 lifted
             }
         })
-    }
-
-    pub fn autonome<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        anchor: Anchor,
-        spends: Vec<(
-            Note,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-        )>,
-        output_notes: Vec<Note>,
-    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-        let (bundle_plan, unproven, spend_pcds) =
-            self.signed(rng, app, spends, output_notes, self.random_note(0));
-        let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);
-        let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
-
-        unproven.stamp(stamp)
-    }
-
-    pub fn signed<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        spends: Vec<(
-            Note,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-        )>,
-        output_notes: Vec<Note>,
-        max_fee_note: Note,
-    ) -> (
-        bundle::Plan,
-        Bundle<Unproven>,
-        Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-        )>,
-    ) {
-        let ask = self.sk.derive_auth_private();
-
-        let mut spend_plans = Vec::with_capacity(spends.len());
-        let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, spendable_pcd) in spends {
-            let rcv = value::Trapdoor::random(rng);
-            let theta = ActionEntropy::random(rng);
-            let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-                self.pak.ak.derive_action_public(&alpha)
-            });
-            spend_plans.push(plan);
-            spend_pcds.push((self.note_secret(app, note), spendable_pcd, vec![]));
-        }
-
-        let output_plans: Vec<action::Plan<effect::Output>> = output_notes
-            .into_iter()
-            .map(|note| {
-                let rcv = value::Trapdoor::random(rng);
-                let theta = ActionEntropy::random(rng);
-                action::Plan::output(note, theta, rcv)
-            })
-            .collect();
-
-        let bundle_plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
-        let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-        let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-
-        (bundle_plan, unproven, spend_pcds)
-    }
-
-    pub fn fee_bundle<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        spend_value: u64,
-        output_value: u64,
-        feemax: u64,
-    ) -> (
-        bundle::Plan,
-        Bundle<Unproven>,
-        Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-        )>,
-        Anchor,
-        Note,
-    ) {
-        let spend_note = self.random_note(spend_value);
-        let output_note = self.random_note(output_value);
-        let max_fee_note = self.random_note(feemax);
-
-        let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-        pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
-        let height = pool.height();
-        let spendable_pcd = self.spendable_init(app, &pool, &spend_note, height);
-        let anchor = spendable_pcd.data().2;
-
-        let (bundle_plan, signed, spend_pcds) = self.signed(
-            rng,
-            app,
-            vec![(spend_note, spendable_pcd)],
-            vec![output_note],
-            max_fee_note,
-        );
-        (bundle_plan, signed, spend_pcds, anchor, max_fee_note)
     }
 }

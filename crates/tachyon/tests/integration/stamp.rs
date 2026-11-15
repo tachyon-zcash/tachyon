@@ -10,8 +10,8 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, Anchor, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram,
+    TachygramSetPoly, action, bundle,
     entropy::ActionEntropy,
     fee,
     stamp::{
@@ -26,10 +26,12 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    pool::{PoolSim, random_block, random_block_with},
+    mock_sighash,
+    pool::PoolSim,
     stamp_coverage,
     wallet::{
-        WalletSim, build_autonome, build_output_stamp, output_plan, random_action, shared_sk,
+        WalletSim, alice, alice_output_note, bob, later_output, lifted, merged, output_plan,
+        random_action, shared_sk, spend,
     },
 };
 
@@ -113,19 +115,13 @@ fn plan_prove_rejects_invalid_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let other = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let pool = PoolSim::shared();
+    let note_a = PoolSim::shared_note(500);
+    let note_b = PoolSim::shared_note(700);
+    let height = BlockHeight(1);
 
-    let note_a = user.random_note(500);
-    let note_b = user.random_note(500);
-    pool.mine(random_block_with(
-        rng,
-        &[vec![note_a.commitment(), note_b.commitment()]],
-        50,
-    ));
-    let height = pool.height();
-
-    let sp_a = user.spendable_init(app, &pool, &note_a, height);
-    let sp_b = user.spendable_init(app, &pool, &note_b, height);
+    let sp_a = user.spendable_init(app, pool, &note_a, height);
+    let sp_b = user.spendable_init(app, pool, &note_b, height);
     let anchor = sp_a.data().2;
 
     let (rcv_a, theta_a) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -225,16 +221,12 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-
-    let note = user.random_note(500);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 3));
-    let cm_height = pool.height();
-    pool.advance(2, |_| random_block(rng, 1, 2));
-    let plan_height = pool.height();
-    let middle = cm_height.next().unwrap();
-
-    let spendable = user.spendable_init(app, &pool, &note, cm_height);
+    let pool = PoolSim::shared();
+    let note = PoolSim::shared_note(500);
+    let cm_height = BlockHeight(1);
+    let middle = BlockHeight(2);
+    let plan_height = BlockHeight(3);
+    let spendable = user.spendable_init(app, pool, &note, cm_height);
     let plan_anchor = pool.block(plan_height).anchor();
 
     let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
@@ -265,8 +257,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
     for spans in [
         vec![pool.anchor_span(app, cm_height..=plan_height)],
         vec![
-            pool.anchor_span(app, cm_height..=cm_height),
-            pool.anchor_span(app, middle..=plan_height),
+            pool.anchor_span(app, cm_height..=middle),
+            pool.anchor_span(app, plan_height..=plan_height),
         ],
         vec![
             pool.anchor_span(app, cm_height..=middle),
@@ -315,35 +307,56 @@ fn overlapping_stamps_cannot_aggregate() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let output = wallet.random_note(200);
-    let spend = wallet.random_note(1000);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.mine(random_block_with(rng, &[vec![spend.commitment()]], 50));
-    let spendable = wallet.spendable_init(app, &pool, &spend, pool.height());
-    let anchor = spendable.data().2;
-
-    let (output_a, plan_a, fee_a) = build_output_stamp(rng, app, anchor, output);
-    let (output_b, plan_b, fee_b) = build_output_stamp(rng, app, anchor, output);
-    let spend_a = wallet.autonome(
-        rng,
-        app,
-        anchor,
-        vec![(spend, spendable.clone())],
-        vec![wallet.random_note(700)],
-    );
-    let spend_b = wallet.autonome(
-        rng,
-        app,
-        anchor,
-        vec![(spend, spendable)],
-        vec![wallet.random_note(600)],
-    );
+    let pool = PoolSim::shared();
+    let anchor = pool.mint_anchor();
+    let (_, alice_bundle) = alice(app);
+    let alice_note = alice_output_note();
+    let descriptor_a = alice_bundle.descriptors().next().unwrap();
+    let output_a = alice_bundle.stamp.clone();
+    let fee_a = alice_bundle.fee_descriptor();
+    let (_, _, plan_b) = output_plan(rng, alice_note);
+    let max_fee_note = wallet.random_note(0);
+    let output_b = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(rng, app, &wallet.pak, vec![])
+        .unwrap();
+    let fee_b = fee::Descriptor {
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
+    };
+    let (_, spend_a) = spend(app);
+    let note = PoolSim::shared_note(1000);
+    let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let spend_plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        wallet.pak.ak.derive_action_public(&alpha)
+    });
+    let (_, _, output) = output_plan(rng, wallet.random_note(600));
+    let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
+    let signed = plan
+        .sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let second_spend_stamp = plan
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(
+            rng,
+            app,
+            &wallet.pak,
+            vec![(wallet.note_secret(app, note), spendable, vec![])],
+        )
+        .unwrap();
+    let spend_b = signed.stamp(second_spend_stamp);
 
     for ((left, left_descriptors, left_fees), (right, right_descriptors, right_fees), expected) in [
         (
             (
                 output_a.clone(),
-                BTreeSet::from([plan_a.descriptor()]),
+                BTreeSet::from([descriptor_a]),
                 BTreeSet::from([fee_a]),
             ),
             (
@@ -369,12 +382,12 @@ fn overlapping_stamps_cannot_aggregate() {
         (
             (
                 output_a.clone(),
-                BTreeSet::from([plan_a.descriptor()]),
+                BTreeSet::from([descriptor_a]),
                 BTreeSet::from([fee_a]),
             ),
             (
                 output_a,
-                BTreeSet::from([plan_a.descriptor()]),
+                BTreeSet::from([descriptor_a]),
                 BTreeSet::from([fee_a]),
             ),
             "StampMerge: merged action set must be the product of left and right action sets",
@@ -438,8 +451,7 @@ fn overlapping_stamps_cannot_aggregate() {
 fn verify_proof_action_multiset_invariants() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, app, &wallet, 1000, 700);
+    let (_, stamped) = spend(app);
 
     let digests: Vec<ActionDigest> = stamped
         .actions
@@ -513,9 +525,8 @@ fn read_rejects_malformed_tachygram_lists() {
 fn read_rejects_wrong_proof_size() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let anchor = Anchor::random(rng);
-    let (stamp, ..) = build_output_stamp(rng, app, anchor, wallet.random_note(200));
+    let (_, alice) = alice(app);
+    let stamp = alice.stamp;
     let compressed_size = <stamp::Compressed as stamp::Proof>::encoded_len();
     let uncompressed_size = <stamp::Uncompressed as stamp::Proof>::encoded_len();
 
@@ -565,10 +576,10 @@ fn read_rejects_wrong_proof_size() {
 fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let anchor = Anchor::random(rng);
-    let (stamp, plan, fee_descriptor) =
-        build_output_stamp(rng, app, anchor, wallet.random_note(200));
+    let (_, alice) = alice(app);
+    let descriptor = alice.descriptors().next().unwrap();
+    let fee_descriptor = alice.fee_descriptor();
+    let stamp = alice.stamp;
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
@@ -588,7 +599,10 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
             .verify_proof(
                 rng,
                 app,
-                [plan.digest().unwrap(), fee_descriptor.digest().unwrap()]
+                [
+                    descriptor.digest().unwrap(),
+                    fee_descriptor.digest().unwrap()
+                ]
             )
             .unwrap()
     );
@@ -598,28 +612,21 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note = wallet.random_note(200);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, app, pool.anchor(), note);
-    let stamped_at = pool.height();
-    pool.advance(2, |_| random_block(rng, 1, 4));
-    let lifted_to = pool.height();
+    let pool = PoolSim::shared();
+    let (_, alice) = alice(app);
+    let descriptor = alice.descriptors().next().unwrap();
+    let descriptors = alice.descriptors().collect();
+    let fee_descriptor = alice.fee_descriptor();
+    let stamp = alice.stamp.clone();
+    let lifted_to = BlockHeight(2);
     let fees = BTreeSet::from([fee_descriptor]);
-    let digests = [plan.digest().unwrap(), fee_descriptor.digest().unwrap()];
+    let digests = [
+        descriptor.digest().unwrap(),
+        fee_descriptor.digest().unwrap(),
+    ];
 
-    let span = pool.anchor_span(app, stamped_at.next().unwrap()..=lifted_to);
-    let lifted = stamp
-        .clone()
-        .lift(
-            rng,
-            app,
-            &BTreeSet::from([plan.descriptor()]),
-            &fees,
-            vec![span.clone()],
-        )
-        .unwrap();
+    let span = pool.anchor_span(app, BlockHeight(1)..=lifted_to);
+    let lifted = lifted(app, &alice, pool, BlockHeight(1)..=lifted_to).stamp;
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
     assert_eq!(lifted.coverage, stamp.coverage);
     assert_eq!(lifted.tachygram_set, stamp.tachygram_set);
@@ -630,13 +637,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     stamp.write(&mut bytes).unwrap();
     let decoded = ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
     let lifted_decoded = decoded
-        .lift(
-            rng,
-            app,
-            &BTreeSet::from([plan.descriptor()]),
-            &fees,
-            vec![span.clone()],
-        )
+        .lift(rng, app, &descriptors, &fees, vec![span.clone()])
         .unwrap();
     assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
     assert!(lifted_decoded.verify_proof(rng, app, digests).unwrap());
@@ -652,58 +653,45 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
 fn merge_after_lift() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user_a = WalletSim::random(rng);
-    let user_b = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let pool = PoolSim::shared();
+    let (_, bundle_a) = alice(app);
+    let (_, bundle_b) = later_output(app);
+    let stamp_a = &bundle_a.stamp;
+    let stamp_b = &bundle_b.stamp;
 
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note_a = user_a.random_note(200);
-    let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, app, pool.anchor(), note_a);
-    let height_a = pool.height();
-
-    pool.advance(3, |_| random_block(rng, 1, 4));
-    let note_b = user_b.random_note(300);
-    let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, app, pool.anchor(), note_b);
-    let height_b = pool.height();
-
-    let (desc_a, desc_b) = (
-        BTreeSet::from_iter([plan_a.descriptor()]),
-        BTreeSet::from_iter([plan_b.descriptor()]),
+    let (desc_a, desc_b): (BTreeSet<action::Descriptor>, BTreeSet<action::Descriptor>) = (
+        bundle_a.descriptors().collect(),
+        bundle_b.descriptors().collect(),
     );
-    let (fee_set_a, fee_set_b) = (BTreeSet::from([fee_a]), BTreeSet::from([fee_b]));
+    let (fee_set_a, fee_set_b) = (
+        BTreeSet::from([bundle_a.fee_descriptor()]),
+        BTreeSet::from([bundle_b.fee_descriptor()]),
+    );
 
     assert_matches!(
         stamp_a.clone().merge(
             rng,
             app,
-            (desc_a.clone(), fee_set_a.clone()),
-            (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
+            (desc_a, fee_set_a),
+            (stamp_b.clone(), desc_b, fee_set_b),
         ),
         Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
             if err.to_string() == "StampMerge: anchors must match"
     );
 
-    let span = pool.anchor_span(app, height_a.next().unwrap()..=height_b);
-    let lifted_a = stamp_a
-        .lift(rng, app, &desc_a, &fee_set_a, vec![span])
-        .unwrap();
+    let lifted_a = lifted(app, &bundle_a, pool, BlockHeight(1)..=BlockHeight(2));
 
-    assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    lifted_a
-        .merge(rng, app, (desc_a, fee_set_a), (stamp_b, desc_b, fee_set_b))
-        .unwrap();
+    assert_eq!(lifted_a.stamp.anchor, stamp_b.anchor);
+    let combined = merged(app, &lifted_a, &bundle_b);
+    assert_eq!(combined.stamp.anchor, lifted_a.stamp.anchor);
 }
 
 #[test]
 fn mismatched_merge_descriptors_fail_verification() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user_a = WalletSim::random(rng);
-    let user_b = WalletSim::random(rng);
-    let anchor = Anchor::random(rng);
-
-    let bundle_a = user_a.autonome(rng, app, anchor, vec![], vec![user_a.random_note(200)]);
-    let bundle_b = user_b.autonome(rng, app, anchor, vec![], vec![user_b.random_note(300)]);
+    let (_, bundle_a) = alice(app);
+    let (_, bundle_b) = bob(app);
     let (descriptors_a, fees_a) = bundle_a.verify_coverage(&[], &[]).unwrap();
     let (descriptors_b, fees_b) = bundle_b.verify_coverage(&[], &[]).unwrap();
     let foreign = random_action(rng).descriptor();
@@ -725,24 +713,12 @@ fn mismatched_merge_descriptors_fail_verification() {
         bundle_a.stamp.clone().merge(
             rng,
             app,
-            (descriptors_a.clone(), fees_a.clone()),
-            (
-                bundle_b.stamp.clone(),
-                BTreeSet::from([foreign]),
-                fees_b.clone(),
-            ),
+            (descriptors_a, fees_a),
+            (bundle_b.stamp.clone(), BTreeSet::from([foreign]), fees_b,),
         ),
         Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
     );
 
-    let honest = bundle_a
-        .stamp
-        .merge(
-            rng,
-            app,
-            (descriptors_a, fees_a),
-            (bundle_b.stamp, descriptors_b, fees_b),
-        )
-        .unwrap();
+    let honest = merged(app, &bundle_a, &bundle_b).stamp;
     assert!(honest.verify_proof(rng, app, digests).unwrap());
 }
