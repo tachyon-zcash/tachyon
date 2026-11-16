@@ -6,7 +6,7 @@ use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
     field::Field as _,
-    polynomial::{divide_linear_in_place, evaluate_iter, vanishing_polynomial},
+    polynomial::{evaluate_iter, vanishing_polynomial},
 };
 
 use crate::pasta::Fp;
@@ -123,14 +123,6 @@ pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     }
 
     polys.into_iter().next().expect("nonempty product tree")
-}
-
-/// The exact quotient of `coeffs` by $(X - \mathsf{root})$, or `None` when a
-/// remainder is left.
-pub(crate) fn divide_by_root(coeffs: &[Fp], root: Fp) -> Option<Vec<Fp>> {
-    let mut quotient = coeffs.to_vec();
-    let split = divide_linear_in_place(Fp::as_slice_mut(&mut quotient), root.as_inner());
-    (split == 1 && quotient.first() == Some(&Fp::ZERO)).then(|| quotient.split_off(split))
 }
 
 /// The polynomial of least degree through `points`, or `None` when two points

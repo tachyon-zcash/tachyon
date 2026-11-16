@@ -26,7 +26,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use udon::field::Field as _;
+use udon::{field::Field as _, polynomial::divide_monic_in_place};
 
 use crate::{arithmetic, pasta::Fp};
 
@@ -103,6 +103,10 @@ pub(crate) fn split(
 ///
 /// Returns `None` when two abscissas coincide or a point lies off the side.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "the vanishing polynomial of the abscissas is monic"
+)]
 pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
     class: Fp,
@@ -116,21 +120,26 @@ pub(crate) fn decomposition(
     } else {
         arithmetic::interpolate(points)?
     };
+    let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
+    let vanishing = arithmetic::poly_with_roots(&abscissas);
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
-        let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
-        interpolant_coeffs = arithmetic::poly_with_roots(&abscissas);
+        interpolant_coeffs.clone_from(&vanishing);
     }
 
     let translate = [class * shift, class];
-    let mut h_coeffs = arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs);
-    if h_coeffs.len() < translate.len() {
-        h_coeffs.resize(translate.len(), Fp::ZERO);
+    let mut dividend = arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs);
+    if dividend.len() < translate.len() {
+        dividend.resize(translate.len(), Fp::ZERO);
     }
-    for (coeff, &translate_coeff) in h_coeffs.iter_mut().zip(&translate) {
+    for (coeff, &translate_coeff) in dividend.iter_mut().zip(&translate) {
         *coeff -= translate_coeff;
     }
-    for &(abscissa, _) in points {
-        h_coeffs = arithmetic::divide_by_root(&h_coeffs, abscissa)?;
+    let remainder_len =
+        divide_monic_in_place(Fp::as_slice_mut(&mut dividend), Fp::as_slice(&vanishing))
+            .expect("the vanishing polynomial is monic");
+    let h_coeffs = dividend.split_off(remainder_len);
+    if dividend.iter().any(|coeff| coeff != &Fp::ZERO) {
+        return None;
     }
 
     Some((
