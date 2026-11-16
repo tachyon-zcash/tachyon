@@ -26,8 +26,8 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | A stamp's fee descriptors | `Tachyon-Fees` |
 | A stamp's coverage | `Tachyon-Coverage` |
 | Memo payload | `Tachyon-Memo` |
-| Stamp proof | `Tachyon-Proof` |
-| Stamp data | `Tachyon-Stamp` |
+| Stamp proof and its header | `Tachyon-Proof` |
+| Stamp | `Tachyon-Stamp` |
 
 ## BLAKE2b-512
 

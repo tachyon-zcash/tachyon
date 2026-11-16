@@ -6,7 +6,8 @@ use core::{assert_matches, iter};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    ActionSetPoly, BlockHeight, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly,
+    VerificationError, VerifyCoverageError, bundle,
     stamp::{
         self, ProofStamp, ProveError,
         proof::stamp::{Stamp, StampUnmerge},
@@ -37,12 +38,15 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             rng,
             app,
             (
-                alice.descriptors().chain(bob.descriptors()).collect(),
+                alice
+                    .action_tachygrams()
+                    .chain(bob.action_tachygrams())
+                    .collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
             ),
             (
                 carol.stamp.clone(),
-                carol.descriptors().collect(),
+                carol.action_tachygrams().collect(),
                 [carol.fee_descriptor()].into(),
             ),
         )
@@ -51,12 +55,12 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let decoded_aggregate = {
         let mut bytes = Vec::new();
         all_three.write(&mut bytes).unwrap();
-        ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap()
+        ProofStamp::<stamp::Uncompressed>::read(&*bytes, all_three.tachygrams.pairs.len()).unwrap()
     };
     for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
         (
             bob.stamp.clone(),
-            bob.descriptors().collect(),
+            bob.action_tachygrams().collect(),
             [bob.fee_descriptor()].into(),
             vec![carol.clone()],
         ),
@@ -66,15 +70,20 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                 .merge(
                     rng,
                     app,
-                    (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
+                    (
+                        bob.action_tachygrams().collect(),
+                        [bob.fee_descriptor()].into(),
+                    ),
                     (
                         carol.stamp.clone(),
-                        carol.descriptors().collect(),
+                        carol.action_tachygrams().collect(),
                         [carol.fee_descriptor()].into(),
                     ),
                 )
                 .unwrap(),
-            bob.descriptors().chain(carol.descriptors()).collect(),
+            bob.action_tachygrams()
+                .chain(carol.action_tachygrams())
+                .collect(),
             [bob.fee_descriptor(), carol.fee_descriptor()].into(),
             vec![],
         ),
@@ -87,9 +96,9 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                 app,
                 (
                     alice
-                        .descriptors()
-                        .chain(bob.descriptors())
-                        .chain(carol.descriptors())
+                        .action_tachygrams()
+                        .chain(bob.action_tachygrams())
+                        .chain(carol.action_tachygrams())
                         .collect(),
                     [
                         alice.fee_descriptor(),
@@ -132,12 +141,12 @@ fn unmerge_keeps_the_dividend_fee() {
             rng,
             app,
             (
-                alice.descriptors().collect(),
+                alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
             (
                 bob.stamp.clone(),
-                bob.descriptors().collect(),
+                bob.action_tachygrams().collect(),
                 [bob.fee_descriptor()].into(),
             ),
         )
@@ -150,12 +159,15 @@ fn unmerge_keeps_the_dividend_fee() {
             rng,
             app,
             (
-                alice.descriptors().chain(bob.descriptors()).collect(),
+                alice
+                    .action_tachygrams()
+                    .chain(bob.action_tachygrams())
+                    .collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
             ),
             (
                 bob.stamp.clone(),
-                bob.descriptors().collect(),
+                bob.action_tachygrams().collect(),
                 [bob.fee_descriptor()].into(),
             ),
         )
@@ -176,12 +188,15 @@ fn unmerge_keeps_the_dividend_fee() {
             rng,
             app,
             (
-                alice.descriptors().chain(bob.descriptors()).collect(),
+                alice
+                    .action_tachygrams()
+                    .chain(bob.action_tachygrams())
+                    .collect(),
                 [alice.fee_descriptor(), bob.fee_descriptor()].into(),
             ),
             (
                 alice.stamp.clone(),
-                alice.descriptors().collect(),
+                alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
         )
@@ -208,12 +223,12 @@ fn unmerge_keeps_the_dividend_fee() {
             rng,
             app,
             (
-                carol.descriptors().collect(),
+                carol.action_tachygrams().collect(),
                 [carol.fee_descriptor()].into(),
             ),
             (
                 hostless.stamp,
-                bob.descriptors().collect(),
+                bob.action_tachygrams().collect(),
                 [bob.fee_descriptor()].into(),
             ),
         )
@@ -246,12 +261,12 @@ fn unmerge_by_a_lifted_divisor() {
             rng,
             app,
             (
-                later.descriptors().chain(earlier.descriptors()).collect(),
+                later.action_tachygrams().chain(earlier.action_tachygrams()).collect(),
                 [later.fee_descriptor(), earlier.fee_descriptor()].into(),
             ),
             (
                 earlier.stamp.clone(),
-                earlier.descriptors().collect(),
+                earlier.action_tachygrams().collect(),
                 [earlier.fee_descriptor()].into(),
             ),
         ),
@@ -264,12 +279,15 @@ fn unmerge_by_a_lifted_divisor() {
             rng,
             app,
             (
-                later.descriptors().chain(earlier.descriptors()).collect(),
+                later
+                    .action_tachygrams()
+                    .chain(earlier.action_tachygrams())
+                    .collect(),
                 [later.fee_descriptor(), earlier.fee_descriptor()].into(),
             ),
             (
                 lifted_divisor,
-                earlier.descriptors().collect(),
+                earlier.action_tachygrams().collect(),
                 [earlier.fee_descriptor()].into(),
             ),
         )
@@ -299,17 +317,16 @@ fn unmerge_by_itself_leaves_no_leaves() {
             rng,
             app,
             (
-                alice.descriptors().collect(),
+                alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
             (
                 alice.stamp.clone(),
-                alice.descriptors().collect(),
+                alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
         )
         .unwrap();
-    assert!(quotient.tachygrams.is_empty());
     assert!(quotient.verify_proof(rng, app, []).unwrap());
 
     alice.stamp = quotient;
@@ -341,11 +358,14 @@ fn unmerge_splitting_a_bundle() {
         .flatten()
         .next()
         .unwrap();
-    let removed_descriptor = removed_plan.descriptor();
     let kept_descriptor = kept_plan.descriptor();
 
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
+    let stamp = plan
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(rng, app, &wallet.pak, vec![])
+        .unwrap();
     let mut whole = plan
         .sign(
             rng,
@@ -353,12 +373,14 @@ fn unmerge_splitting_a_bundle() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap()
-        .stamp(
-            plan.stamp_plan(anchor, value::Positive::ZERO)
-                .prove(rng, app, &wallet.pak, vec![])
-                .unwrap(),
-        );
+        .stamp(stamp)
+        .unwrap();
+    let (_, kept_pair) = whole
+        .action_tachygrams()
+        .find(|&(descriptor, _)| descriptor == kept_descriptor)
+        .unwrap();
 
+    let part_pairs = alice.action_tachygrams().collect();
     let part = alice.stamp;
 
     let quotient = whole
@@ -368,19 +390,19 @@ fn unmerge_splitting_a_bundle() {
             rng,
             app,
             (
-                whole.descriptors().collect(),
+                whole.action_tachygrams().collect(),
                 [whole.fee_descriptor()].into(),
             ),
-            (
-                part,
-                [removed_descriptor].into(),
-                [whole.fee_descriptor()].into(),
-            ),
+            (part, part_pairs, [whole.fee_descriptor()].into()),
         )
         .unwrap();
     assert!(
         quotient
-            .verify_proof(rng, app, [kept_descriptor.digest().unwrap()])
+            .verify_proof(
+                rng,
+                app,
+                [ActionDigest::new(kept_descriptor, kept_pair).unwrap()]
+            )
             .unwrap()
     );
 
@@ -401,6 +423,75 @@ fn unmerge_splitting_a_bundle() {
 }
 
 #[test]
+fn unmerge_rejects_a_reproven_note_as_divisor() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = Anchor::random(rng);
+    let note = wallet.random_note(300);
+    let max_fee_note = wallet.random_note(100);
+    let fee = value::Positive::try_from(40u64).unwrap();
+    let [original, reproven] = [(), ()].map(|()| {
+        let output = output_plan(rng, note).2;
+        let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
+        let signed = plan
+            .sign(
+                rng,
+                &mock_sighash(plan.commitment().unwrap()),
+                &wallet.sk.derive_auth_private(),
+            )
+            .unwrap();
+        let stamp = plan
+            .stamp_plan(anchor, fee)
+            .prove(rng, app, &wallet.pak, vec![])
+            .unwrap();
+        signed.stamp(stamp).unwrap()
+    });
+    let (_, other) = wallet.bundle(
+        app,
+        anchor,
+        &[],
+        &[wallet.random_note(200)],
+        wallet.random_note(0),
+        value::Positive::ZERO,
+    );
+    let dividend = original
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            app,
+            (
+                original.action_tachygrams().collect(),
+                [original.fee_descriptor()].into(),
+            ),
+            (
+                other.stamp.clone(),
+                other.action_tachygrams().collect(),
+                [other.fee_descriptor()].into(),
+            ),
+        )
+        .unwrap();
+    let divisor_pairs = reproven.action_tachygrams().collect();
+    let divisor_fees = [reproven.fee_descriptor()].into();
+    assert_matches!(
+        dividend.unmerge(
+            rng,
+            app,
+            (
+                original
+                    .action_tachygrams()
+                    .chain(other.action_tachygrams())
+                    .collect(),
+                [original.fee_descriptor(), other.fee_descriptor()].into(),
+            ),
+            (reproven.stamp, divisor_pairs, divisor_fees),
+        ),
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
+    );
+}
+
+#[test]
 fn unmerge_binds_its_sets() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
@@ -408,19 +499,36 @@ fn unmerge_binds_its_sets() {
     let (_, bob) = bob(app);
     let alice_bob = merged(app, &alice, &bob).stamp;
 
-    let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
+    let alice_members = alice
+        .stamp
+        .tachygrams
+        .pairs
+        .iter()
+        .copied()
+        .flat_map(<[Tachygram; 2]>::from)
+        .chain([alice.stamp.tachygrams.fee_change]);
+    let bob_members = bob
+        .stamp
+        .tachygrams
+        .pairs
+        .iter()
+        .copied()
+        .flat_map(<[Tachygram; 2]>::from)
+        .chain([bob.stamp.tachygrams.fee_change]);
+    let alice_bob_tachygrams: TachygramSetPoly =
+        alice_members.clone().chain(bob_members.clone()).collect();
     let alice_actions: ActionSetPoly = alice
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .chain(iter::once(alice.fee_descriptor().digest().unwrap()))
         .collect();
-    let alice_tachygrams: TachygramSetPoly = alice.stamp.tachygrams.iter().copied().collect();
+    let alice_tachygrams: TachygramSetPoly = alice_members.clone().collect();
     let bob_actions: ActionSetPoly = bob
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
         .collect();
-    let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
+    let bob_tachygrams: TachygramSetPoly = bob_members.clone().collect();
     let dividend_header = (
         app.bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
             .unwrap()
@@ -451,14 +559,10 @@ fn unmerge_binds_its_sets() {
         (
             {
                 let mut corrupt = valid;
-                let dropped = *alice.stamp.tachygrams.first().unwrap();
-                corrupt.1 = alice
-                    .stamp
-                    .tachygrams
-                    .iter()
-                    .copied()
+                let dropped = alice_members.clone().next().unwrap();
+                corrupt.1 = alice_members
                     .filter(|&tachygram| tachygram != dropped)
-                    .chain([*bob.stamp.tachygrams.first().unwrap()])
+                    .chain(bob_members.take(1))
                     .collect();
                 corrupt
             },

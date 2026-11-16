@@ -1,13 +1,17 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeSet, string::ToString as _, vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    string::ToString as _,
+    vec,
+};
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
+    VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
     pasta::Fp,
     stamp::{
@@ -69,9 +73,12 @@ fn fee_less_output_bundle(
             coverage: stamp_coverage([output_plan.descriptor()], &[]),
             anchor,
             tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
-            tachygrams: BTreeSet::from([cm, pad]),
             proof: Box::new(pcd.proof().clone()),
             fee: value::Positive::ZERO,
+            tachygrams: stamp::Tachygrams {
+                pairs: vec![(cm.min(pad), cm.max(pad))],
+                fee_change: max_fee_note.commitment().into(),
+            },
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
@@ -82,6 +89,7 @@ fn fee_less_output_bundle(
         )
         .unwrap()
         .stamp(stamp)
+        .unwrap()
     })
 }
 
@@ -95,22 +103,36 @@ fn fee_fuse_binds_its_sets() {
     let left = fee_less_output_bundle(app, max_fee_note);
 
     let action_digests: BTreeSet<ActionDigest> = left
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .collect();
     let valid = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
-        &left.stamp.tachygrams,
+        &left
+            .stamp
+            .tachygrams
+            .pairs
+            .iter()
+            .copied()
+            .flat_map(<[Tachygram; 2]>::from)
+            .collect(),
     );
     let other = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
-        &left.stamp.tachygrams,
+        &left
+            .stamp
+            .tachygrams
+            .pairs
+            .iter()
+            .copied()
+            .flat_map(<[Tachygram; 2]>::from)
+            .collect(),
     );
 
     for (corrupt, expected) in [
@@ -162,8 +184,8 @@ fn fee_fuse_slack_boundaries() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, wallet.random_note(300));
     let digests = left
-        .descriptors()
-        .map(|descriptor| descriptor.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .collect();
     let left_pcd = left.stamp.proof.clone().carry::<Actions>(anchor);
     for (maximum, fee) in [
@@ -180,7 +202,14 @@ fn fee_fuse_slack_boundaries() {
             note,
             value::Positive::try_from(fee).unwrap(),
             &digests,
-            &left.stamp.tachygrams,
+            &left
+                .stamp
+                .tachygrams
+                .pairs
+                .iter()
+                .copied()
+                .flat_map(<[Tachygram; 2]>::from)
+                .collect(),
         );
         let (pcd, ()) = app
             .fuse(
@@ -247,8 +276,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
 
     let [_, once, _] = bundles;
     let digests: BTreeSet<_> = once
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .chain([once.fee_descriptor().digest().unwrap()])
         .collect();
     let repeated_witness = witness::fee_fuse(
@@ -256,7 +285,15 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         max_fee_note,
         value::Positive::try_from(0).unwrap(),
         &digests,
-        &once.stamp.tachygrams,
+        &once
+            .stamp
+            .tachygrams
+            .pairs
+            .iter()
+            .copied()
+            .flat_map(<[Tachygram; 2]>::from)
+            .chain([once.stamp.tachygrams.fee_change])
+            .collect(),
     );
     assert_matches!(
         app.fuse(
@@ -271,9 +308,6 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     );
     let mut twice_stamp = once.stamp.clone();
     twice_stamp.tachygram_set = repeated_witness.2.1.commit();
-    twice_stamp
-        .tachygrams
-        .insert(max_fee_note.commitment().into());
     twice_stamp.coverage = [0; 32];
     let mut twice = Bundle {
         stamp: twice_stamp,
@@ -288,16 +322,10 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     );
 
     twice.stamp.coverage = stamp_coverage(twice.descriptors(), &[twice.fee_descriptor()]);
-    assert_matches!(
-        twice.verify(rng, app, &sighash, &mock_wtxid(&twice).into(), &[]),
-        Err(VerificationError::Tachygrams(
-            VerifyTachygramsError::WrongArity
-        ))
-    );
 
     let published_digests: Vec<ActionDigest> = twice
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
+        .actions()
+        .map(|action| action.digest().unwrap())
         .chain([twice.fee_descriptor().digest().unwrap()])
         .collect();
     assert!(!twice.verify_proof(rng, app, &published_digests).unwrap());
@@ -317,12 +345,12 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             rng,
             app,
             (
-                aggregate.descriptors().collect(),
+                aggregate.action_tachygrams().collect(),
                 [aggregate.fee_descriptor()].into(),
             ),
             (
                 fee_bearing.stamp.clone(),
-                fee_bearing.descriptors().collect(),
+                fee_bearing.action_tachygrams().collect(),
                 [fee_bearing.fee_descriptor()].into(),
             ),
         )
@@ -362,22 +390,14 @@ fn verify_rejects_a_stamp_without_its_fee() {
     );
 
     fee_less.stamp.coverage = stamp_coverage(fee_less.descriptors(), &[fee_less.fee_descriptor()]);
-    assert_matches!(
-        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
-        Err(VerificationError::Tachygrams(
-            VerifyTachygramsError::WrongArity
-        ))
-    );
-
-    fee_less
-        .stamp
-        .tachygrams
-        .insert(Tachygram::from(max_fee_note.commitment()));
     fee_less.stamp.tachygram_set = fee_less
         .stamp
         .tachygrams
+        .pairs
         .iter()
         .copied()
+        .flat_map(<[Tachygram; 2]>::from)
+        .chain([fee_less.stamp.tachygrams.fee_change])
         .collect::<TachygramSetPoly>()
         .commit();
     assert_matches!(
@@ -395,7 +415,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
 
     let [(_, adjunct), _, _] = outputs_with_fees(app);
     let aggregate_stamp = signed.stamp.clone();
-    let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
+    let aggregate_descriptors: BTreeMap<_, _> = signed.action_tachygrams().collect();
     let aggregate_fee_descriptors = BTreeSet::from([signed.fee_descriptor()]);
 
     let merged_stamp = aggregate_stamp
@@ -405,7 +425,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             (aggregate_descriptors, aggregate_fee_descriptors),
             (
                 adjunct.stamp.clone(),
-                adjunct.descriptors().collect(),
+                adjunct.action_tachygrams().collect(),
                 [adjunct.fee_descriptor()].into(),
             ),
         )
@@ -455,12 +475,12 @@ fn fee_bearing_aggregates_merge_and_lift() {
                 rng,
                 app,
                 (
-                    bundle.descriptors().collect(),
+                    bundle.action_tachygrams().collect(),
                     [bundle.fee_descriptor()].into(),
                 ),
                 (
                     auto.stamp.clone(),
-                    auto.descriptors().collect(),
+                    auto.action_tachygrams().collect(),
                     [auto.fee_descriptor()].into(),
                 ),
             )
@@ -473,14 +493,16 @@ fn fee_bearing_aggregates_merge_and_lift() {
             rng,
             app,
             (
-                left.descriptors().chain(left_auto.descriptors()).collect(),
+                left.action_tachygrams()
+                    .chain(left_auto.action_tachygrams())
+                    .collect(),
                 [left.fee_descriptor(), left_auto.fee_descriptor()].into(),
             ),
             (
                 right.stamp.clone(),
                 right
-                    .descriptors()
-                    .chain(right_auto.descriptors())
+                    .action_tachygrams()
+                    .chain(right_auto.action_tachygrams())
                     .collect(),
                 [right.fee_descriptor(), right_auto.fee_descriptor()].into(),
             ),
@@ -544,12 +566,12 @@ fn innocent_seed_merges_and_strips() {
             rng,
             app,
             (
-                innocent.descriptors().collect(),
+                innocent.action_tachygrams().collect(),
                 [innocent.fee_descriptor()].into(),
             ),
             (
                 adjunct.stamp.clone(),
-                adjunct.descriptors().collect(),
+                adjunct.action_tachygrams().collect(),
                 [adjunct.fee_descriptor()].into(),
             ),
         )
@@ -563,14 +585,14 @@ fn innocent_seed_merges_and_strips() {
             rng,
             app,
             (
-                parent.descriptors().collect(),
+                parent.action_tachygrams().collect(),
                 [parent.fee_descriptor()].into(),
             ),
             (
                 innocent.stamp.clone(),
                 innocent
-                    .descriptors()
-                    .chain(adjunct.descriptors())
+                    .action_tachygrams()
+                    .chain(adjunct.action_tachygrams())
                     .collect(),
                 [innocent.fee_descriptor(), adjunct.fee_descriptor()].into(),
             ),

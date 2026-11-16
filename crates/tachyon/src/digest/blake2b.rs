@@ -186,53 +186,54 @@ pub fn bundle_commitment(
     })
 }
 
-const STAMP_DATA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
+const STAMP_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 
-/// Digest of a stamp's proof.
+/// `hStampProofTachyon`, the stamp proof and its header.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(
+///     \mathsf{anchorTachyon} \Vert
+///     \mathsf{cTachygrams} \Vert
 ///     \mathsf{proofTachyon}
 ///   )
 /// $$
 #[must_use]
-pub fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
+pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8]) -> [u8; 32] {
     hasher_256(STAMP_PROOF_PERSONALIZATION, |state| {
+        state.update(&anchor);
+        state.update(&tachygram_set);
+        // only variable-length component
         state.update(proof);
     })
 }
 
-/// Digest of a proof stamp's proof, anchor, tachygram-set commitment, and
-/// tachygrams.
-///
-/// Tachygrams are hashed in the order given, so the digest commits to that
-/// order.
+/// `hStampTachyon`, one layout for every stamp form.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
-///     \mathsf{hStampProofTachyon} \Vert
-///     \mathsf{anchorTachyon} \Vert
-///     \mathsf{cTachygrams} \Vert
-///     \mathsf{vTachygrams}
+///     \mathsf{vTachygrams} \Vert
+///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert
+///     \mathsf{tachyonStampState}
 ///   )
 /// $$
+///
+/// $\mathsf{tachyonBundleState}$ is one byte indicating format of the 64-byte
+/// $\mathsf{tachyonStampState}$
+///
+/// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
+/// | ----------------------------- | ---- | ---------------------------- |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampProofTachyon} $ |
+/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{tachyonAggregateId} $ |
 #[must_use]
-pub fn stamp_data_digest(
-    stamp_proof_digest: [u8; 32],
-    anchor: [u8; 32],
-    tachygram_set: [u8; 32],
-    tachygrams: &[[u8; 32]],
-) -> [u8; 32] {
-    hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
-        state.update(&stamp_proof_digest);
-        state.update(&anchor);
-        state.update(&tachygram_set);
-
+pub fn stamp_digest(tachygrams: &[[u8; 32]], fee: u64, stamp_state: &[u8; 64]) -> [u8; 32] {
+    hasher_256(STAMP_PERSONALIZATION, |state| {
         // only variable-length component
-        for tg in tachygrams {
-            state.update(tg);
+        for tachygram in tachygrams {
+            state.update(tachygram);
         }
+        state.update(&fee.to_le_bytes());
+        state.update(stamp_state);
     })
 }
 
@@ -241,23 +242,15 @@ pub fn stamp_data_digest(
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \Vert \mathsf{vActionSigs} \Vert
-///     \mathsf{bindingSigTachyon} \Vert \mathsf{tachyonStampState}
+///     \mathsf{bindingSigTachyon} \Vert \mathsf{hStampTachyon}
 ///   )
 /// $$
-///
-/// $\mathsf{tachyonBundleState}$ is one byte indicating format of
-/// $\mathsf{tachyonStampState}$
-///
-/// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
-/// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
-/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonAggregateId} $ |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
-    stamp_contrib: &[u8; 72],
+    stamp_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
         state.update(&[state_header]);
@@ -266,7 +259,7 @@ pub fn bundle_auth_digest(
             state.update(sig);
         }
         state.update(binding_sig);
-        state.update(stamp_contrib);
+        state.update(stamp_digest);
     })
 }
 

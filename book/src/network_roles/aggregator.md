@@ -37,7 +37,7 @@ A transparent aggregate can be split into any subset of its bundles by that part
 
 Two things make aggregates transparent in practice.
 
-- Keep every input you merged and the order you merged them in, with the signed bundles, their descriptors and the fee each was merged at.
+- Keep every input you merged and the order you merged them in, with the signed bundles, their action pairs, and the fee and fee change each was merged with.
 - Cache recent mempool autonomes and aggregates.
 
 Hold both until the end of the epoch after the working aggregate's anchor epoch.
@@ -53,7 +53,7 @@ Work at a current-epoch [anchor](../anchor.md) and lift every input to it before
 Lifts cannot cross an [epoch boundary](../anchor.md#epoch-boundary).
 An aggregate started in one epoch is finished within the following epoch or rebuilt.
 
-Compare candidates' [tachygrams](../tachygrams.md) with each other and with the working aggregate, and merge a disjoint set.
+Derive candidates' [tachygram unions](../tachygrams.md#tachygram-sets) from their covered bundles' action pairs and fee changes, compare them with each other and with the working aggregate, and merge a disjoint set.
 Keep the stamps of the overlapping candidates you passed over.
 The block may include one of those instead.
 
@@ -65,7 +65,7 @@ If cooperative aggregators decline to stack such aggregates, the cost of withhol
 
 Call the working stamp $W$.
 Find which of $W$'s bundles the block includes by comparing action descriptors, which are public on both sides.
-Compare fees separately, because the block may carry a bundle at a different fee than $W$ holds it at.
+Compare action pairs, fees, and fee changes separately, because a spend re-proven at another epoch has a different pair, and the block may carry a bundle at a different fee than $W$ holds it at.
 Compare tachygrams too, because a conflicting spend of the same note has a different descriptor and the same nullifiers.
 Every match has to come out of $W$ before $W$ can be published, because consensus rejects a tachygram published twice within [two epochs](../tachygrams.md#consensus-validation).
 
@@ -115,8 +115,8 @@ Rebuild instead when that is less work than the divisions and merges needed.
 
 $Q$ can go back on $A$ only if it still covers $A$'s own actions and fee.
 If the block included $A$'s bundle too, the remaining work has to go into a different complete aggregate.
-Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and no bundle it covers can carry it.
-Merge $Q$ into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, and the merged stamp keeps that bundle's fee.
+Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and fee change and no bundle it covers can carry them.
+Merge $Q$ into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, and the merged stamp keeps that bundle's fee and fee change.
 
 ## At the miner
 

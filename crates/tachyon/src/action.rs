@@ -12,7 +12,7 @@ use crate::{
     keys::{private, public},
     note::Note,
     pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
+    primitives::{ActionDigest, ActionDigestError, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
 
@@ -33,15 +33,6 @@ pub struct Descriptor {
 }
 
 impl Descriptor {
-    /// Derive the action digest.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
-    }
-
     /// Read an action descriptor from the consensus wire format.
     ///
     /// # Errors
@@ -169,15 +160,6 @@ impl<E: Effect> Plan<E> {
         E::commit_value(self.rcv, self.note.value)
     }
 
-    /// Derive the action digest.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv(), self.rk)
-    }
-
     /// Obtain a descriptor for this planned action.
     #[must_use]
     pub fn descriptor(&self) -> Descriptor {
@@ -190,33 +172,19 @@ impl<E: Effect> Plan<E> {
 
 /// An authorized Tachyon action.
 ///
-/// - `cv`: Commitment to a value effect
-/// - `rk`: Public key (randomized counterpart to `rsk`)
+/// - `descriptor`: Value commitment `cv` and randomized key `rk`
+/// - `tg`: Tachygram pair
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
-    /// Value commitment.
-    ///
-    /// $$
-    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
-    /// $$
-    pub cv: value::Commitment,
+    /// The action's `cv` and `rk`.
+    pub descriptor: Descriptor,
 
-    /// Randomized action verification key $\mathsf{rk}$.
-    pub rk: public::ActionVerificationKey,
+    /// The action's tachygrams.
+    pub tg: (Tachygram, Tachygram),
 
     /// RedPallas spend auth signature over the transaction sighash.
     pub sig: Signature,
-}
-
-impl From<(Descriptor, Signature)> for Action {
-    fn from((desc, sig): (Descriptor, Signature)) -> Self {
-        Self {
-            cv: desc.cv,
-            rk: desc.rk,
-            sig,
-        }
-    }
 }
 
 impl Action {
@@ -226,16 +194,7 @@ impl Action {
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
-    }
-
-    /// Obtain a descriptor for this action.
-    #[must_use]
-    pub const fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            cv: self.cv,
-            rk: self.rk,
-        }
+        ActionDigest::new(self.descriptor, self.tg)
     }
 }
 
@@ -247,18 +206,16 @@ impl PartialOrd for Action {
 
 impl Ord for Action {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.descriptor()
-            .cmp(&other.descriptor())
+        self.descriptor
+            .cmp(&other.descriptor)
+            .then(self.tg.cmp(&other.tg))
             .then(self.sig.cmp(&other.sig))
     }
 }
 
 impl From<Action> for Descriptor {
     fn from(action: Action) -> Self {
-        Self {
-            cv: action.cv,
-            rk: action.rk,
-        }
+        action.descriptor
     }
 }
 
