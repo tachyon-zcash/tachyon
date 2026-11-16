@@ -15,38 +15,15 @@ use crate::pasta::Fp;
 const ROOT_CHUNK: usize = 128;
 
 /// The product of `left` and `right`, empty when either factor is empty.
+#[expect(
+    clippy::expect_used,
+    reason = "the product fits the FFT domain, which expands onto itself"
+)]
 pub(crate) fn poly_mul(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
     if left.is_empty() || right.is_empty() {
         return Vec::new();
     }
 
-    let schoolbook_cost = left.len().saturating_mul(right.len());
-    let fft_cost = (left.len() + right.len() - 1)
-        .next_power_of_two()
-        .saturating_mul(16);
-    if schoolbook_cost <= fft_cost {
-        poly_mul_schoolbook(left, right)
-    } else {
-        poly_mul_fft(left, right)
-    }
-}
-
-#[expect(clippy::indexing_slicing, reason = "the output spans the convolution")]
-fn poly_mul_schoolbook(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
-    let mut out = vec![Fp::ZERO; left.len() + right.len() - 1];
-    for (i, ai) in left.iter().enumerate() {
-        for (j, bj) in right.iter().enumerate() {
-            out[i + j] += *ai * bj;
-        }
-    }
-    out
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "the product fits the FFT domain, which expands onto itself"
-)]
-fn poly_mul_fft(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
     let result_len = left.len() + right.len() - 1;
     let n = result_len.next_power_of_two();
     let transform = Transform::new(
