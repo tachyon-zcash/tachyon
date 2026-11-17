@@ -186,14 +186,11 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// `actions`. This has the same length as `actions`.
     pub action_auth: Vec<(action::Signature, (Tachygram, Tachygram))>,
 
-    /// The max fee note's value commitment.
-    pub cv_feemax: value::Commitment,
-
-    /// The fee paid by this bundle.
-    pub fee: value::Positive,
+    /// The max fee note's value commitment and the fee paid by this bundle.
+    pub fee: fee::Descriptor,
 
     /// The fee change note commitment.
-    pub cm_change: Tachygram,
+    pub fee_auth: Tachygram,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -246,15 +243,6 @@ impl<S: StampState + 'static> PartialEq for Bundle<S> {
 }
 
 impl<S: StampState + ?Sized> Bundle<S> {
-    /// The bundle's fee descriptor.
-    #[must_use]
-    pub const fn fee_descriptor(&self) -> fee::Descriptor {
-        fee::Descriptor {
-            cv_feemax: self.cv_feemax,
-            v_fee: self.fee,
-        }
-    }
-
     /// Digest the bundle's effecting data.
     ///
     /// This contributes to the transaction sighash. The stamp and the fee are
@@ -272,7 +260,7 @@ impl<S: StampState + ?Sized> Bundle<S> {
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
-            &self.cv_feemax.into(),
+            &self.fee.cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         )
     }
@@ -289,7 +277,7 @@ impl<S: StampState + ?Sized> Bundle<S> {
             self.actions
                 .iter()
                 .map(|desc| desc.cv)
-                .chain([self.cv_feemax]),
+                .chain([self.fee.cv_feemax]),
             self.value_balance,
         );
 
@@ -656,9 +644,11 @@ impl Unproven {
             actions,
             action_auth,
             value_balance: self.value_balance,
-            cv_feemax: self.cv_feemax,
-            fee,
-            cm_change,
+            fee: fee::Descriptor {
+                cv_feemax: self.cv_feemax,
+                v_fee: fee,
+            },
+            fee_auth: cm_change,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp,
@@ -697,7 +687,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
                     .copied()
                     .zip(bundle.action_auth.iter().map(|&(_, pair)| pair)),
             );
-            fee_descriptors.insert(bundle.fee_descriptor(), bundle.cm_change);
+            fee_descriptors.insert(bundle.fee, bundle.fee_auth);
         }
         let stamp = self
             .stamp
@@ -748,9 +738,8 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             actions: self.actions,
             action_auth: self.action_auth,
             value_balance: self.value_balance,
-            cv_feemax: self.cv_feemax,
             fee: self.fee,
-            cm_change: self.cm_change,
+            fee_auth: self.fee_auth,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp: StrippedStamp,
@@ -797,20 +786,12 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
-        let covered = iter::once((
-            &self.actions,
-            &self.action_auth,
-            self.fee_descriptor(),
-            self.cm_change,
-        ))
-        .chain(adjuncts.iter().map(|adj| {
-            (
-                &adj.actions,
-                &adj.action_auth,
-                adj.fee_descriptor(),
-                adj.cm_change,
-            )
-        }));
+        let covered = iter::once((&self.actions, &self.action_auth, self.fee, self.fee_auth))
+            .chain(
+                adjuncts
+                    .iter()
+                    .map(|adj| (&adj.actions, &adj.action_auth, adj.fee, adj.fee_auth)),
+            );
 
         let mut covered_descriptors = BTreeSet::new();
         let mut fee_entries = BTreeSet::new();
@@ -1032,9 +1013,11 @@ impl<S: StampState> Bundle<S> {
             value_balance,
             actions,
             action_auth,
-            cv_feemax,
-            fee,
-            cm_change,
+            fee: fee::Descriptor {
+                cv_feemax,
+                v_fee: fee,
+            },
+            fee_auth: cm_change,
             binding_sig,
             memo,
             stamp,
@@ -1065,7 +1048,7 @@ impl<S: StampState> Bundle<S> {
             action.write(&mut writer)?;
         }
 
-        serialization::write_ep_affine(&mut writer, &self.cv_feemax.into())?;
+        serialization::write_ep_affine(&mut writer, &self.fee.cv_feemax.into())?;
 
         let n_memo = u64::try_from(self.memo.len()).map_err(|_err| {
             io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds u64")
@@ -1083,8 +1066,8 @@ impl<S: StampState> Bundle<S> {
             pair.0.write(&mut writer)?;
             pair.1.write(&mut writer)?;
         }
-        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
-        self.cm_change.write(&mut writer)?;
+        writer.write_all(&u64::from(self.fee.v_fee).to_le_bytes())?;
+        self.fee_auth.write(&mut writer)?;
 
         self.stamp.write(&mut writer)
     }
@@ -1114,8 +1097,8 @@ impl<S: StampState> Bundle<S> {
         blake2b::bundle_auth_digest(
             S::state_byte().into(),
             &action_auth,
-            self.fee.into(),
-            &Fp::from(self.cm_change).to_bytes(),
+            self.fee.v_fee.into(),
+            &Fp::from(self.fee_auth).to_bytes(),
             &binding_sig,
             &self.stamp.stamp_digest(),
         )

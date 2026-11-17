@@ -251,8 +251,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .zip(&bundle.action_auth)
             .map(|(desc, &(sig, _))| (sig, pairs[desc]))
             .collect();
-        bundle.fee = fee;
-        bundle.cm_change = cm_change;
+        bundle.fee.v_fee = fee;
+        bundle.fee_auth = cm_change;
         bundle.stamp = stamp;
         bundle
     });
@@ -261,9 +261,12 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         assert_eq!(bundle.commitment(), commitment);
         bundle.verify(rng, app, &sighash, &[]).unwrap();
     }
-    assert_eq!(bundles[0].fee, value::Positive::ZERO);
-    assert_eq!(bundles[2].fee, value::Positive::try_from(300u64).unwrap());
-    assert_ne!(bundles[0].cm_change, bundles[2].cm_change);
+    assert_eq!(bundles[0].fee.v_fee, value::Positive::ZERO);
+    assert_eq!(
+        bundles[2].fee.v_fee,
+        value::Positive::try_from(300u64).unwrap()
+    );
+    assert_ne!(bundles[0].fee_auth, bundles[2].fee_auth);
     assert_ne!(bundles[0].auth_digest(), bundles[2].auth_digest());
 
     let [_, once, _] = bundles;
@@ -277,7 +280,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .action_auth
             .iter()
             .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-            .chain([once.cm_change])
+            .chain([once.fee_auth])
             .collect(),
     );
     assert_matches!(
@@ -329,7 +332,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
                     .zip(&aggregate.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(aggregate.fee_descriptor(), aggregate.cm_change)]),
+                &BTreeMap::from([(aggregate.fee, aggregate.fee_auth)]),
             ),
             (
                 fee_bearing.stamp.clone(),
@@ -340,13 +343,12 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
                     .zip(&fee_bearing.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(fee_bearing.fee_descriptor(), fee_bearing.cm_change)]),
+                &BTreeMap::from([(fee_bearing.fee, fee_bearing.fee_auth)]),
             ),
         )
         .unwrap();
 
     let mut adjunct = fee_bearing.strip();
-    adjunct.cv_feemax = aggregate.cv_feemax;
     adjunct.fee = aggregate.fee;
     assert_matches!(
         aggregate.verify(rng, app, &sighash, &[&adjunct]),
@@ -376,7 +378,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .action_auth
         .iter()
         .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .chain([fee_less.cm_change])
+        .chain([fee_less.fee_auth])
         .collect::<TachygramSetPoly>()
         .commit();
     assert_matches!(
@@ -406,7 +408,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
                     .zip(&signed.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(signed.fee_descriptor(), signed.cm_change)]),
+                &BTreeMap::from([(signed.fee, signed.fee_auth)]),
             ),
             (
                 adjunct.stamp.clone(),
@@ -417,7 +419,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
                     .zip(&adjunct.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(adjunct.fee_descriptor(), adjunct.cm_change)]),
+                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
         .unwrap();
@@ -464,7 +466,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
                         .zip(&bundle.action_auth)
                         .map(|(&desc, &(_, pair))| (desc, pair))
                         .collect(),
-                    &BTreeMap::from([(bundle.fee_descriptor(), bundle.cm_change)]),
+                    &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 ),
                 (
                     auto.stamp.clone(),
@@ -475,7 +477,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
                         .zip(&auto.action_auth)
                         .map(|(&desc, &(_, pair))| (desc, pair))
                         .collect(),
-                    &BTreeMap::from([(auto.fee_descriptor(), auto.cm_change)]),
+                    &BTreeMap::from([(auto.fee, auto.fee_auth)]),
                 ),
             )
             .unwrap();
@@ -499,7 +501,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
                     .collect(),
                 &[&left, &left_auto]
                     .into_iter()
-                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
                     .collect(),
             ),
             (
@@ -517,7 +519,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
                     .collect(),
                 &[&right, &right_auto]
                     .into_iter()
-                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
                     .collect(),
             ),
         )
@@ -583,7 +585,7 @@ fn innocent_seed_merges_and_strips() {
                     .zip(&innocent.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(innocent.fee_descriptor(), innocent.cm_change)]),
+                &BTreeMap::from([(innocent.fee, innocent.fee_auth)]),
             ),
             (
                 adjunct.stamp.clone(),
@@ -594,7 +596,7 @@ fn innocent_seed_merges_and_strips() {
                     .zip(&adjunct.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(adjunct.fee_descriptor(), adjunct.cm_change)]),
+                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
         .unwrap();
@@ -613,7 +615,7 @@ fn innocent_seed_merges_and_strips() {
                     .zip(&parent.action_auth)
                     .map(|(&desc, &(_, pair))| (desc, pair))
                     .collect(),
-                &BTreeMap::from([(parent.fee_descriptor(), parent.cm_change)]),
+                &BTreeMap::from([(parent.fee, parent.fee_auth)]),
             ),
             (
                 innocent.stamp.clone(),
@@ -630,7 +632,7 @@ fn innocent_seed_merges_and_strips() {
                     .collect(),
                 &[&innocent, &adjunct]
                     .into_iter()
-                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
                     .collect(),
             ),
         )

@@ -19,6 +19,7 @@ use zcash_tachyon::{
     digest::blake2b,
     effect,
     entropy::ActionEntropy,
+    fee,
     keys::private,
     pasta::{Ep, Eq, Fp},
     stamp::{self, ProofStamp, StrippedStamp},
@@ -156,8 +157,8 @@ fn stamp_joins_by_descriptor_and_rejects_missing_or_extra_keys() {
         .stamp(
             original.stamp.clone(),
             pairs.clone(),
-            original.fee,
-            original.cm_change,
+            original.fee.v_fee,
+            original.fee_auth,
         )
         .unwrap();
     assert_eq!(joined.actions, pairs.keys().copied().collect::<Vec<_>>());
@@ -187,8 +188,8 @@ fn stamp_joins_by_descriptor_and_rejects_missing_or_extra_keys() {
             signed.clone().stamp(
                 original.stamp.clone(),
                 mismatched_pairs,
-                original.fee,
-                original.cm_change
+                original.fee.v_fee,
+                original.fee_auth
             ),
             Err(StampError::ActionMismatch)
         );
@@ -236,11 +237,13 @@ fn zero_action_bundle_requires_a_zero_balance() {
             actions: vec![],
             action_auth: vec![],
             value_balance: value::Balance::try_from(value_balance).unwrap(),
-            cv_feemax: max_fee_note.cv_feemax(),
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
-            fee: value::Positive::ZERO,
-            cm_change: max_fee_note.commitment().into(),
+            fee: fee::Descriptor {
+                cv_feemax: max_fee_note.cv_feemax(),
+                v_fee: value::Positive::ZERO,
+            },
+            fee_auth: max_fee_note.commitment().into(),
             stamp: StrippedStamp,
         };
         let mut buf = Vec::new();
@@ -318,11 +321,13 @@ fn duplicated_spend_cannot_inflate() {
         actions: vec![descriptor, descriptor],
         action_auth: vec![(sig, pair), (sig, pair)],
         value_balance,
-        cv_feemax,
         binding_sig,
         memo: Vec::new(),
-        fee: value::Positive::ZERO,
-        cm_change,
+        fee: fee::Descriptor {
+            cv_feemax,
+            v_fee: value::Positive::ZERO,
+        },
+        fee_auth: cm_change,
         stamp: honest_stamp,
     };
 
@@ -336,7 +341,7 @@ fn duplicated_spend_cannot_inflate() {
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap();
     let action_digest = descriptor.digest(pair).unwrap();
-    let fee_digest = bundle.fee_descriptor().digest(bundle.cm_change);
+    let fee_digest = bundle.fee.digest(bundle.fee_auth);
     assert!(
         !bundle
             .verify_proof(rng, app, &[action_digest, action_digest, fee_digest])
@@ -365,7 +370,7 @@ fn based_aggregate_with_two_adjuncts() {
         .copied()
         .zip(becomes_based.action_auth.iter().map(|&(_, pair)| pair))
         .collect();
-    let based_fees = BTreeMap::from([(becomes_based.fee_descriptor(), becomes_based.cm_change)]);
+    let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
     let innocent_desc = [&autonome_a, &autonome_b]
         .into_iter()
         .flat_map(|bundle| {
@@ -378,7 +383,7 @@ fn based_aggregate_with_two_adjuncts() {
         .collect();
     let innocent_fees = [&autonome_a, &autonome_b]
         .into_iter()
-        .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+        .map(|bundle| (bundle.fee, bundle.fee_auth))
         .collect();
     let innocent_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let (txid_a, txid_b) = (mock_txid(&autonome_a), mock_txid(&autonome_b));
@@ -422,7 +427,7 @@ fn based_aggregate_with_two_adjuncts() {
     {
         let mut edited = becomes_based.clone();
         let mut adjunct = adjunct_a.clone();
-        mem::swap(&mut edited.cm_change, &mut adjunct.cm_change);
+        mem::swap(&mut edited.fee_auth, &mut adjunct.fee_auth);
         assert_matches!(
             edited.verify(rng, app, &sighash, &[&adjunct, &adjunct_b]),
             Err(VerificationError::Disproved)
@@ -501,8 +506,8 @@ fn stamped_bundle_round_trips() {
     assert_eq!(decoded.actions, stamped.actions);
     assert_eq!(decoded.value_balance, stamped.value_balance);
     assert_eq!(decoded.action_auth, stamped.action_auth);
-    assert_eq!(decoded.fee, stamped.fee);
-    assert_eq!(decoded.cm_change, stamped.cm_change);
+    assert_eq!(decoded.fee.v_fee, stamped.fee.v_fee);
+    assert_eq!(decoded.fee_auth, stamped.fee_auth);
     assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
     decoded
         .verify(rng, app, &mock_sighash(decoded.commitment()), &[])
@@ -512,9 +517,8 @@ fn stamped_bundle_round_trips() {
         actions: stamped.actions,
         action_auth: stamped.action_auth,
         fee: stamped.fee,
-        cm_change: stamped.cm_change,
+        fee_auth: stamped.fee_auth,
         value_balance: stamped.value_balance,
-        cv_feemax: stamped.cv_feemax,
         binding_sig: stamped.binding_sig,
         memo: stamped.memo,
     };
@@ -527,8 +531,8 @@ fn stamped_bundle_round_trips() {
     let mut block = Bundle::<ProofStamp<stamp::Compressed>>::read(&*bytes).unwrap();
     assert_eq!(block.actions, decoded.actions);
     assert_eq!(block.action_auth, decoded.action_auth);
-    assert_eq!(block.fee, decoded.fee);
-    assert_eq!(block.cm_change, decoded.cm_change);
+    assert_eq!(block.fee.v_fee, decoded.fee.v_fee);
+    assert_eq!(block.fee_auth, decoded.fee_auth);
     assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
     Bundle::<StrippedStamp>::try_from(erased).unwrap_err();
     let sighash = mock_sighash(block.commitment());
@@ -589,11 +593,13 @@ fn read_preserves_action_order() {
         actions,
         action_auth,
         value_balance,
-        cv_feemax,
         binding_sig,
         memo: Vec::new(),
-        fee: value::Positive::ZERO,
-        cm_change: max_fee_note.commitment().into(),
+        fee: fee::Descriptor {
+            cv_feemax,
+            v_fee: value::Positive::ZERO,
+        },
+        fee_auth: max_fee_note.commitment().into(),
         stamp: StrippedStamp,
     };
 
@@ -632,8 +638,8 @@ fn stripped_bundle_round_trips() {
         assert_eq!(decoded.auth_digest(), stripped.auth_digest());
         assert_eq!(decoded.actions, stripped.actions);
         assert_eq!(decoded.action_auth, stripped.action_auth);
-        assert_eq!(decoded.fee, stripped.fee);
-        assert_eq!(decoded.cm_change, stripped.cm_change);
+        assert_eq!(decoded.fee.v_fee, stripped.fee.v_fee);
+        assert_eq!(decoded.fee_auth, stripped.fee_auth);
         decoded
             .verify_signatures(&mock_sighash(decoded.commitment()))
             .unwrap();
@@ -664,7 +670,7 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     }
     assert_eq!(
         &bytes[offset..offset + 32],
-        &<[u8; 32]>::from(bundle.cv_feemax)
+        &<[u8; 32]>::from(bundle.fee.cv_feemax)
     );
     offset += 32;
     assert_eq!(bytes[offset], 3);
@@ -689,12 +695,12 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     }
     assert_eq!(
         &bytes[offset..offset + 8],
-        &u64::from(bundle.fee).to_le_bytes()
+        &u64::from(bundle.fee.v_fee).to_le_bytes()
     );
     offset += 8;
     assert_eq!(
         &bytes[offset..offset + 32],
-        &Fp::from(bundle.cm_change).to_bytes()
+        &Fp::from(bundle.fee_auth).to_bytes()
     );
     offset += 32;
     expected.clear();
@@ -732,6 +738,7 @@ fn read_bounds_the_fee() {
             Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*maximum_fee)
                 .unwrap()
                 .fee
+                .v_fee
         ),
         MAX_MONEY
     );
@@ -742,6 +749,7 @@ fn read_bounds_the_fee() {
             Bundle::<StrippedStamp>::try_from(TachyonBundle::read(&*maximum_stripped).unwrap())
                 .unwrap()
                 .fee
+                .v_fee
         ),
         MAX_MONEY
     );
@@ -827,9 +835,11 @@ fn bundles_round_trip_at_action_count_limits() {
                     )
                 })
                 .collect(),
-            cv_feemax: signed.cv_feemax,
-            fee: value::Positive::ZERO,
-            cm_change: Tachygram::from(Fp::from(0u64)),
+            fee: fee::Descriptor {
+                cv_feemax: signed.cv_feemax,
+                v_fee: value::Positive::ZERO,
+            },
+            fee_auth: Tachygram::from(Fp::from(0u64)),
             binding_sig: signed.binding_sig,
             memo: Vec::new(),
             stamp: StrippedStamp,
@@ -842,7 +852,7 @@ fn bundles_round_trip_at_action_count_limits() {
         ] {
             assert_eq!(decoded.actions, bundle.actions);
             assert_eq!(decoded.action_auth, bundle.action_auth);
-            assert_eq!(decoded.cm_change, bundle.cm_change);
+            assert_eq!(decoded.fee_auth, bundle.fee_auth);
             let mut round_trip = Vec::new();
             decoded.write(&mut round_trip).unwrap();
             assert_eq!(round_trip, bytes);
@@ -851,9 +861,8 @@ fn bundles_round_trip_at_action_count_limits() {
             value_balance: bundle.value_balance,
             actions: bundle.actions,
             action_auth: bundle.action_auth,
-            cv_feemax: bundle.cv_feemax,
             fee: bundle.fee,
-            cm_change: bundle.cm_change,
+            fee_auth: bundle.fee_auth,
             binding_sig: bundle.binding_sig,
             memo: bundle.memo,
             stamp: stamped.stamp.clone(),
@@ -925,12 +934,12 @@ fn auth_digest_invariants() {
     let erased_stripped: TachyonBundle = stripped.clone().into();
     assert_eq!(erased_stripped.auth_digest(), stripped.auth_digest());
     let mut refeed = stripped.clone();
-    refeed.fee = value::Positive::try_from(u64::from(stripped.fee) + 1).unwrap();
+    refeed.fee.v_fee = value::Positive::try_from(u64::from(stripped.fee.v_fee) + 1).unwrap();
     assert_ne!(refeed.auth_digest(), stripped.auth_digest());
     let mut stripped_pair = stripped.clone();
     stripped_pair.action_auth[0].1 = (Tachygram::random(rng), Tachygram::random(rng));
     let mut stripped_change = stripped.clone();
-    stripped_change.cm_change = Tachygram::random(rng);
+    stripped_change.fee_auth = Tachygram::random(rng);
     for edited in [stripped_pair, stripped_change] {
         assert_eq!(edited.commitment(), commitment);
         assert_ne!(edited.auth_digest(), stripped.auth_digest());
@@ -938,7 +947,7 @@ fn auth_digest_invariants() {
 
     assert_ne!(aggregate_a.auth_digest(), aggregate_b.auth_digest());
     let mut fee = stamped.clone();
-    fee.fee = value::Positive::try_from(u64::from(stamped.fee) + 1).unwrap();
+    fee.fee.v_fee = value::Positive::try_from(u64::from(stamped.fee.v_fee) + 1).unwrap();
     let mut pair = stamped.clone();
     pair.action_auth[0].1 = (Tachygram::random(rng), Tachygram::random(rng));
     let mut flipped = stamped.clone();
@@ -952,7 +961,7 @@ fn auth_digest_invariants() {
     let mut proof = stamped.clone();
     proof.stamp.proof = alice(app).1.stamp.proof;
     let mut fee_change = stamped;
-    fee_change.cm_change = Tachygram::random(rng);
+    fee_change.fee_auth = Tachygram::random(rng);
     for edited in [
         aggregate_a,
         aggregate_b,
@@ -1100,9 +1109,8 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
         actions: oversized.actions,
         action_auth: oversized.action_auth,
         value_balance: oversized.value_balance,
-        cv_feemax: oversized.cv_feemax,
         fee: oversized.fee,
-        cm_change: oversized.cm_change,
+        fee_auth: oversized.fee_auth,
         binding_sig: oversized.binding_sig,
         memo: oversized.memo,
     };
@@ -1274,7 +1282,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
     let (plan, stamped) = alice(app);
 
     let mut change = stamped.clone();
-    change.cm_change = Tachygram::random(rng);
+    change.fee_auth = Tachygram::random(rng);
     assert_matches!(
         change.verify_covered(&[]),
         Err(VerifyCoverageError::WrongTachygramSet)
@@ -1296,7 +1304,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
         .collect();
     pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
     let bundle = signed
-        .stamp(stamped.stamp, pairs, stamped.fee, stamped.cm_change)
+        .stamp(stamped.stamp, pairs, stamped.fee.v_fee, stamped.fee_auth)
         .unwrap();
     assert_matches!(
         bundle.verify_covered(&[]),
@@ -1422,7 +1430,7 @@ fn bundle_lift_over_an_aggregate() {
         .copied()
         .zip(zero.action_auth.iter().map(|&(_, pair)| pair))
         .collect();
-    let zero_fees = BTreeMap::from([(zero.fee_descriptor(), zero.cm_change)]);
+    let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
     let adjunct_desc = [&autonome_a, &autonome_b]
         .into_iter()
         .flat_map(|bundle| {
@@ -1435,7 +1443,7 @@ fn bundle_lift_over_an_aggregate() {
         .collect();
     let adjunct_fees = [&autonome_a, &autonome_b]
         .into_iter()
-        .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+        .map(|bundle| (bundle.fee, bundle.fee_auth))
         .collect();
     let adjunct_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let innocent = Bundle {

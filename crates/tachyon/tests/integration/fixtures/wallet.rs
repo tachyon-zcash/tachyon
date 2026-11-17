@@ -76,12 +76,12 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     for descriptor in &bundle.actions {
         descriptor.write(&mut key).unwrap();
     }
-    key.extend_from_slice(&<[u8; 40]>::from(bundle.fee_descriptor()));
+    key.extend_from_slice(&<[u8; 40]>::from(bundle.fee));
     for tachygram in bundle
         .action_auth
         .iter()
         .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .chain([bundle.cm_change])
+        .chain([bundle.fee_auth])
     {
         key.extend_from_slice(&Fp::from(tachygram).to_bytes());
     }
@@ -111,7 +111,7 @@ pub(crate) fn merged(
                         .copied()
                         .zip(left.action_auth.iter().map(|&(_, pair)| pair))
                         .collect(),
-                    &BTreeMap::from([(left.fee_descriptor(), left.cm_change)]),
+                    &BTreeMap::from([(left.fee, left.fee_auth)]),
                 ),
                 (
                     right.stamp.clone(),
@@ -122,7 +122,7 @@ pub(crate) fn merged(
                         .copied()
                         .zip(right.action_auth.iter().map(|&(_, pair)| pair))
                         .collect(),
-                    &BTreeMap::from([(right.fee_descriptor(), right.cm_change)]),
+                    &BTreeMap::from([(right.fee, right.fee_auth)]),
                 ),
             )
             .unwrap()
@@ -157,7 +157,7 @@ pub(crate) fn lifted(
                     .copied()
                     .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
                     .collect(),
-                &BTreeMap::from([(bundle.fee_descriptor(), bundle.cm_change)]),
+                &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 vec![span],
             )
             .unwrap()
