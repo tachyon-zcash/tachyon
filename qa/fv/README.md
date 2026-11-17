@@ -139,6 +139,13 @@ carries or about the leaf step's constraints on it.
   arbitrary hint commitments (`SideSelection`); `QrSideDescend` matches the selection's source and
   hints before checking their class identity (`SideCheck`). A split that places the exceptional
   root on the non-residue side cannot produce a selection (`split_without_selection`).
+- `QrGuards.lean` adds the split guard `parent(zeta) ≠ 1` and descent guard
+  `nonResidue(zeta) ≠ residue(zeta)` to the idealized QR relations. `Guarded.Route` records
+  separate split/descent challenges per hop and forgets to `Qr.Route`, inheriting retention
+  and conditional exclusion. Regressions distinguish evaluation guards from polynomial
+  inequality and preserve scaled equal-root and rootless-constant cases. This refinement is
+  local: checked intakes and queries still consume the unguarded relations, and no theorem
+  equates either model with the Rust circuit or its challenge distribution.
 - A routed bucket retains the published values that match its profile and may retain other roots.
   Completeness is therefore stated per query (`QueryComplete`). The profile-aware lineage needs completeness only for the
   values it opens (`SpendableDerivable.routed_lineage`, `no_double_spend_of_routed`).
