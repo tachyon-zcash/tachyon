@@ -4,76 +4,95 @@ use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    ActionDigest, Anchor, Bundle, Note, Tachygram, TachygramSetPoly, VerificationError,
-    VerifyCoverageError, VerifyTachygramsError, action, bundle,
+    ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
+    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
     constants::MAX_MONEY,
-    fee,
+    pasta::Fp,
     stamp::{
         self, Proof as _, ProofStamp,
         proof::{
-            PROOF_SYSTEM, output,
+            App, output,
             stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
         },
     },
     value, witness,
 };
 
+use super::fixtures::application;
 use crate::fixtures::{
-    PoolSim, WalletSim, build_lift_span, build_output_plan, mock_sighash, mock_wtxid, random_block,
-    random_block_with, shared_sk, stamp_coverage,
+    Proved, mock_sighash, mock_wtxid,
+    pool::PoolSim,
+    stamp_coverage,
+    wallet::{
+        WalletSim, alice, bob, output_plan, outputs_with_fees, shared_sk, spend_with_fee,
+        spend_with_fee_max_fee_note, zero_action,
+    },
 };
 
 fn fee_less_output_bundle(
-    rng: &mut StdRng,
-    wallet: &WalletSim,
-    anchor: Anchor,
+    app: &App<'_>,
     max_fee_note: Note,
 ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            output::OutputBind,
-            witness::output_bind(((), ()), output_plan.note, rcv),
-        )
-        .unwrap();
-    let (cm, pad, _cv) = *bind_pcd.data();
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
-            bind_pcd,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    let stamp = ProofStamp {
-        coverage: stamp_coverage([output_plan.descriptor()], &[]),
-        anchor,
-        tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
-        tachygrams: BTreeSet::from([cm, pad]),
-        proof: Box::new(pcd.proof().clone()),
-        fee: value::Positive::ZERO,
-    };
+    static FEE_LESS: Proved<Bundle<ProofStamp<stamp::Uncompressed>>> =
+        Proved::new("fee less output bundle");
+    let anchor = PoolSim::shared().mint_anchor();
+    let wallet = WalletSim::new(shared_sk());
+    let note = wallet.labelled_note("fee-less output", 500);
+    let key = [
+        Fp::from(anchor).to_bytes(),
+        Fp::from(note.commitment()).to_bytes(),
+        Fp::from(max_fee_note.commitment()).to_bytes(),
+    ]
+    .concat();
+    FEE_LESS.get(&key, |rng| {
+        let (rcv, theta, output_plan) = output_plan(rng, note);
+        let (bind_pcd, ()) = app
+            .seed(
+                rng,
+                output::OutputBind,
+                witness::output_bind(((), ()), output_plan.note, rcv),
+            )
+            .unwrap();
+        let (cm, pad, _cv) = *bind_pcd.data();
+        let (pcd, ()) = app
+            .fuse(
+                rng,
+                OutputAction,
+                witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+                bind_pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        let stamp = ProofStamp {
+            coverage: stamp_coverage([output_plan.descriptor()], &[]),
+            anchor,
+            tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
+            tachygrams: BTreeSet::from([cm, pad]),
+            proof: Box::new(pcd.proof().clone()),
+            fee: value::Positive::ZERO,
+        };
 
-    let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
-    plan.sign(
-        rng,
-        &mock_sighash(plan.commitment().unwrap()),
-        &wallet.sk.derive_auth_private(),
-    )
-    .unwrap()
-    .stamp(stamp)
+        let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
+        plan.sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap()
+        .stamp(stamp)
+    })
 }
 
 #[test]
 fn fee_fuse_binds_its_sets() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
-    let anchor = Anchor::random(rng);
-    let left = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
+    let anchor = PoolSim::shared().mint_anchor();
+    let left = fee_less_output_bundle(app, max_fee_note);
 
     let action_digests: BTreeSet<ActionDigest> = left
         .descriptors()
@@ -121,13 +140,13 @@ fn fee_fuse_binds_its_sets() {
         ),
     ] {
         assert_matches!(
-            PROOF_SYSTEM
+            app
                 .fuse(
                     rng,
                     FeeFuse,
                     corrupt,
                     left.stamp.proof.clone().carry::<Actions>(anchor),
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                    app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
@@ -137,10 +156,11 @@ fn fee_fuse_binds_its_sets() {
 
 #[test]
 fn fee_fuse_slack_boundaries() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::random(rng);
-    let left = fee_less_output_bundle(rng, &wallet, anchor, wallet.random_note(300));
+    let anchor = PoolSim::shared().mint_anchor();
+    let left = fee_less_output_bundle(app, wallet.random_note(300));
     let digests = left
         .descriptors()
         .map(|descriptor| descriptor.digest().unwrap())
@@ -162,26 +182,26 @@ fn fee_fuse_slack_boundaries() {
             &digests,
             &left.stamp.tachygrams,
         );
-        let (pcd, ()) = PROOF_SYSTEM
+        let (pcd, ()) = app
             .fuse(
                 rng,
                 FeeFuse,
                 witness.clone(),
                 left_pcd.clone(),
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        assert!(PROOF_SYSTEM.verify_differential(&pcd, &mut *rng).unwrap());
+        assert!(app.verify_differential(&pcd, &mut *rng).unwrap());
         if maximum < MAX_MONEY {
             let mut corrupt = witness;
             corrupt.1 = value::Positive::try_from(maximum + 1).unwrap();
             assert_matches!(
-                PROOF_SYSTEM.fuse(
+                app.fuse(
                     rng,
                     FeeFuse,
                     corrupt,
                     left_pcd.clone(),
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+                    app.bootstrap_proof().clone().carry::<()>(()),
                 ).err(),
                 Some(ragu_core::Error::InvalidWitness(err))
                     if err.to_string() == "FeeFuse: change is out of range"
@@ -192,25 +212,36 @@ fn fee_fuse_slack_boundaries() {
 
 #[test]
 fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
-        wallet.fee_bundle(rng, 1000, 700, 300);
-    let sighash = mock_sighash(signed.commitment());
+    let (bundle_plan, at_fixture_fee) = spend_with_fee(app);
+    let anchor = at_fixture_fee.stamp.anchor;
+    let max_fee_note = spend_with_fee_max_fee_note();
+    let note = PoolSim::shared_note(1000);
+    let spend_pcds = vec![(
+        wallet.note_secret(app, note),
+        wallet.spendable_init(app, PoolSim::shared(), &note, BlockHeight(1)),
+        vec![],
+    )];
+    let commitment = at_fixture_fee.commitment();
+    let sighash = mock_sighash(commitment);
 
-    let fees = [0u64, 120, 300];
-    let bundles = fees.map(|fee| {
-        signed.clone().stamp(
-            bundle_plan
-                .stamp_plan(anchor, value::Positive::try_from(fee).unwrap())
-                .prove(rng, &wallet.pak, spend_pcds.clone())
-                .unwrap(),
-        )
+    let [without_fee, maximum_fee] = [0u64, 300].map(|fee| {
+        let stamp = bundle_plan
+            .stamp_plan(anchor, value::Positive::try_from(fee).unwrap())
+            .prove(rng, app, &wallet.pak, spend_pcds.clone())
+            .unwrap();
+        Bundle {
+            stamp,
+            ..at_fixture_fee.clone()
+        }
     });
+    let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
-        assert_eq!(bundle.commitment(), signed.commitment());
+        assert_eq!(bundle.commitment(), commitment);
         bundle
-            .verify(rng, &sighash, &mock_wtxid(bundle).into(), &[])
+            .verify(rng, app, &sighash, &mock_wtxid(bundle).into(), &[])
             .unwrap();
     }
 
@@ -228,15 +259,14 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         &once.stamp.tachygrams,
     );
     assert_matches!(
-        PROOF_SYSTEM
-            .fuse(
-                rng,
-                FeeFuse,
-                repeated_witness.clone(),
-                once.stamp.proof.clone().carry::<Actions>(anchor),
-                PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
+        app.fuse(
+            rng,
+            FeeFuse,
+            repeated_witness.clone(),
+            once.stamp.proof.clone().carry::<Actions>(anchor),
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .err(),
         Some(ragu_core::Error::InvalidWitness(_))
     );
     let mut twice_stamp = once.stamp.clone();
@@ -251,7 +281,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     };
 
     assert_matches!(
-        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[]),
+        twice.verify(rng, app, &sighash, &mock_wtxid(&twice).into(), &[]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::StampActionsMismatch
         ))
@@ -259,7 +289,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
 
     twice.stamp.coverage = stamp_coverage(twice.descriptors(), &[twice.fee_descriptor()]);
     assert_matches!(
-        twice.verify(rng, &sighash, &mock_wtxid(&twice).into(), &[]),
+        twice.verify(rng, app, &sighash, &mock_wtxid(&twice).into(), &[]),
         Err(VerificationError::Tachygrams(
             VerifyTachygramsError::WrongArity
         ))
@@ -270,28 +300,22 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         .map(|desc| desc.digest().unwrap())
         .chain([twice.fee_descriptor().digest().unwrap()])
         .collect();
-    assert!(!twice.verify_proof(rng, &published_digests).unwrap());
+    assert!(!twice.verify_proof(rng, app, &published_digests).unwrap());
 }
 
 #[test]
 fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, _) = wallet.fee_bundle(rng, 1000, 700, 300);
-    let sighash = mock_sighash(signed.commitment());
-
-    let mut aggregate = signed.stamp(
-        bundle_plan
-            .stamp_plan(anchor, value::Positive::try_from(120).unwrap())
-            .prove(rng, &wallet.pak, spend_pcds)
-            .unwrap(),
-    );
-    let fee_bearing = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(500)]);
+    let (_, mut aggregate) = spend_with_fee(app);
+    let sighash = mock_sighash(aggregate.commitment());
+    let (_, fee_bearing) = alice(app);
     aggregate.stamp = aggregate
         .stamp
         .clone()
         .merge(
             rng,
+            app,
             (
                 aggregate.descriptors().collect(),
                 [aggregate.fee_descriptor()].into(),
@@ -308,7 +332,13 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     adjunct.cv_feemax = aggregate.cv_feemax;
     adjunct.stamp.fee = aggregate.stamp.fee;
     assert_matches!(
-        aggregate.verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct]),
+        aggregate.verify(
+            rng,
+            app,
+            &sighash,
+            &mock_wtxid(&aggregate).into(),
+            &[&adjunct]
+        ),
         Err(VerificationError::Coverage(
             VerifyCoverageError::DuplicateFees
         ))
@@ -317,15 +347,15 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
 #[test]
 fn verify_rejects_a_stamp_without_its_fee() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(300);
-    let anchor = Anchor::random(rng);
-    let mut fee_less = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
+    let mut fee_less = fee_less_output_bundle(app, max_fee_note);
     let sighash = mock_sighash(fee_less.commitment());
 
     assert_matches!(
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::StampActionsMismatch
         ))
@@ -333,7 +363,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
 
     fee_less.stamp.coverage = stamp_coverage(fee_less.descriptors(), &[fee_less.fee_descriptor()]);
     assert_matches!(
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
         Err(VerificationError::Tachygrams(
             VerifyTachygramsError::WrongArity
         ))
@@ -351,46 +381,27 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .collect::<TachygramSetPoly>()
         .commit();
     assert_matches!(
-        fee_less.verify(rng, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
         Err(VerificationError::Disproved)
     );
 }
 
 #[test]
 fn fee_applies_over_a_fee_bearing_adjunct() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
-        wallet.fee_bundle(rng, 1000, 700, 300);
+    let (_, signed) = spend_with_fee(app);
     let sighash = mock_sighash(signed.commitment());
 
-    let adjunct_max_fee_note = wallet.random_note(100);
-    let (adjunct_plan, adjunct_signed, _) = wallet.signed(
-        rng,
-        vec![],
-        vec![wallet.random_note(500)],
-        adjunct_max_fee_note,
-    );
-    let adjunct = adjunct_signed.stamp(
-        adjunct_plan
-            .stamp_plan(anchor, value::Positive::try_from(40).unwrap())
-            .prove(rng, &wallet.pak, vec![])
-            .unwrap(),
-    );
-
-    let aggregate_stamp = bundle_plan
-        .stamp_plan(anchor, value::Positive::try_from(120).unwrap())
-        .prove(rng, &wallet.pak, spend_pcds)
-        .unwrap();
+    let [(_, adjunct), _, _] = outputs_with_fees(app);
+    let aggregate_stamp = signed.stamp.clone();
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
-    let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
-        cv_feemax: max_fee_note.cv_feemax(),
-        v_fee: aggregate_stamp.fee,
-    }]);
+    let aggregate_fee_descriptors = BTreeSet::from([signed.fee_descriptor()]);
 
     let merged_stamp = aggregate_stamp
         .merge(
             rng,
+            app,
             (aggregate_descriptors, aggregate_fee_descriptors),
             (
                 adjunct.stamp.clone(),
@@ -399,38 +410,40 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             ),
         )
         .unwrap();
-    let aggregate = signed.stamp(merged_stamp);
+    let aggregate = Bundle {
+        stamp: merged_stamp,
+        ..signed
+    };
 
     let final_id = mock_wtxid(&aggregate);
     aggregate
-        .verify(rng, &sighash, &final_id.into(), &[&adjunct.strip(final_id)])
+        .verify(
+            rng,
+            app,
+            &sighash,
+            &final_id.into(),
+            &[&adjunct.strip(final_id)],
+        )
         .unwrap();
 }
 
 #[test]
 fn fee_bearing_aggregates_merge_and_lift() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let notes: Vec<Note> = [1000, 900, 800, 700]
-        .map(|value| wallet.random_note(value))
-        .into();
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    let commitments: Vec<_> = notes.iter().map(Note::commitment).collect();
-    pool.mine(random_block_with(rng, &[commitments], 1));
-    let [mut left, left_auto, mut right, right_auto] = [0, 1, 2, 3].map(|i| {
-        let spendable = wallet.spendable_init(rng, &notes[i], &pool, pool.height());
-        let anchor = spendable.data().2;
-        let (plan, signed, pcds) = wallet.signed(
-            rng,
-            vec![(notes[i], spendable)],
-            vec![wallet.random_note(500)],
+    let pool = PoolSim::shared();
+    let (_, mut left) = spend_with_fee(app);
+    let [left_auto, mut right, right_auto] = [900, 800, 700].map(|value| {
+        let (_, bundle) = wallet.bundle(
+            app,
+            pool.mint_anchor(),
+            &[(PoolSim::shared_note(value), pool)],
+            &[wallet.random_note(500)],
             wallet.random_note(100),
+            value::Positive::try_from(40u64).unwrap(),
         );
-        let stamp = plan
-            .stamp_plan(anchor, value::Positive::try_from(40).unwrap())
-            .prove(rng, &wallet.pak, pcds)
-            .unwrap();
-        signed.stamp(stamp)
+        bundle
     });
     let sighash = mock_sighash(left.commitment());
 
@@ -440,6 +453,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             .clone()
             .merge(
                 rng,
+                app,
                 (
                     bundle.descriptors().collect(),
                     [bundle.fee_descriptor()].into(),
@@ -457,6 +471,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
         .clone()
         .merge(
             rng,
+            app,
             (
                 left.descriptors().chain(left_auto.descriptors()).collect(),
                 [left.fee_descriptor(), left_auto.fee_descriptor()].into(),
@@ -472,11 +487,11 @@ fn fee_bearing_aggregates_merge_and_lift() {
         )
         .unwrap();
 
-    pool.mine(random_block(rng, 1, 2));
-    let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
+    let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let lifted = left
         .lift(
             rng,
+            app,
             &[left_auto.as_dyn(), right.as_dyn(), right_auto.as_dyn()],
             vec![span],
         )
@@ -486,6 +501,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
     lifted
         .verify(
             rng,
+            app,
             &sighash,
             &id.into(),
             &[
@@ -499,35 +515,34 @@ fn fee_bearing_aggregates_merge_and_lift() {
 
 #[test]
 fn zero_action_fee_seed_round_trips_and_verifies() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::random(rng);
-    let bundle = wallet.autonome(rng, anchor, vec![], vec![]);
+    let (_, bundle) = zero_action(app, PoolSim::shared().mint_anchor());
     let sighash = mock_sighash(bundle.commitment());
     bundle
-        .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
+        .verify(rng, app, &sighash, &mock_wtxid(&bundle).into(), &[])
         .unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     decoded
-        .verify(rng, &sighash, &mock_wtxid(&decoded).into(), &[])
+        .verify(rng, app, &sighash, &mock_wtxid(&decoded).into(), &[])
         .unwrap();
 }
 
 #[test]
 fn innocent_seed_merges_and_strips() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let anchor = Anchor::random(rng);
-    let mut innocent = wallet.autonome(rng, anchor, vec![], vec![]);
-    let adjunct = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(100)]);
+    let (_, mut innocent) = zero_action(app, PoolSim::shared().mint_anchor());
+    let (_, adjunct) = alice(app);
     innocent.stamp = innocent
         .stamp
         .clone()
         .merge(
             rng,
+            app,
             (
                 innocent.descriptors().collect(),
                 [innocent.fee_descriptor()].into(),
@@ -540,12 +555,13 @@ fn innocent_seed_merges_and_strips() {
         )
         .unwrap();
 
-    let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
+    let (_, mut parent) = bob(app);
     parent.stamp = parent
         .stamp
         .clone()
         .merge(
             rng,
+            app,
             (
                 parent.descriptors().collect(),
                 [parent.fee_descriptor()].into(),
@@ -564,6 +580,7 @@ fn innocent_seed_merges_and_strips() {
     parent
         .verify(
             rng,
+            app,
             &mock_sighash(parent.commitment()),
             &parent_id.into(),
             &[&adjunct.strip(parent_id), &innocent.strip(parent_id)],
@@ -573,6 +590,7 @@ fn innocent_seed_merges_and_strips() {
 
 #[test]
 fn fee_seed_binds_its_singletons_and_header() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = Anchor::random(rng);
@@ -607,14 +625,14 @@ fn fee_seed_binds_its_singletons_and_header() {
         ),
     ] {
         assert_matches!(
-            PROOF_SYSTEM.seed(rng, FeeSeed, corrupt).err(),
+            app.seed(rng, FeeSeed, corrupt).err(),
             Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
         );
     }
 
-    let (seed_pcd, ()) = PROOF_SYSTEM.seed(rng, FeeSeed, valid.clone()).unwrap();
+    let (seed_pcd, ()) = app.seed(rng, FeeSeed, valid.clone()).unwrap();
     let compressed = {
-        let compressed = PROOF_SYSTEM.compress(&seed_pcd, rng).unwrap();
+        let compressed = app.compress(&seed_pcd, rng).unwrap();
         let bytes = compressed.proof().to_bytes().unwrap();
         stamp::Compressed::from_bytes(&bytes).unwrap()
     };
@@ -628,12 +646,14 @@ fn fee_seed_binds_its_singletons_and_header() {
         ((valid.2.commit(), other.3.commit(), anchor), false),
         ((valid.2.commit(), valid.3.commit(), other_anchor), false),
     ] {
-        assert_eq!(proof.verify(rng, header).unwrap(), expected);
-        assert_eq!(compressed.verify(rng, header).unwrap(), expected);
+        assert_eq!(proof.verify(rng, app, header).unwrap(), expected);
+        assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
     }
-    let pcd = seed_pcd
-        .proof()
-        .clone()
-        .carry::<Stamp>((valid.3.commit().bridge().unwrap(), anchor));
-    assert!(PROOF_SYSTEM.verify_differential(&pcd, rng).unwrap());
+    let pcd = seed_pcd.proof().clone().carry::<Stamp>((
+        app.bridge_hash(valid.3.commit().as_ref().to_affine())
+            .unwrap()
+            .into(),
+        anchor,
+    ));
+    assert!(app.verify_differential(&pcd, rng).unwrap());
 }

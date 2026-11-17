@@ -116,7 +116,8 @@ use crate::{
     reddsa, serialization,
     stamp::{
         self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
-        Unproven, proof::pool,
+        Unproven,
+        proof::{App, pool},
     },
     value,
 };
@@ -637,6 +638,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
+        app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ProveError> {
@@ -650,7 +652,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
 
         let stamp = self
             .stamp
-            .lift(rng, &descriptors, &fee_descriptors, spans)?;
+            .lift(rng, app, &descriptors, &fee_descriptors, spans)?;
 
         Ok(Self { stamp, ..self })
     }
@@ -804,9 +806,11 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         action_digests: &[ActionDigest],
     ) -> Result<bool, ragu_core::Error> {
-        self.stamp.verify_proof(rng, action_digests.iter().copied())
+        self.stamp
+            .verify_proof(rng, app, action_digests.iter().copied())
     }
 
     /// Verify everything about this bundle. Does not verify any details about
@@ -826,6 +830,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        app: &App<'_>,
         sighash: &[u8; 32],
         wtxid: &[u8; 64],
         adjuncts: &[&Bundle<PointerStamp>],
@@ -852,7 +857,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             .map_err(VerificationError::Actions)?;
 
         if self
-            .verify_proof(rng, &covered_digests)
+            .verify_proof(rng, app, &covered_digests)
             .map_err(VerificationError::Proof)?
         {
             Ok(())
