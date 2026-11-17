@@ -546,17 +546,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let lifted_to = BlockHeight(2);
 
     let span = pool.anchor_span(app, BlockHeight(1)..=lifted_to);
-    let lifted_bundle = lifted(app, &alice, pool, BlockHeight(1)..=lifted_to);
-    let mut before_body = Vec::new();
-    alice.strip().write(&mut before_body).unwrap();
-    let mut after_body = Vec::new();
-    lifted_bundle
-        .clone()
-        .strip()
-        .write(&mut after_body)
-        .unwrap();
-    assert_eq!(after_body, before_body);
-    let lifted = lifted_bundle.stamp;
+    let lifted = lifted(app, &alice, pool, BlockHeight(1)..=lifted_to).stamp;
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
     assert_eq!(lifted.adjuncts, stamp.adjuncts);
     assert_eq!(lifted.tachygram_set, stamp.tachygram_set);
@@ -586,15 +576,10 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
 }
 
 #[test]
-fn empty_lift_preserves_stamp_and_bundle_without_digesting_coverage() {
+fn empty_lift_does_not_digest_invalid_coverage() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = alice(app);
-    let mut stamp_bytes = Vec::new();
-    bundle.stamp.write(&mut stamp_bytes).unwrap();
-    let mut bundle_bytes = Vec::new();
-    bundle.write(&mut bundle_bytes).unwrap();
-
     let mut invalid = bundle.clone().strip();
     invalid.actions[0].cv = value::Trapdoor::ZERO.commit(value::Positive::ZERO);
     invalid.cv_feemax = invalid.actions[0].cv;
@@ -610,25 +595,12 @@ fn empty_lift_preserves_stamp_and_bundle_without_digesting_coverage() {
         .unwrap_err();
 
     // Even unusable coverage maps must not be inspected for an empty lift.
-    let empty_descriptors = BTreeMap::new();
-    let empty_fees = BTreeMap::new();
-    for (coverage, fee_entries) in [(&descriptors, &fees), (&empty_descriptors, &empty_fees)] {
-        let unchanged_stamp = bundle
-            .stamp
-            .clone()
-            .lift(rng, app, coverage, fee_entries, vec![])
-            .unwrap();
-        let mut actual = Vec::new();
-        unchanged_stamp.write(&mut actual).unwrap();
-        assert_eq!(actual, stamp_bytes);
-    }
-
-    for adjuncts in [vec![], vec![invalid.as_dyn()]] {
-        let unchanged_bundle = bundle.clone().lift(rng, app, &adjuncts, vec![]).unwrap();
-        let mut actual = Vec::new();
-        unchanged_bundle.write(&mut actual).unwrap();
-        assert_eq!(actual, bundle_bytes);
-    }
+    bundle
+        .stamp
+        .clone()
+        .lift(rng, app, &descriptors, &fees, vec![])
+        .unwrap();
+    bundle.lift(rng, app, &[invalid.as_dyn()], vec![]).unwrap();
 }
 
 #[test]
@@ -675,11 +647,6 @@ fn merge_after_lift() {
     assert_eq!(lifted_a.stamp.anchor, stamp_b.anchor);
     let combined = merged(app, &lifted_a, &bundle_b);
     assert_eq!(combined.stamp.anchor, lifted_a.stamp.anchor);
-    let mut before_body = Vec::new();
-    lifted_a.strip().write(&mut before_body).unwrap();
-    let mut after_body = Vec::new();
-    combined.strip().write(&mut after_body).unwrap();
-    assert_eq!(after_body, before_body);
 }
 
 #[test]

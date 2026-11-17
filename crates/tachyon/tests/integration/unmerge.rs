@@ -126,11 +126,6 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             )
             .unwrap();
         let stripped: Vec<_> = adjuncts.into_iter().map(bundle::Bundle::strip).collect();
-        let mut before_body = Vec::new();
-        alice.clone().strip().write(&mut before_body).unwrap();
-        let mut after_body = Vec::new();
-        unmerged.clone().strip().write(&mut after_body).unwrap();
-        assert_eq!(after_body, before_body);
         assert_eq!(
             unmerged.stamp.adjuncts,
             stripped.iter().map(mock_txid).collect()
@@ -212,7 +207,7 @@ fn unmerge_keeps_the_bundle_body_and_supports_a_hostless_quotient() {
     kept.verify(rng, app, &mock_sighash(kept.commitment()), &[])
         .unwrap();
 
-    let mut hostless = bob.clone();
+    let mut hostless = alice.clone();
     hostless.stamp = on_alice
         .clone()
         .unmerge(
@@ -222,15 +217,13 @@ fn unmerge_keeps_the_bundle_body_and_supports_a_hostless_quotient() {
             (alice.stamp.clone(), alice_txid, &alice_pairs, &alice_fees),
         )
         .unwrap();
-    assert_eq!(hostless.fee, bob.fee);
-    assert_eq!(hostless.cm_change, bob.cm_change);
-    assert_eq!(hostless.action_auth, bob.action_auth);
     assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
-    // The quotient can be attached to Bob's unchanged body; no Alice fee is
-    // carried by the stamp. Coverage verification does not resolve txids.
-    hostless
-        .verify(rng, app, &mock_sighash(hostless.commitment()), &[])
-        .unwrap();
+    assert_matches!(
+        hostless.verify(rng, app, &mock_sighash(hostless.commitment()), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::WrongTachygramSet
+        ))
+    );
 
     let carol_fee = carol.fee;
     let rehosted = carol

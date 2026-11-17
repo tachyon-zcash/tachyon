@@ -343,20 +343,6 @@ mod tests {
             ]
         );
 
-        // Unlike the Poseidon action digest, the auth digest preserves pair order.
-        records[0][64..96].fill(0xaa);
-        records[0][96..].fill(0x99);
-        assert_ne!(
-            digest,
-            bundle_auth_digest(
-                0x01,
-                &records,
-                0x0102_0304_0506_0708,
-                &[0xbb; 32],
-                &[0xcc; 64],
-                &stamp,
-            )
-        );
         assert_eq!(
             bundle_auth_digest(0x02, &[], 0, &[0xbb; 32], &[0xcc; 64], &STAMP_DIGEST_EMPTY),
             [

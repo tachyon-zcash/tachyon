@@ -940,7 +940,7 @@ impl<S: StampState> Bundle<S> {
 
         // A bundle's two tachygrams per action and its fee change are roots of
         // one set polynomial, which has one more coefficient than roots.
-        if n_actions > ((ProductionRank::num_coeffs() - 2) >> 1) {
+        if 2 * n_actions + 1 > ProductionRank::num_coeffs() - 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many actions",

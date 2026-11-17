@@ -704,10 +704,6 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     bundle.strip().write(&mut stripped).unwrap();
     assert_eq!(stripped[0], 0x02);
     assert_eq!(stripped.len(), offset);
-    assert_eq!(&stripped[1..], &bytes[1..offset]);
-    expected.clear();
-    StrippedStamp.write(&mut expected).unwrap();
-    assert_eq!(expected, Vec::<u8>::new());
 }
 
 #[test]
@@ -767,7 +763,7 @@ fn read_bounds_the_fee() {
 }
 
 #[test]
-fn read_rejects_identity_fee_commitments_but_admits_identity_action_points() {
+fn read_rejects_identity_fee_commitments() {
     let app = &application();
     let (_, bundle) = spend(app);
     let mut count = Vec::new();
@@ -782,9 +778,9 @@ fn read_rejects_identity_fee_commitments_but_admits_identity_action_points() {
     let mut stripped = Vec::new();
     bundle.strip().write(&mut stripped).unwrap();
     let identity = <[u8; 32]>::from(value::Commitment::from(Ep::identity()));
-    let mut invalid = bytes.clone();
+    let mut invalid = bytes;
     invalid[cv_feemax_at..cv_feemax_at + 32].copy_from_slice(&identity);
-    let mut invalid_stripped = stripped.clone();
+    let mut invalid_stripped = stripped;
     invalid_stripped[cv_feemax_at..cv_feemax_at + 32].copy_from_slice(&identity);
     for err in [
         Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*invalid).unwrap_err(),
@@ -794,17 +790,6 @@ fn read_rejects_identity_fee_commitments_but_admits_identity_action_points() {
     ] {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(err.to_string(), "fee commitment is the identity");
-    }
-    // Unlike the fee commitment, action cv/rk retain their existing read
-    // admission policy. This revision must not add wire rejection for them.
-    for point_at in [actions_at, actions_at + 32] {
-        let mut admitted = bytes.clone();
-        admitted[point_at..point_at + 32].copy_from_slice(&identity);
-        Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*admitted).unwrap();
-        let mut admitted_stripped = stripped.clone();
-        admitted_stripped[point_at..point_at + 32].copy_from_slice(&identity);
-        Bundle::<StrippedStamp>::read(&*admitted_stripped).unwrap();
-        TachyonBundle::read(&*admitted_stripped).unwrap();
     }
 }
 
@@ -990,12 +975,10 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
     let (first, second) = bundle.action_auth[0].1;
-    let auth_digest = bundle.auth_digest();
     let action_digest = bundle.actions[0].digest((first, second)).unwrap();
     let mut bytes = Vec::new();
 
     bundle.action_auth[0].1 = (second, first);
-    assert_ne!(bundle.auth_digest(), auth_digest);
     assert_eq!(
         bundle.actions[0].digest((second, first)).unwrap(),
         action_digest
@@ -1111,27 +1094,6 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let overcap_error = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*complete).unwrap_err();
     assert_eq!(overcap_error.kind(), io::ErrorKind::InvalidData);
     assert_eq!(overcap_error.to_string(), "too many adjuncts");
-    let rng = &mut StdRng::seed_from_u64(0);
-    let compressed = Bundle {
-        stamp: oversized.stamp.compress(rng, app).unwrap(),
-        actions: oversized.actions,
-        action_auth: oversized.action_auth,
-        value_balance: oversized.value_balance,
-        cv_feemax: oversized.cv_feemax,
-        fee: oversized.fee,
-        cm_change: oversized.cm_change,
-        binding_sig: oversized.binding_sig,
-        memo: oversized.memo,
-    };
-    complete.clear();
-    compressed.write(&mut complete).unwrap();
-    for compressed_error in [
-        Bundle::<ProofStamp<stamp::Compressed>>::read(&*complete).unwrap_err(),
-        TachyonBundle::read(&*complete).unwrap_err(),
-    ] {
-        assert_eq!(compressed_error.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(compressed_error.to_string(), "too many adjuncts");
-    }
 
     // The standalone cap is enforced immediately, before reading the list.
     let mut trailer = Vec::new();

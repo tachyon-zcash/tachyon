@@ -109,31 +109,11 @@ impl StampState for StrippedStamp {
         StateByte::StrippedStamp
     }
 
-    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        Self::read(reader)
-    }
-
-    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.write(writer)
-    }
-}
-
-impl StrippedStamp {
-    /// Read the empty stripped stamp trailer.
-    ///
-    /// # Errors
-    ///
-    /// This reader consumes no bytes and cannot fail.
-    pub fn read<R: Read>(_reader: R) -> io::Result<Self> {
+    fn read<R: Read>(_reader: &mut R) -> io::Result<Self> {
         Ok(Self)
     }
 
-    /// Write the stamp trailer to the consensus wire format.
-    ///
-    /// # Errors
-    ///
-    /// This writer emits no bytes and cannot fail.
-    pub fn write<W: Write>(&self, _writer: W) -> io::Result<()> {
+    fn write<W: Write>(&self, _writer: &mut W) -> io::Result<()> {
         Ok(())
     }
 }
@@ -307,7 +287,7 @@ impl<P: Proof> ProofStamp<P> {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
-            if n_adjuncts > ProductionRank::num_coeffs() - 2 {
+            if n_adjuncts + 1 > ProductionRank::num_coeffs() - 1 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many adjuncts",
@@ -953,8 +933,7 @@ impl ProofStamp<Uncompressed> {
     /// # Errors
     ///
     /// Returns [`ragu_core::Error`] if a proof-system step fails, including
-    /// when `action_digests` are not the stamp's action set. Empty `spans`
-    /// leave the stamp unchanged.
+    /// when `action_digests` are not the stamp's action set.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -962,10 +941,6 @@ impl ProofStamp<Uncompressed> {
         action_digests: impl IntoIterator<Item = ActionDigest>,
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
-        if spans.is_empty() {
-            return Ok(self);
-        }
-
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
         let mut stamp_pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));

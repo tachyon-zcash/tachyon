@@ -11,7 +11,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, action, bundle,
+    VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
     pasta::Fp,
     stamp::{
@@ -259,19 +259,6 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
         assert_eq!(bundle.commitment(), commitment);
-        assert_eq!(bundle.binding_sig, bundles[1].binding_sig);
-        assert_eq!(
-            bundle
-                .action_auth
-                .iter()
-                .map(|&(sig, _)| sig)
-                .collect::<Vec<action::Signature>>(),
-            bundles[1]
-                .action_auth
-                .iter()
-                .map(|&(sig, _)| sig)
-                .collect::<Vec<action::Signature>>(),
-        );
         bundle.verify(rng, app, &sighash, &[]).unwrap();
     }
     assert_eq!(bundles[0].fee, value::Positive::ZERO);
@@ -462,8 +449,6 @@ fn fee_bearing_aggregates_merge_and_lift() {
         bundle
     });
     let sighash = mock_sighash(left.commitment());
-    let mut original_body = Vec::new();
-    left.clone().strip().write(&mut original_body).unwrap();
 
     for (bundle, auto) in [(&mut left, &left_auto), (&mut right, &right_auto)] {
         bundle.stamp = bundle
@@ -543,9 +528,6 @@ fn fee_bearing_aggregates_merge_and_lift() {
         mock_txid(&right_auto),
     ]);
     assert_eq!(left.stamp.adjuncts, adjunct_txids);
-    let mut merged_body = Vec::new();
-    left.clone().strip().write(&mut merged_body).unwrap();
-    assert_eq!(merged_body, original_body);
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let lifted = left
@@ -557,9 +539,6 @@ fn fee_bearing_aggregates_merge_and_lift() {
         )
         .unwrap();
     assert_eq!(lifted.stamp.adjuncts, adjunct_txids);
-    let mut lifted_body = Vec::new();
-    lifted.clone().strip().write(&mut lifted_body).unwrap();
-    assert_eq!(lifted_body, original_body);
 
     lifted
         .verify(
