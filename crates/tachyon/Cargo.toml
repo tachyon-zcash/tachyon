@@ -49,6 +49,8 @@ std = [
 ]
 test-epoch-size = [
 ]
+test-utils = [
+]
 
 [lints]
 workspace = true
@@ -99,6 +101,9 @@ rand = { version = "0.10", default-features = false, features = [
 ] }
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", default-features = false, features = [
     "mock",
+    "test-utils",
+] }
+zcash_tachyon = { path = ".", features = [
     "test-utils",
 ] }
 

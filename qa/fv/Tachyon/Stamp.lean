@@ -3,7 +3,7 @@ import Tachyon.SetPoly
 /-!
 # Idealized stamp headers
 
-The Rust `Stamp` header data is `(stamp_tg_commit, anchor)`, where `stamp_tg_commit` is the bridge
+The Rust `Stamp` header data is `(tachygram_set_bridge, anchor)`, where `tachygram_set_bridge` is the bridge
 hash of output slot O1. The proof carries exactly two output polynomials: O0 is the action set and
 O1 is the tachygram set. `Actions` has only `anchor` as header data, with the same two slots.
 This model's `Stamp` is the enriched semantic state of those slots and the anchor, not the encoded

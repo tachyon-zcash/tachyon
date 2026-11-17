@@ -74,8 +74,9 @@ The two alpha domains and the fee digest domain are zero-padded to sixteen bytes
 
 ## Hash-to-curve
 
-Value commitments presently use the same generator as Orchard.
+Value commitments and action authorization presently use the same generators as Orchard.
 
 | Purpose | Value |
 | ------- | ----- |
-| Value commitment | `z.cash:Orchard-cv` |
+| Value commitment generators $\mathcal{V}$, $\mathcal{R}$ | `z.cash:Orchard-cv`, messages `v` and `r` |
+| Action authorization basepoint $\mathcal{G}$, for spend and output actions | `z.cash:Orchard`, message `G`, as used by `reddsa` |

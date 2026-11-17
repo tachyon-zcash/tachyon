@@ -73,14 +73,13 @@ set and $\cm_\chg$ to its tachygram set:
 - Left: $\mathtt{Actions}$
 - Right: empty
 - Output: $\mathtt{Stamp}$
-- Witness: the max fee note opening, $\fee$, the left set polynomials $A$ and
-  $T$, the output set polynomials $A'$ and $T'$, and the fee singleton set
-  polynomials $S_A$ and $S_T$
+- Witness: the max fee note opening, $\fee$, and the output set polynomials
+  $A'$ and $T'$
 
 The step derives $r$ and $\cv_\feemax$ from the opening, and rejects an
-identity $\cv_\feemax$. It checks $\feemax \leq \mathsf{MAX\_MONEY}$ and
-$\feemax - \fee \in [0, \mathsf{MAX\_MONEY}]$, and derives $\cm_\chg \neq 0$
-and the fee digest
+identity $\cv_\feemax$. It bounds $\feemax \leq \mathsf{MAX\_MONEY}$ and splits
+$\feemax$ into $\fee$ and $\feemax - \fee$, both in $[0, \mathsf{MAX\_MONEY}]$,
+so $\fee \leq \feemax$. It derives $\cm_\chg \neq 0$ and the fee digest
 
 $$
 d_\fee = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}\bigl(x(\cv_\feemax), y(\cv_\feemax), \fee\bigr),
@@ -88,26 +87,24 @@ $$
 
 where $x$ and $y$ are the affine coordinates of $\cv_\feemax$.
 
-It checks the commitments to $A$ and $T$ against the left header, and enforces
+It reads the left action and tachygram sets $A$ and $T$ from the left input,
+and enforces
 
 $$
-S_A = X - d_\fee,
+A' = A \cdot (X - d_\fee),
 \qquad
-S_T = X - \cm_\chg,
-\qquad
-A' = A \cdot S_A,
-\qquad
-T' = T \cdot S_T.
+T' = T \cdot (X - \cm_\chg).
 $$
 
-The output header carries the commitments to $A'$ and $T'$ and the left
+The output $\mathtt{Stamp}$ carries the bridge hash of $T'$ and the left
 actions' anchor.
 
 $\mathsf{FeeSeed}$ proves a zero-action bundle's zero fee. It has no
-predecessors and witnesses the max fee note opening, the anchor, $S_A$ and
-$S_T$. It enforces $\feemax = 0$ and checks the singleton relations at
-$\fee = 0$, so the fee change note is the max fee note itself. Its
-$\mathtt{Stamp}$ carries the singleton commitments and the witnessed anchor.
+predecessors and witnesses the max fee note opening, the anchor, and the
+singleton sets $S_A$ and $S_T$. It enforces $\feemax = 0$, and
+$S_A = X - d_\fee$ and $S_T = X - \cm_\chg$ at $\fee = 0$, so the fee change
+note is the max fee note itself. Its $\mathtt{Stamp}$ carries the bridge hash
+of $S_T$ and the witnessed anchor.
 
 The fee steps prove a local relation, not funding. Funding comes from
 the bundle's actions, the binding signature over the signed $\cv_\feemax$,
