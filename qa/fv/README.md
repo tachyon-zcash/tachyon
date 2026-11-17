@@ -104,6 +104,41 @@ from the covered digests, that commitment and the anchor is `StampDerivable`.
 against the same descriptors. It checks neither anchor membership nor anchor recency. Those are
 [consensus rules](#consensus-rules) on the chain.
 
+### Source correspondence at pinned main
+
+The maintenance audit against main `dca1ecb58e204e8aca979bbc55e0f3f0d1be3271` is a manual source
+comparison, not an extraction or equivalence proof. The relevant correspondence is:
+
+| Rust source | Lean interpretation | Boundary |
+| --- | --- | --- |
+| `stamp/proof/stamp.rs`: `ActionMerge`, `StampMerge`, `StampUnmerge` | `Stamp.lean`: `Merge`, `Unmerge`; `ProofTree.lean`: derivability | Equal anchors and both slot-product equations agree, conditional on binding and replacing random-point checks with identities. |
+| `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints, fee/action digest separation and the digest-to-tachygram pairing `R` are assumed, not verified. |
+| `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep` | The polynomial span argument is proved under `HashLaw` and output chain membership; propagating that membership through an entire stamp derivation is not proved. |
+| `bundle.rs`: `verify_coverage`, `verify_tachygrams`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Descriptor uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, coverage hashing, wire bounds and adjunct pointers are not modelled. |
+
+Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
+`7a4cf57e`, the relevant changes are:
+
+- **Caller-owned application (#270).** Proof APIs now take `&App`, built by `new_application`
+  in `stamp/proof.rs`, rather than a global `PROOF_SYSTEM`. The constructor retains the fixed
+  registry and baked setup. Derivability assumes this Tachyon registry and setup; the `App` type
+  alias alone does not establish them for an arbitrary caller-supplied application.
+- **Native bridge helper (#302).** `stamp/proof.rs::bridge_hash` computes the two-generator
+  combination of a commitment's affine coordinates using the baked setup's bridge-wire degrees.
+  `stamp.rs` uses it to reconstruct the `Stamp` header, and `Anchor::next_stamp` uses it before
+  the Poseidon fold. The model still abstracts polynomial commitment, bridge hashing and the fold
+  as a composition; it proves neither this helper's equality with Ragu nor its collision resistance.
+  `stamp/proof/tests.rs` compares three commitments with the application's helper and tests the
+  identity-input panic. These are finite Rust tests, not Lean results. `Anchor::next_stamp` rejects
+  identity and empty-set commitments before hashing; the helper itself panics on identity.
+- **QR characterization and fixtures (#278, #303).** The book retains the observed acceptance of
+  scaled, non-monic QR factors and oversized depth-32 buckets, and explicitly leaves broader
+  non-canonical safety open. The lower stamp/bundle-consensus layers assume the second spend's
+  exclusion lineage and its start bound. This phase adds idealized QR retention, profile and source
+  sealing results, plus the local guard refinement in `QrGuards.lean`; it does not derive broader
+  non-canonical safety, circuit equivalence or the lineage-start bound from those finite tests.
+  Fixture/API changes do not change the stamp equations.
+
 ### Leaf provenance
 
 `ActionsTrace` and `StampTrace` (`ProvenanceTraces.lean`) carry the derivations as data. Each leaf
@@ -160,6 +195,13 @@ carries or about the leaf step's constraints on it.
   arbitrary hint commitments (`SideSelection`); `QrSideDescend` matches the selection's source and
   hints before checking their class identity (`SideCheck`). A split that places the exceptional
   root on the non-residue side cannot produce a selection (`split_without_selection`).
+- `QrGuards.lean` adds the split guard `parent(zeta) ≠ 1` and descent guard
+  `nonResidue(zeta) ≠ residue(zeta)` to the idealized QR relations. `Guarded.Route` records
+  separate split/descent challenges per hop and forgets to `Qr.Route`, inheriting retention
+  and conditional exclusion. Regressions distinguish evaluation guards from polynomial
+  inequality and preserve scaled equal-root and rootless-constant cases. This refinement is
+  local: checked intakes and queries still consume the unguarded relations, and no theorem
+  equates either model with the Rust circuit or its challenge distribution.
 - A routed bucket retains the published values that match its profile and may retain other roots.
   Completeness is therefore stated per query (`QueryComplete`). The profile-aware lineage needs completeness only for the
   values it opens (`SpendableDerivable.routed_lineage`, `no_double_spend_of_routed`).
@@ -188,6 +230,26 @@ carries or about the leaf step's constraints on it.
   preimages, or a query break (`doubleSpendBreak`). `no_double_spend_of_no_collisions` is the
   execution-local corollary. `doubleSpendObservedBreak` instantiates the queries with checked source
   data.
+
+`AnchorBreakComposition.lean` postprocesses those existing scoped outputs without changing the
+trace reducers. Given canonical factorization `m.commit p = bridge (pc p)` on the returned finite
+opening scope, `ScopedBreak.refineComposition` distinguishes an actual Pedersen equality from a
+bridge collision on distinct commitment points, and preserves anchor-hash collisions separately.
+Its `forget` theorem recovers the exact original collision and scope, not just an existence claim.
+`Certificate.primitiveOutcome` integrates this classification with the actual checked source-query
+reduction; `ObservedBreak.refineComposition` accepts the output of `doubleSpendObservedBreak`.
+
+For polynomial openings, `Certificate.polyOutcome` and `ObservedBreak.polyRefine` also take explicit
+rank bounds on the compared stamp openings. Only their actual Pedersen-equality branch calls
+`NontrivialDLRelation.ofPolyCollision`; the bridge and hash branches remain separate. The returned
+DL witness retains the original scoped collision. These specializations inherit Mathlib's
+noncomputable polynomial representation. Distinct runtime encodings need not denote distinct
+polynomials, so the generic classifier alone does not justify a runtime-opening DL adapter.
+
+Here the model's `C` means canonical bridge output. Canonical factorization, concrete tagged affine
+hash encoding, and agreement with the Rust/native bridge implementation remain explicit boundaries.
+In particular, binding a bridge stage to O1 does not itself establish its unique unblinded encoding;
+these results do not prove that publication checks close every intermediate bridge encoding.
 
 ### Indexed nullifier sets and runtime openings
 
@@ -226,13 +288,19 @@ choices that no theorem here discharges.
 ### Proof system
 
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
-  from registered steps on accepted inputs. The reductions take their traces and certificates as
-  inputs. A knowledge extractor for the real proof system must supply them, and none is modelled.
+  from the fixed Tachyon registered steps on accepted inputs. The configured Rust dependency uses
+  Ragu's mock driver; a passing mock test is not a proof of production PCD soundness.
+  The reductions take their traces and certificates as inputs. A knowledge extractor for the real
+  proof system must supply them, and none is modelled.
 - **Commitment/bridge binding and the random challenge.** The model reads committed output slots
   as polynomials, abstracts the O1 bridge hash by its bound opening, and reads checks as identities.
   Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
   `Idealization.lean` counts the challenges that fixed violating operands pass. Dividing by the
   field size bounds the probability for a uniform challenge drawn after the operands are fixed.
+  Ragu's pinned bridge-stage source warns that binding to O1 does not itself force the unique
+  unblinded digest recomputed natively. Rust reconstructs that canonical digest for published stamp
+  verification and native chain advancement. The model assumes the canonical composition; it does
+  not prove that these boundary checks close every intermediate bridge encoding in a proof tree.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
 - **Typed circuit inputs.** The profile checks take genuine booleans, a canonical depth and explicit
@@ -254,11 +322,13 @@ choices that no theorem here discharges.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
   domain-separated (`Node.epoch_unique`, `SpanDerivable.node_epoch`). This is a global law over the
   fold inputs. The stamp fold includes commitment and bridge hashing before Poseidon absorbs
-  the bridge point's affine coordinates; the law abstracts that whole composition.
-  No finite hash satisfies it, so results that assume it are symbolic. The trace reductions
-  above replace it with execution-local collision freedom in their supplied abstract model;
-  identifying a break in that composition with a concrete Pedersen or bridge-hash break remains
-  a correspondence boundary.
+  the bridge point's affine coordinates; the law abstracts that whole composition. This exact,
+  global law is stronger than computational collision resistance, not a proved injectivity result
+  for the concrete finite-field implementation or a reduction to Pedersen binding alone.
+  No finite hash satisfies it, so results that assume it are symbolic. The trace reductions replace
+  it with execution-local collision freedom in their supplied abstract model. The scoped
+  composition refinement above separates Pedersen and bridge collisions under explicit canonical
+  factorization; instantiating that premise and the concrete hash encoding remains a boundary.
 
 ### Consensus rules
 
