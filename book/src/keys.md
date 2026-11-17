@@ -1,9 +1,5 @@
 # Key Hierarchy
 
-<!-- todo: the per-note delegation bundle (ak, mk) in the tables below has no
-     implementation; delegation is header-based (NoteSecret -> NoteNullifiers in
-     stamp/proof/delegation.rs) and does not export ak to the delegate. -->
-
 Tachyon simplifies the Zcash key hierarchy by removing key diversification, viewing keys, and payment addresses from the core protocol. These capabilities are handled by higher-level wallet software through out-of-band payment protocols.[^out-of-band]
 
 [^out-of-band]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the full design rationale behind out-of-band payments and the simplified key hierarchy.
@@ -43,7 +39,6 @@ The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\math
 | Incoming | $\mathsf{dk}, \mathsf{ivk}, \mathsf{ovk}$ | **Removed** | Out-of-band |
 | Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{ak}_y, \mathsf{nk})$ | No diversification; binds to pak |
 | Proof authorization | Not separated | $\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$ | Authorize proofs for all notes |
-| Per-note delegation | Not separated | $(\mathsf{ak}, \mathsf{mk})$ | Delegate proofs for one note |
 
 The key insight is that removing in-band secret distribution (on-chain ciphertexts) eliminates the need for viewing keys, diversified addresses, and the entire key tree that supports them.
 
@@ -114,9 +109,4 @@ $$\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$$
 
 Allows constructing proofs without spend authority. The prover uses $\mathsf{ak}$ to constrain $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$ and $\mathsf{nk}$ to constrain nullifier correctness in the circuit.
 
-$\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For narrower delegation, per-note key bundles restrict scope:
-
-| Bundle | Keys | Holder | Scope |
-| ------ | ---- | ------ | ----- |
-| $\mathsf{pak}$ | $(\mathsf{ak}, \mathsf{nk})$ | Prover | All notes, all epochs |
-| per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
+$\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. No narrower proof-authorizing key exists. A wallet can instead delegate absence proving for a window of one note's epochs by sharing that window's nullifiers as values to test (see [Nullifiers § Delegation](./nullifiers.md#delegation)); the delegate holds no key material.

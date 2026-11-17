@@ -19,7 +19,9 @@ when selecting the non-residue side and `c` when selecting the residue side. The
 advance by one, as in the Rust code. Selection's interpolant/quotient are its O0/O1, and descent
 copies the chosen split slot into O0. Rust additionally rejects contents evaluating to one at
 `zeta` at split, and equal side evaluations at descent. Those rejection predicates are not
-represented here: this is an over-approximation for retention, not an exact acceptance relation.
+represented by these base relations: this is an over-approximation for retention, not an exact
+acceptance relation. `QrGuards.lean` adds a local challenge-indexed refinement with forgetful maps;
+existing checked-intake/query consumers still use the base relations.
 `Route.retains` composes root retention along
 any finite profile, including the empty profile.
 
