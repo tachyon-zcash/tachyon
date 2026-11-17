@@ -6,9 +6,10 @@ import Tachyon.ProofTree
 `Bundle::verify` as consensus runs it, idealized like the proof tree: the carried tachygram-set
 commitment is its polynomial, and an accepted proof is a `StampDerivable` header. The proof's header
 is not carried. Consensus rebuilds its action set from the digests of the covered descriptors.
-Rust reconstructs `(tachygram_set.bridge(), anchor)` and verifies O0/O1 against the reconstructed
-action-set commitment and the carried tachygram-set commitment. The `proof` field below packages
-those slot checks with header acceptance as one enriched semantic state.
+Rust reconstructs `(bridge_hash(tachygram_set.as_ref().to_affine()), anchor)` and verifies O0/O1
+against the reconstructed action-set commitment and the carried tachygram-set commitment, using
+the caller's Tachyon application. The `proof` field below packages those slot checks with header
+acceptance as one enriched semantic state; it does not model application construction or bridge code.
 
 Signatures, the value balance and adjunct pointers are out of scope. The BLAKE2b coverage digest is
 left out: it compares the stamp's carried coverage field against the same descriptors the proof
