@@ -42,4 +42,5 @@ Within a block, each stamp's absorption produces an intermediate hash value.
 
 Consensus actors should know about intermediate states, but may only acknowledge the anchor state at the end of a block.
 
-A proof such as `SpendableInit` will produce a header that is likely at an intra-block state, and should be lifted to the end of a block by proving state continuity.
+A proof such as `SpendableInit` may produce a header at an intra-block state: its anchor is the state right after the creation stamp, which is the end-of-block anchor only when that stamp is the block's last.
+A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#anchor-segments), which prove state continuity.
