@@ -2,7 +2,7 @@
 
 A tachygram is an opaque Poseidon $\mathbb{F}_p$ commitment to the creation or destruction of a note[^notes].
 
-A Tachyon transaction publishes each action's tachygram pair, in action order, then its fee change note commitment, at the head of the stamp trailer.
+A Tachyon transaction publishes each action's tachygram pair in `vActionTachygramsTachyon`, in action order, and its fee change note commitment in `cmChangeTachyon`. Both are in the bundle body's proving section and remain when the stamp is stripped.
 
 Every action publishes exactly two tachygrams, whichever kind it is.
 
@@ -38,7 +38,7 @@ An observer learns which two tachygrams belong to each action and which tachygra
 
 An intermediate `Actions` proof, built from actions and merges before the bundle's fee is applied, contains the two tachygrams of every action it covers.
 
-A published stamp has every covered bundle's fee applied. Its tachygram set is the union of the covered actions' pairs and each covered bundle's [fee change note](./fee.md#fee-change-note) commitment. These members are read from the covered bundles' stamp trailers[^bundle], each of which carries its own bundle's pairs and fee change; the covering stamp also carries the set commitment. Ideally, the consensus chain contains aggregated[^aggregation] bundles.
+A published stamp has every covered bundle's fee applied. Its tachygram set is the union of the covered actions' pairs and each covered bundle's [fee change note](./fee.md#fee-change-note) commitment. These members are read from the covered bundle bodies[^bundle], each of which carries its own bundle's pairs and fee change; the covering stamp carries only the set commitment, not the members. Ideally, the consensus chain contains aggregated[^aggregation] bundles.
 
 The stamp proof binds a commitment to the unordered set of those tachygrams.
 
@@ -67,7 +67,7 @@ A spend publishes a nullifier for the current epoch and one for the next epoch[^
 
 [^aggregation]: See [Aggregation](./aggregation.md) for how stamps merge their tachygram sets.
 
-[^bundle]: See [Bundle](./bundle.md) for the on-wire encoding of bundles and the layout of a stamp trailer.
+[^bundle]: See [Bundle](./bundle.md) for the phase-ordered body and the stamp trailer.
 
 [^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment.
 

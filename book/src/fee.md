@@ -12,9 +12,9 @@ The fee is local to the Tachyon bundle, and only its maximum is signed.
   `cvFeeMaxTachyon` and is never spent.
 - **Fee change note**: the spendable note worth $\feemax - \fee$, paid to the
   max fee note's owner. It is published only as its commitment $\cm_\chg$
-  (`cmChange`), the last tachygram of `vTachygrams` in either stamp trailer.
+  (`cmChangeTachyon`), in the bundle body's proving section.
 - **Fee descriptor**: $(\cv_\feemax, \fee, \cm_\chg)$ on the bundle, published
-  as `cvFeeMaxTachyon`, `vFeeTachyon`, and the last entry of `vTachygrams`.
+  as `cvFeeMaxTachyon`, `vFeeTachyon`, and `cmChangeTachyon`. The first is effecting data; the latter two are in the body's proving section.
 - **Fee digest**: the Poseidon digest $d_\fee$ of a fee descriptor.
 
 ## Max Fee Note
@@ -112,14 +112,16 @@ the bundle's actions, the binding signature over the signed $\cv_\feemax$,
 and transaction accounting.
 
 The prover applies $\mathsf{FeeFuse}$ after proving a bundle's actions, or
-$\mathsf{FeeSeed}$ when it has none. The proved stamp carries the applied fee
-in `vFeeTachyon` and the fee change commitment in `vTachygrams`. Every stamp
+$\mathsf{FeeSeed}$ when it has none. The bundle body's proving section carries
+the applied fee in `vFeeTachyon` and the fee change commitment in `cmChangeTachyon`. Every stamp
 has its bundle's fee applied.
 **Consensus rebuilds the stamp's action set from the published action
 descriptors and fee descriptors, recomputes the action accumulator, and checks
 the proof against it.** The stamp does not publish the action accumulator. A
 stamp that doesn't cover its bundle's fee descriptor fails, as
 [Coverage](#coverage) details. Changing the fee rebuilds the stamp.
+
+The native `fee::Descriptor::digest(cm_change)` is infallible. Bundle reading rejects an identity `cvFeeMaxTachyon`; supplying one through a hand-built descriptor instead panics, as documented by its `# Panics` contract and the underlying primitive's `expect`.
 
 ## Coverage
 
@@ -131,9 +133,11 @@ bundle's fee change commitment, with repeated members rejected.
 Consensus rebuilds $d_\fee$ from the published bundles. An accepted proof therefore covers the signed $\cv_\feemax$
 at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
 cannot be applied twice to the same lineage. Merging and lifting carry fee
-digests and fee change note commitments like any other set members. A merge
-keeps the receiving stamp's fee and fee change. An unmerge undoes a merge and keeps the
-dividend's fee and fee change. Stripping carries both into the stripped trailer.
+digests and fee change note commitments like any other set members. Merging,
+unmerging, lifting, and stripping change only the stamp, leaving the bundle
+body's fee and fee change unchanged. Re-proving at another fee must update the
+body's fee, change, and action pairs along with the stamp; replacing the stamp
+alone is not sufficient.
 
 ## Balance
 

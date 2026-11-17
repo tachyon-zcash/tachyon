@@ -5,7 +5,7 @@ A Tachyon bundle's authorization form changes as it moves through aggregation: s
 Tachyon routes the mutable parts through `auth_digest`, leaving `txid` stable:
 
 - `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the action descriptors `(cv, rk)`, the value balance, the max fee note's value commitment, and the memo. Stripping, merging, re-stamping, and applying or changing the fee leave `txid` unchanged.
-- `auth_digest` commits to action sigs and the stamp trailer, which carries the action pairs, the fee and the fee change, and on an aggregate the `txid`s of its adjuncts. Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
+- `auth_digest` commits to action signatures and pairs, the fee and fee change, the binding signature, and the stamp digest, including an aggregate's adjunct `txid`s. Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
 
 ## `auth_digest` contribution
 
@@ -14,52 +14,48 @@ Zcash's transaction-level `auth_digest` commits to authorization data — the ha
 Tachyon's bundle contributes on both sides:
 
 - **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{cvFeeMaxTachyon} \,\|\, \mathsf{hMemoTachyon}$.
-- **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, the action signatures, the binding signature, and one digest of whichever stamp the bundle carries:
+- **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, one signature-and-pair record per action, the fee, the fee change, the binding signature, and the stamp digest:
 
 $$
 \mathsf{tachyon\_auth\_digest} =
 \text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(
-    \mathsf{tachyonBundleState} \,\|\, \mathsf{vActionSigsTachyon} \,\|\, \mathsf{bindingSigTachyon}
-    \,\|\, \mathsf{hStampTachyon}
+    \mathsf{tachyonBundleState} \,\|\, \mathop{\|}_{i=0}^{n-1}(\mathsf{sig}_i \,\|\, \mathsf{tg}_{i,0} \,\|\, \mathsf{tg}_{i,1})
+    \,\|\, \mathsf{LE64}(\mathsf{vFeeTachyon}) \,\|\, \mathsf{cmChangeTachyon}
+    \,\|\, \mathsf{bindingSigTachyon} \,\|\, \mathsf{hStampTachyon}
 \bigr)
 $$
 
-$\mathsf{hStampTachyon}$ covers every field applied after signing, with one layout for both stamp forms: the bundle's action pairs as written, 64 bytes per pair, and its fee change, then the fee, then a digest of the adjunct list and a digest of the stamp proof:
+Record $i$ combines `vActionSigsTachyon[i]` with `vActionTachygramsTachyon[i]`, hashing the pair as written. Each record is 128 bytes. The preimage is $137 + 128n$ bytes, with the record sequence its only variable-length input; no count is hashed. This is a digest projection, not the phase-ordered [wire layout](./bundle.md#bundle-body).
+
+For a proof stamp, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
 
 $$
 \mathsf{hStampTachyon} =
 \text{BLAKE2b-256}_\text{Tachyon-Stamp}\bigl(
-    \mathsf{vTachygrams} \,\|\, \mathsf{LE64}(\mathsf{vFeeTachyon}) \,\|\, \mathsf{hStampAdjunctsTachyon} \,\|\, \mathsf{hStampProofTachyon}
+    \mathsf{vAdjunctsTachyon} \,\|\, \mathsf{hStampProofTachyon}
 \bigr)
 $$
 
-$\mathsf{vTachygrams}$ is its only variable-length input.
+$\mathsf{vAdjunctsTachyon}$ is its only variable-length input; no count is hashed. The preimage is $32k + 32$ bytes for $k$ adjuncts. An autonome has an empty adjunct list but still includes the proof digest.
 
 $$
-\mathsf{hStampAdjunctsTachyon} =
-\text{BLAKE2b-256}_\text{Tachyon-Adjuncts}\bigl(\mathsf{vAdjunctsTachyon}\bigr)
-$$
-
-covers the adjunct txids in list order. The list is empty for an autonome and for a stripped stamp.
-
-$$
-\mathsf{hStampProofTachyon} = \begin{cases}
+\mathsf{hStampProofTachyon} =
     \text{BLAKE2b-256}_\text{Tachyon-Proof}\bigl(
         \mathsf{anchorTachyon} \,\|\, \mathsf{cTachygrams} \,\|\, \mathsf{proofTachyon}
-    \bigr) & \text{if stamped}\\
-    \text{BLAKE2b-256}_\text{Tachyon-Proof}() & \text{if stripped}
-\end{cases}
+    \bigr)
 $$
 
 covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. $\mathsf{proofTachyon}$ is its only variable-length input: the Ragu-encoded proof bytes including their envelope. These bytes determine [`sizeProofTachyon`](./bundle.md#stamp-trailer).
 
-A stripped bundle has no adjunct list and no stamp proof. Both digests take ZIP 244's value for an absent component, the personalized hash of the empty input. A stamped preimage of $\mathsf{hStampProofTachyon}$ is at least 64 bytes, so the two forms differ inside $\mathsf{hStampTachyon}$ itself. A stripped bundle's $\mathsf{hStampTachyon}$ depends on that bundle alone. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+A stripped bundle has an empty trailer and no proof digest. Its $\mathsf{hStampTachyon}$ is `STAMP_DIGEST_EMPTY`, the `Tachyon-Stamp` personalized hash of the empty input, written $\text{BLAKE2b-256}_\text{Tachyon-Stamp}(\texttt{""})$. A proof stamp always hashes at least its 32-byte proof digest, so even an autonome has a different stamp-digest preimage. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+
+This layout changes the stamp digest and authorization digest for every present bundle, but not the effecting commitment, txid, sighash, or action and binding signatures. The no-bundle digests and the proof stamp's $\mathsf{hStampProofTachyon}$ are unchanged.
 
 ## Adjunct references
 
 An aggregate refers to each other transaction whose bundle it covers by `txid`, in its [`vAdjunctsTachyon`](./bundle.md#stamp-trailer). Those transactions are still stamped in the mempool and stripped in a block. A stripped bundle holds no reference.
 
-A `txid` is enough to name an adjunct. The stamp proof binds each covered bundle's fee, fee change and pairs, which are the stamp fields a `txid` leaves out. An adjunct whose stamp fields differ from what the stamp proof covers fails verification.
+A `txid` is enough to name an adjunct. The stamp proof binds each covered bundle's fee, fee change and pairs, which are authorization fields in the body that a `txid` leaves out. An adjunct whose authorization fields differ from what the stamp proof covers fails verification.
 
 A stripped bundle's `wtxid` is a function of that bundle alone. Stripping takes nothing and writes nothing. The miner strips each listed transaction for its block, and a mempool node that strips a copy to verify an aggregate gets the same adjunct and `wtxid`. Lifting, merging or rerandomizing the aggregate's stamp changes the aggregate's `wtxid` and breaks no reference.
 

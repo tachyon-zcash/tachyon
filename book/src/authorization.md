@@ -31,7 +31,7 @@ flowchart TB
     output_alpha -->|"rsk = alpha"| sign
 
     sign(("sign(rsk, sighash)"))
-    sign --- action["action { cv, rk, sig }"]
+    sign --- action["Unproven entry { descriptor (cv, rk) => sig }"]
 ```
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
@@ -179,6 +179,8 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
+Authorizing and binding produce a signed `Unproven`, without pairs, fee, change, or stamp. Proving returns a proof stamp, a descriptor-keyed pair map, and the change commitment. `Unproven::stamp` joins them with the caller's chosen fee, checking that the signature and pair maps have identical keys. The paths can run in either order or concurrently.
+
 ```mermaid
 flowchart LR
     style proving fill:#ff000010,stroke:none
@@ -211,13 +213,13 @@ flowchart LR
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
             value_balance
-            action@{ shape: st-rect }
+            action@{ shape: st-rect, label: "actions (cv, rk)" }
+            action_auth["action_auth (signature, pair) tuples"]
             cv_feemax
             binding_sig
             memo_2[memo]
             fee
-            fee_change
-            pairs["tachygram pairs"]
+            cm_change
             stamp
         end
         other2@{ shape: st-doc, label: "other tx data" }
@@ -234,10 +236,11 @@ flowchart LR
             fee_seed((FeeSeed))
         end
     end
-    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- stamp
-    leaf -.- pairs
-    zero_actions["0 actions"] -.- fee_seed -.- stamp
-    max_fee_note -.- fee_fuse & fee_seed -.- fee & fee_change
+    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- proved_stamp["ProofStamp"]
+    leaf -.- pairs["descriptor-keyed pair map"]
+    zero_actions["0 actions"] -.- fee_seed -.- proved_stamp
+    max_fee_note -.- fee_fuse & fee_seed -.- proved_change["change commitment"]
+    chosen_fee["caller-chosen fee"] -.- fee_fuse & fee_seed
 
 
     sighash ~~~ binding
@@ -245,7 +248,7 @@ flowchart LR
         bsk 
         sign_binding_sig(("sign"))
     end
-    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> binding_sig
+    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> unproven
     sighash === sign_binding_sig
 
     sighash ~~~ authorization
@@ -256,7 +259,12 @@ flowchart LR
         end
     end
     sighash === sign_action
-    action_plan --- rsk --- sign_action ==> action
+    action_plan --- rsk --- sign_action ==> unproven
+
+    unproven["signed Unproven"] --> join{"checked stamp join"}
+    pairs --> join
+    proved_stamp & chosen_fee & proved_change --> join
+    join --> action & action_auth & binding_sig & stamp & fee & cm_change
 
     other1 --> other2
     pczt ~~~ sighash
@@ -264,11 +272,11 @@ flowchart LR
 
 Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
 
-A modified descriptor breaks both checks. A modified pair breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md).
+A modified descriptor breaks both checks. Changing a pair's members breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md). Swapping the two members changes the authorization digest but leaves the order-independent action digest unchanged.
 
 ## Detailed Sequence
 
-The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through stamping, and `Bundle::verify` through consensus.
+The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through proving, `Unproven::stamp` through the checked join, and `Bundle::verify` through consensus.
 Custody is drawn as a separate participant for a device-split integration that does not exist yet.
 `Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
@@ -349,7 +357,7 @@ par Authorizing
             note over User: every planned descriptor (cv, rk) has exactly one signature
             note over User: bsk = Sum rcv_i + r
             note over User: binding_sig = Sign(bsk, sighash)
-            note over User: bundle { actions[], value_balance, cv_feemax, binding_sig, memo } unproven
+            note over User: Unproven { action_sigs: descriptor to signature map, value_balance, cv_feemax, binding_sig, memo }
         end
     end
 
@@ -427,20 +435,22 @@ and Proving
         note over Stamper: adjuncts = empty
         destroy Stamper
         note over Stamper: each pair smaller tachygram first, pairs in descriptor order
-        Stamper ->> User: ProofStamp { pairs, fee, fee_change, anchor, tachygram_set, adjuncts, proof }
+        Stamper ->> User: (ProofStamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map, cm_change)
     end
 end
 
 critical stamp
-    note over User: the stamp holds one pair per signed action
-    note over User: the pairs match the actions by position
+    note over User: Unproven::stamp(stamp, pairs, fee, cm_change), using the stamp plan's fee
+    note over User: reject unequal descriptor key sets with StampError::ActionMismatch
+    note over User: join maps in descriptor order into actions[] and action_auth[] (signature, pair) tuples
+    note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
 break
     note over User: rebuild header from action descriptors and pairs, fee descriptor and fee change, verify stamp proof
 end
 
 create participant Consensus
-note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, stamp { pairs[], fee, fee_change, anchor, tachygram_set, adjuncts, proof } }
+note over User: transaction { actions[], action_auth[], value_balance, cv_feemax, binding_sig, memo, fee, cm_change, stamp { anchor, tachygram_set, adjuncts, proof } }
 deactivate User
 destroy User
 User ->> Consensus: transaction

@@ -24,7 +24,6 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | ------- | ----- |
 | Action descriptors | `Tachyon-Actions` |
 | Memo payload | `Tachyon-Memo` |
-| `hStampAdjunctsTachyon`, the stamp's adjunct list | `Tachyon-Adjuncts` |
 | `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set commitment | `Tachyon-Proof` |
 | `hStampTachyon`, the stamp | `Tachyon-Stamp` |
 
