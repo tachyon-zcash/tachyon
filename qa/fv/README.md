@@ -189,6 +189,26 @@ carries or about the leaf step's constraints on it.
   execution-local corollary. `doubleSpendObservedBreak` instantiates the queries with checked source
   data.
 
+`AnchorBreakComposition.lean` postprocesses those existing scoped outputs without changing the
+trace reducers. Given canonical factorization `m.commit p = bridge (pc p)` on the returned finite
+opening scope, `ScopedBreak.refineComposition` distinguishes an actual Pedersen equality from a
+bridge collision on distinct commitment points, and preserves anchor-hash collisions separately.
+Its `forget` theorem recovers the exact original collision and scope, not just an existence claim.
+`Certificate.primitiveOutcome` integrates this classification with the actual checked source-query
+reduction; `ObservedBreak.refineComposition` accepts the output of `doubleSpendObservedBreak`.
+
+For polynomial openings, `Certificate.polyOutcome` and `ObservedBreak.polyRefine` also take explicit
+rank bounds on the compared stamp openings. Only their actual Pedersen-equality branch calls
+`NontrivialDLRelation.ofPolyCollision`; the bridge and hash branches remain separate. The returned
+DL witness retains the original scoped collision. These specializations inherit Mathlib's
+noncomputable polynomial representation. Distinct runtime encodings need not denote distinct
+polynomials, so the generic classifier alone does not justify a runtime-opening DL adapter.
+
+Here the model's `C` means canonical bridge output. Canonical factorization, concrete tagged affine
+hash encoding, and agreement with the Rust/native bridge implementation remain explicit boundaries.
+In particular, binding a bridge stage to O1 does not itself establish its unique unblinded encoding;
+these results do not prove that publication checks close every intermediate bridge encoding.
+
 ### Value, fees and removal
 
 - Two distinct openings of one set commitment, both of degree below `n`, give a nontrivial
