@@ -12,7 +12,7 @@ use crate::{
     keys::{private, public},
     note::Note,
     pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
+    primitives::{ActionDigest, ActionDigestError, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
 
@@ -38,8 +38,11 @@ impl Descriptor {
     /// # Errors
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
+    pub fn digest(
+        &self,
+        tachygrams: (Tachygram, Tachygram),
+    ) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -174,8 +177,11 @@ impl<E: Effect> Plan<E> {
     /// # Errors
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv(), self.rk)
+    pub fn digest(
+        &self,
+        tachygrams: (Tachygram, Tachygram),
+    ) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv(), self.rk, tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.
@@ -225,8 +231,11 @@ impl Action {
     /// # Errors
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
+    pub fn digest(
+        &self,
+        tachygrams: (Tachygram, Tachygram),
+    ) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
     /// Obtain a descriptor for this action.

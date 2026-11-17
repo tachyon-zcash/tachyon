@@ -7,8 +7,8 @@ use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
-    pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError},
+    pasta::{EpAffine, Fp},
+    primitives::{ActionDigest, ActionDigestError, Tachygram},
     value,
 };
 
@@ -28,7 +28,7 @@ impl Descriptor {
     /// # Errors
     ///
     /// Returns [`ActionDigestError`] if the commitment is the identity.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+    pub fn digest(&self, fee_change: Tachygram) -> Result<ActionDigest, ActionDigestError> {
         let cv_feemax = EpAffine::from(self.cv_feemax);
         if cv_feemax.is_identity() {
             return Err(ActionDigestError::IdentityCv);
@@ -36,6 +36,7 @@ impl Descriptor {
         Ok(ActionDigest::from(poseidon::fee_digest(
             cv_feemax,
             u64::from(self.v_fee),
+            Fp::from(fee_change),
         )))
     }
 }

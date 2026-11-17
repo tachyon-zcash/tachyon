@@ -14,12 +14,9 @@ use ragu_core::{
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    action,
     bundle::Bundle,
-    digest::blake2b,
-    fee,
     pasta::Fp,
-    stamp::{self, AggregateId, StampState, proof::App},
+    stamp::{self, StampState, proof::App},
 };
 
 pub mod pool;
@@ -170,35 +167,14 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-pub fn stamp_coverage(
-    descriptors: impl IntoIterator<Item = action::Descriptor>,
-    fees: &[fee::Descriptor],
-) -> [u8; 32] {
-    let mut descriptor_bytes: Vec<[u8; 64]> = descriptors.into_iter().collect();
-    descriptor_bytes.sort_unstable();
-    let mut fee_bytes: Vec<[u8; 40]> = fees.iter().copied().map(Into::into).collect();
-    fee_bytes.sort_unstable();
-    blake2b::stamp_coverage_digest(
-        &blake2b::action_descriptor_digest(&descriptor_bytes),
-        &blake2b::stamp_fees_digest(&fee_bytes),
-    )
-}
-
-pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
-    let txid = blake2b_simd::Params::new()
+pub fn mock_txid<S: StampState + 'static>(bundle: &Bundle<S>) -> [u8; 32] {
+    let hash = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend txid")
         .to_state()
         .update(&bundle.commitment())
         .finalize();
-    let auth_digest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .personal(b"pretend auth")
-        .to_state()
-        .update(&bundle.auth_digest())
-        .finalize();
-    let mut wtxid = [0u8; 64];
-    wtxid[..32].copy_from_slice(txid.as_bytes());
-    wtxid[32..].copy_from_slice(auth_digest.as_bytes());
-    AggregateId::try_from(wtxid).unwrap()
+    let mut txid = [0u8; 32];
+    txid.copy_from_slice(hash.as_bytes());
+    txid
 }

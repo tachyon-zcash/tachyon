@@ -1,12 +1,13 @@
 extern crate alloc;
 
-use alloc::vec;
-use core::{assert_matches, iter};
+use alloc::{collections::BTreeSet, vec};
+use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    ActionSetPoly, BlockHeight, TachygramSetPoly, VerificationError, VerifyCoverageError, bundle,
+    ActionSetPoly, Anchor, BlockHeight, TachygramSetPoly, VerificationError, VerifyCoverageError,
+    bundle,
     stamp::{
         self, ProofStamp, ProveError,
         proof::stamp::{Stamp, StampUnmerge},
@@ -16,7 +17,7 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    mock_sighash, mock_wtxid,
+    mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
         WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, merged, output_plan,
@@ -31,51 +32,38 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let (_, alice) = alice(app);
     let (_, bob) = bob(app);
     let [(_, carol), _, _] = outputs_with_fees(app);
+    let (bob_txid, carol_txid) = (mock_txid(&bob), mock_txid(&carol));
     let all_three = merged(app, &alice, &bob)
         .stamp
         .merge(
             rng,
             app,
-            (
-                alice.descriptors().chain(bob.descriptors()).collect(),
-                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
-            ),
-            (
-                carol.stamp.clone(),
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
+            vec![alice.covered(), bob.covered()],
+            (carol.stamp.clone(), carol_txid, vec![carol.covered()]),
         )
         .unwrap();
+    assert_eq!(all_three.adjuncts, BTreeSet::from([bob_txid, carol_txid]));
 
     let decoded_aggregate = {
         let mut bytes = Vec::new();
         all_three.write(&mut bytes).unwrap();
-        ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap()
+        ProofStamp::<stamp::Uncompressed>::read(&*bytes, (all_three.tachygrams.len() - 1) / 2)
+            .unwrap()
     };
-    for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
-        (
-            bob.stamp.clone(),
-            bob.descriptors().collect(),
-            [bob.fee_descriptor()].into(),
-            vec![carol.clone()],
-        ),
+    assert_eq!(decoded_aggregate.adjuncts, all_three.adjuncts);
+    for (divisor, divisor_covered, adjuncts) in [
+        (bob.stamp.clone(), vec![bob.covered()], vec![carol.clone()]),
         (
             bob.stamp
                 .clone()
                 .merge(
                     rng,
                     app,
-                    (bob.descriptors().collect(), [bob.fee_descriptor()].into()),
-                    (
-                        carol.stamp.clone(),
-                        carol.descriptors().collect(),
-                        [carol.fee_descriptor()].into(),
-                    ),
+                    vec![bob.covered()],
+                    (carol.stamp.clone(), carol_txid, vec![carol.covered()]),
                 )
                 .unwrap(),
-            bob.descriptors().chain(carol.descriptors()).collect(),
-            [bob.fee_descriptor(), carol.fee_descriptor()].into(),
+            vec![bob.covered(), carol.covered()],
             vec![],
         ),
     ] {
@@ -85,33 +73,20 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             .unmerge(
                 rng,
                 app,
-                (
-                    alice
-                        .descriptors()
-                        .chain(bob.descriptors())
-                        .chain(carol.descriptors())
-                        .collect(),
-                    [
-                        alice.fee_descriptor(),
-                        bob.fee_descriptor(),
-                        carol.fee_descriptor(),
-                    ]
-                    .into(),
-                ),
-                (divisor, divisor_descriptors, divisor_fees),
+                vec![alice.covered(), bob.covered(), carol.covered()],
+                (divisor, bob_txid, divisor_covered),
             )
             .unwrap();
-        let wtxid = mock_wtxid(&unmerged);
-        let stripped: Vec<_> = adjuncts
-            .into_iter()
-            .map(|adjunct| adjunct.strip(wtxid))
-            .collect();
+        let stripped: Vec<_> = adjuncts.into_iter().map(bundle::Bundle::strip).collect();
+        assert_eq!(
+            unmerged.stamp.adjuncts,
+            stripped.iter().map(mock_txid).collect()
+        );
         unmerged
             .verify(
                 rng,
                 app,
                 &mock_sighash(unmerged.commitment()),
-                &wtxid.into(),
                 &stripped.iter().collect::<Vec<_>>(),
             )
             .unwrap();
@@ -124,6 +99,7 @@ fn unmerge_keeps_the_dividend_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let [(_, alice), (_, bob), (_, mut carol)] = outputs_with_fees(app);
     let alice_fee = alice.stamp.fee;
+    let (alice_txid, bob_txid) = (mock_txid(&alice), mock_txid(&bob));
 
     let on_alice = alice
         .stamp
@@ -131,17 +107,11 @@ fn unmerge_keeps_the_dividend_fee() {
         .merge(
             rng,
             app,
-            (
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
+            vec![alice.covered()],
+            (bob.stamp.clone(), bob_txid, vec![bob.covered()]),
         )
         .unwrap();
+    assert_eq!(on_alice.adjuncts, BTreeSet::from([bob_txid]));
 
     let mut kept = alice.clone();
     kept.stamp = on_alice
@@ -149,83 +119,62 @@ fn unmerge_keeps_the_dividend_fee() {
         .unmerge(
             rng,
             app,
-            (
-                alice.descriptors().chain(bob.descriptors()).collect(),
-                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
-            ),
-            (
-                bob.stamp.clone(),
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
+            vec![alice.covered(), bob.covered()],
+            (bob.stamp.clone(), bob_txid, vec![bob.covered()]),
         )
         .unwrap();
-    let kept_wtxid = mock_wtxid(&kept);
-    kept.verify(
-        rng,
-        app,
-        &mock_sighash(kept.commitment()),
-        &kept_wtxid.into(),
-        &[],
-    )
-    .unwrap();
+    assert!(kept.is_autonome());
+    kept.verify(rng, app, &mock_sighash(kept.commitment()), &[])
+        .unwrap();
 
     let mut hostless = bob.clone();
     hostless.stamp = on_alice
+        .clone()
         .unmerge(
             rng,
             app,
-            (
-                alice.descriptors().chain(bob.descriptors()).collect(),
-                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
-            ),
-            (
-                alice.stamp.clone(),
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
-            ),
+            vec![alice.covered(), bob.covered()],
+            (alice.stamp.clone(), alice_txid, vec![alice.covered()]),
         )
         .unwrap();
     assert_eq!(hostless.stamp.fee, alice_fee);
-    let hostless_wtxid = mock_wtxid(&hostless);
+    assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
     assert_matches!(
-        hostless.verify(
-            rng,
-            app,
-            &mock_sighash(hostless.commitment()),
-            &hostless_wtxid.into(),
-            &[],
-        ),
+        hostless.verify(rng, app, &mock_sighash(hostless.commitment()), &[]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
+            VerifyCoverageError::WrongTachygramSet
         ))
     );
 
-    carol.stamp = carol
+    let carol_fee = carol.stamp.fee;
+    let rehosted = carol
         .stamp
         .clone()
         .merge(
             rng,
             app,
-            (
-                carol.descriptors().collect(),
-                [carol.fee_descriptor()].into(),
-            ),
-            (
-                hostless.stamp,
-                bob.descriptors().collect(),
-                [bob.fee_descriptor()].into(),
-            ),
+            vec![carol.covered()],
+            (on_alice, alice_txid, vec![alice.covered(), bob.covered()]),
         )
         .unwrap();
-    let carol_wtxid = mock_wtxid(&carol);
+    assert_eq!(rehosted.adjuncts, BTreeSet::from([alice_txid, bob_txid]));
+    carol.stamp = rehosted
+        .unmerge(
+            rng,
+            app,
+            vec![carol.covered(), alice.covered(), bob.covered()],
+            (alice.stamp.clone(), alice_txid, vec![alice.covered()]),
+        )
+        .unwrap();
+    assert_eq!(carol.stamp.fee, carol_fee);
+    assert_eq!(carol.stamp.adjuncts, BTreeSet::from([bob_txid]));
+    let stripped_bob = bob.strip();
     carol
         .verify(
             rng,
             app,
             &mock_sighash(carol.commitment()),
-            &carol_wtxid.into(),
-            &[&bob.strip(carol_wtxid)],
+            &[&stripped_bob],
         )
         .unwrap();
 }
@@ -239,21 +188,15 @@ fn unmerge_by_a_lifted_divisor() {
     let (_, mut later) = later_output(app);
     let lifted_bundle = lifted(app, &earlier, pool, BlockHeight(1)..=BlockHeight(2));
     let lifted_divisor = lifted_bundle.stamp.clone();
+    let earlier_txid = mock_txid(&earlier);
     let dividend = merged(app, &later, &lifted_bundle).stamp;
 
     assert_matches!(
         dividend.clone().unmerge(
             rng,
             app,
-            (
-                later.descriptors().chain(earlier.descriptors()).collect(),
-                [later.fee_descriptor(), earlier.fee_descriptor()].into(),
-            ),
-            (
-                earlier.stamp.clone(),
-                earlier.descriptors().collect(),
-                [earlier.fee_descriptor()].into(),
-            ),
+            vec![later.covered(), earlier.covered()],
+            (earlier.stamp.clone(), earlier_txid, vec![earlier.covered()]),
         ),
         Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
             if err.to_string() == "StampUnmerge: anchors must match"
@@ -263,26 +206,12 @@ fn unmerge_by_a_lifted_divisor() {
         .unmerge(
             rng,
             app,
-            (
-                later.descriptors().chain(earlier.descriptors()).collect(),
-                [later.fee_descriptor(), earlier.fee_descriptor()].into(),
-            ),
-            (
-                lifted_divisor,
-                earlier.descriptors().collect(),
-                [earlier.fee_descriptor()].into(),
-            ),
+            vec![later.covered(), earlier.covered()],
+            (lifted_divisor, earlier_txid, vec![earlier.covered()]),
         )
         .unwrap();
-    let wtxid = mock_wtxid(&later);
     later
-        .verify(
-            rng,
-            app,
-            &mock_sighash(later.commitment()),
-            &wtxid.into(),
-            &[],
-        )
+        .verify(rng, app, &mock_sighash(later.commitment()), &[])
         .unwrap();
 }
 
@@ -298,32 +227,22 @@ fn unmerge_by_itself_leaves_no_leaves() {
         .unmerge(
             rng,
             app,
-            (
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
-            ),
+            vec![alice.covered()],
             (
                 alice.stamp.clone(),
-                alice.descriptors().collect(),
-                [alice.fee_descriptor()].into(),
+                mock_txid(&alice),
+                vec![alice.covered()],
             ),
         )
         .unwrap();
-    assert!(quotient.tachygrams.is_empty());
     assert!(quotient.verify_proof(rng, app, []).unwrap());
+    assert!(quotient.adjuncts.is_empty());
 
     alice.stamp = quotient;
-    let wtxid = mock_wtxid(&alice);
     assert_matches!(
-        alice.verify(
-            rng,
-            app,
-            &mock_sighash(alice.commitment()),
-            &wtxid.into(),
-            &[]
-        ),
+        alice.verify(rng, app, &mock_sighash(alice.commitment()), &[]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
+            VerifyCoverageError::WrongTachygramSet
         ))
     );
 }
@@ -341,11 +260,14 @@ fn unmerge_splitting_a_bundle() {
         .flatten()
         .next()
         .unwrap();
-    let removed_descriptor = removed_plan.descriptor();
     let kept_descriptor = kept_plan.descriptor();
 
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
+    let stamp = plan
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(rng, app, &wallet.pak, vec![])
+        .unwrap();
     let mut whole = plan
         .sign(
             rng,
@@ -353,12 +275,24 @@ fn unmerge_splitting_a_bundle() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap()
-        .stamp(
-            plan.stamp_plan(anchor, value::Positive::ZERO)
-                .prove(rng, app, &wallet.pak, vec![])
-                .unwrap(),
-        );
+        .stamp(stamp);
+    let kept_index = whole
+        .descriptors()
+        .position(|descriptor| descriptor == kept_descriptor)
+        .unwrap();
+    let kept_digest = whole.verify_covered(&[]).unwrap().0[kept_index];
 
+    let (_, part_pairs) = alice.stamp.tachygrams.split_last().unwrap();
+    let part_covered = vec![(
+        alice.descriptors().collect(),
+        whole.fee_descriptor(),
+        part_pairs
+            .iter()
+            .copied()
+            .chain(whole.stamp.tachygrams.last().copied())
+            .collect(),
+    )];
+    let part_txid = mock_txid(&alice);
     let part = alice.stamp;
 
     let quotient = whole
@@ -367,36 +301,79 @@ fn unmerge_splitting_a_bundle() {
         .unmerge(
             rng,
             app,
+            vec![whole.covered()],
+            (part, part_txid, part_covered),
+        )
+        .unwrap();
+    assert!(quotient.verify_proof(rng, app, [kept_digest]).unwrap());
+    assert!(quotient.adjuncts.is_empty());
+
+    whole.stamp = quotient;
+    assert_matches!(
+        whole.verify(rng, app, &mock_sighash(whole.commitment()), &[]),
+        Err(VerificationError::Coverage(
+            VerifyCoverageError::WrongTachygramSet
+        ))
+    );
+}
+
+#[test]
+fn unmerge_rejects_a_reproven_note_as_divisor() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = Anchor::random(rng);
+    let note = wallet.random_note(300);
+    let max_fee_note = wallet.random_note(100);
+    let fee = value::Positive::try_from(40u64).unwrap();
+    let [original, reproven] = [(), ()].map(|()| {
+        let output = output_plan(rng, note).2;
+        let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
+        let signed = plan
+            .sign(
+                rng,
+                &mock_sighash(plan.commitment().unwrap()),
+                &wallet.sk.derive_auth_private(),
+            )
+            .unwrap();
+        let stamp = plan
+            .stamp_plan(anchor, fee)
+            .prove(rng, app, &wallet.pak, vec![])
+            .unwrap();
+        signed.stamp(stamp)
+    });
+    let (_, other) = wallet.bundle(
+        app,
+        anchor,
+        &[],
+        &[wallet.random_note(200)],
+        wallet.random_note(0),
+        value::Positive::ZERO,
+    );
+    let dividend = original
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            app,
+            vec![original.covered()],
             (
-                whole.descriptors().collect(),
-                [whole.fee_descriptor()].into(),
-            ),
-            (
-                part,
-                [removed_descriptor].into(),
-                [whole.fee_descriptor()].into(),
+                other.stamp.clone(),
+                mock_txid(&other),
+                vec![other.covered()],
             ),
         )
         .unwrap();
-    assert!(
-        quotient
-            .verify_proof(rng, app, [kept_descriptor.digest().unwrap()])
-            .unwrap()
-    );
-
-    whole.stamp = quotient;
-    let wtxid = mock_wtxid(&whole);
+    let divisor_txid = mock_txid(&reproven);
+    let divisor_covered = vec![reproven.covered()];
     assert_matches!(
-        whole.verify(
+        dividend.unmerge(
             rng,
             app,
-            &mock_sighash(whole.commitment()),
-            &wtxid.into(),
-            &[]
+            vec![original.covered(), other.covered()],
+            (reproven.stamp, divisor_txid, divisor_covered),
         ),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
-        ))
+        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
     );
 }
 
@@ -408,19 +385,14 @@ fn unmerge_binds_its_sets() {
     let (_, bob) = bob(app);
     let alice_bob = merged(app, &alice, &bob).stamp;
 
-    let alice_bob_tachygrams: TachygramSetPoly = alice_bob.tachygrams.iter().copied().collect();
-    let alice_actions: ActionSetPoly = alice
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain(iter::once(alice.fee_descriptor().digest().unwrap()))
-        .collect();
-    let alice_tachygrams: TachygramSetPoly = alice.stamp.tachygrams.iter().copied().collect();
-    let bob_actions: ActionSetPoly = bob
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain(iter::once(bob.fee_descriptor().digest().unwrap()))
-        .collect();
-    let bob_tachygrams: TachygramSetPoly = bob.stamp.tachygrams.iter().copied().collect();
+    let alice_members = alice.stamp.tachygrams.iter().copied();
+    let bob_members = bob.stamp.tachygrams.iter().copied();
+    let alice_bob_tachygrams: TachygramSetPoly =
+        alice_members.clone().chain(bob_members.clone()).collect();
+    let alice_actions: ActionSetPoly = alice.verify_covered(&[]).unwrap().0.into_iter().collect();
+    let alice_tachygrams: TachygramSetPoly = alice_members.clone().collect();
+    let bob_actions: ActionSetPoly = bob.verify_covered(&[]).unwrap().0.into_iter().collect();
+    let bob_tachygrams: TachygramSetPoly = bob_members.clone().collect();
     let dividend_header = (
         app.bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
             .unwrap()
@@ -451,14 +423,10 @@ fn unmerge_binds_its_sets() {
         (
             {
                 let mut corrupt = valid;
-                let dropped = *alice.stamp.tachygrams.first().unwrap();
-                corrupt.1 = alice
-                    .stamp
-                    .tachygrams
-                    .iter()
-                    .copied()
+                let dropped = alice_members.clone().next().unwrap();
+                corrupt.1 = alice_members
                     .filter(|&tachygram| tachygram != dropped)
-                    .chain([*bob.stamp.tachygrams.first().unwrap()])
+                    .chain(bob_members.take(1))
                     .collect();
                 corrupt
             },

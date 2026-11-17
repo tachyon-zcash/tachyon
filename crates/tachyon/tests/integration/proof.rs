@@ -224,8 +224,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             Some("StampLift: stamp anchor is neither the span's start nor a member"),
         ),
     ] {
-        let descriptor = bundle.descriptors().next().unwrap();
-        let fee_descriptor = bundle.fee_descriptor();
+        let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
         let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
             app.bridge_hash(stamp.tachygram_set.as_ref().to_affine())
@@ -238,10 +237,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             stamp::StampLift,
             witness::stamp_lift(
                 (*stamp_pcd.data(), *span.data()),
-                ActionSetPoly::from_iter([
-                    descriptor.digest().unwrap(),
-                    fee_descriptor.digest().unwrap(),
-                ]),
+                ActionSetPoly::from_iter(digests),
             ),
             stamp_pcd,
             span.clone(),
@@ -481,7 +477,16 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
-        Eq::from(ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()).to_affine()
+        Eq::from(
+            ActionSetPoly::from_iter([plan
+                .digest((
+                    Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                    Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
+                ))
+                .unwrap()])
+            .commit()
+        )
+        .to_affine()
     );
     assert_eq!(
         tachygram_commit,
@@ -978,28 +983,20 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         )
         .unwrap();
     assert_eq!(*pcd.data(), anchor);
+    let plan = action::Plan::output(note, theta, rcv);
+    let pair = (Tachygram::from(note.commitment()), pad);
     assert_eq!(
         pcd.commitments()[..2],
         [
-            Eq::from(
-                ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv)
-                    .digest()
-                    .unwrap()])
-                .commit()
-            )
-            .to_affine(),
+            Eq::from(ActionSetPoly::from_iter([plan.digest(pair).unwrap()]).commit()).to_affine(),
             Eq::from(
                 TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
             )
             .to_affine(),
         ]
     );
-    assert_ne!(
-        action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv)
-            .digest()
-            .unwrap(),
-        action::Plan::output(note, theta, rcv).digest().unwrap()
-    );
+    let foreign = action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv);
+    assert_ne!(foreign.digest(pair).unwrap(), plan.digest(pair).unwrap());
 }
 
 #[test]

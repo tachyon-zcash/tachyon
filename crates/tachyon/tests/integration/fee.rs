@@ -6,8 +6,8 @@ use core::assert_matches;
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
+    ActionDigest, Anchor, BlockHeight, Bundle, Note, TachygramSetPoly, VerificationError,
+    VerifyCoverageError, bundle,
     constants::MAX_MONEY,
     pasta::Fp,
     stamp::{
@@ -22,9 +22,8 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    Proved, mock_sighash, mock_wtxid,
+    Proved, mock_sighash, mock_txid,
     pool::PoolSim,
-    stamp_coverage,
     wallet::{
         WalletSim, alice, bob, output_plan, outputs_with_fees, shared_sk, spend_with_fee,
         spend_with_fee_max_fee_note, zero_action,
@@ -66,12 +65,12 @@ fn fee_less_output_bundle(
             )
             .unwrap();
         let stamp = ProofStamp {
-            coverage: stamp_coverage([output_plan.descriptor()], &[]),
             anchor,
             tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
-            tachygrams: BTreeSet::from([cm, pad]),
+            adjuncts: BTreeSet::new(),
             proof: Box::new(pcd.proof().clone()),
             fee: value::Positive::ZERO,
+            tachygrams: vec![cm.min(pad), cm.max(pad), max_fee_note.commitment().into()],
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
@@ -94,23 +93,23 @@ fn fee_fuse_binds_its_sets() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, max_fee_note);
 
-    let action_digests: BTreeSet<ActionDigest> = left
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .collect();
+    let action_digests = BTreeSet::from([left.actions[0]
+        .digest((left.stamp.tachygrams[0], left.stamp.tachygrams[1]))
+        .unwrap()]);
+    let action_tachygrams = left.stamp.tachygrams[..2].iter().copied().collect();
     let valid = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
-        &left.stamp.tachygrams,
+        &action_tachygrams,
     );
     let other = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
-        &left.stamp.tachygrams,
+        &action_tachygrams,
     );
 
     for (corrupt, expected) in [
@@ -161,11 +160,11 @@ fn fee_fuse_slack_boundaries() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, wallet.random_note(300));
-    let digests = left
-        .descriptors()
-        .map(|descriptor| descriptor.digest().unwrap())
-        .collect();
-    let left_pcd = left.stamp.proof.clone().carry::<Actions>(anchor);
+    let digests = BTreeSet::from([left.actions[0]
+        .digest((left.stamp.tachygrams[0], left.stamp.tachygrams[1]))
+        .unwrap()]);
+    let action_tachygrams = left.stamp.tachygrams[..2].iter().copied().collect();
+    let left_pcd = left.stamp.proof.carry::<Actions>(anchor);
     for (maximum, fee) in [
         (0, 0),
         (1, 0),
@@ -180,7 +179,7 @@ fn fee_fuse_slack_boundaries() {
             note,
             value::Positive::try_from(fee).unwrap(),
             &digests,
-            &left.stamp.tachygrams,
+            &action_tachygrams,
         );
         let (pcd, ()) = app
             .fuse(
@@ -240,23 +239,17 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
         assert_eq!(bundle.commitment(), commitment);
-        bundle
-            .verify(rng, app, &sighash, &mock_wtxid(bundle).into(), &[])
-            .unwrap();
+        bundle.verify(rng, app, &sighash, &[]).unwrap();
     }
 
     let [_, once, _] = bundles;
-    let digests: BTreeSet<_> = once
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain([once.fee_descriptor().digest().unwrap()])
-        .collect();
+    let digests: BTreeSet<_> = once.verify_covered(&[]).unwrap().0.into_iter().collect();
     let repeated_witness = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(0).unwrap(),
         &digests,
-        &once.stamp.tachygrams,
+        &once.stamp.tachygrams.iter().copied().collect(),
     );
     assert_matches!(
         app.fuse(
@@ -271,35 +264,19 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     );
     let mut twice_stamp = once.stamp.clone();
     twice_stamp.tachygram_set = repeated_witness.2.1.commit();
-    twice_stamp
-        .tachygrams
-        .insert(max_fee_note.commitment().into());
-    twice_stamp.coverage = [0; 32];
-    let mut twice = Bundle {
+    let twice = Bundle {
         stamp: twice_stamp,
         ..once
     };
 
     assert_matches!(
-        twice.verify(rng, app, &sighash, &mock_wtxid(&twice).into(), &[]),
+        twice.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
+            VerifyCoverageError::WrongTachygramSet
         ))
     );
 
-    twice.stamp.coverage = stamp_coverage(twice.descriptors(), &[twice.fee_descriptor()]);
-    assert_matches!(
-        twice.verify(rng, app, &sighash, &mock_wtxid(&twice).into(), &[]),
-        Err(VerificationError::Tachygrams(
-            VerifyTachygramsError::WrongArity
-        ))
-    );
-
-    let published_digests: Vec<ActionDigest> = twice
-        .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain([twice.fee_descriptor().digest().unwrap()])
-        .collect();
+    let published_digests: Vec<ActionDigest> = digests.into_iter().collect();
     assert!(!twice.verify_proof(rng, app, &published_digests).unwrap());
 }
 
@@ -316,29 +293,20 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         .merge(
             rng,
             app,
-            (
-                aggregate.descriptors().collect(),
-                [aggregate.fee_descriptor()].into(),
-            ),
+            vec![aggregate.covered()],
             (
                 fee_bearing.stamp.clone(),
-                fee_bearing.descriptors().collect(),
-                [fee_bearing.fee_descriptor()].into(),
+                mock_txid(&fee_bearing),
+                vec![fee_bearing.covered()],
             ),
         )
         .unwrap();
 
-    let mut adjunct = fee_bearing.strip(mock_wtxid(&aggregate));
+    let mut adjunct = fee_bearing.strip();
     adjunct.cv_feemax = aggregate.cv_feemax;
     adjunct.stamp.fee = aggregate.stamp.fee;
     assert_matches!(
-        aggregate.verify(
-            rng,
-            app,
-            &sighash,
-            &mock_wtxid(&aggregate).into(),
-            &[&adjunct]
-        ),
+        aggregate.verify(rng, app, &sighash, &[&adjunct]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::DuplicateFees
         ))
@@ -355,24 +323,12 @@ fn verify_rejects_a_stamp_without_its_fee() {
     let sighash = mock_sighash(fee_less.commitment());
 
     assert_matches!(
-        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        fee_less.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
+            VerifyCoverageError::WrongTachygramSet
         ))
     );
 
-    fee_less.stamp.coverage = stamp_coverage(fee_less.descriptors(), &[fee_less.fee_descriptor()]);
-    assert_matches!(
-        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
-        Err(VerificationError::Tachygrams(
-            VerifyTachygramsError::WrongArity
-        ))
-    );
-
-    fee_less
-        .stamp
-        .tachygrams
-        .insert(Tachygram::from(max_fee_note.commitment()));
     fee_less.stamp.tachygram_set = fee_less
         .stamp
         .tachygrams
@@ -381,7 +337,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
         .collect::<TachygramSetPoly>()
         .commit();
     assert_matches!(
-        fee_less.verify(rng, app, &sighash, &mock_wtxid(&fee_less).into(), &[]),
+        fee_less.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Disproved)
     );
 }
@@ -395,18 +351,17 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
 
     let [(_, adjunct), _, _] = outputs_with_fees(app);
     let aggregate_stamp = signed.stamp.clone();
-    let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
-    let aggregate_fee_descriptors = BTreeSet::from([signed.fee_descriptor()]);
+    let aggregate_covered = vec![signed.covered()];
 
     let merged_stamp = aggregate_stamp
         .merge(
             rng,
             app,
-            (aggregate_descriptors, aggregate_fee_descriptors),
+            aggregate_covered,
             (
                 adjunct.stamp.clone(),
-                adjunct.descriptors().collect(),
-                [adjunct.fee_descriptor()].into(),
+                mock_txid(&adjunct),
+                vec![adjunct.covered()],
             ),
         )
         .unwrap();
@@ -415,16 +370,8 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         ..signed
     };
 
-    let final_id = mock_wtxid(&aggregate);
-    aggregate
-        .verify(
-            rng,
-            app,
-            &sighash,
-            &final_id.into(),
-            &[&adjunct.strip(final_id)],
-        )
-        .unwrap();
+    let stripped = adjunct.strip();
+    aggregate.verify(rng, app, &sighash, &[&stripped]).unwrap();
 }
 
 #[test]
@@ -454,15 +401,8 @@ fn fee_bearing_aggregates_merge_and_lift() {
             .merge(
                 rng,
                 app,
-                (
-                    bundle.descriptors().collect(),
-                    [bundle.fee_descriptor()].into(),
-                ),
-                (
-                    auto.stamp.clone(),
-                    auto.descriptors().collect(),
-                    [auto.fee_descriptor()].into(),
-                ),
+                vec![bundle.covered()],
+                (auto.stamp.clone(), mock_txid(auto), vec![auto.covered()]),
             )
             .unwrap();
     }
@@ -472,20 +412,20 @@ fn fee_bearing_aggregates_merge_and_lift() {
         .merge(
             rng,
             app,
-            (
-                left.descriptors().chain(left_auto.descriptors()).collect(),
-                [left.fee_descriptor(), left_auto.fee_descriptor()].into(),
-            ),
+            vec![left.covered(), left_auto.covered()],
             (
                 right.stamp.clone(),
-                right
-                    .descriptors()
-                    .chain(right_auto.descriptors())
-                    .collect(),
-                [right.fee_descriptor(), right_auto.fee_descriptor()].into(),
+                mock_txid(&right),
+                vec![right.covered(), right_auto.covered()],
             ),
         )
         .unwrap();
+    let adjunct_txids = BTreeSet::from([
+        mock_txid(&left_auto),
+        mock_txid(&right),
+        mock_txid(&right_auto),
+    ]);
+    assert_eq!(left.stamp.adjuncts, adjunct_txids);
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let lifted = left
@@ -496,19 +436,14 @@ fn fee_bearing_aggregates_merge_and_lift() {
             vec![span],
         )
         .unwrap();
+    assert_eq!(lifted.stamp.adjuncts, adjunct_txids);
 
-    let id = mock_wtxid(&lifted);
     lifted
         .verify(
             rng,
             app,
             &sighash,
-            &id.into(),
-            &[
-                &left_auto.strip(id),
-                &right.strip(id),
-                &right_auto.strip(id),
-            ],
+            &[&left_auto.strip(), &right.strip(), &right_auto.strip()],
         )
         .unwrap();
 }
@@ -519,16 +454,12 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = zero_action(app, PoolSim::shared().mint_anchor());
     let sighash = mock_sighash(bundle.commitment());
-    bundle
-        .verify(rng, app, &sighash, &mock_wtxid(&bundle).into(), &[])
-        .unwrap();
+    bundle.verify(rng, app, &sighash, &[]).unwrap();
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    decoded
-        .verify(rng, app, &sighash, &mock_wtxid(&decoded).into(), &[])
-        .unwrap();
+    decoded.verify(rng, app, &sighash, &[]).unwrap();
 }
 
 #[test]
@@ -543,14 +474,11 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (
-                innocent.descriptors().collect(),
-                [innocent.fee_descriptor()].into(),
-            ),
+            vec![innocent.covered()],
             (
                 adjunct.stamp.clone(),
-                adjunct.descriptors().collect(),
-                [adjunct.fee_descriptor()].into(),
+                mock_txid(&adjunct),
+                vec![adjunct.covered()],
             ),
         )
         .unwrap();
@@ -562,28 +490,24 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (
-                parent.descriptors().collect(),
-                [parent.fee_descriptor()].into(),
-            ),
+            vec![parent.covered()],
             (
                 innocent.stamp.clone(),
-                innocent
-                    .descriptors()
-                    .chain(adjunct.descriptors())
-                    .collect(),
-                [innocent.fee_descriptor(), adjunct.fee_descriptor()].into(),
+                mock_txid(&innocent),
+                vec![innocent.covered(), adjunct.covered()],
             ),
         )
         .unwrap();
-    let parent_id = mock_wtxid(&parent);
+    assert_eq!(
+        parent.stamp.adjuncts,
+        BTreeSet::from([mock_txid(&adjunct), mock_txid(&innocent)])
+    );
     parent
         .verify(
             rng,
             app,
             &mock_sighash(parent.commitment()),
-            &parent_id.into(),
-            &[&adjunct.strip(parent_id), &innocent.strip(parent_id)],
+            &[&adjunct.strip(), &innocent.strip()],
         )
         .unwrap();
 }
