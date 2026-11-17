@@ -33,12 +33,12 @@ mod primitives;
 mod relations;
 mod serialization;
 
-pub use action::{Action, Plan as ActionPlan};
+pub use action::Plan as ActionPlan;
 pub use bundle::{
-    Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
+    Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, Unproven, VerificationError,
     VerifyCoverageError,
 };
 pub use note::Note;
 pub use primitives::*;
 pub use serialization::compactsize::{CompactSize, CompactSizeError};
-pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp, Unproven};
+pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp};

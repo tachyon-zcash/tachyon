@@ -1,13 +1,17 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeSet, string::ToString as _, vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    string::ToString as _,
+    vec,
+};
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, Bundle, Note, TachygramSetPoly, VerificationError,
-    VerifyCoverageError, bundle,
+    ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
+    VerificationError, VerifyCoverageError, action, bundle,
     constants::MAX_MONEY,
     pasta::Fp,
     stamp::{
@@ -69,8 +73,6 @@ fn fee_less_output_bundle(
             tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
             adjuncts: BTreeSet::new(),
             proof: Box::new(pcd.proof().clone()),
-            fee: value::Positive::ZERO,
-            tachygrams: vec![cm.min(pad), cm.max(pad), max_fee_note.commitment().into()],
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
@@ -80,7 +82,13 @@ fn fee_less_output_bundle(
             &wallet.sk.derive_auth_private(),
         )
         .unwrap()
-        .stamp(stamp)
+        .stamp(
+            stamp,
+            BTreeMap::from([(output_plan.descriptor(), (cm.min(pad), cm.max(pad)))]),
+            value::Positive::ZERO,
+            max_fee_note.commitment().into(),
+        )
+        .unwrap()
     })
 }
 
@@ -93,10 +101,12 @@ fn fee_fuse_binds_its_sets() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, max_fee_note);
 
-    let action_digests = BTreeSet::from([left.actions[0]
-        .digest((left.stamp.tachygrams[0], left.stamp.tachygrams[1]))
-        .unwrap()]);
-    let action_tachygrams = left.stamp.tachygrams[..2].iter().copied().collect();
+    let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1).unwrap()]);
+    let action_tachygrams = left
+        .action_auth
+        .iter()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .collect();
     let valid = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
@@ -160,10 +170,12 @@ fn fee_fuse_slack_boundaries() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, wallet.random_note(300));
-    let digests = BTreeSet::from([left.actions[0]
-        .digest((left.stamp.tachygrams[0], left.stamp.tachygrams[1]))
-        .unwrap()]);
-    let action_tachygrams = left.stamp.tachygrams[..2].iter().copied().collect();
+    let digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1).unwrap()]);
+    let action_tachygrams = left
+        .action_auth
+        .iter()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .collect();
     let left_pcd = left.stamp.proof.carry::<Actions>(anchor);
     for (maximum, fee) in [
         (0, 0),
@@ -226,21 +238,46 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let commitment = at_fixture_fee.commitment();
     let sighash = mock_sighash(commitment);
 
-    let [without_fee, maximum_fee] = [0u64, 300].map(|fee| {
-        let stamp = bundle_plan
-            .stamp_plan(anchor, value::Positive::try_from(fee).unwrap())
+    let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
+        let fee = value::Positive::try_from(amount).unwrap();
+        let (stamp, pairs, cm_change) = bundle_plan
+            .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
-        Bundle {
-            stamp,
-            ..at_fixture_fee.clone()
-        }
+        let mut bundle = at_fixture_fee.clone();
+        bundle.action_auth = bundle
+            .actions
+            .iter()
+            .zip(&bundle.action_auth)
+            .map(|(desc, &(sig, _))| (sig, pairs[desc]))
+            .collect();
+        bundle.fee = fee;
+        bundle.cm_change = cm_change;
+        bundle.stamp = stamp;
+        bundle
     });
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
         assert_eq!(bundle.commitment(), commitment);
+        assert_eq!(bundle.binding_sig, bundles[1].binding_sig);
+        assert_eq!(
+            bundle
+                .action_auth
+                .iter()
+                .map(|&(sig, _)| sig)
+                .collect::<Vec<action::Signature>>(),
+            bundles[1]
+                .action_auth
+                .iter()
+                .map(|&(sig, _)| sig)
+                .collect::<Vec<action::Signature>>(),
+        );
         bundle.verify(rng, app, &sighash, &[]).unwrap();
     }
+    assert_eq!(bundles[0].fee, value::Positive::ZERO);
+    assert_eq!(bundles[2].fee, value::Positive::try_from(300u64).unwrap());
+    assert_ne!(bundles[0].cm_change, bundles[2].cm_change);
+    assert_ne!(bundles[0].auth_digest(), bundles[2].auth_digest());
 
     let [_, once, _] = bundles;
     let digests: BTreeSet<_> = once.verify_covered(&[]).unwrap().0.into_iter().collect();
@@ -249,7 +286,12 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         max_fee_note,
         value::Positive::try_from(0).unwrap(),
         &digests,
-        &once.stamp.tachygrams.iter().copied().collect(),
+        &once
+            .action_auth
+            .iter()
+            .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+            .chain([once.cm_change])
+            .collect(),
     );
     assert_matches!(
         app.fuse(
@@ -293,18 +335,32 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         .merge(
             rng,
             app,
-            vec![aggregate.covered()],
+            (
+                &aggregate
+                    .actions
+                    .iter()
+                    .zip(&aggregate.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(aggregate.fee_descriptor(), aggregate.cm_change)]),
+            ),
             (
                 fee_bearing.stamp.clone(),
                 mock_txid(&fee_bearing),
-                vec![fee_bearing.covered()],
+                &fee_bearing
+                    .actions
+                    .iter()
+                    .zip(&fee_bearing.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(fee_bearing.fee_descriptor(), fee_bearing.cm_change)]),
             ),
         )
         .unwrap();
 
     let mut adjunct = fee_bearing.strip();
     adjunct.cv_feemax = aggregate.cv_feemax;
-    adjunct.stamp.fee = aggregate.stamp.fee;
+    adjunct.fee = aggregate.fee;
     assert_matches!(
         aggregate.verify(rng, app, &sighash, &[&adjunct]),
         Err(VerificationError::Coverage(
@@ -330,10 +386,10 @@ fn verify_rejects_a_stamp_without_its_fee() {
     );
 
     fee_less.stamp.tachygram_set = fee_less
-        .stamp
-        .tachygrams
+        .action_auth
         .iter()
-        .copied()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .chain([fee_less.cm_change])
         .collect::<TachygramSetPoly>()
         .commit();
     assert_matches!(
@@ -351,17 +407,30 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
 
     let [(_, adjunct), _, _] = outputs_with_fees(app);
     let aggregate_stamp = signed.stamp.clone();
-    let aggregate_covered = vec![signed.covered()];
 
     let merged_stamp = aggregate_stamp
         .merge(
             rng,
             app,
-            aggregate_covered,
+            (
+                &signed
+                    .actions
+                    .iter()
+                    .zip(&signed.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(signed.fee_descriptor(), signed.cm_change)]),
+            ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
-                vec![adjunct.covered()],
+                &adjunct
+                    .actions
+                    .iter()
+                    .zip(&adjunct.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(adjunct.fee_descriptor(), adjunct.cm_change)]),
             ),
         )
         .unwrap();
@@ -393,6 +462,8 @@ fn fee_bearing_aggregates_merge_and_lift() {
         bundle
     });
     let sighash = mock_sighash(left.commitment());
+    let mut original_body = Vec::new();
+    left.clone().strip().write(&mut original_body).unwrap();
 
     for (bundle, auto) in [(&mut left, &left_auto), (&mut right, &right_auto)] {
         bundle.stamp = bundle
@@ -401,8 +472,26 @@ fn fee_bearing_aggregates_merge_and_lift() {
             .merge(
                 rng,
                 app,
-                vec![bundle.covered()],
-                (auto.stamp.clone(), mock_txid(auto), vec![auto.covered()]),
+                (
+                    &bundle
+                        .actions
+                        .iter()
+                        .zip(&bundle.action_auth)
+                        .map(|(&desc, &(_, pair))| (desc, pair))
+                        .collect(),
+                    &BTreeMap::from([(bundle.fee_descriptor(), bundle.cm_change)]),
+                ),
+                (
+                    auto.stamp.clone(),
+                    mock_txid(auto),
+                    &auto
+                        .actions
+                        .iter()
+                        .zip(&auto.action_auth)
+                        .map(|(&desc, &(_, pair))| (desc, pair))
+                        .collect(),
+                    &BTreeMap::from([(auto.fee_descriptor(), auto.cm_change)]),
+                ),
             )
             .unwrap();
     }
@@ -412,11 +501,39 @@ fn fee_bearing_aggregates_merge_and_lift() {
         .merge(
             rng,
             app,
-            vec![left.covered(), left_auto.covered()],
+            (
+                &[&left, &left_auto]
+                    .into_iter()
+                    .flat_map(|bundle| {
+                        bundle
+                            .actions
+                            .iter()
+                            .zip(&bundle.action_auth)
+                            .map(|(&desc, &(_, pair))| (desc, pair))
+                    })
+                    .collect(),
+                &[&left, &left_auto]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .collect(),
+            ),
             (
                 right.stamp.clone(),
                 mock_txid(&right),
-                vec![right.covered(), right_auto.covered()],
+                &[&right, &right_auto]
+                    .into_iter()
+                    .flat_map(|bundle| {
+                        bundle
+                            .actions
+                            .iter()
+                            .zip(&bundle.action_auth)
+                            .map(|(&desc, &(_, pair))| (desc, pair))
+                    })
+                    .collect(),
+                &[&right, &right_auto]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .collect(),
             ),
         )
         .unwrap();
@@ -426,6 +543,9 @@ fn fee_bearing_aggregates_merge_and_lift() {
         mock_txid(&right_auto),
     ]);
     assert_eq!(left.stamp.adjuncts, adjunct_txids);
+    let mut merged_body = Vec::new();
+    left.clone().strip().write(&mut merged_body).unwrap();
+    assert_eq!(merged_body, original_body);
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let lifted = left
@@ -437,6 +557,9 @@ fn fee_bearing_aggregates_merge_and_lift() {
         )
         .unwrap();
     assert_eq!(lifted.stamp.adjuncts, adjunct_txids);
+    let mut lifted_body = Vec::new();
+    lifted.clone().strip().write(&mut lifted_body).unwrap();
+    assert_eq!(lifted_body, original_body);
 
     lifted
         .verify(
@@ -474,11 +597,25 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            vec![innocent.covered()],
+            (
+                &innocent
+                    .actions
+                    .iter()
+                    .zip(&innocent.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(innocent.fee_descriptor(), innocent.cm_change)]),
+            ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
-                vec![adjunct.covered()],
+                &adjunct
+                    .actions
+                    .iter()
+                    .zip(&adjunct.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(adjunct.fee_descriptor(), adjunct.cm_change)]),
             ),
         )
         .unwrap();
@@ -490,11 +627,32 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            vec![parent.covered()],
+            (
+                &parent
+                    .actions
+                    .iter()
+                    .zip(&parent.action_auth)
+                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .collect(),
+                &BTreeMap::from([(parent.fee_descriptor(), parent.cm_change)]),
+            ),
             (
                 innocent.stamp.clone(),
                 mock_txid(&innocent),
-                vec![innocent.covered(), adjunct.covered()],
+                &[&innocent, &adjunct]
+                    .into_iter()
+                    .flat_map(|bundle| {
+                        bundle
+                            .actions
+                            .iter()
+                            .zip(&bundle.action_auth)
+                            .map(|(&desc, &(_, pair))| (desc, pair))
+                    })
+                    .collect(),
+                &[&innocent, &adjunct]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee_descriptor(), bundle.cm_change))
+                    .collect(),
             ),
         )
         .unwrap();

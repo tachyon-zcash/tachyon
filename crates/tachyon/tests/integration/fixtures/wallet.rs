@@ -12,8 +12,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Tachygram,
-    action::{self, Action},
+    Anchor, BlockHeight, EpochIndex, Tachygram, action,
     bundle::{self, Bundle},
     effect,
     entropy::ActionEntropy,
@@ -30,7 +29,7 @@ use zcash_tachyon::{
 
 use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBucketEntry};
 
-pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
+pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
@@ -42,7 +41,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
     let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-    unproven.actions[0]
+    unproven.action_sigs.into_iter().next().unwrap()
 }
 
 pub fn output_plan<RNG: CryptoRng>(
@@ -73,14 +72,17 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     stamp.tachygram_set.write(&mut key).unwrap();
     // The action digest binds each action's pair; the union does not.
     // Keep the collection passed to merge/lift in the key.
-    let (descriptors, fee_descriptor, tachygrams) = bundle.covered();
-    key.extend_from_slice(&u32::try_from(descriptors.len()).unwrap().to_le_bytes());
-    for descriptor in descriptors {
+    key.extend_from_slice(&u32::try_from(bundle.actions.len()).unwrap().to_le_bytes());
+    for descriptor in &bundle.actions {
         descriptor.write(&mut key).unwrap();
     }
-    key.extend_from_slice(&<[u8; 40]>::from(fee_descriptor));
-    key.extend_from_slice(&u32::try_from(tachygrams.len()).unwrap().to_le_bytes());
-    for tachygram in tachygrams {
+    key.extend_from_slice(&<[u8; 40]>::from(bundle.fee_descriptor()));
+    for tachygram in bundle
+        .action_auth
+        .iter()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .chain([bundle.cm_change])
+    {
         key.extend_from_slice(&Fp::from(tachygram).to_bytes());
     }
     key
@@ -102,8 +104,26 @@ pub(crate) fn merged(
             .merge(
                 rng,
                 app,
-                vec![left.covered()],
-                (right.stamp.clone(), right_txid, vec![right.covered()]),
+                (
+                    &left
+                        .actions
+                        .iter()
+                        .copied()
+                        .zip(left.action_auth.iter().map(|&(_, pair)| pair))
+                        .collect(),
+                    &BTreeMap::from([(left.fee_descriptor(), left.cm_change)]),
+                ),
+                (
+                    right.stamp.clone(),
+                    right_txid,
+                    &right
+                        .actions
+                        .iter()
+                        .copied()
+                        .zip(right.action_auth.iter().map(|&(_, pair)| pair))
+                        .collect(),
+                    &BTreeMap::from([(right.fee_descriptor(), right.cm_change)]),
+                ),
             )
             .unwrap()
     });
@@ -128,7 +148,18 @@ pub(crate) fn lifted(
         bundle
             .stamp
             .clone()
-            .lift(rng, app, vec![bundle.covered()], vec![span])
+            .lift(
+                rng,
+                app,
+                &bundle
+                    .actions
+                    .iter()
+                    .copied()
+                    .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
+                    .collect(),
+                &BTreeMap::from([(bundle.fee_descriptor(), bundle.cm_change)]),
+                vec![span],
+            )
             .unwrap()
     });
     Bundle {
@@ -358,11 +389,11 @@ impl WalletSim {
             let signed = plan
                 .sign(rng, &sighash, &self.sk.derive_auth_private())
                 .unwrap();
-            let stamp = plan
+            let (stamp, pairs, cm_change) = plan
                 .stamp_plan(anchor, fee)
                 .prove(rng, app, &self.pak, spend_pcds)
                 .unwrap();
-            (plan, signed.stamp(stamp))
+            (plan, signed.stamp(stamp, pairs, fee, cm_change).unwrap())
         })
     }
 

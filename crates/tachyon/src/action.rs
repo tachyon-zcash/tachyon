@@ -16,7 +16,7 @@ use crate::{
     reddsa, serialization, value,
 };
 
-/// The simple fields of an action, without the signature.
+/// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
     /// Value commitment (EpAffine).
@@ -190,83 +190,6 @@ impl<E: Effect> Plan<E> {
         Descriptor {
             cv: self.cv(),
             rk: self.rk,
-        }
-    }
-}
-
-/// An authorized Tachyon action.
-///
-/// - `cv`: Commitment to a value effect
-/// - `rk`: Public key (randomized counterpart to `rsk`)
-/// - `sig`: Signature (by single-use `rsk`) over transaction sighash
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Action {
-    /// Value commitment.
-    ///
-    /// $$
-    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
-    /// $$
-    pub cv: value::Commitment,
-
-    /// Randomized action verification key $\mathsf{rk}$.
-    pub rk: public::ActionVerificationKey,
-
-    /// RedPallas spend auth signature over the transaction sighash.
-    pub sig: Signature,
-}
-
-impl From<(Descriptor, Signature)> for Action {
-    fn from((desc, sig): (Descriptor, Signature)) -> Self {
-        Self {
-            cv: desc.cv,
-            rk: desc.rk,
-            sig,
-        }
-    }
-}
-
-impl Action {
-    /// Derive the action digest.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(
-        &self,
-        tachygrams: (Tachygram, Tachygram),
-    ) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk, tachygrams)
-    }
-
-    /// Obtain a descriptor for this action.
-    #[must_use]
-    pub const fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            cv: self.cv,
-            rk: self.rk,
-        }
-    }
-}
-
-impl PartialOrd for Action {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Action {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.descriptor()
-            .cmp(&other.descriptor())
-            .then(self.sig.cmp(&other.sig))
-    }
-}
-
-impl From<Action> for Descriptor {
-    fn from(action: Action) -> Self {
-        Self {
-            cv: action.cv,
-            rk: action.rk,
         }
     }
 }

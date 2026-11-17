@@ -61,7 +61,10 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// Panics if `cv_feemax` is the identity.
 #[must_use]
 pub fn fee_digest(cv_feemax: EpAffine, fee: u64, fee_change: Fp) -> Fp {
-    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    #[expect(
+        clippy::expect_used,
+        reason = "bundle reading rejects an identity fee commitment; hand-built values must uphold this"
+    )]
     let (x, y) = cv_feemax
         .coordinates()
         .expect("cv_feemax must not be the identity");
@@ -80,9 +83,15 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 /// Panics if `cv` or `rk` is the identity.
 #[must_use]
 pub fn action_digest(cv: EpAffine, rk: EpAffine, (first, second): (Fp, Fp)) -> Fp {
-    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    #[expect(
+        clippy::expect_used,
+        reason = "callers reject the identity or upstream generation establishes nonidentity"
+    )]
     let (cv_x, cv_y) = cv.coordinates().expect("cv must not be the identity");
-    #[expect(clippy::expect_used, reason = "callers reject the identity")]
+    #[expect(
+        clippy::expect_used,
+        reason = "callers reject the identity or upstream generation establishes nonidentity"
+    )]
     let (rk_x, rk_y) = rk.coordinates().expect("rk must not be the identity");
 
     let [hash] = emulated(

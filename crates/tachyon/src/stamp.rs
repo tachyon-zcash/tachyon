@@ -41,13 +41,13 @@ use udon::{
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
-    bundle::{BundleState, StateByte},
-    digest::blake2b,
+    bundle::StateByte,
+    digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{Eq, Fp},
+    pasta::{EpAffine, Eq, Fp},
     primitives::{
         ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit,
     },
@@ -56,67 +56,37 @@ use crate::{
     value, witness,
 };
 
-/// Marker for a bundle that has not yet been proven.
-///
-/// This is the initial state for a newly constructed bundle.
-/// Proving produces a [`ProofStamp`].
-///
-/// `Unproven` has no wire representation: it does not implement
-/// [`StampState`], so an unproven bundle cannot be serialized.
-///
-/// ```compile_fail,E0599
-/// use zcash_tachyon::{Bundle, Unproven};
-///
-/// fn serialize(unproven: &Bundle<Unproven>) {
-///     unproven.write(&mut Vec::<u8>::new()); // no `write` on `Bundle<Unproven>`
-/// }
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Unproven;
-
-/// The tachygrams and fee of a stripped bundle. Its stamp proof is carried by
+/// An empty stamp whose proof is carried by
 /// an aggregate whose [`ProofStamp::adjuncts`] lists the txid of this bundle's
 /// transaction.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
-pub struct StrippedStamp {
-    /// The fee of the bundle that carries this stamp.
-    pub fee: value::Positive,
+pub struct StrippedStamp;
 
-    /// The carrying bundle's `vTachygrams`: each action's tachygram pair in
-    /// action order, then the fee change note commitment.
-    pub tachygrams: Vec<Tachygram>,
+mod stamp_sealed {
+    pub trait Sealed {}
+    impl<P: super::Proof> Sealed for super::ProofStamp<P> {}
+    impl Sealed for super::StrippedStamp {}
 }
 
 /// Bundle states that carry a stamp: [`ProofStamp`] or [`StrippedStamp`].
-/// The intermediate [`Unproven`] state has no stamp.
-pub trait StampState: BundleState {
+pub trait StampState: stamp_sealed::Sealed {
     /// A stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
     ///
-    /// A [`StrippedStamp`] has no adjunct list and no stamp proof, and passes
-    /// `hStampAdjunctsTachyon` of the empty list and
-    /// [`blake2b::STAMP_PROOF_DIGEST_EMPTY`].
+    /// A [`StrippedStamp`] hashes an empty input.
     fn stamp_digest(&self) -> [u8; 32];
-
-    /// The fee of the bundle that carries this stamp.
-    fn fee(&self) -> value::Positive;
-
-    /// The carrying bundle's `vTachygrams`: each action's tachygram pair in
-    /// action order, then the fee change note commitment.
-    fn tachygrams(&self) -> &[Tachygram];
 
     /// The `tachyonBundleState` wire byte for this state.
     fn state_byte() -> StateByte
     where
         Self: Sized;
 
-    /// Read the stamp trailer of a bundle with `n_actions` actions from the
-    /// consensus wire format.
+    /// Read the stamp trailer from the consensus wire format.
     ///
     /// # Errors
     ///
     /// Returns an error if reading fails or the trailer is not a canonical
     /// encoding of this state.
-    fn read<R: Read>(reader: &mut R, n_actions: usize) -> io::Result<Self>
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self>
     where
         Self: Sized;
 
@@ -130,78 +100,17 @@ pub trait StampState: BundleState {
         Self: Sized;
 }
 
-/// Read the prefix both stamp trailers share: `vTachygrams`, then
-/// `vFeeTachyon`. `vTachygrams` holds two tachygrams per action, then the fee
-/// change, and rejects a tachygram that repeats an earlier one. Each action's
-/// pair may hold its tachygrams in either order.
-fn read_trailer_prefix<R: Read>(
-    reader: &mut R,
-    n_actions: usize,
-) -> io::Result<(Vec<Tachygram>, value::Positive)> {
-    let n_tachygrams = 2 * n_actions + 1;
-    let mut tachygrams = Vec::new();
-    let mut seen = BTreeSet::new();
-    for _ in 0..n_tachygrams {
-        let tg = Tachygram::read(&mut *reader)?;
-        if !seen.insert(tg) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "tachygrams are not unique",
-            ));
-        }
-        tachygrams.push(tg);
-    }
-
-    let fee = {
-        let mut bytes = [0u8; size_of::<u64>()];
-        reader.read_exact(&mut bytes)?;
-        value::Positive::try_from(u64::from_le_bytes(bytes))
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-    }?;
-
-    Ok((tachygrams, fee))
-}
-
-/// Write the prefix both stamp trailers share. See [`read_trailer_prefix`].
-fn write_trailer_prefix<W: Write>(
-    writer: &mut W,
-    tachygrams: &[Tachygram],
-    fee: value::Positive,
-) -> io::Result<()> {
-    for tg in tachygrams {
-        tg.write(&mut *writer)?;
-    }
-    writer.write_all(&u64::from(fee).to_le_bytes())
-}
-
 impl StampState for StrippedStamp {
     fn stamp_digest(&self) -> [u8; 32] {
-        blake2b::stamp_digest(
-            &self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg).to_bytes())
-                .collect::<Vec<_>>(),
-            u64::from(self.fee),
-            &blake2b::stamp_adjuncts_digest(&[]),
-            &blake2b::STAMP_PROOF_DIGEST_EMPTY,
-        )
-    }
-
-    fn fee(&self) -> value::Positive {
-        self.fee
-    }
-
-    fn tachygrams(&self) -> &[Tachygram] {
-        &self.tachygrams
+        *blake2b::STAMP_DIGEST_EMPTY
     }
 
     fn state_byte() -> StateByte {
         StateByte::StrippedStamp
     }
 
-    fn read<R: Read>(reader: &mut R, n_actions: usize) -> io::Result<Self> {
-        Self::read(reader, n_actions)
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        Self::read(reader)
     }
 
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -210,25 +119,22 @@ impl StampState for StrippedStamp {
 }
 
 impl StrippedStamp {
-    /// Read the stamp trailer of a bundle with `n_actions` actions from the
-    /// consensus wire format.
+    /// Read the empty stripped stamp trailer.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails, a tachygram repeats, or the fee
-    /// exceeds `MAX_MONEY`.
-    pub fn read<R: Read>(mut reader: R, n_actions: usize) -> io::Result<Self> {
-        let (tachygrams, fee) = read_trailer_prefix(&mut reader, n_actions)?;
-        Ok(Self { fee, tachygrams })
+    /// This reader consumes no bytes and cannot fail.
+    pub fn read<R: Read>(_reader: R) -> io::Result<Self> {
+        Ok(Self)
     }
 
     /// Write the stamp trailer to the consensus wire format.
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        write_trailer_prefix(&mut writer, &self.tachygrams, self.fee)
+    /// This writer emits no bytes and cannot fail.
+    pub fn write<W: Write>(&self, _writer: W) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -348,13 +254,7 @@ impl<P: Proof> StampState for ProofStamp<P> {
         let proof = self.proof.to_bytes().expect("stamp proof is encodable");
 
         blake2b::stamp_digest(
-            &self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg).to_bytes())
-                .collect::<Vec<_>>(),
-            u64::from(self.fee),
-            &blake2b::stamp_adjuncts_digest(&self.adjuncts.iter().copied().collect::<Vec<_>>()),
+            &self.adjuncts.iter().copied().collect::<Vec<_>>(),
             &blake2b::stamp_proof_digest(
                 self.anchor.0.to_bytes(),
                 self.tachygram_set.as_ref().to_affine().to_bytes(),
@@ -363,20 +263,12 @@ impl<P: Proof> StampState for ProofStamp<P> {
         )
     }
 
-    fn fee(&self) -> value::Positive {
-        self.fee
-    }
-
-    fn tachygrams(&self) -> &[Tachygram] {
-        &self.tachygrams
-    }
-
     fn state_byte() -> StateByte {
         StateByte::ProofStamp
     }
 
-    fn read<R: Read>(reader: &mut R, n_actions: usize) -> io::Result<Self> {
-        Self::read(reader, n_actions)
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        Self::read(reader)
     }
 
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -385,20 +277,18 @@ impl<P: Proof> StampState for ProofStamp<P> {
 }
 
 impl<P: Proof> ProofStamp<P> {
-    /// Read the stamp trailer of a bundle with `n_actions` actions from the
-    /// consensus wire format. The adjunct list and the proof blob each have a
+    /// Read the stamp trailer from the consensus wire format.
+    /// The adjunct list and the proof blob each have a
     /// compactSize prefix. The proof is bounded by the proof type's encoded
     /// length.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails, a tachygram repeats, any component is
+    /// Returns an error if reading fails, any component is
     /// not a canonical encoding, the adjunct txids are not strictly ascending,
-    /// or the adjuncts and actions hold more tachygrams than one set
-    /// polynomial.
-    pub fn read<R: Read>(mut reader: R, n_actions: usize) -> io::Result<Self> {
-        let (tachygrams, fee) = read_trailer_prefix(&mut reader, n_actions)?;
-
+    /// or the adjunct count exceeds the standalone bound. The bundle reader
+    /// separately checks the combined action and adjunct bound.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let anchor = Anchor::read(&mut reader)?;
 
         // Full validation confirms this against the covered bundles.
@@ -416,9 +306,8 @@ impl<P: Proof> ProofStamp<P> {
         let adjuncts = {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            // Each adjunct holds at least its fee change, a root of the covered
-            // set polynomial beside this bundle's pairs and fee change.
-            if 2 * n_actions + n_adjuncts + 1 > ProductionRank::num_coeffs() - 1 {
+            // Each adjunct and the carrying bundle hold at least a fee change.
+            if n_adjuncts > ProductionRank::num_coeffs() - 2 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many adjuncts",
@@ -457,10 +346,8 @@ impl<P: Proof> ProofStamp<P> {
         Ok(Self {
             anchor,
             tachygram_set,
-            tachygrams,
             adjuncts,
             proof: Box::new(proof),
-            fee,
         })
     }
 
@@ -471,7 +358,6 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        write_trailer_prefix(&mut writer, &self.tachygrams, self.fee)?;
         self.anchor.write(&mut writer)?;
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
         serialization::write_compactsize(
@@ -554,8 +440,9 @@ impl Plan {
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// Its tachygram pairs are in descriptor order, each smaller tachygram
-    /// first.
+    /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
+    /// and the fee change. Each pair has the smaller tachygram first; the
+    /// caller joins these independently produced values with signed data.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -577,7 +464,6 @@ impl Plan {
     ///
     /// - [`ProveError::MissingPcd`] if the spend PCDs do not match the planned
     ///   spends, or a spend does not reach the plan's anchor.
-    /// - [`ProveError::ActionDigest`] if a proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     ///
     /// # Panics
@@ -586,7 +472,7 @@ impl Plan {
     /// actions and the max fee note's value is nonzero.
     #[expect(
         clippy::type_complexity,
-        reason = "each spend's secret, spendable and anchor spans"
+        reason = "each spend's secret, spendable and spans; the stamp, pairs and change output"
     )]
     #[expect(
         clippy::too_many_lines,
@@ -602,7 +488,14 @@ impl Plan {
             ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
             Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
-    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
+    ) -> Result<
+        (
+            ProofStamp<Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+        ),
+        ProveError,
+    > {
         let change = Tachygram::from(self.fee_change_note.commitment());
 
         // Each entry pairs leaf stamp components with the descriptor of its
@@ -645,7 +538,8 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof, pair) =
-                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)?;
+                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)
+                    .map_err(ProveError::ProofFailed)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for span in spans {
                 stamp_pcd = app
@@ -666,7 +560,8 @@ impl Plan {
 
         for (desc, theta, note, rcv) in self.outputs {
             let (digests, tachygrams, anchor, proof, pair) =
-                ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)?;
+                ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)
+                    .map_err(ProveError::ProofFailed)?;
             entries.push((
                 BTreeMap::from([(desc, pair)]),
                 digests,
@@ -758,18 +653,16 @@ impl Plan {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        Ok(ProofStamp {
-            anchor,
-            tachygram_set,
-            tachygrams: descriptors
-                .into_values()
-                .flat_map(<[Tachygram; 2]>::from)
-                .chain([change])
-                .collect(),
-            adjuncts: BTreeSet::new(),
-            proof: Box::new(proof),
-            fee: self.fee,
-        })
+        Ok((
+            ProofStamp {
+                anchor,
+                tachygram_set,
+                adjuncts: BTreeSet::new(),
+                proof: Box::new(proof),
+            },
+            descriptors,
+            change,
+        ))
     }
 }
 
@@ -780,9 +673,6 @@ pub enum ProveError {
     /// Missing PCD inputs for the operation.
     #[display("missing pcd inputs: {_0}")]
     MissingPcd(Box<dyn error::Error + Send + Sync + 'static>),
-    /// Action digest construction failed (cv or rk was the identity point).
-    #[display("action digest failed: {_0}")]
-    ActionDigest(ActionDigestError),
     /// Proof creation failed; carries the underlying step-level error.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu_core::Error),
@@ -794,7 +684,7 @@ pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
 /// A compressed Ragu proof.
 pub type Compressed = ragu::CompressedProof<Pasta>;
 
-/// A stamp carrying tachygrams, anchor, and a proof for specific actions.
+/// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
 /// The PCD header `(tachygram_bridge, anchor)` is entirely not stored
 /// here. A verifier must reconstruct the header from public data and check the
@@ -811,24 +701,28 @@ pub struct ProofStamp<P: Proof> {
     /// The commitment to the covered bundles' tachygram union.
     pub tachygram_set: TachygramSetCommit,
 
-    /// The carrying bundle's `vTachygrams`: each action's tachygram pair in
-    /// action order, then the fee change note commitment.
-    pub tachygrams: Vec<Tachygram>,
-
     /// The txids of the other transactions whose bundles this stamp covers,
     /// empty for an autonome. The bundle carrying this stamp is never listed.
     ///
     /// [`Self::merge`] and [`Self::unmerge`] write the list. Neither the stamp
-    /// proof nor a signature binds it; it enters only `hStampTachyon`, through
-    /// `hStampAdjunctsTachyon`.
+    /// proof nor a signature binds it; it enters only `hStampTachyon`.
     pub adjuncts: BTreeSet<[u8; 32]>,
 
     /// The full or compressed Ragu proof.
     #[debug(skip)]
     pub proof: Box<P>,
+}
 
-    /// The fee of the bundle that carries this stamp.
-    pub fee: value::Positive,
+/// Errors while transforming an existing stamp proof.
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum TransformError {
+    /// An action descriptor contains an identity commitment or key.
+    #[display("action digest failed: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// A proof-system transformation failed.
+    #[display("proof failed: {_0}")]
+    ProofFailed(ragu_core::Error),
 }
 
 impl ProofStamp<Uncompressed> {
@@ -838,13 +732,12 @@ impl ProofStamp<Uncompressed> {
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputAction`]
     /// derives `alpha` from `theta` and the bound `cm`, proves the action over
     /// the pair, and enforces the stamp accumulator. Both tachygrams
-    /// are derived inside the circuit and placed on the stamp for data
-    /// availability. `digests` holds the proved action's digest.
+    /// are returned for publication in the bundle's authorization data.
+    /// `digests` holds the proved action's digest.
     ///
     /// # Errors
     ///
-    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "the digests, tachygrams, anchor and proof of one stamp"
@@ -864,35 +757,33 @@ impl ProofStamp<Uncompressed> {
             Box<Uncompressed>,
             (Tachygram, Tachygram),
         ),
-        ProveError,
+        ragu_core::Error,
     > {
-        let (bind_pcd, ()) = app
-            .seed(
-                rng,
-                output::OutputBind,
-                witness::output_bind(((), ()), note, rcv),
-            )
-            .map_err(ProveError::ProofFailed)?;
+        let (bind_pcd, ()) = app.seed(
+            rng,
+            output::OutputBind,
+            witness::output_bind(((), ()), note, rcv),
+        )?;
         let (cm, pad, cv) = *bind_pcd.data();
         let pair = (cm.min(pad), cm.max(pad));
         let alpha = theta.randomizer::<effect::Output>(note.commitment());
-        let digest = ActionDigest::new(
-            cv,
-            private::ActionSigningKey::new(&alpha).derive_action_public(),
-            pair,
-        )
-        .map_err(ProveError::ActionDigest)?;
+        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
+        // The successful bind step establishes a non-identity cv; an identity
+        // rk would require finding a preimage of the randomizer hash.
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
-        let (pcd, ()) = app
-            .fuse(
-                rng,
-                OutputAction,
-                witness::output_action((*bind_pcd.data(), ()), theta, anchor),
-                bind_pcd,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .map_err(ProveError::ProofFailed)?;
+        let (pcd, ()) = app.fuse(
+            rng,
+            OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            bind_pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )?;
 
         Ok((
             BTreeSet::from_iter([digest]),
@@ -918,8 +809,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "the digests, tachygrams, anchor and proof of one stamp"
@@ -938,26 +828,30 @@ impl ProofStamp<Uncompressed> {
             Box<Uncompressed>,
             (Tachygram, Tachygram),
         ),
-        ProveError,
+        ragu_core::Error,
     > {
         let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
         let alpha = theta.randomizer::<effect::Spend>(cm);
         let (tg_current, tg_next) = (Tachygram::from(nf_current), Tachygram::from(nf_next));
         let pair = (tg_current.min(tg_next), tg_current.max(tg_next));
-        let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha), pair)
-            .map_err(ProveError::ActionDigest)?;
+        let rk = pak.ak.derive_action_public(&alpha);
+        // The successful bind step establishes a non-identity cv; an identity
+        // rk would require finding a preimage of the randomizer hash.
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
 
         let tachygrams = BTreeSet::from_iter([tg_current, tg_next]);
 
-        let (pcd, ()) = app
-            .fuse(
-                rng,
-                SpendAction,
-                witness::spend_action((*bind_pcd.data(), ()), theta, pak),
-                bind_pcd,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .map_err(ProveError::ProofFailed)?;
+        let (pcd, ()) = app.fuse(
+            rng,
+            SpendAction,
+            witness::spend_action((*bind_pcd.data(), ()), theta, pak),
+            bind_pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )?;
 
         Ok((
             BTreeSet::from_iter([digest]),
@@ -1058,20 +952,18 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// - [`ProveError::MissingPcd`] if no span is provided.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including
-    ///   when `action_digests` are not the stamp's action set.
+    /// Returns [`ragu_core::Error`] if a proof-system step fails, including
+    /// when `action_digests` are not the stamp's action set. Empty `spans`
+    /// leave the stamp unchanged.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, ProveError> {
+    ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
-            return Err(ProveError::MissingPcd(
-                "no anchor span proof for no anchor advance".into(),
-            ));
+            return Ok(self);
         }
 
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
@@ -1085,83 +977,63 @@ impl ProofStamp<Uncompressed> {
                     witness::stamp_lift((*stamp_pcd.data(), *span.data()), action_set.clone()),
                     stamp_pcd,
                     span,
-                )
-                .map_err(ProveError::ProofFailed)?
+                )?
                 .0;
         }
         let anchor = stamp_pcd.data().1;
-        let proof = app
-            .rerandomize(stamp_pcd, rng)
-            .map_err(ProveError::ProofFailed)?
-            .proof()
-            .clone();
+        let proof = app.rerandomize(stamp_pcd, rng)?.proof().clone();
 
         Ok(Self {
             anchor,
             tachygram_set: self.tachygram_set,
-            tachygrams: self.tachygrams,
             adjuncts: self.adjuncts,
             proof: Box::new(proof),
-            fee: self.fee,
         })
     }
 
     /// Advances the stamp's anchor along `spans`, computing the action digests
-    /// from the covered descriptors. The lifted stamp keeps this stamp's fee.
+    /// from the covered action and fee descriptors.
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if an action digest cannot be computed, no span
-    /// is provided, or a proof-system step fails. `StampLift` fails when the
-    /// descriptors are not the stamp's covered actions.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a covered bundle's tachygrams are empty. A read stamp and a
-    /// proved stamp always end with the fee change.
+    /// Returns [`TransformError`] if an action digest cannot be computed or a
+    /// proof-system step fails. Empty `spans` leave the stamp unchanged before
+    /// inspecting the descriptors.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        covered: Vec<(Vec<action::Descriptor>, fee::Descriptor, Vec<Tachygram>)>,
+        descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+        fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, ProveError> {
+    ) -> Result<Self, TransformError> {
+        if spans.is_empty() {
+            return Ok(self);
+        }
         let mut action_digests = BTreeSet::new();
-        for (descriptors, fee_descriptor, tachygrams) in covered {
-            #[expect(
-                clippy::expect_used,
-                reason = "a covered bundle's tachygrams end with its fee change"
-            )]
-            let (&fee_change, pairs) = tachygrams
-                .split_last()
-                .expect("a covered bundle's tachygrams end with its fee change");
-            for (descriptor, &pair) in descriptors.iter().zip(pairs.as_chunks::<2>().0) {
-                action_digests.insert(
-                    descriptor
-                        .digest(pair.into())
-                        .map_err(ProveError::ActionDigest)?,
-                );
-            }
+        for (descriptor, &pair) in descriptors {
             action_digests.insert(
-                fee_descriptor
-                    .digest(fee_change)
-                    .map_err(ProveError::ActionDigest)?,
+                descriptor
+                    .digest(pair)
+                    .map_err(TransformError::ActionDigest)?,
             );
+        }
+        for (descriptor, &change) in fee_descriptors {
+            action_digests.insert(descriptor.digest(change));
         }
 
         self.prove_lift(rng, app, action_digests, spans)
+            .map_err(TransformError::ProofFailed)
     }
 
     /// Merges two stamps into one covering stamp.
     ///
-    /// Each side pairs a stamp with what it covers of each covered bundle, as
-    /// [`Bundle::covered`](crate::Bundle::covered) gives it, from which the
-    /// action digests and tachygrams for the merge proof are derived.
+    /// Each side supplies borrowed action and fee maps, from which the action
+    /// digests and tachygrams for the merge proof are derived.
     ///
-    /// The merged stamp stays with this stamp's bundle and keeps this stamp's
-    /// fee. It lists both stamps' adjuncts and `right_txid`, the txid of the
-    /// one transaction the right stamp covers without listing, which the
-    /// caller takes from that transaction's plan or from the published
+    /// The merged stamp lists both stamps' adjuncts and `right_txid`, the txid
+    /// of the one transaction the right stamp covers without listing, which
+    /// the caller takes from that transaction's plan or from the published
     /// transaction.
     ///
     /// This method cannot check `right_txid`. A wrong txid yields an aggregate
@@ -1173,13 +1045,8 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if an action digest cannot be computed or a
+    /// Returns [`TransformError`] if an action digest cannot be computed or a
     /// proof-system step fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a covered bundle's tachygrams are empty. A read stamp and a
-    /// proved stamp always end with the fee change.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the absorbed side"
@@ -1188,61 +1055,45 @@ impl ProofStamp<Uncompressed> {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        left_covered: Vec<(Vec<action::Descriptor>, fee::Descriptor, Vec<Tachygram>)>,
-        (right_stamp, right_txid, right_covered): (
+        (left_desc, left_fees): (
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
+        ),
+        (right_stamp, right_txid, right_desc, right_fees): (
             Self,
             [u8; 32],
-            Vec<(Vec<action::Descriptor>, fee::Descriptor, Vec<Tachygram>)>,
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, ProveError> {
+    ) -> Result<Self, TransformError> {
         let mut left_digests = BTreeSet::new();
         let mut left_tachygrams = BTreeSet::new();
-        for (descriptors, fee_descriptor, tachygrams) in left_covered {
-            left_tachygrams.extend(tachygrams.iter().copied());
-            #[expect(
-                clippy::expect_used,
-                reason = "a covered bundle's tachygrams end with its fee change"
-            )]
-            let (&fee_change, pairs) = tachygrams
-                .split_last()
-                .expect("a covered bundle's tachygrams end with its fee change");
-            for (descriptor, &pair) in descriptors.iter().zip(pairs.as_chunks::<2>().0) {
-                left_digests.insert(
-                    descriptor
-                        .digest(pair.into())
-                        .map_err(ProveError::ActionDigest)?,
-                );
-            }
+        for (descriptor, &pair) in left_desc {
+            left_tachygrams.extend(<[Tachygram; 2]>::from(pair));
             left_digests.insert(
-                fee_descriptor
-                    .digest(fee_change)
-                    .map_err(ProveError::ActionDigest)?,
+                descriptor
+                    .digest(pair)
+                    .map_err(TransformError::ActionDigest)?,
             );
+        }
+        for (descriptor, &change) in left_fees {
+            left_tachygrams.insert(change);
+            left_digests.insert(descriptor.digest(change));
         }
 
         let mut right_digests = BTreeSet::new();
         let mut right_tachygrams = BTreeSet::new();
-        for (descriptors, fee_descriptor, tachygrams) in right_covered {
-            right_tachygrams.extend(tachygrams.iter().copied());
-            #[expect(
-                clippy::expect_used,
-                reason = "a covered bundle's tachygrams end with its fee change"
-            )]
-            let (&fee_change, pairs) = tachygrams
-                .split_last()
-                .expect("a covered bundle's tachygrams end with its fee change");
-            for (descriptor, &pair) in descriptors.iter().zip(pairs.as_chunks::<2>().0) {
-                right_digests.insert(
-                    descriptor
-                        .digest(pair.into())
-                        .map_err(ProveError::ActionDigest)?,
-                );
-            }
+        for (descriptor, &pair) in right_desc {
+            right_tachygrams.extend(<[Tachygram; 2]>::from(pair));
             right_digests.insert(
-                fee_descriptor
-                    .digest(fee_change)
-                    .map_err(ProveError::ActionDigest)?,
+                descriptor
+                    .digest(pair)
+                    .map_err(TransformError::ActionDigest)?,
             );
+        }
+        for (descriptor, &change) in right_fees {
+            right_tachygrams.insert(change);
+            right_digests.insert(descriptor.digest(change));
         }
 
         let (_, tachygrams, anchor, merged_proof) = Self::prove_merge(
@@ -1256,7 +1107,7 @@ impl ProofStamp<Uncompressed> {
                 right_stamp.proof,
             ),
         )
-        .map_err(ProveError::ProofFailed)?;
+        .map_err(TransformError::ProofFailed)?;
 
         let tachygram_set = tachygrams
             .iter()
@@ -1271,7 +1122,7 @@ impl ProofStamp<Uncompressed> {
                 )),
                 rng,
             )
-            .map_err(ProveError::ProofFailed)?
+            .map_err(TransformError::ProofFailed)?
             .proof()
             .clone();
 
@@ -1282,24 +1133,17 @@ impl ProofStamp<Uncompressed> {
         Ok(Self {
             anchor,
             tachygram_set,
-            tachygrams: self.tachygrams,
             adjuncts,
             proof: Box::new(proof),
-            fee: self.fee,
         })
     }
 
     /// Divides this stamp by a divisor stamp at the same anchor, removing the
     /// divisor's covered actions, fees and tachygrams.
     ///
-    /// Each side pairs a stamp with what it covers of each covered bundle, as
-    /// [`Bundle::covered`](crate::Bundle::covered) gives it. The quotient's
-    /// action digests and tachygrams are the dividend's less the divisor's.
-    /// The quotient stays with this stamp's bundle and keeps this stamp's fee,
-    /// fee change and tachygram pairs, undoing a merge of the divisor into this
-    /// stamp. A divisor that removes this stamp's bundle leaves a quotient
-    /// whose fee, fee change and pairs belong to a bundle it no longer covers.
-    /// A divisor that does not divide this stamp fails in the proof system.
+    /// Each side supplies borrowed action and fee maps. The quotient's action
+    /// digests and tachygrams are the dividend's less the divisor's. A divisor
+    /// that does not divide this stamp fails in the proof system.
     ///
     /// The quotient lists this stamp's adjuncts less the divisor's adjuncts and
     /// `divisor_txid`, the txid of the one transaction the divisor covers
@@ -1314,80 +1158,55 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if an action digest cannot be computed or a
+    /// Returns [`TransformError`] if an action digest cannot be computed or a
     /// proof-system step fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a covered bundle's tachygrams are empty. A read stamp and a
-    /// proved stamp always end with the fee change.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the divisor"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the dividend's and the divisor's digest loops are written in place"
     )]
     pub fn unmerge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        covered: Vec<(Vec<action::Descriptor>, fee::Descriptor, Vec<Tachygram>)>,
-        (divisor_stamp, divisor_txid, divisor_covered): (
+        (descriptors, fees): (
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
+        ),
+        (divisor_stamp, divisor_txid, divisor_desc, divisor_fees): (
             Self,
             [u8; 32],
-            Vec<(Vec<action::Descriptor>, fee::Descriptor, Vec<Tachygram>)>,
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, ProveError> {
+    ) -> Result<Self, TransformError> {
         let mut digests = BTreeSet::new();
         let mut tachygrams_all = BTreeSet::new();
-        for (descriptors, fee_descriptor, tachygrams) in covered {
-            tachygrams_all.extend(tachygrams.iter().copied());
-            #[expect(
-                clippy::expect_used,
-                reason = "a covered bundle's tachygrams end with its fee change"
-            )]
-            let (&fee_change, pairs) = tachygrams
-                .split_last()
-                .expect("a covered bundle's tachygrams end with its fee change");
-            for (descriptor, &pair) in descriptors.iter().zip(pairs.as_chunks::<2>().0) {
-                digests.insert(
-                    descriptor
-                        .digest(pair.into())
-                        .map_err(ProveError::ActionDigest)?,
-                );
-            }
+        for (descriptor, &pair) in descriptors {
+            tachygrams_all.extend(<[Tachygram; 2]>::from(pair));
             digests.insert(
-                fee_descriptor
-                    .digest(fee_change)
-                    .map_err(ProveError::ActionDigest)?,
+                descriptor
+                    .digest(pair)
+                    .map_err(TransformError::ActionDigest)?,
             );
+        }
+        for (descriptor, &change) in fees {
+            tachygrams_all.insert(change);
+            digests.insert(descriptor.digest(change));
         }
 
         let mut divisor_digests = BTreeSet::new();
         let mut divisor_tachygrams = BTreeSet::new();
-        for (descriptors, fee_descriptor, tachygrams) in divisor_covered {
-            divisor_tachygrams.extend(tachygrams.iter().copied());
-            #[expect(
-                clippy::expect_used,
-                reason = "a covered bundle's tachygrams end with its fee change"
-            )]
-            let (&fee_change, pairs) = tachygrams
-                .split_last()
-                .expect("a covered bundle's tachygrams end with its fee change");
-            for (descriptor, &pair) in descriptors.iter().zip(pairs.as_chunks::<2>().0) {
-                divisor_digests.insert(
-                    descriptor
-                        .digest(pair.into())
-                        .map_err(ProveError::ActionDigest)?,
-                );
-            }
+        for (descriptor, &pair) in divisor_desc {
+            divisor_tachygrams.extend(<[Tachygram; 2]>::from(pair));
             divisor_digests.insert(
-                fee_descriptor
-                    .digest(fee_change)
-                    .map_err(ProveError::ActionDigest)?,
+                descriptor
+                    .digest(pair)
+                    .map_err(TransformError::ActionDigest)?,
             );
+        }
+        for (descriptor, &change) in divisor_fees {
+            divisor_tachygrams.insert(change);
+            divisor_digests.insert(descriptor.digest(change));
         }
 
         let quotient_action_set = digests
@@ -1427,19 +1246,18 @@ impl ProofStamp<Uncompressed> {
                 dividend_pcd,
                 divisor_pcd,
             )
-            .map_err(ProveError::ProofFailed)?;
+            .map_err(TransformError::ProofFailed)?;
 
         let anchor = pcd.data().1;
         let proof = app
             .rerandomize(pcd, rng)
-            .map_err(ProveError::ProofFailed)?
+            .map_err(TransformError::ProofFailed)?
             .proof()
             .clone();
 
         Ok(Self {
             anchor,
             tachygram_set,
-            tachygrams: self.tachygrams,
             adjuncts: self
                 .adjuncts
                 .difference(&divisor_stamp.adjuncts)
@@ -1447,7 +1265,6 @@ impl ProofStamp<Uncompressed> {
                 .filter(|txid| *txid != divisor_txid)
                 .collect(),
             proof: Box::new(proof),
-            fee: self.fee,
         })
     }
 
@@ -1455,25 +1272,20 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError::ProofFailed`] if the proof system fails.
+    /// Returns [`ragu_core::Error`] if the proof system fails.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-    ) -> Result<ProofStamp<Compressed>, ProveError> {
+    ) -> Result<ProofStamp<Compressed>, ragu_core::Error> {
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
         let pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
-        let (compressed, _) = app
-            .compress(&pcd, rng)
-            .map_err(ProveError::ProofFailed)?
-            .into_parts();
+        let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
         Ok(ProofStamp {
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
-            tachygrams: self.tachygrams,
             adjuncts: self.adjuncts,
             proof: Box::new(compressed),
-            fee: self.fee,
         })
     }
 }
