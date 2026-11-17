@@ -134,7 +134,7 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
-///     \mathsf{hActionsTachyon} \Vert \mathsf{vBalanceTachyon} \Vert
+///     \mathsf{hActionsTachyon} \Vert \mathsf{valueBalanceTachyon} \Vert
 ///     \mathsf{cvFeeMaxTachyon} \Vert \mathsf{hMemoTachyon}
 ///   )
 /// $$

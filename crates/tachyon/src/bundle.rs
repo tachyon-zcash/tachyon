@@ -206,6 +206,16 @@ pub struct Bundle<S: StampState + ?Sized> {
 }
 
 /// A signed bundle awaiting its independently produced proof authorization.
+///
+/// `Unproven` has no wire representation and cannot be serialized.
+///
+/// ```compile_fail,E0599
+/// use zcash_tachyon::Unproven;
+///
+/// fn serialize(bundle: &Unproven) {
+///     bundle.write(&mut Vec::<u8>::new()); // no `write` on `Unproven`
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct Unproven {
     /// Net value of spends minus outputs and max fee.

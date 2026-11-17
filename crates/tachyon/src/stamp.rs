@@ -932,8 +932,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails, including
-    /// when `action_digests` are not the stamp's action set.
+    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,

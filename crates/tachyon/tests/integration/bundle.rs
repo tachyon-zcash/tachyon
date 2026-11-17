@@ -1094,6 +1094,23 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let overcap_error = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*complete).unwrap_err();
     assert_eq!(overcap_error.kind(), io::ErrorKind::InvalidData);
     assert_eq!(overcap_error.to_string(), "too many adjuncts");
+    let rng = &mut StdRng::seed_from_u64(0);
+    let compressed = Bundle {
+        stamp: oversized.stamp.compress(rng, app).unwrap(),
+        actions: oversized.actions,
+        action_auth: oversized.action_auth,
+        value_balance: oversized.value_balance,
+        cv_feemax: oversized.cv_feemax,
+        fee: oversized.fee,
+        cm_change: oversized.cm_change,
+        binding_sig: oversized.binding_sig,
+        memo: oversized.memo,
+    };
+    complete.clear();
+    compressed.write(&mut complete).unwrap();
+    let compressed_error = TachyonBundle::read(&*complete).unwrap_err();
+    assert_eq!(compressed_error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(compressed_error.to_string(), "too many adjuncts");
 
     // The standalone cap is enforced immediately, before reading the list.
     let mut trailer = Vec::new();
@@ -1206,6 +1223,17 @@ fn plan_value_balance_is_bounded_by_max_money() {
             assert_eq!(
                 plan.sign(rng, &[0u8; 32], &ask).unwrap_err(),
                 value::OutOfRange
+            );
+            let signature = random_action(rng).1;
+            let authorized = plan
+                .descriptors()
+                .into_iter()
+                .map(|descriptor| (descriptor, signature))
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(
+                plan.apply_signatures(rng, &[0u8; 32], authorized)
+                    .unwrap_err(),
+                PlanError::BalanceOverflow
             );
         }
     }
