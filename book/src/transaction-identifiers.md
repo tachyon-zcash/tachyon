@@ -49,8 +49,6 @@ covers the stamp proof, the anchor and the tachygram set commitment. A verifier 
 
 A stripped bundle has an empty trailer and no proof digest. Its $\mathsf{hStampTachyon}$ is `STAMP_DIGEST_EMPTY`, the `Tachyon-Stamp` personalized hash of the empty input, written $\text{BLAKE2b-256}_\text{Tachyon-Stamp}(\texttt{""})$. A proof stamp always hashes at least its 32-byte proof digest, so even an autonome has a different stamp-digest preimage. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 
-This layout changes the stamp digest and authorization digest for every present bundle, but not the effecting commitment, txid, sighash, or action and binding signatures. The no-bundle digests and the proof stamp's $\mathsf{hStampProofTachyon}$ are unchanged.
-
 ## Adjunct references
 
 An aggregate refers to each other transaction whose bundle it covers by `txid`, in its [`vAdjunctsTachyon`](./bundle.md#stamp-trailer). Those transactions are still stamped in the mempool and stripped in a block. A stripped bundle holds no reference.

@@ -58,8 +58,6 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
-The native stamp transforms take borrowed coverage maps: action descriptors to tachygram pairs, and fee descriptors to change commitments. `ProofStamp::lift` takes these as two flat map arguments. `merge` and `unmerge` group them by side: the receiving or dividend side is `(descriptors, fee_descriptors)`, and the absorbed or divisor side is `(stamp, txid, descriptors, fee_descriptors)`. Callers build the maps from the bundles or plans being covered; the stamp itself does not carry their pairs or fees. There is no `Bundle::merge` or `Bundle::unmerge`. `Bundle::lift` builds both maps and moves its stamp into the transform. With no anchor spans, either lift returns its input unchanged.
-
 Tachygrams covered by a stamp must be distinct.
 [Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
 [`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
@@ -76,7 +74,6 @@ Miners obtain the broadcast aggregates, or by vertically integrating as aggregat
 Stripping removes the stamp from a transaction covered by an aggregate, producing an adjunct.
 The miner strips each transaction an aggregate in its block lists.
 Stripping takes nothing and writes nothing, and the adjunct's bytes depend on that bundle alone.
-Merging, unmerging, lifting, and stripping leave the bundle body unchanged; only the stamp is transformed or removed.
 
 ```mermaid
 ---

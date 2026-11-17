@@ -84,8 +84,6 @@ A Tachyon bundle collects tachyactions with authorization data:
 - `memo` - opaque recipient-directed payload, empty when absent
 - `stamp` - anchor, tachygram set commitment, adjunct txids, and stamp proof; stripping replaces these with the fieldless `StrippedStamp`
 
-The public `actions` and `action_auth` vectors must have equal lengths. Reading and the checked signing/proving join guarantee this; callers constructing bundles directly must preserve it. Verification does not promise to reject a hand-built arity mismatch.
-
 ```mermaid
 ---
 title: Autonome Bundle

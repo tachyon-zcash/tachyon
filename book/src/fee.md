@@ -121,8 +121,6 @@ the proof against it.** The stamp does not publish the action accumulator. A
 stamp that doesn't cover its bundle's fee descriptor fails, as
 [Coverage](#coverage) details. Changing the fee rebuilds the stamp.
 
-The native `fee::Descriptor::digest(cm_change)` is infallible. Bundle reading rejects an identity `cvFeeMaxTachyon`; supplying one through a hand-built descriptor instead panics, as documented by its `# Panics` contract and the underlying primitive's `expect`.
-
 ## Coverage
 
 A stamp covers actions and fee descriptors, one fee descriptor for each
