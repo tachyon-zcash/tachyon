@@ -1,5 +1,6 @@
 import Tachyon.Foundation.DiscreteLogRelation
 import Tachyon.Binding
+import Tachyon.AnchorBreakComposition
 import Tachyon.SetPoly
 import Tachyon.Idealization
 import Tachyon.Stamp
