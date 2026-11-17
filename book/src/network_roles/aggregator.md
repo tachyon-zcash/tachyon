@@ -13,7 +13,7 @@ It merges the three stamps.
 The merged stamp sits on $A$ and covers the actions and fees of $A$, $X$ and $Y$.
 
 The aggregator publishes $A$ with that stamp.
-A miner that includes it also includes $X$ and $Y$ as [adjuncts](../aggregation.md#strip-to-produce-adjuncts), with their stamps stripped and replaced by pointers to $A$.
+A miner that includes it also includes $X$ and $Y$ as [adjuncts](../aggregation.md#strip-to-produce-adjuncts), with their stamps stripped and their `txid`s listed by $A$.
 If another aggregator merges $A$ into something larger first, $A$ becomes one of its adjuncts in turn.
 
 Folding its own actions into $A$ is one of the reasons to aggregate.
@@ -116,11 +116,15 @@ Rebuild instead when that is less work than the divisions and merges needed.
 $Q$ can go back on $A$ only if it still covers $A$'s own actions and fee.
 If the block included $A$'s bundle too, the remaining work has to go into a different complete aggregate.
 Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and fee change and no bundle it covers can carry them.
-Merge $Q$ into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, and the merged stamp keeps that bundle's fee and fee change.
+Such a $Q$ covers only the transactions it lists.
+It has no transaction it covers without listing, so no `txid` is correct for it, and it is not a valid argument to `merge` or `unmerge`.
+Both accept it, and a stamp built from it can list a transaction it does not cover or omit one it does, which consensus rejects.
+Move $W$ first instead: merge it into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, with $A$'s `txid`, then divide out what the block included.
+The merged stamp keeps that bundle's fee and fee change, and at every step its adjunct list names exactly the other transactions it covers.
 
 ## At the miner
 
-Include eligible, disjoint public aggregates as they are, together with every bundle they cover, stripped to point at the aggregate version in the block.
+Include eligible, disjoint public aggregates as they are, together with every bundle they cover, stripped and listed by `txid` in the aggregate version in the block.
 
 Where two candidate aggregates overlap, remove the overlap from one of them with cached autonomes or a divisor built from stamps you hold, instead of rebuilding either.
 Spend the saved proving time on an aggregate of your own.

@@ -32,9 +32,8 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    mock_sighash,
+    mock_sighash, mock_txid,
     pool::PoolSim,
-    stamp_coverage,
     wallet::{
         WalletSim, alice, alice_output_note, bob, later_output, lifted, merged, output_plan,
         random_action, shared_sk, spend,
@@ -425,7 +424,12 @@ fn overlapping_stamps_cannot_aggregate() {
                 rng,
                 app,
                 (left_descriptors.clone(), left_fees.clone()),
-                (right.clone(), right_descriptors.clone(), right_fees.clone()),
+                (
+                    right.clone(),
+                    [0; 32],
+                    right_descriptors.clone(),
+                    right_fees.clone()
+                ),
             ),
             Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
                 if err.to_string() == expected
@@ -445,11 +449,6 @@ fn overlapping_stamps_cannot_aggregate() {
                 &right_fees.iter().copied().collect::<Vec<_>>(),
             ),
         );
-        let descriptors: Vec<action::Descriptor> = left_descriptors
-            .keys()
-            .chain(right_descriptors.keys())
-            .copied()
-            .collect();
         let fees: Vec<fee::Descriptor> = left_fees.iter().chain(&right_fees).copied().collect();
         let tachygrams: BTreeSet<Tachygram> = left_descriptors
             .values()
@@ -459,13 +458,13 @@ fn overlapping_stamps_cannot_aggregate() {
             .chain(fees.iter().map(|fee| fee.fee_change))
             .collect();
         let stamp = ProofStamp {
-            coverage: stamp_coverage(descriptors.iter().copied(), &fees),
             anchor: forged.data().1,
             tachygram_set: tachygrams
                 .iter()
                 .copied()
                 .collect::<TachygramSetPoly>()
                 .commit(),
+            adjuncts: BTreeSet::new(),
             proof: Box::new(forged.proof().clone()),
             fee: left.fee,
             tachygrams: left.tachygrams.clone(),
@@ -577,7 +576,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
         ProofStamp::<stamp::Uncompressed>::read(&*buf, stamp.tachygrams.pairs.len()).unwrap();
     assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
-    assert_eq!(decoded.coverage, stamp.coverage);
+    assert_eq!(decoded.adjuncts, stamp.adjuncts);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
 
@@ -610,7 +609,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let span = pool.anchor_span(app, BlockHeight(1)..=lifted_to);
     let lifted = lifted(app, &alice, pool, BlockHeight(1)..=lifted_to).stamp;
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
-    assert_eq!(lifted.coverage, stamp.coverage);
+    assert_eq!(lifted.adjuncts, stamp.adjuncts);
     assert_eq!(lifted.tachygram_set, stamp.tachygram_set);
     assert!(lifted.verify_proof(rng, app, digests).unwrap());
 
@@ -622,6 +621,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         .lift(rng, app, &descriptors, &fees, vec![span.clone()])
         .unwrap();
     assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
+    assert_eq!(lifted_decoded.adjuncts, stamp.adjuncts);
     assert!(lifted_decoded.verify_proof(rng, app, digests).unwrap());
 
     let foreign = BTreeMap::from([(random_action(rng).descriptor, pair)]);
@@ -655,7 +655,7 @@ fn merge_after_lift() {
             rng,
             app,
             (desc_a, fee_set_a),
-            (stamp_b.clone(), desc_b, fee_set_b),
+            (stamp_b.clone(), mock_txid(&bundle_b), desc_b, fee_set_b),
         ),
         Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
             if err.to_string() == "StampMerge: anchors must match"
@@ -700,6 +700,7 @@ fn mismatched_merge_descriptors_fail_verification() {
             (descriptors_a, fees_a),
             (
                 bundle_b.stamp.clone(),
+                mock_txid(&bundle_b),
                 BTreeMap::from([(foreign, bundle_b.stamp.tachygrams.pairs[0])]),
                 fees_b,
             ),

@@ -45,9 +45,9 @@ It contains:
 
 - `tachygrams` - the carrying bundle's action pairs, in action order, then its fee change note commitment
 - `fee` - the fee that bundle pays, chosen at or below its signed maximum
-- `coverage` - a digest of the action and fee descriptors the proof covers
 - `anchor` - a chain [anchor](./anchor.md)
 - `tachygram_set` - a commitment to the union of the covered actions' pairs and covered bundles' fee change note commitments
+- `adjuncts` - the txids of the other transactions whose bundles the proof covers, empty for an autonome
 - `proof` - the recursive proof (which may be aggregated)
 
 The proof establishes:
@@ -80,7 +80,7 @@ A Tachyon bundle collects tachyactions with authorization data:
 - `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
 - `memo` - opaque recipient-directed payload, empty when absent
-- `tachystamp` - action pairs and fee change, fee, coverage, anchor, tachygram set commitment, stamp proof (the last four may be aggregated or replaced by a pointer)
+- `tachystamp` - action pairs and fee change, fee, anchor, tachygram set commitment, adjunct txids, stamp proof (the last four may be aggregated, and stripping removes them)
 
 ```mermaid
 ---
@@ -131,8 +131,8 @@ subgraph shielded_data["Bundle"]
             fee_change
         end
         fee
-        coverage
         tachygram_set
+        adjuncts
         anchor@{shape: odd}
         stamp_proof@{shape: notch-rect, label: "stamp proof"}
 
@@ -171,8 +171,8 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped (`ProofStamp`) | bundle with tachygrams, fee, fee change, `hStampCoverageTachyon`, anchor, tachygram set commitment, proof |
-| `0b0000_0010` | stripped (`PointerStamp`) | bundle with tachygrams, fee, fee change and the covering aggregate's `wtxid` |
+| `0b0000_0001` | stamped (`ProofStamp`) | bundle with tachygrams, fee, fee change, anchor, tachygram set commitment, adjunct txids, proof |
+| `0b0000_0010` | stripped (`StrippedStamp`) | bundle with tachygrams, fee and fee change |
 
 ### Bundle body
 
@@ -205,9 +205,10 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | --- | --- | --- |
 | `vTachygrams` | 64 * nActionsTachyon + 32 | each action's tachygram pair, in action order, then the carrying bundle's fee change note commitment |
 | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
-| `hStampCoverageTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors and fee descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygram union derived from covered bundles |
+| `nAdjunctsTachyon` | compactSize | number of other covered transactions, `0` for an autonome |
+| `vAdjunctsTachyon` | 32 * nAdjunctsTachyon | txids of the other covered transactions, strictly ascending |
 | `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
 | `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
 
@@ -219,23 +220,17 @@ Every action contributes exactly two tachygrams, and every covered bundle's fee 
 
 A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set. A max fee note publishes its fee change note's commitment.
 
-`hStampCoverageTachyon` is an assistive indicator built from two sub-digests:
+`vAdjunctsTachyon` lists the txid of every other transaction whose bundle the stamp proof covers. Those transactions are still stamped in the mempool and stripped in a block. The carrying bundle is never listed. Parsing rejects a list that is not strictly ascending by bytewise comparison, which also rejects a repeated txid. The list is a set, and one wire order lets a stamp read from the wire digest the same as the bytes received.
 
-$$
-\begin{aligned}
-\mathsf{hStampCoverageTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Coverage}\bigl(\mathsf{hStampActionsTachyon} \,\|\, \mathsf{hStampFeesTachyon}\bigr) \\
-\mathsf{hStampActionsTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Actions}\bigl(a_1 \,\|\, \cdots \,\|\, a_N\bigr), & a_i &= \mathsf{cv}_i \,\|\, \mathsf{rk}_i \\
-\mathsf{hStampFeesTachyon} &= \text{BLAKE2b-256}_\texttt{Tachyon-Fees}\bigl(f_1 \,\|\, \cdots \,\|\, f_B\bigr), & f_j &= \cv_{\feemax,j} \,\|\, \mathsf{LE64}(\fee_j)
-\end{aligned}
-$$
+Every listed transaction's bundle holds at least its fee change in the tachygram union. Parsing therefore rejects a stamp with $2 \cdot \mathsf{nActionsTachyon} + \mathsf{nAdjunctsTachyon} + 2 > 2^{13}$ before reading the list, because such a stamp can never verify.
 
-$\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+Neither the stamp proof nor a signature binds the list. It enters only the [stamp digest](./transaction-identifiers.md), through its own digest $\mathsf{hStampAdjunctsTachyon}$. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
 Consensus carries `Compressed` proofs in [block items](./aggregation.md), and `Uncompressed` proofs use the same `tachyonBundleState == 0x01` layout while stamps are [merged](./aggregation.md#merge-to-produce-aggregate) and [lifted](./proof-tree.md#stamp-anchor) outside consensus.
 
-[`hStampProofTachyon`](./transaction-identifiers.md) hashes the stamp proof and its header: the anchor, the tachygram set commitment and the Ragu-encoded proof bytes, including the envelope. Its definition is the same for both proof forms.
+[`hStampProofTachyon`](./transaction-identifiers.md) hashes the stamp proof, its header, and the list naming the transactions whose data completes its statement: the anchor, the tachygram set commitment, $\mathsf{hStampAdjunctsTachyon}$ and the Ragu-encoded proof bytes, including the envelope. Its definition is the same for both proof forms.
 
 ### Stripped trailer
 
@@ -245,8 +240,5 @@ When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped tra
 | --- | --- | --- |
 | `vTachygrams` | 64 * nActionsTachyon + 32 | each action's tachygram pair, in action order, then the carrying bundle's fee change note commitment |
 | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
-| `tachyonAggregateId` | 64 bytes | nonzero `wtxid` of the covering aggregate |
 
-Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.
-
-The stripped trailer carries no `hStampCoverageTachyon`: that field rides on the stamp, so it strips away when a bundle becomes an adjunct. Observers read the covering aggregate's `hStampCoverageTachyon` from the stamped aggregate, not from the adjunct.
+A stripped bundle holds no reference to the aggregate that covers it. That aggregate lists the stripped bundle's txid in its `vAdjunctsTachyon`.

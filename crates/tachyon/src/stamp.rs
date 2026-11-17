@@ -22,7 +22,7 @@ use alloc::{
 use core::error;
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
     App, HEADER_SIZE, bridge_hash, output,
     stamp::{
@@ -31,7 +31,7 @@ use proof::{
     },
 };
 use ragu::wire;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::{
@@ -74,22 +74,11 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
 
-/// The 64-byte `wtxid` of the covering aggregate in the same block, assigned by
-/// the miner during block assembly.
-///
-/// Use of the wtxid unambiguously pins the aggregate's specific auth state.
-///
-/// The all-zero wtxid (which refers to no aggregate) is rejected.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct AggregateId([u8; 64]);
-
-/// A pointer to the covering aggregate, with the tachygrams and fee of the
-/// bundle that carries this stamp.
+/// The tachygrams and fee of a stripped bundle. Its stamp proof is carried by
+/// an aggregate whose [`ProofStamp::adjuncts`] lists the txid of this bundle's
+/// transaction.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
-pub struct PointerStamp {
-    /// The covering aggregate's wtxid.
-    pub wtxid: AggregateId,
-
+pub struct StrippedStamp {
     /// The fee of the bundle that carries this stamp.
     pub fee: value::Positive,
 
@@ -156,45 +145,15 @@ impl From<&Tachygrams> for Vec<[u8; 32]> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Display, Error)]
-/// Errors that can occur when handling an aggregate id.
-pub enum AggregateIdError {
-    /// The aggregate id is zero and refers to no aggregate.
-    #[display("aggregate id is zero and refers to no aggregate")]
-    Zero,
-}
-
-impl TryFrom<(&[u8; 32], &[u8; 32])> for AggregateId {
-    type Error = AggregateIdError;
-
-    fn try_from((sighash, auth_digest): (&[u8; 32], &[u8; 32])) -> Result<Self, Self::Error> {
-        let mut wtxid = [0u8; 64];
-        wtxid[..32].copy_from_slice(sighash);
-        wtxid[32..].copy_from_slice(auth_digest);
-        Self::try_from(wtxid)
-    }
-}
-
-impl TryFrom<[u8; 64]> for AggregateId {
-    type Error = AggregateIdError;
-
-    fn try_from(wtxid: [u8; 64]) -> Result<Self, Self::Error> {
-        if wtxid == [0u8; 64] {
-            return Err(AggregateIdError::Zero);
-        }
-        Ok(Self(wtxid))
-    }
-}
-
-/// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
+/// Bundle states that carry a stamp: [`ProofStamp`] or [`StrippedStamp`].
 /// The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
-    /// A stamp's 64-byte `tachyonStampState`.
+    /// A stamp's `hStampProofTachyon`.
     ///
-    /// For a [`ProofStamp`], this is `hStampCoverageTachyon ||
-    /// hStampProofTachyon`. For a [`PointerStamp`], this is
-    /// `tachyonAggregateId`. See [`blake2b::stamp_digest`].
-    fn stamp_state(&self) -> [u8; 64];
+    /// For a [`ProofStamp`], this is [`blake2b::stamp_proof_digest`]. For a
+    /// [`StrippedStamp`], this is [`blake2b::STAMP_PROOF_STRIPPED`]. See
+    /// [`blake2b::stamp_digest`].
+    fn stamp_proof_digest(&self) -> [u8; 32];
 
     /// The fee of the bundle that carries this stamp.
     fn fee(&self) -> value::Positive;
@@ -256,9 +215,9 @@ fn write_trailer_prefix<W: Write>(
     writer.write_all(&u64::from(fee).to_le_bytes())
 }
 
-impl StampState for PointerStamp {
-    fn stamp_state(&self) -> [u8; 64] {
-        self.wtxid.0
+impl StampState for StrippedStamp {
+    fn stamp_proof_digest(&self) -> [u8; 32] {
+        *blake2b::STAMP_PROOF_STRIPPED
     }
 
     fn fee(&self) -> value::Positive {
@@ -270,7 +229,7 @@ impl StampState for PointerStamp {
     }
 
     fn state_byte() -> StateByte {
-        StateByte::PointerStamped
+        StateByte::Stripped
     }
 
     fn read<R: Read>(reader: &mut R, n_actions: usize) -> io::Result<Self> {
@@ -282,47 +241,25 @@ impl StampState for PointerStamp {
     }
 }
 
-impl PointerStamp {
+impl StrippedStamp {
     /// Read the stamp trailer of a bundle with `n_actions` actions from the
     /// consensus wire format.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails, the fee exceeds `MAX_MONEY`, or the
-    /// wtxid is all-zero, which refers to no aggregate.
+    /// Returns an error if reading fails or the fee exceeds `MAX_MONEY`.
     pub fn read<R: Read>(mut reader: R, n_actions: usize) -> io::Result<Self> {
         let (tachygrams, fee) = read_trailer_prefix(&mut reader, n_actions)?;
-
-        let mut wtxid = [0u8; 64];
-        reader.read_exact(&mut wtxid)?;
-        let aggregate = AggregateId::try_from(wtxid).map_err(|_err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "aggregate id is zero and refers to no aggregate",
-            )
-        })?;
-        Ok(Self {
-            wtxid: aggregate,
-            fee,
-            tachygrams,
-        })
+        Ok(Self { fee, tachygrams })
     }
 
     /// Write the stamp trailer to the consensus wire format.
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails or the wtxid is all-zero, which
-    /// refers to no aggregate.
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if self.wtxid.0 == [0u8; 64] {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "aggregate id is zero and refers to no aggregate",
-            ));
-        }
-        write_trailer_prefix(&mut writer, &self.tachygrams, self.fee)?;
-        writer.write_all(&self.wtxid.0)
+        write_trailer_prefix(&mut writer, &self.tachygrams, self.fee)
     }
 }
 
@@ -434,21 +371,19 @@ impl Proof for Compressed {
 }
 
 impl<P: Proof> StampState for ProofStamp<P> {
-    fn stamp_state(&self) -> [u8; 64] {
+    fn stamp_proof_digest(&self) -> [u8; 32] {
         #[expect(
             clippy::expect_used,
             reason = "a proved or decoded stamp proof is encodable"
         )]
         let proof = self.proof.to_bytes().expect("stamp proof is encodable");
 
-        let mut stamp_state = [0u8; 64];
-        stamp_state[..32].copy_from_slice(&self.coverage);
-        stamp_state[32..].copy_from_slice(&blake2b::stamp_proof_digest(
+        blake2b::stamp_proof_digest(
             self.anchor.0.to_bytes(),
             self.tachygram_set.as_ref().to_affine().to_bytes(),
+            blake2b::stamp_adjuncts_digest(&self.adjuncts.iter().copied().collect::<Vec<_>>()),
             proof.as_ref(),
-        ));
-        stamp_state
+        )
     }
 
     fn fee(&self) -> value::Positive {
@@ -474,18 +409,17 @@ impl<P: Proof> StampState for ProofStamp<P> {
 
 impl<P: Proof> ProofStamp<P> {
     /// Read the stamp trailer of a bundle with `n_actions` actions from the
-    /// consensus wire format. The proof blob has a compactSize prefix and is
-    /// bounded by the proof type's encoded length.
+    /// consensus wire format. The adjunct list and the proof blob each have a
+    /// compactSize prefix. The proof is bounded by the proof type's encoded
+    /// length.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails or any component is not a canonical
-    /// encoding.
+    /// Returns an error if reading fails, any component is not a canonical
+    /// encoding, the adjunct txids are not strictly ascending, or the adjuncts
+    /// and actions hold more tachygrams than one set polynomial.
     pub fn read<R: Read>(mut reader: R, n_actions: usize) -> io::Result<Self> {
         let (tachygrams, fee) = read_trailer_prefix(&mut reader, n_actions)?;
-
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
 
         let anchor = Anchor::read(&mut reader)?;
 
@@ -499,6 +433,32 @@ impl<P: Proof> ProofStamp<P> {
                 ));
             }
             TachygramSetCommit::from(Eq::from(point))
+        };
+
+        let adjuncts = {
+            let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            // Each adjunct holds at least its fee change, a root of the covered
+            // set polynomial beside this bundle's pairs and fee change.
+            if 2 * n_actions + n_adjuncts + 2 > ProductionRank::num_coeffs() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "too many adjuncts",
+                ));
+            }
+            let mut adjuncts = BTreeSet::new();
+            for _ in 0..n_adjuncts {
+                let mut txid = [0u8; 32];
+                reader.read_exact(&mut txid)?;
+                if adjuncts.last().is_some_and(|last| *last >= txid) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "adjunct txids are not strictly ascending",
+                    ));
+                }
+                adjuncts.insert(txid);
+            }
+            adjuncts
         };
 
         let proof = {
@@ -517,26 +477,34 @@ impl<P: Proof> ProofStamp<P> {
         };
 
         Ok(Self {
-            coverage: covered_actions,
             anchor,
             tachygram_set,
+            adjuncts,
             proof: Box::new(proof),
             fee,
             tachygrams,
         })
     }
 
-    /// Write the stamp trailer to the consensus wire format. The proof blob
-    /// has a compactSize prefix.
+    /// Write the stamp trailer to the consensus wire format. The adjunct list
+    /// and the proof blob each have a compactSize prefix.
     ///
     /// # Errors
     ///
     /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         write_trailer_prefix(&mut writer, &self.tachygrams, self.fee)?;
-        writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
+        serialization::write_compactsize(
+            &mut writer,
+            u64::try_from(self.adjuncts.len()).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "adjunct count exceeds u64")
+            })?,
+        )?;
+        for txid in &self.adjuncts {
+            writer.write_all(txid)?;
+        }
         let proof = self
             .proof
             .to_bytes()
@@ -622,9 +590,9 @@ impl Plan {
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// The planned actions are recursively merged via [`ActionMerge`] into a
-    /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
-    /// then applies the fee, or [`FeeSeed`] proves it for a plan with no
-    /// actions.
+    /// single proof covering the planned descriptors. [`FeeFuse`] then applies
+    /// the fee, or [`FeeSeed`] proves it for a plan with no actions. The stamp
+    /// lists no adjuncts.
     ///
     /// # Errors
     ///
@@ -657,15 +625,9 @@ impl Plan {
         )>,
     ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let change = Tachygram::from(self.fee_change_note.commitment());
-        let fee_descriptor = fee::Descriptor {
-            cv_feemax: self.max_fee_note.cv_feemax(),
-            v_fee: self.fee,
-            fee_change: change,
-        };
 
         // Each entry pairs leaf stamp components with the descriptor of its
-        // covered action; merges concatenate both. The covered-actions digest
-        // is computed once, on the final stamp.
+        // covered action; merges concatenate both.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spend_pcds.len() {
@@ -818,14 +780,9 @@ impl Plan {
             .collect::<TachygramSetPoly>()
             .commit();
         Ok(ProofStamp {
-            coverage: blake2b::stamp_coverage_digest(
-                &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(
-                    descriptors.keys().copied(),
-                )),
-                &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
-            ),
             anchor,
             tachygram_set,
+            adjuncts: BTreeSet::new(),
             proof: Box::new(proof),
             fee: self.fee,
             tachygrams: Tachygrams {
@@ -861,26 +818,27 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// actions.
 ///
 /// The PCD header `(tachygram_bridge, anchor)` is entirely not stored
-/// here.  The covered actions are present only as reference. A verifier must
-/// reconstruct the header from public data and check the proof's output slots
-/// against the covered actions and [`Self::tachygram_set`].
+/// here. A verifier must reconstruct the header from public data and check the
+/// proof's output slots against the covered actions and
+/// [`Self::tachygram_set`].
 ///
 /// Only the uncompressed proof type supports lifting, merging and
 /// unmerging. Compressed stamps support reading, writing and verification.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
-    /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
-    /// action descriptors and fee descriptors from this stamp's bundle and
-    /// all covered bundles.
-    ///
-    /// See [`blake2b::stamp_coverage_digest`]
-    pub coverage: [u8; 32],
-
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
     /// The commitment to the covered bundles' tachygram union.
     pub tachygram_set: TachygramSetCommit,
+
+    /// The txids of the other transactions whose bundles this stamp covers,
+    /// empty for an autonome. The bundle carrying this stamp is never listed.
+    ///
+    /// [`Self::merge`] and [`Self::unmerge`] write the list. Neither the stamp
+    /// proof nor a signature binds it; it enters only `hStampProofTachyon`,
+    /// through `hStampAdjunctsTachyon`.
+    pub adjuncts: BTreeSet<[u8; 32]>,
 
     /// The full or compressed Ragu proof.
     #[debug(skip)]
@@ -1167,9 +1125,9 @@ impl ProofStamp<Uncompressed> {
             .clone();
 
         Ok(Self {
-            coverage: self.coverage,
             anchor,
             tachygram_set: self.tachygram_set,
+            adjuncts: self.adjuncts,
             proof: Box::new(proof),
             fee: self.fee,
             tachygrams: self.tachygrams,
@@ -1204,17 +1162,34 @@ impl ProofStamp<Uncompressed> {
 
     /// Merges two stamps into one covering stamp.
     ///
-    /// Each side pairs a stamp with its covered action and fee descriptors.
-    /// The action digests for the merge proof and the merged
-    /// `covered_actions` are both derived from the descriptor lists.
+    /// Each side pairs a stamp with its covered action and fee descriptors,
+    /// from which the action digests for the merge proof are derived.
     ///
     /// The merged stamp stays with this stamp's bundle and keeps this stamp's
-    /// fee, and the other stamp's bundle is stripped.
+    /// fee. It lists both stamps' adjuncts and `right_txid`, the txid of the
+    /// one transaction the right stamp covers without listing, which the
+    /// caller takes from that transaction's plan or from the published
+    /// transaction.
+    ///
+    /// This method cannot check `right_txid`. A wrong txid yields an aggregate
+    /// that consensus rejects, because its list omits a transaction it covers
+    /// and can name one it does not.
+    ///
+    /// A quotient from [`Self::unmerge`] whose divisor removed the bundle that
+    /// carried the dividend covers only the transactions it lists. It has no
+    /// transaction it covers without listing, so no `right_txid` is correct
+    /// for it, and it is not a valid right stamp. This method accepts it, and
+    /// the merged stamp can list a transaction it does not cover, which
+    /// consensus rejects.
     ///
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or a
     /// proof-system step fails.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp, txid, pairs and fee descriptors of the absorbed side"
+    )]
     pub fn merge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1223,8 +1198,9 @@ impl ProofStamp<Uncompressed> {
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             BTreeSet<fee::Descriptor>,
         ),
-        (right_stamp, right_desc, right_fees): (
+        (right_stamp, right_txid, right_desc, right_fees): (
             Self,
+            [u8; 32],
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             BTreeSet<fee::Descriptor>,
         ),
@@ -1270,25 +1246,6 @@ impl ProofStamp<Uncompressed> {
         )
         .map_err(ProveError::ProofFailed)?;
 
-        let coverage = blake2b::stamp_coverage_digest(
-            &blake2b::action_descriptor_digest(
-                &left_desc
-                    .keys()
-                    .chain(right_desc.keys())
-                    .copied()
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect::<Vec<[u8; 64]>>(),
-            ),
-            &blake2b::stamp_fees_digest(
-                &left_fees
-                    .union(&right_fees)
-                    .copied()
-                    .map(<[u8; 40]>::from)
-                    .collect::<Vec<[u8; 40]>>(),
-            ),
-        );
-
         let tachygram_set = tachygrams
             .iter()
             .copied()
@@ -1306,10 +1263,14 @@ impl ProofStamp<Uncompressed> {
             .proof()
             .clone();
 
+        let mut adjuncts = self.adjuncts;
+        adjuncts.extend(right_stamp.adjuncts);
+        adjuncts.insert(right_txid);
+
         Ok(Self {
-            coverage,
             anchor,
             tachygram_set,
+            adjuncts,
             proof: Box::new(proof),
             fee: self.fee,
             tachygrams: self.tachygrams,
@@ -1320,17 +1281,31 @@ impl ProofStamp<Uncompressed> {
     /// divisor's covered actions, fees and tachygrams.
     ///
     /// Each side pairs a stamp with its covered action and fee descriptors.
-    /// The quotient stays with this stamp's bundle and keeps this stamp's fee,
-    /// fee change and tachygram pairs, undoing a merge of the divisor into
-    /// this stamp. A divisor that removes this stamp's bundle leaves a quotient
-    /// whose fee, fee change and pairs belong to a bundle it no longer covers,
-    /// and merging it into another stamp keeps that stamp's. A divisor that
-    /// does not divide this stamp fails in the proof system.
+    /// The quotient keeps this stamp's fee, fee change and tachygram pairs,
+    /// undoing a merge of the divisor into this stamp. A divisor that removes
+    /// the bundle carrying this stamp leaves a quotient whose fee, fee change
+    /// and pairs belong to a bundle it no longer covers. A divisor that does
+    /// not divide this stamp fails in the proof system.
+    ///
+    /// The quotient lists this stamp's adjuncts less the divisor's adjuncts and
+    /// `divisor_txid`, the txid of the one transaction the divisor covers
+    /// without listing. A divisor this stamp does not list is not rejected.
+    ///
+    /// A quotient whose divisor removed the bundle that carried the dividend
+    /// covers only the transactions it lists. It has no transaction it covers
+    /// without listing, so no `divisor_txid` is correct for it, and it is not
+    /// a valid divisor. This method accepts it, and the result can list a
+    /// transaction it does not cover or omit one it does, which consensus
+    /// rejects.
     ///
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or a
     /// proof-system step fails.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp, txid, pairs and fee descriptors of the divisor"
+    )]
     pub fn unmerge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1339,8 +1314,9 @@ impl ProofStamp<Uncompressed> {
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             BTreeSet<fee::Descriptor>,
         ),
-        (divisor_stamp, divisor_desc, divisor_fees): (
+        (divisor_stamp, divisor_txid, divisor_desc, divisor_fees): (
             Self,
+            [u8; 32],
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             BTreeSet<fee::Descriptor>,
         ),
@@ -1404,18 +1380,6 @@ impl ProofStamp<Uncompressed> {
             )
             .map_err(ProveError::ProofFailed)?;
 
-        let coverage = blake2b::stamp_coverage_digest(
-            &blake2b::action_descriptor_digest(
-                &quotient_desc.into_keys().collect::<Vec<[u8; 64]>>(),
-            ),
-            &blake2b::stamp_fees_digest(
-                &quotient_fees
-                    .into_iter()
-                    .map(<[u8; 40]>::from)
-                    .collect::<Vec<[u8; 40]>>(),
-            ),
-        );
-
         let anchor = pcd.data().1;
         let proof = app
             .rerandomize(pcd, rng)
@@ -1424,9 +1388,14 @@ impl ProofStamp<Uncompressed> {
             .clone();
 
         Ok(Self {
-            coverage,
             anchor,
             tachygram_set,
+            adjuncts: self
+                .adjuncts
+                .difference(&divisor_stamp.adjuncts)
+                .copied()
+                .filter(|txid| *txid != divisor_txid)
+                .collect(),
             proof: Box::new(proof),
             fee: self.fee,
             tachygrams: self.tachygrams,
@@ -1450,9 +1419,9 @@ impl ProofStamp<Uncompressed> {
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         Ok(ProofStamp {
-            coverage: self.coverage,
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
+            adjuncts: self.adjuncts,
             proof: Box::new(compressed),
             fee: self.fee,
             tachygrams: self.tachygrams,
@@ -1461,34 +1430,7 @@ impl ProofStamp<Uncompressed> {
 }
 
 impl<P: Proof> ProofStamp<P> {
-    /// Confirm `hStampCoverageTachyon` represents the given descriptors.
-    ///
-    /// # Soundness
-    ///
-    /// The parameters are multisets: order does not matter, multiplicity does.
-    #[must_use]
-    pub fn is_covering(
-        &self,
-        action_descs: impl IntoIterator<Item = action::Descriptor>,
-        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
-    ) -> bool {
-        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
-        desc_bytes.sort_unstable();
-
-        let mut fee_descriptor_bytes = fee_descriptors
-            .into_iter()
-            .map(<[u8; 40]>::from)
-            .collect::<Vec<[u8; 40]>>();
-        fee_descriptor_bytes.sort_unstable();
-        self.coverage
-            == blake2b::stamp_coverage_digest(
-                &blake2b::action_descriptor_digest(&desc_bytes),
-                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
-            )
-    }
-
-    /// Reconstruct the PCD header and verify the proof. Call
-    /// [`ProofStamp::is_covering`] first to cheaply predict a mismatch.
+    /// Reconstruct the PCD header and verify the proof.
     ///
     /// # Soundness
     ///

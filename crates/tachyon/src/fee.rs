@@ -51,7 +51,7 @@ impl PartialOrd for Descriptor {
 }
 
 impl Ord for Descriptor {
-    /// Orders by coverage entry, then change commitment.
+    /// Orders by `cv_feemax || LE64(fee)`, then change commitment.
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         <[u8; 40]>::from(*self)
             .cmp(&<[u8; 40]>::from(*other))
@@ -60,7 +60,7 @@ impl Ord for Descriptor {
 }
 
 impl From<Descriptor> for [u8; 40] {
-    /// The fee descriptor's coverage entry, `cv_feemax || LE64(fee)`.
+    /// The fee descriptor's `cv_feemax || LE64(fee)`.
     fn from(descriptor: Descriptor) -> Self {
         let mut entry = [0u8; 40];
         entry[..32].copy_from_slice(&EpAffine::from(descriptor.cv_feemax).to_bytes());

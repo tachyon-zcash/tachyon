@@ -4,9 +4,10 @@
 //! Action descriptors and signatures are constant through state transitions;
 //! only the stamp changes.
 //!
-//! - `Bundle<ProofStamp<P>>`: self-contained bundle with a proof stamp
-//! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
-//!   covering aggregate
+//! - `Bundle<ProofStamp<P>>`: bundle with a proof stamp, listing the txids of
+//!   the other transactions whose bundles it covers
+//! - `Bundle<StrippedStamp>`: proof stamp removed, covered by an aggregate that
+//!   lists this bundle's txid
 //! - [`TachyonBundle`]: enum of the on-wire forms for block items
 //!
 //! # Consensus wire format
@@ -17,12 +18,11 @@
 //! | ------------- | ------------- | ------------------------------------- |
 //! | `0b0000_0000` | non-tachyon   | no bundle                             |
 //! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
-//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid         |
+//! | `0b0000_0010` | stripped      | bundle with tachygrams and no proof   |
 //! | `...`         | *reserved*    | *n/a*                                 |
 //!
-//! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
-//! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
-//! naming the covering aggregate).
+//! Any other byte is invalid. Stripped innocents and adjuncts share the same
+//! wire layout (both write `0x02` + body + the stripped trailer).
 //!
 //! ## No Bundle
 //!
@@ -63,15 +63,16 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                    | Format                   | Description                                |
-//! | ----------------------- | ------------------------ | ------------------------------------------ |
-//! | `vTachygrams`           | 64 * nActionsTachyon + 32 | each action's pair, then the fee change    |
-//! | `vFeeTachyon`           | LE64                     | fee, at most `MAX_MONEY`                   |
-//! | `hStampCoverageTachyon` | 32 bytes                 | BLAKE2b digest of covered actions and fees |
-//! | `anchorTachyon`         | 32 bytes                 | pool state reference                       |
-//! | `cTachygrams`           | 32 bytes                 | commitment to the covered tachygram union  |
-//! | `sizeProofTachyon`      | compactSize              | length of `proofTachyon` in bytes          |
-//! | `proofTachyon`          | `byte[sizeProofTachyon]` | the Ragu stamp proof                       |
+//! | Name               | Format                    | Description                               |
+//! | ------------------ | ------------------------- | ----------------------------------------- |
+//! | `vTachygrams`      | 64 * nActionsTachyon + 32 | each action's pair, then the fee change   |
+//! | `vFeeTachyon`      | LE64                      | fee, at most `MAX_MONEY`                  |
+//! | `anchorTachyon`    | 32 bytes                  | pool state reference                      |
+//! | `cTachygrams`      | 32 bytes                  | commitment to the covered tachygram union |
+//! | `nAdjunctsTachyon` | compactSize               | number of adjuncts, `0` for an autonome   |
+//! | `vAdjunctsTachyon` | 32 * nAdjunctsTachyon     | txids of the other covered transactions   |
+//! | `sizeProofTachyon` | compactSize               | length of `proofTachyon` in bytes         |
+//! | `proofTachyon`     | `byte[sizeProofTachyon]`  | the Ragu stamp proof                      |
 //!
 //! The prover writes each pair smaller tachygram first, so the order reveals
 //! neither member's role. The encoding does not require it.
@@ -80,25 +81,29 @@
 //! confirm it against every covered bundle's `vTachygrams`. Anchor
 //! advancement then reads the point instead of rebuilding it.
 //!
+//! `vAdjunctsTachyon` is strictly ascending by bytewise comparison, so it holds
+//! no repeat. Every adjunct holds at least its fee change, so a stamp with
+//! `2 * nActionsTachyon + nAdjunctsTachyon + 2 > 2^13` never verifies and is
+//! rejected at read.
+//!
 //! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
 //! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
 //! uncompressed length while stamps are merged and lifted outside consensus.
 //!
-//! ## Pointer stamp
+//! ## Stripped stamp
 //!
-//! When `tachyonBundleState == 2`, the bundle carries a pointer stamp.
+//! When `tachyonBundleState == 2`, the bundle carries a stripped trailer.
 //!
-//! | Name                  | Format               | Description                              |
-//! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `vTachygrams`         | 64 * nActionsTachyon + 32 | each action's pair, then the fee change  |
-//! | `vFeeTachyon`         | LE64                 | fee, at most `MAX_MONEY`                 |
-//! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
+//! | Name          | Format                    | Description                             |
+//! | ------------- | ------------------------- | --------------------------------------- |
+//! | `vTachygrams` | 64 * nActionsTachyon + 32 | each action's pair, then the fee change |
+//! | `vFeeTachyon` | LE64                      | fee, at most `MAX_MONEY`                |
 //!
 //! The transaction `auth_digest` contribution commits either stamp as
-//! `hStampTachyon`, over `vTachygrams`, the fee and the 64-byte
-//! `tachyonStampState`. For a proof stamp, `tachyonStampState` is
-//! `hStampCoverageTachyon || hStampProofTachyon`; for a pointer stamp, it is
-//! `tachyonAggregateId`. See [`blake2b::stamp_digest`].
+//! `hStampTachyon`, over `vTachygrams`, the fee and `hStampProofTachyon`. For a
+//! proof stamp, `hStampProofTachyon` covers the stamp proof, its header and the
+//! adjunct list; for a stripped stamp, it is
+//! [`blake2b::STAMP_PROOF_STRIPPED`]. See [`blake2b::stamp_digest`].
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -122,8 +127,7 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
-        Unproven,
+        self, ProofStamp, ProveError, StampState, StrippedStamp, Unproven,
         proof::{App, pool},
     },
     value,
@@ -138,8 +142,8 @@ pub enum StateByte {
     NoBundle = 0b0000_0000u8,
     /// Proof stamped bundle.
     ProofStamped = 0b0000_0001u8,
-    /// Pointer stamped bundle.
-    PointerStamped = 0b0000_0010u8,
+    /// Stripped bundle.
+    Stripped = 0b0000_0010u8,
 }
 
 impl From<StateByte> for u8 {
@@ -156,7 +160,7 @@ impl StateByte {
         match u8::from_le_bytes(byte) {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::ProofStamped),
-            0b0000_0010u8 => Ok(Self::PointerStamped),
+            0b0000_0010u8 => Ok(Self::Stripped),
             _other => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid bundle state",
@@ -174,7 +178,7 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
     impl<P: super::stamp::Proof> Sealed for super::ProofStamp<P> {}
-    impl Sealed for super::PointerStamp {}
+    impl Sealed for super::StrippedStamp {}
 }
 
 /// Sealed trait constraining bundle state types.
@@ -202,7 +206,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// Opaque recipient-directed payload, empty when absent.
     pub memo: Vec<u8>,
 
-    /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
+    /// Bundle state: `Unproven`, `ProofStamp`, or `StrippedStamp`.
     pub stamp: S,
 }
 
@@ -346,24 +350,9 @@ pub enum VerifyCoverageError {
     /// A covered action or fee has no digest.
     #[display("action digest error: {_0}")]
     ActionDigest(ActionDigestError),
-    /// The stamp on this bundle does not claim to cover these actions and fees.
-    #[display("stamp on this bundle does not claim to cover these actions and fees")]
-    StampActionsMismatch,
     /// The covered tachygrams do not reproduce the stamp's set commitment.
     #[display("tachygrams do not reproduce the set commitment")]
     WrongSet,
-}
-
-/// Errors during adjunct pointer verification.
-#[derive(Clone, Copy, Debug, Display, Error)]
-#[non_exhaustive]
-pub enum VerifyPointersError {
-    /// The pointer of an adjunct is not the expected aggregate id.
-    #[display("stamp on an adjunct does not match the expected aggregate id")]
-    AdjunctPointerMismatch,
-    /// The adjunct is not in the expected state.
-    #[display("stamp on an adjunct does not contain a valid pointer")]
-    AdjunctPointerInvalid(AggregateIdError),
 }
 
 /// Errors during bundle verification.
@@ -373,9 +362,6 @@ pub enum VerificationError {
     /// The bundle signatures did not verify.
     #[display("signature verification error: {_0}")]
     Signatures(SignatureError),
-    /// An error occurred while verifying the adjunct pointers.
-    #[display("adjunct pointer verification error: {_0}")]
-    Pointers(VerifyPointersError),
     /// An error occurred while verifying the coverage.
     #[display("coverage verification error: {_0}")]
     Coverage(VerifyCoverageError),
@@ -658,23 +644,6 @@ pub enum StampError {
 }
 
 impl Bundle<ProofStamp<stamp::Uncompressed>> {
-    /// Replace the stamp with a wtxid pointer to a covering aggregate.
-    #[must_use]
-    pub fn strip(self, wtxid: AggregateId) -> Bundle<PointerStamp> {
-        Bundle {
-            value_balance: self.value_balance,
-            action_sigs: self.action_sigs,
-            cv_feemax: self.cv_feemax,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp: PointerStamp {
-                wtxid,
-                fee: self.stamp.fee,
-                tachygrams: self.stamp.tachygrams,
-            },
-        }
-    }
-
     /// Advance the stamp's anchor along `spans`. The first span must contain
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
@@ -708,31 +677,37 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
 }
 
 impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
-    /// Confirm `hStampCoverageTachyon` represents the combined actions and
-    /// fee descriptors of this bundle and the given bundles.
+    /// Remove the stamp proof, keeping the fee, fee change and tachygram pairs.
+    ///
+    /// The miner strips the bundle of each transaction an aggregate in its
+    /// block lists. Stripping
+    /// writes nothing, and the stripped bundle's bytes depend on nothing
+    /// outside it.
     #[must_use]
-    pub fn is_covering(&self, others: &[&Bundle<dyn StampState>]) -> bool {
-        let own_descs = self.descriptors();
-        let other_descs = others.iter().flat_map(|&adjunct| adjunct.descriptors());
-        let fee_descriptors = iter::once(self.fee_descriptor())
-            .chain(others.iter().map(|&other| other.fee_descriptor()));
-
-        self.stamp
-            .is_covering(own_descs.into_iter().chain(other_descs), fee_descriptors)
+    pub fn strip(self) -> Bundle<StrippedStamp> {
+        Bundle {
+            value_balance: self.value_balance,
+            action_sigs: self.action_sigs,
+            cv_feemax: self.cv_feemax,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp: StrippedStamp {
+                fee: self.stamp.fee,
+                tachygrams: self.stamp.tachygrams,
+            },
+        }
     }
 
-    /// Confirm `hStampCoverageTachyon` represents this bundle's actions and
-    /// fee descriptor.
+    /// Whether the stamp lists no adjuncts.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
-        self.is_covering(&[])
+        self.stamp.adjuncts.is_empty()
     }
 
-    /// Confirm `hStampCoverageTachyon` does not represent this bundle's actions
-    /// and fee descriptor.
+    /// Whether the stamp lists at least one adjunct.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        !self.is_covering(&[])
+        !self.stamp.adjuncts.is_empty()
     }
 
     /// Verify that the stamp covers this bundle and the given adjuncts,
@@ -747,11 +722,11 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// Returns [`VerifyCoverageError`] if the covered tachygrams exceed one
     /// set polynomial, an action, fee or tachygram repeats, a digest cannot be
-    /// computed, or the recomputed coverage or tachygram set commitment
-    /// disagrees with the one the stamp carries.
+    /// computed, or the recomputed tachygram set commitment disagrees with the
+    /// one the stamp carries.
     pub fn verify_covered(
         &self,
-        adjuncts: &[&Bundle<PointerStamp>],
+        adjuncts: &[&Bundle<StrippedStamp>],
     ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
         let n_actions = self.action_sigs.len()
             + adjuncts
@@ -767,7 +742,6 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 
         let mut descriptors = BTreeSet::new();
         let mut fee_entries = BTreeSet::new();
-        let mut fee_descriptors = Vec::with_capacity(n_fees);
         let mut tachygrams = BTreeSet::new();
         let mut digests = Vec::with_capacity(n_actions + n_fees);
 
@@ -800,11 +774,6 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
                     .digest()
                     .map_err(VerifyCoverageError::ActionDigest)?,
             );
-            fee_descriptors.push(fee_descriptor);
-        }
-
-        if !self.stamp.is_covering(descriptors, fee_descriptors) {
-            return Err(VerifyCoverageError::StampActionsMismatch);
         }
 
         let tachygram_set = tachygrams
@@ -817,31 +786,6 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         }
 
         Ok((digests, tachygram_set))
-    }
-
-    /// Verify the pointers of the adjuncts against the expected wtxid.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VerifyPointersError`] if the wtxid is all-zero or an adjunct
-    /// points at a different aggregate.
-    pub fn verify_pointers(
-        &self,
-        wtxid: &[u8; 64],
-        adjuncts: &[&Bundle<PointerStamp>],
-    ) -> Result<(), VerifyPointersError> {
-        if let Err(agg_id_err) = AggregateId::try_from(*wtxid) {
-            return Err(VerifyPointersError::AdjunctPointerInvalid(agg_id_err));
-        }
-
-        if adjuncts
-            .iter()
-            .any(|&adj| <[u8; 64]>::from(adj.stamp.wtxid) != *wtxid)
-        {
-            return Err(VerifyPointersError::AdjunctPointerMismatch);
-        }
-
-        Ok(())
     }
 
     /// Verify the stamp's proof against the given action digests, which
@@ -870,9 +814,12 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// details about the provided adjuncts.
     ///
     /// - Signatures are valid
-    /// - Adjuncts point at this bundle
     /// - The stamp covers this bundle and the adjuncts
     /// - Proof is correct
+    ///
+    /// The adjuncts are the stripped bundles the stamp's
+    /// [`adjuncts`](ProofStamp::adjuncts) lists, looked up by txid. This method
+    /// does not read the list.
     ///
     /// If you need more control, call each verify method directly.
     ///
@@ -885,14 +832,10 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         rng: &mut RNG,
         app: &App<'_>,
         sighash: &[u8; 32],
-        wtxid: &[u8; 64],
-        adjuncts: &[&Bundle<PointerStamp>],
+        adjuncts: &[&Bundle<StrippedStamp>],
     ) -> Result<TachygramSetCommit, VerificationError> {
         self.verify_signatures(sighash)
             .map_err(VerificationError::Signatures)?;
-
-        self.verify_pointers(wtxid, adjuncts)
-            .map_err(VerificationError::Pointers)?;
 
         let (covered_digests, tachygram_set) = self
             .verify_covered(adjuncts)
@@ -1074,7 +1017,7 @@ impl<S: StampState> Bundle<S> {
     ///
     /// Commits the action signatures, the binding signature, and
     /// `hStampTachyon`, which covers `vTachygrams`, the fee and
-    /// `tachyonStampState`. See [`blake2b::bundle_auth_digest`] and
+    /// `hStampProofTachyon`. See [`blake2b::bundle_auth_digest`] and
     /// [`blake2b::stamp_digest`]. The memo is absent here because it is
     /// effecting data, committed by [`Self::commitment`].
     #[must_use]
@@ -1084,7 +1027,7 @@ impl<S: StampState> Bundle<S> {
         let stamp_digest = blake2b::stamp_digest(
             &Vec::<[u8; 32]>::from(self.stamp.tachygrams()),
             u64::from(self.stamp.fee()),
-            &self.stamp.stamp_state(),
+            &self.stamp.stamp_proof_digest(),
         );
 
         blake2b::bundle_auth_digest(
@@ -1108,7 +1051,7 @@ pub enum TachyonBundle {
     /// A bundle with its own proof (autonome or aggregate).
     Proven(Bundle<ProofStamp<stamp::Compressed>>),
     /// A bundle with no internal proof (adjunct).
-    Adjunct(Bundle<PointerStamp>),
+    Adjunct(Bundle<StrippedStamp>),
 }
 
 impl PartialEq for TachyonBundle {
@@ -1156,7 +1099,7 @@ impl TachyonBundle {
     /// on the `tachyonBundleState` byte.
     ///
     /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
-    /// proof-stamped bundle, and `0x02` as a pointer-stamped bundle;
+    /// proof-stamped bundle, and `0x02` as a stripped bundle;
     /// rejects any other byte.
     ///
     /// # Errors
@@ -1169,7 +1112,7 @@ impl TachyonBundle {
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
             StateByte::ProofStamped => Self::Proven(Bundle::read_body(&mut reader)?),
-            StateByte::PointerStamped => Self::Adjunct(Bundle::read_body(&mut reader)?),
+            StateByte::Stripped => Self::Adjunct(Bundle::read_body(&mut reader)?),
         })
     }
 
@@ -1212,8 +1155,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has a proof stamp, but its `hStampCoverageTachyon`
-    /// does not represent this bundle's actions.
+    /// Whether this bundle has a proof stamp listing at least one adjunct.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
@@ -1224,33 +1166,13 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm this bundle has a proof stamp, and its `hStampCoverageTachyon`
-    /// represents this bundle's actions.
+    /// Whether this bundle has a proof stamp listing no adjuncts.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_autonome(),
-            Self::Adjunct(ref _stamped) => false,
-        }
-    }
-
-    /// Confirm `hStampCoverageTachyon` represents the combined actions and
-    /// fee descriptors of this bundle and the given bundles.
-    ///
-    /// Descriptors are sorted but not deduplicated, so a collection containing
-    /// duplicates mismatches.
-    #[must_use]
-    pub fn is_covering(&self, adjuncts: &[Self]) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-        match *self {
-            Self::NoBundle => false,
-            Self::Proven(ref stamped) => adjuncts
-                .iter()
-                .map(|adj| adj.as_dyn())
-                .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
-                .is_some_and(|dyn_adjuncts| stamped.is_covering(&dyn_adjuncts)),
             Self::Adjunct(ref _stamped) => false,
         }
     }

@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::vec;
+use alloc::{collections::BTreeSet, vec};
 use core::{assert_matches, iter};
 
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -17,7 +17,7 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    mock_sighash, mock_wtxid,
+    mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
         WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, merged, output_plan,
@@ -32,6 +32,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let (_, alice) = alice(app);
     let (_, bob) = bob(app);
     let [(_, carol), _, _] = outputs_with_fees(app);
+    let (bob_txid, carol_txid) = (mock_txid(&bob), mock_txid(&carol));
     let all_three = merged(app, &alice, &bob)
         .stamp
         .merge(
@@ -46,17 +47,20 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             ),
             (
                 carol.stamp.clone(),
+                carol_txid,
                 carol.action_tachygrams().collect(),
                 [carol.fee_descriptor()].into(),
             ),
         )
         .unwrap();
+    assert_eq!(all_three.adjuncts, BTreeSet::from([bob_txid, carol_txid]));
 
     let decoded_aggregate = {
         let mut bytes = Vec::new();
         all_three.write(&mut bytes).unwrap();
         ProofStamp::<stamp::Uncompressed>::read(&*bytes, all_three.tachygrams.pairs.len()).unwrap()
     };
+    assert_eq!(decoded_aggregate.adjuncts, all_three.adjuncts);
     for (divisor, divisor_descriptors, divisor_fees, adjuncts) in [
         (
             bob.stamp.clone(),
@@ -65,22 +69,28 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             vec![carol.clone()],
         ),
         (
-            bob.stamp
-                .clone()
-                .merge(
-                    rng,
-                    app,
-                    (
-                        bob.action_tachygrams().collect(),
-                        [bob.fee_descriptor()].into(),
-                    ),
-                    (
-                        carol.stamp.clone(),
-                        carol.action_tachygrams().collect(),
-                        [carol.fee_descriptor()].into(),
-                    ),
-                )
-                .unwrap(),
+            {
+                let bob_carol = bob
+                    .stamp
+                    .clone()
+                    .merge(
+                        rng,
+                        app,
+                        (
+                            bob.action_tachygrams().collect(),
+                            [bob.fee_descriptor()].into(),
+                        ),
+                        (
+                            carol.stamp.clone(),
+                            carol_txid,
+                            carol.action_tachygrams().collect(),
+                            [carol.fee_descriptor()].into(),
+                        ),
+                    )
+                    .unwrap();
+                assert_eq!(bob_carol.adjuncts, BTreeSet::from([carol_txid]));
+                bob_carol
+            },
             bob.action_tachygrams()
                 .chain(carol.action_tachygrams())
                 .collect(),
@@ -107,20 +117,19 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                     ]
                     .into(),
                 ),
-                (divisor, divisor_descriptors, divisor_fees),
+                (divisor, bob_txid, divisor_descriptors, divisor_fees),
             )
             .unwrap();
-        let wtxid = mock_wtxid(&unmerged);
-        let stripped: Vec<_> = adjuncts
-            .into_iter()
-            .map(|adjunct| adjunct.strip(wtxid))
-            .collect();
+        let stripped: Vec<_> = adjuncts.into_iter().map(bundle::Bundle::strip).collect();
+        assert_eq!(
+            unmerged.stamp.adjuncts,
+            stripped.iter().map(mock_txid).collect()
+        );
         unmerged
             .verify(
                 rng,
                 app,
                 &mock_sighash(unmerged.commitment()),
-                &wtxid.into(),
                 &stripped.iter().collect::<Vec<_>>(),
             )
             .unwrap();
@@ -133,6 +142,7 @@ fn unmerge_keeps_the_dividend_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let [(_, alice), (_, bob), (_, mut carol)] = outputs_with_fees(app);
     let alice_fee = alice.stamp.fee;
+    let (alice_txid, bob_txid) = (mock_txid(&alice), mock_txid(&bob));
 
     let on_alice = alice
         .stamp
@@ -146,11 +156,13 @@ fn unmerge_keeps_the_dividend_fee() {
             ),
             (
                 bob.stamp.clone(),
+                bob_txid,
                 bob.action_tachygrams().collect(),
                 [bob.fee_descriptor()].into(),
             ),
         )
         .unwrap();
+    assert_eq!(on_alice.adjuncts, BTreeSet::from([bob_txid]));
 
     let mut kept = alice.clone();
     kept.stamp = on_alice
@@ -167,23 +179,19 @@ fn unmerge_keeps_the_dividend_fee() {
             ),
             (
                 bob.stamp.clone(),
+                bob_txid,
                 bob.action_tachygrams().collect(),
                 [bob.fee_descriptor()].into(),
             ),
         )
         .unwrap();
-    let kept_wtxid = mock_wtxid(&kept);
-    kept.verify(
-        rng,
-        app,
-        &mock_sighash(kept.commitment()),
-        &kept_wtxid.into(),
-        &[],
-    )
-    .unwrap();
+    assert!(kept.is_autonome());
+    kept.verify(rng, app, &mock_sighash(kept.commitment()), &[])
+        .unwrap();
 
     let mut hostless = bob.clone();
     hostless.stamp = on_alice
+        .clone()
         .unmerge(
             rng,
             app,
@@ -196,27 +204,21 @@ fn unmerge_keeps_the_dividend_fee() {
             ),
             (
                 alice.stamp.clone(),
+                alice_txid,
                 alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
         )
         .unwrap();
     assert_eq!(hostless.stamp.fee, alice_fee);
-    let hostless_wtxid = mock_wtxid(&hostless);
+    assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
     assert_matches!(
-        hostless.verify(
-            rng,
-            app,
-            &mock_sighash(hostless.commitment()),
-            &hostless_wtxid.into(),
-            &[],
-        ),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
-        ))
+        hostless.verify(rng, app, &mock_sighash(hostless.commitment()), &[]),
+        Err(VerificationError::Coverage(VerifyCoverageError::WrongSet))
     );
 
-    carol.stamp = carol
+    let carol_fee = carol.stamp.fee;
+    let rehosted = carol
         .stamp
         .clone()
         .merge(
@@ -227,20 +229,51 @@ fn unmerge_keeps_the_dividend_fee() {
                 [carol.fee_descriptor()].into(),
             ),
             (
-                hostless.stamp,
-                bob.action_tachygrams().collect(),
-                [bob.fee_descriptor()].into(),
+                on_alice,
+                alice_txid,
+                alice
+                    .action_tachygrams()
+                    .chain(bob.action_tachygrams())
+                    .collect(),
+                [alice.fee_descriptor(), bob.fee_descriptor()].into(),
             ),
         )
         .unwrap();
-    let carol_wtxid = mock_wtxid(&carol);
+    assert_eq!(rehosted.adjuncts, BTreeSet::from([alice_txid, bob_txid]));
+    carol.stamp = rehosted
+        .unmerge(
+            rng,
+            app,
+            (
+                carol
+                    .action_tachygrams()
+                    .chain(alice.action_tachygrams())
+                    .chain(bob.action_tachygrams())
+                    .collect(),
+                [
+                    carol.fee_descriptor(),
+                    alice.fee_descriptor(),
+                    bob.fee_descriptor(),
+                ]
+                .into(),
+            ),
+            (
+                alice.stamp.clone(),
+                alice_txid,
+                alice.action_tachygrams().collect(),
+                [alice.fee_descriptor()].into(),
+            ),
+        )
+        .unwrap();
+    assert_eq!(carol.stamp.fee, carol_fee);
+    assert_eq!(carol.stamp.adjuncts, BTreeSet::from([bob_txid]));
+    let stripped_bob = bob.strip();
     carol
         .verify(
             rng,
             app,
             &mock_sighash(carol.commitment()),
-            &carol_wtxid.into(),
-            &[&bob.strip(carol_wtxid)],
+            &[&stripped_bob],
         )
         .unwrap();
 }
@@ -254,6 +287,7 @@ fn unmerge_by_a_lifted_divisor() {
     let (_, mut later) = later_output(app);
     let lifted_bundle = lifted(app, &earlier, pool, BlockHeight(1)..=BlockHeight(2));
     let lifted_divisor = lifted_bundle.stamp.clone();
+    let earlier_txid = mock_txid(&earlier);
     let dividend = merged(app, &later, &lifted_bundle).stamp;
 
     assert_matches!(
@@ -266,6 +300,7 @@ fn unmerge_by_a_lifted_divisor() {
             ),
             (
                 earlier.stamp.clone(),
+                earlier_txid,
                 earlier.action_tachygrams().collect(),
                 [earlier.fee_descriptor()].into(),
             ),
@@ -287,20 +322,14 @@ fn unmerge_by_a_lifted_divisor() {
             ),
             (
                 lifted_divisor,
+                earlier_txid,
                 earlier.action_tachygrams().collect(),
                 [earlier.fee_descriptor()].into(),
             ),
         )
         .unwrap();
-    let wtxid = mock_wtxid(&later);
     later
-        .verify(
-            rng,
-            app,
-            &mock_sighash(later.commitment()),
-            &wtxid.into(),
-            &[],
-        )
+        .verify(rng, app, &mock_sighash(later.commitment()), &[])
         .unwrap();
 }
 
@@ -322,26 +351,19 @@ fn unmerge_by_itself_leaves_no_leaves() {
             ),
             (
                 alice.stamp.clone(),
+                mock_txid(&alice),
                 alice.action_tachygrams().collect(),
                 [alice.fee_descriptor()].into(),
             ),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, []).unwrap());
+    assert!(quotient.adjuncts.is_empty());
 
     alice.stamp = quotient;
-    let wtxid = mock_wtxid(&alice);
     assert_matches!(
-        alice.verify(
-            rng,
-            app,
-            &mock_sighash(alice.commitment()),
-            &wtxid.into(),
-            &[]
-        ),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
-        ))
+        alice.verify(rng, app, &mock_sighash(alice.commitment()), &[]),
+        Err(VerificationError::Coverage(VerifyCoverageError::WrongSet))
     );
 }
 
@@ -381,6 +403,7 @@ fn unmerge_splitting_a_bundle() {
         .unwrap();
 
     let part_pairs = alice.action_tachygrams().collect();
+    let part_txid = mock_txid(&alice);
     let part = alice.stamp;
 
     let quotient = whole
@@ -393,7 +416,7 @@ fn unmerge_splitting_a_bundle() {
                 whole.action_tachygrams().collect(),
                 [whole.fee_descriptor()].into(),
             ),
-            (part, part_pairs, [whole.fee_descriptor()].into()),
+            (part, part_txid, part_pairs, [whole.fee_descriptor()].into()),
         )
         .unwrap();
     assert!(
@@ -405,20 +428,12 @@ fn unmerge_splitting_a_bundle() {
             )
             .unwrap()
     );
+    assert!(quotient.adjuncts.is_empty());
 
     whole.stamp = quotient;
-    let wtxid = mock_wtxid(&whole);
     assert_matches!(
-        whole.verify(
-            rng,
-            app,
-            &mock_sighash(whole.commitment()),
-            &wtxid.into(),
-            &[]
-        ),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::StampActionsMismatch
-        ))
+        whole.verify(rng, app, &mock_sighash(whole.commitment()), &[]),
+        Err(VerificationError::Coverage(VerifyCoverageError::WrongSet))
     );
 }
 
@@ -467,11 +482,13 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             ),
             (
                 other.stamp.clone(),
+                mock_txid(&other),
                 other.action_tachygrams().collect(),
                 [other.fee_descriptor()].into(),
             ),
         )
         .unwrap();
+    let divisor_txid = mock_txid(&reproven);
     let divisor_pairs = reproven.action_tachygrams().collect();
     let divisor_fees = [reproven.fee_descriptor()].into();
     assert_matches!(
@@ -485,7 +502,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                     .collect(),
                 [original.fee_descriptor(), other.fee_descriptor()].into(),
             ),
-            (reproven.stamp, divisor_pairs, divisor_fees),
+            (reproven.stamp, divisor_txid, divisor_pairs, divisor_fees),
         ),
         Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(_)))
     );

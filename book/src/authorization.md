@@ -424,10 +424,10 @@ and Proving
             end
         end
         note over Stamper: rerandomize proof
-        note over Stamper: hStampCoverageTachyon = Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
+        note over Stamper: adjuncts = empty
         destroy Stamper
         note over Stamper: each pair smaller tachygram first, pairs in descriptor order
-        Stamper ->> User: ProofStamp { pairs, fee, fee_change, coverage, anchor, tachygram_set, proof }
+        Stamper ->> User: ProofStamp { pairs, fee, fee_change, anchor, tachygram_set, adjuncts, proof }
     end
 end
 
@@ -440,7 +440,7 @@ break
 end
 
 create participant Consensus
-note over User: transaction { action_sigs[], value_balance, cv_feemax, binding_sig, memo, stamp { pairs[], fee, fee_change, coverage, anchor, tachygram_set, proof } }
+note over User: transaction { action_sigs[], value_balance, cv_feemax, binding_sig, memo, stamp { pairs[], fee, fee_change, anchor, tachygram_set, adjuncts, proof } }
 deactivate User
 destroy User
 User ->> Consensus: transaction
@@ -452,16 +452,12 @@ break verify_signatures
     note over Consensus: check binding_sig against sighash under bvk
     note over Consensus: check each action sig against sighash under rk
 end
-break verify_pointers
-    note over Consensus: the adjuncts come from the block, not the wallet
-    note over Consensus: wtxid is nonzero and every adjunct points at it
-end
 break verify_covered
+    note over Consensus: the adjuncts are the block's stripped bundles named by txid in adjuncts
     note over Consensus: 2N + B <= 8191 for N covered actions and B covered bundles
     note over Consensus: no duplicate action descriptor, fee descriptor or tachygram across covered bundles
     note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i), tg_i0 + tg_i1, tg_i0 * tg_i1)
     note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j, cm_chg_j)
-    note over Consensus: hStampCoverageTachyon == Blake2b_Coverage(hStampActionsTachyon || hStampFeesTachyon)
     note over Consensus: cTachygrams == Commit(product over covered pairs and fee changes of (X - tg))
 end
 break verify_proof

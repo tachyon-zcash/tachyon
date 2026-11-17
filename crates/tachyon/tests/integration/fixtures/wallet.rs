@@ -28,7 +28,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use super::{Proved, keyed_rng, mock_sighash, pool::PoolSim, qr::QrBucketEntry};
+use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBucketEntry};
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let wallet = WalletSim::random(rng);
@@ -71,11 +71,14 @@ pub(crate) fn other_sk() -> private::SpendingKey {
 fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     let stamp = &bundle.stamp;
     let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
-    key.extend_from_slice(&stamp.coverage);
+    key.extend_from_slice(&u32::try_from(stamp.adjuncts.len()).unwrap().to_le_bytes());
+    for txid in &stamp.adjuncts {
+        key.extend_from_slice(txid);
+    }
     stamp.tachygram_set.write(&mut key).unwrap();
     key.extend_from_slice(&Fp::from(stamp.tachygrams.fee_change).to_bytes());
     key.extend_from_slice(&<[u8; 40]>::from(bundle.fee_descriptor()));
-    // The action digest binds each action's pair; coverage and the union do not.
+    // The action digest binds each action's pair; the union does not.
     // Keep the descriptor-to-pair map passed to merge/lift in the key.
     let pairs: BTreeMap<_, _> = bundle.action_tachygrams().collect();
     key.extend_from_slice(&u32::try_from(pairs.len()).unwrap().to_le_bytes());
@@ -93,8 +96,10 @@ pub(crate) fn merged(
     right: &Bundle<ProofStamp<stamp::Uncompressed>>,
 ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
     static MERGES: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
+    let right_txid = mock_txid(right);
     let mut key = stamp_key(left);
     key.extend_from_slice(&stamp_key(right));
+    key.extend_from_slice(&right_txid);
     let stamp = MERGES.get(&key, |rng| {
         left.stamp
             .clone()
@@ -107,6 +112,7 @@ pub(crate) fn merged(
                 ),
                 (
                     right.stamp.clone(),
+                    right_txid,
                     right.action_tachygrams().collect(),
                     [right.fee_descriptor()].into(),
                 ),

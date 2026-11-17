@@ -89,7 +89,7 @@ After publication, an aggregator combines `Stamp`s from independently-proven bun
 Each input is anchored at the height its wallet chose.
 The aggregator runs `StampLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
-The merged stamp stays with one receiving bundle and keeps that bundle's fee and fee change, and the bundles it covers are stripped to point at the receiver.
+The merged stamp stays with one receiving bundle and keeps that bundle's fee and fee change, and the receiver's stamp lists by `txid` the other transactions it covers, which a block holds stripped.
 An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
 `StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
 It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee and fee change.

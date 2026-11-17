@@ -31,8 +31,8 @@ Aggregates may be further named:
 - *based* aggregate proving its own Tachyon actions.  
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
-When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that merged its stamp, never the all-zero `wtxid`.
-It retains its fee descriptor and binding signature.
+When stripped, an innocent contributes no actions.
+It retains its fee descriptor and binding signature, and the aggregate that covers it lists its `txid` like any other adjunct's.
 
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
@@ -51,9 +51,10 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 4. Merge stamps
    - Merge tachygrams (exclusive sets)
    - Merge proofs
+   - List the `txid` of the one transaction the absorbed stamp covers without listing
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
 6. Compress the merged stamp for the block
-7. Publish aggregate transaction
+7. Publish aggregate transaction with its [adjunct list](#adjunct-list)
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
@@ -70,7 +71,9 @@ This follows from Ragu's production rank and is not a policy limit.
 
 Miners obtain the broadcast aggregates, or by vertically integrating as aggregators.
 
-When authoring a block, miners remove stamps from transactions covered by an aggregate, to produce appropriate adjuncts, and assign the adjunct a reference to the `wtxid` of the aggregate.
+Stripping removes the stamp from a transaction covered by an aggregate, producing an adjunct.
+The miner strips each transaction an aggregate in its block lists.
+Stripping takes nothing and writes nothing, and the adjunct's bytes depend on that bundle alone.
 
 ```mermaid
 ---
@@ -141,19 +144,97 @@ flowchart LR
             end
         end
     end
+
+    bk0_ts -.->|txid| bk1 & bk2 & bk3 & bk4
 ```
 
-## Action set indicator
+### What a mempool node checks
 
-An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header: a verifier reconstructs the header from the covered bundles. Within a block that material is all at hand, since each adjunct points to its aggregate by `wtxid`. Before block inclusion, an observer needs a way to recognize a complete collection of candidate adjuncts without full proof verification.
+A relayed aggregate arrives with its list, and the transactions it lists sit in the mempool, stamped.
+A mempool node:
 
-To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_feemax || LE64(fee)` coverage entries of every [fee descriptor](./fee.md) it covers. The indicator excludes action pairs and fee changes. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the stamp proof. The stamp proof binds the descriptors together with their tachygrams through a Pedersen commitment to their Poseidon digests.
+1. Looks up each listed `txid`, and holds off while any is missing.
+2. Relies on each listed transaction having been accepted on its own stamp.
+   Nothing in a mempool is unproven, so rule B below has no mempool form.
+3. Strips a copy of each and verifies the aggregate with them.
+   This is the check a block validator runs, on the bytes a block holds.
+4. Strips a listed transaction that is itself an aggregate like any other.
+   Its own list goes with its stamp, and the outer list already names those transactions.
+
+The aggregate then replaces the stamps of exactly the listed transactions.
+An aggregate and the stamped form of a transaction it lists are alternatives: a block holds that transaction stripped under the aggregate or stamped without it.
+Two aggregates that list one transaction are alternatives, and a block takes at most one of them (rule C).
+
+### Block rules
+
+A block validator checks every adjunct list against the block with three rules:
+
+- **A.** Every listed `txid` is a transaction in the same block whose Tachyon bundle is stripped.
+- **B.** Every stripped bundle in the block is listed at least once.
+- **C.** No stripped bundle is listed more than once.
+
+Skipping rule B mints value.
+An unlisted stripped bundle is a set of actions with no stamp proof, and no other rule catches it.
+A stripped bundle carries no field that prompts the check, so a validator that walks only proof stamps and their lists never visits an unlisted one.
+
+Rule C has a backstop.
+A bundle covered by two stamps puts its tachygrams, including at least its fee change, into two unions, and the block's rule against repeated tachygrams rejects them.
+
+A validator indexes the block's stripped bundles by `txid`.
+For each proof stamp it takes the listed bundles out of the index and verifies the stamp with them.
+It fails if a listed `txid` is absent (rule A) or already taken (rule C), or if any stripped bundle is left in the index at the end (rule B).
+The rules rely on a `txid` naming one transaction within a block.
+
+Node test vectors:
+
+- A block with an aggregate that lists a `txid` absent from the block is invalid (rule A).
+- A block with an aggregate that lists the `txid` of a transaction whose Tachyon bundle is stamped is invalid (rule A).
+- A block with a valid aggregate and one stripped bundle that no stamp lists is invalid (rule B).
+- A block with two aggregates, each valid with its adjuncts, that both list one stripped bundle is invalid (rule C).
+
+## Adjunct list {#adjunct-list}
+
+An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header.
+A verifier reconstructs the header from the covered bundles.
+The stamp's `vAdjunctsTachyon` lists the `txid` of every other transaction whose bundle it covers (see [Bundles → Wire Format](./bundle.md#stamp-trailer)), so a node gathers the covered bundles by lookup.
+In the mempool those transactions are still stamped, and in a block they are stripped.
+The carrying bundle is never in its own list, and an autonome's list is empty.
+
+A mempool node matches a relayed aggregate to its transactions by looking up the listed `txid`s.
+Whether a candidate collection is the set of other transactions an aggregate covers is an equality test between the collection's `txid`s and the list.
+
+The list is authorization data.
+It contributes to `auth_digest` through the stamp digest, and neither the stamp proof nor a signature binds it.
+`Plan::prove` produces an empty list, and lifting and compressing keep the list.
+`merge` lists both stamps' lists and the `txid` of the one transaction the absorbed stamp covers without listing.
+`unmerge` removes the divisor's list and the `txid` of the one transaction the divisor covers without listing.
+Nothing else writes the list.
+
+`merge` and `unmerge` take that `txid` from the caller.
+A transaction's plan or PCZT fixes its effecting data before its stamp exists, so its `txid` is known before the stamp is merged, and an aggregator holding the published transaction computes it from there.
+`merge` cannot check the `txid` it is given.
+A wrong one yields an aggregate that consensus rejects, because its list omits a transaction it covers and can name one it does not.
+
+Moving an aggregate to another host is `merge` then `unmerge`.
+The new host absorbs the aggregate with its host's `txid`, which lists that host and everything the aggregate listed, then divides out the old host's own stamp with the same `txid`.
+
+A quotient whose divisor removed the bundle that carried the dividend covers only the transactions it lists.
+It has no transaction it covers without listing, so no `txid` is correct for it, and it is not a valid argument to `merge` or to `unmerge`.
+Both accept it, and the stamp they produce can list a transaction it does not cover or omit one it does, which consensus rejects.
+
+A wrong list carries no soundness risk.
+A listed bundle the stamp does not cover adds to the derived tachygram union, and a covered bundle the list omits is missing from it, so verification fails either way.
+
+A `txid` names a transaction and not one of its authorization forms.
+Several forms of one `txid` can sit in a mempool, differing in fee, fee change or pairs.
+A node strips the form it holds and verifies the aggregate with it.
+A wrong form fails before stamp proof verification, at the tachygram set check or at the stamp proof's output slot comparison.
 
 A stripped adjunct keeps its action pairs and fee descriptor: `cvFeeMaxTachyon` in the bundle body, and `vTachygrams` and `vFeeTachyon` in the stripped trailer. The covering verifier collects these from the published bundles.
 
-The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
-
-Coverage verification walks the candidate collection once, before attempting stamp proof verification. It bounds the covered tachygrams, rejects a repeated action descriptor, fee coverage entry or tachygram, recomputes the indicator and fails on disagreement, and checks `cTachygrams` against the union of all covered action pairs and fee changes.
+Coverage verification walks the covered bundles once, before attempting stamp proof verification.
+It bounds the covered tachygrams, rejects a repeated action descriptor, fee descriptor or tachygram, and checks `cTachygrams` against the union of all covered action pairs and fee changes.
+It does not read the list.
 
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.

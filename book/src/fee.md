@@ -128,9 +128,7 @@ covered bundle. Consensus rejects a repeated fee descriptor, as it rejects a
 repeated action. The action set holds the action digests and the fee digests.
 The tachygram set is derived from the covered actions' pairs and each covered
 bundle's fee change commitment, with repeated members rejected.
-[Bundles](./bundle.md#stamp-trailer) defines `hStampCoverageTachyon`, whose fee
-entries contain only $\cv_\feemax$ and $\fee$. Consensus rebuilds the coverage and $d_\fee$ from the
-published bundles. An accepted proof therefore covers the signed $\cv_\feemax$
+Consensus rebuilds $d_\fee$ from the published bundles. An accepted proof therefore covers the signed $\cv_\feemax$
 at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
 cannot be applied twice to the same lineage. Merging and lifting carry fee
 digests and fee change note commitments like any other set members. A merge

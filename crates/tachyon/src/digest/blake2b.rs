@@ -96,40 +96,12 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 /// $$
 ///
 /// Over a bundle's actions this is `hActionsTachyon`.
-///
-/// Over a stamp's covered actions this is `hStampActionsTachyon`.
 #[must_use]
 pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {
         for descriptor in descriptors {
             state.update(descriptor);
         }
-    })
-}
-
-const STAMP_FEES_PERSONALIZATION: &[u8; 12] = b"Tachyon-Fees";
-
-/// `hStampFeesTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
-/// $\mathsf{cv}_{\mathsf{feemax},j} \Vert \mathsf{LE64}(\mathsf{fee}_j)$ in the
-/// order given. The caller sorts the fee descriptors.
-#[must_use]
-pub fn stamp_fees_digest(fee_descriptors: &[[u8; 40]]) -> [u8; 32] {
-    hasher_256(STAMP_FEES_PERSONALIZATION, |state| {
-        for fee_descriptor in fee_descriptors {
-            state.update(fee_descriptor);
-        }
-    })
-}
-
-const STAMP_COVERAGE_PERSONALIZATION: &[u8; 16] = b"Tachyon-Coverage";
-
-/// `hStampCoverageTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Coverage}(
-/// \mathsf{hStampActionsTachyon} \Vert \mathsf{hStampFeesTachyon})$.
-#[must_use]
-pub fn stamp_coverage_digest(actions_digest: &[u8; 32], fees_digest: &[u8; 32]) -> [u8; 32] {
-    hasher_256(STAMP_COVERAGE_PERSONALIZATION, |state| {
-        state.update(actions_digest);
-        state.update(fees_digest);
     })
 }
 
@@ -188,21 +160,47 @@ pub fn bundle_commitment(
 
 const STAMP_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
+const STAMP_ADJUNCTS_PERSONALIZATION: &[u8; 16] = b"Tachyon-Adjuncts";
 
-/// `hStampProofTachyon`, the stamp proof and its header.
+/// `hStampAdjunctsTachyon`, the txids of the other transactions a stamp
+/// proof covers.
+///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{Tachyon-Adjuncts}(
+///     \mathsf{vAdjunctsTachyon}
+///   )
+/// $$
+#[must_use]
+pub fn stamp_adjuncts_digest(adjuncts: &[[u8; 32]]) -> [u8; 32] {
+    hasher_256(STAMP_ADJUNCTS_PERSONALIZATION, |state| {
+        for txid in adjuncts {
+            state.update(txid);
+        }
+    })
+}
+
+/// `hStampProofTachyon`, the stamp proof, its header, and the list naming the
+/// transactions whose data completes its statement.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(
 ///     \mathsf{anchorTachyon} \Vert
 ///     \mathsf{cTachygrams} \Vert
+///     \mathsf{hStampAdjunctsTachyon} \Vert
 ///     \mathsf{proofTachyon}
 ///   )
 /// $$
 #[must_use]
-pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8]) -> [u8; 32] {
+pub fn stamp_proof_digest(
+    anchor: [u8; 32],
+    tachygram_set: [u8; 32],
+    adjuncts_digest: [u8; 32],
+    proof: &[u8],
+) -> [u8; 32] {
     hasher_256(STAMP_PROOF_PERSONALIZATION, |state| {
         state.update(&anchor);
         state.update(&tachygram_set);
+        state.update(&adjuncts_digest);
         // only variable-length component
         state.update(proof);
     })
@@ -214,26 +212,23 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
 ///     \mathsf{vTachygrams} \Vert
 ///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert
-///     \mathsf{tachyonStampState}
+///     \mathsf{hStampProofTachyon}
 ///   )
 /// $$
 ///
-/// $\mathsf{tachyonBundleState}$ is one byte indicating format of the 64-byte
-/// $\mathsf{tachyonStampState}$
-///
-/// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
-/// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampProofTachyon} $ |
-/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{tachyonAggregateId} $ |
+/// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{hStampProofTachyon}$ |
+/// | ----------------------------- | ---- | ----------------------------- |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | [`stamp_proof_digest`] |
+/// | `0x02` | [`StrippedStamp`](crate::stamp::StrippedStamp) | [`STAMP_PROOF_STRIPPED`] |
 #[must_use]
-pub fn stamp_digest(tachygrams: &[[u8; 32]], fee: u64, stamp_state: &[u8; 64]) -> [u8; 32] {
+pub fn stamp_digest(tachygrams: &[[u8; 32]], fee: u64, stamp_proof_digest: &[u8; 32]) -> [u8; 32] {
     hasher_256(STAMP_PERSONALIZATION, |state| {
         // only variable-length component
         for tachygram in tachygrams {
             state.update(tachygram);
         }
         state.update(&fee.to_le_bytes());
-        state.update(stamp_state);
+        state.update(stamp_proof_digest);
     })
 }
 
@@ -284,5 +279,17 @@ lazy_static! {
     /// **This is NOT the same as a bundle with no actions and zero balance.**
     pub static ref AUTH_DIGEST_NO_BUNDLE: [u8; 32] = {
         hasher_256(AUTH_DIGEST_PERSONALIZATION, |_| {})
+    };
+
+    /// A stripped stamp's `hStampProofTachyon` in [`stamp_digest`].
+    ///
+    /// $$
+    ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}()
+    /// $$
+    ///
+    /// A stripped stamp has no stamp proof, so its `hStampProofTachyon` is the
+    /// hash of the empty string: ZIP 244's rule for an absent component.
+    pub static ref STAMP_PROOF_STRIPPED: [u8; 32] = {
+        hasher_256(STAMP_PROOF_PERSONALIZATION, |_| {})
     };
 }

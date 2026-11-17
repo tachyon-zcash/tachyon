@@ -36,11 +36,9 @@ mod serialization;
 pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{
     Bundle, Plan as BundlePlan, SignatureError, StampError, TachyonBundle, VerificationError,
-    VerifyCoverageError, VerifyPointersError,
+    VerifyCoverageError,
 };
 pub use note::Note;
 pub use primitives::*;
 pub use serialization::compactsize::{CompactSize, CompactSizeError};
-pub use stamp::{
-    AggregateId, AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp, Unproven,
-};
+pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp, Unproven};
