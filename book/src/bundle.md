@@ -109,19 +109,16 @@ subgraph shielded_data["Bundle"]
         subgraph tachyaction1["tachyaction"]
             cv1["cv"]
             rk1["rk"]
-            sig1:::signature@{shape: hex, label: "sig"}
         end
 
        subgraph tachyaction2["tachyaction"]
             cv2["cv"]
             rk2["rk"]
-            sig2:::signature@{shape: hex, label: "sig"}
         end
 
        subgraph tachyaction3["tachyaction"]
             cv3["cv"]
             rk3["rk"]
-            sig3:::signature@{shape: hex, label: "sig"}
         end
     end
 
@@ -147,18 +144,23 @@ subgraph shielded_data["Bundle"]
     rk1 & rk2 & rk3 ---> stamp_proof
     cv1 & cv2 & cv3 ---> stamp_proof
 
-    sig_binding:::signature@{shape: hex, label: "binding_sig"}
+    subgraph signing_data["body: signing data"]
+        sig1:::signature@{shape: hex, label: "sig 1"}
+        sig2:::signature@{shape: hex, label: "sig 2"}
+        sig3:::signature@{shape: hex, label: "sig 3"}
+        sig_binding:::signature@{shape: hex, label: "binding_sig"}
+    end
     v_balance["value_balance"]
     cv_feemax["cv_feemax"]
     memo
 
     cv_feemax ---> stamp_proof
 
-    v_balance ===> sig_binding
-    cv_feemax ===> sig_binding
-    memo ===> sig_binding
-    tachyaction_vec ===> sig_binding
 end
+
+    v_balance & cv_feemax & memo ===> sighash["transaction sighash"]
+    cv1 & rk1 & cv2 & rk2 & cv3 & rk3 ===> sighash
+    sighash ===> sig_binding & sig1 & sig2 & sig3
 ```
 
 ## Lifecycle

@@ -53,10 +53,10 @@ A stripped bundle has an empty trailer and no proof digest. Its $\mathsf{hStampT
 
 An aggregate refers to each other transaction whose bundle it covers by `txid`, in its [`vAdjunctsTachyon`](./bundle.md#stamp-trailer). Those transactions are still stamped in the mempool and stripped in a block. A stripped bundle holds no reference.
 
-A `txid` is enough to name an adjunct. The stamp proof binds each covered bundle's fee, fee change and pairs, which are authorization fields in the body that a `txid` leaves out. An adjunct whose authorization fields differ from what the stamp proof covers fails verification.
+A `txid` is enough to name an adjunct. The stamp proof binds each covered bundle's fee, fee change and unordered action pairs, which are authorization data in the body that a `txid` leaves out. An adjunct with a different fee, fee change or unordered action pair from what the stamp proof covers fails verification; signatures and pair encoding order are not bound by the proof.
 
 A stripped bundle's `wtxid` is a function of that bundle alone. Stripping takes nothing and writes nothing. The miner strips each listed transaction for its block, and a mempool node that strips a copy to verify an aggregate gets the same adjunct and `wtxid`. Lifting, merging or rerandomizing the aggregate's stamp changes the aggregate's `wtxid` and breaks no reference.
 
-A `txid` names a transaction and not one of its authorization forms. Several forms of one `txid` can sit in a mempool, differing in fee, fee change or pairs. A node strips the form it holds and verifies. A wrong form fails verification.
+A `txid` names a transaction and not one of its authorization forms. Several forms of one `txid` can sit in a mempool, differing in fee, fee change or pairs. A node strips the form it holds and verifies. A form with a different fee, fee change or unordered action pair from what the covering proof binds fails verification.
 
 See [Aggregation → Adjunct list](./aggregation.md#adjunct-list) for who writes the list and the block rules that use it.

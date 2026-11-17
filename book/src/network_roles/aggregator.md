@@ -70,7 +70,7 @@ Compare tachygrams too, because a conflicting spend of the same note has a diffe
 Every match has to come out of $W$ before $W$ can be published, because consensus rejects a tachygram published twice within [two epochs](../tachygrams.md#consensus-validation).
 
 What comes out is the bundle as it was merged into $W$, at the fee $W$ holds.
-The stamp in the block may cover other bundles or carry a different fee.
+The bundle in the block may use a different fee, and its stamp may cover other bundles.
 It is the right divisor only when it covers exactly what $W$ holds.
 
 The simple case is a block that includes $X$ as an autonome.
@@ -115,12 +115,12 @@ Rebuild instead when that is less work than the divisions and merges needed.
 
 $Q$ can go back on $A$ only if it still covers $A$'s own actions and fee.
 If the block included $A$'s bundle too, the remaining work has to go into a different complete aggregate.
-Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and fee change and no bundle it covers can carry them.
+Dividing $A$ out produces a proof-only quotient; it does not change $A$'s bundle body, including its fee and fee change.
 Such a $Q$ covers only the transactions it lists.
 It has no transaction it covers without listing, so no `txid` is correct for it, and it is not a valid argument to `merge` or `unmerge`.
 Both accept it, and a stamp built from it can list a transaction it does not cover or omit one it does, which consensus rejects.
 Move $W$ first instead: merge it into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, with $A$'s `txid`, then divide out what the block included.
-The merged stamp keeps that bundle's fee and fee change, and at every step its adjunct list names exactly the other transactions it covers.
+The new host's fee and fee change remain in its bundle body, and at every step the stamp's adjunct list names exactly the other transactions it covers.
 
 ## At the miner
 

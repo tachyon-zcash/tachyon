@@ -168,7 +168,7 @@ $$\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$$
 
 $$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\feemax - [\mathsf{value\_balance}]\,\mathcal{V}$$
 
-The fee does not enter $\mathsf{bvk}$. The binding signature is made once, before the fee is chosen.
+The fee does not enter $\mathsf{bvk}$. The binding signature is independent of fee selection.
 
 ## Simplified Flow
 
@@ -240,7 +240,8 @@ flowchart LR
     leaf -.- pairs["descriptor-keyed pair map"]
     zero_actions["0 actions"] -.- fee_seed -.- proved_stamp
     max_fee_note -.- fee_fuse & fee_seed -.- proved_change["change commitment"]
-    chosen_fee["caller-chosen fee"] -.- fee_fuse & fee_seed
+    chosen_fee["caller-chosen fee"] -.- fee_fuse
+    selected_anchor["selected anchor"] -.- fee_seed
 
 
     sighash ~~~ binding
@@ -270,7 +271,7 @@ flowchart LR
     pczt ~~~ sighash
 ```
 
-Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
+Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via its action-set output commitment). The Stamp header contains the bridge hash of `cTachygrams` and the anchor; the action- and tachygram-set commitments are checked separately against the proof's output commitments.
 
 A modified descriptor breaks both checks. Changing a pair's members breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md). Swapping the two members changes the authorization digest but leaves the order-independent action digest unchanged.
 
@@ -420,7 +421,8 @@ and Proving
                 note over Stamper: feemax == 0, so fee == 0
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
                 note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0, cm_chg)
-                note over Stamper: Stamp (Commit(X - d_fee), Commit(X - cm_chg), anchor)
+                note over Stamper: output commitments: Commit(X - d_fee), cTachygrams = Commit(X - cm_chg)
+                note over Stamper: Stamp header (bridge(cTachygrams), anchor)
             end
         else
             critical FeeFuse(Actions), witness max_fee_note, fee
@@ -428,7 +430,8 @@ and Proving
                 note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), fee, cm_chg)
                 note over Stamper: fee_action = action_poly * (X - d_fee)
                 note over Stamper: fee_tg = tg_poly * (X - cm_chg)
-                note over Stamper: Stamp (Commit(fee_action), Commit(fee_tg), anchor)
+                note over Stamper: output commitments: Commit(fee_action), cTachygrams = Commit(fee_tg)
+                note over Stamper: Stamp header (bridge(cTachygrams), anchor)
             end
         end
         note over Stamper: rerandomize proof
@@ -446,7 +449,8 @@ critical stamp
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
 break
-    note over User: rebuild header from action descriptors and pairs, fee descriptor and fee change, verify stamp proof
+    note over User: recompute action and tachygram set commitments from descriptors, pairs, fee and change; compare proof outputs
+    note over User: verify stamp proof with header (bridge(cTachygrams), anchor)
 end
 
 create participant Consensus
@@ -472,6 +476,7 @@ break verify_covered
 end
 break verify_proof
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
-    note over Consensus: verify proof against Stamp (action_acc, cTachygrams, anchor)
+    note over Consensus: compare action_acc and cTachygrams against the proof's two output commitments
+    note over Consensus: verify proof against Stamp header (bridge(cTachygrams), anchor)
 end
 ```
