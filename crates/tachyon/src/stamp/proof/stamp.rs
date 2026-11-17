@@ -185,11 +185,7 @@ impl Step<Pasta> for OutputAction {
             .0
             .randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let digest = ActionDigest::new(cv, rk, (cm, pad)).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "OutputAction: action digest construction failed".into(),
-            )
-        })?;
+        let digest = ActionDigest::new(cv, rk, (cm, pad));
         Ok(alloc::vec![Fp::from(digest)])
     }
 
@@ -330,12 +326,7 @@ impl Step<Pasta> for SpendAction {
             cv,
             rk,
             (Tachygram::from(nf_current), Tachygram::from(nf_next)),
-        )
-        .map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "SpendAction: action digest construction failed".into(),
-            )
-        })?;
+        );
         Ok(alloc::vec![Fp::from(digest)])
     }
 

@@ -48,9 +48,7 @@ use crate::{
     fee,
     keys::{ProofAuthorizingKey, private},
     pasta::{EpAffine, Eq, Fp},
-    primitives::{
-        ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit,
-    },
+    primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
@@ -693,18 +691,6 @@ pub struct ProofStamp<P: Proof> {
     pub proof: Box<P>,
 }
 
-/// Errors while transforming an existing stamp proof.
-#[derive(Debug, Display, Error)]
-#[non_exhaustive]
-pub enum TransformError {
-    /// An action descriptor contains an identity commitment or key.
-    #[display("action digest failed: {_0}")]
-    ActionDigest(ActionDigestError),
-    /// A proof-system transformation failed.
-    #[display("proof failed: {_0}")]
-    ProofFailed(ragu_core::Error),
-}
-
 impl ProofStamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof, pair)`. The proof is not rerandomized.
@@ -970,8 +956,8 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`TransformError`] if an action digest cannot be computed or a
-    /// proof-system step fails. Empty `spans` leave the stamp unchanged before
+    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Empty `spans` leave the stamp unchanged before
     /// inspecting the descriptors.
     pub fn lift<RNG: CryptoRng>(
         self,
@@ -980,24 +966,19 @@ impl ProofStamp<Uncompressed> {
         descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, TransformError> {
+    ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
         let mut action_digests = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
-            action_digests.insert(
-                descriptor
-                    .digest(pair)
-                    .map_err(TransformError::ActionDigest)?,
-            );
+            action_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
         }
 
         self.prove_lift(rng, app, action_digests, spans)
-            .map_err(TransformError::ProofFailed)
     }
 
     /// Merges two stamps into one covering stamp.
@@ -1019,8 +1000,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`TransformError`] if an action digest cannot be computed or a
-    /// proof-system step fails.
+    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the absorbed side"
@@ -1039,16 +1019,12 @@ impl ProofStamp<Uncompressed> {
             &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, TransformError> {
+    ) -> Result<Self, ragu_core::Error> {
         let mut left_digests = BTreeSet::new();
         let mut left_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in left_desc {
             left_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            left_digests.insert(
-                descriptor
-                    .digest(pair)
-                    .map_err(TransformError::ActionDigest)?,
-            );
+            left_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in left_fees {
             left_tachygrams.insert(change);
@@ -1059,11 +1035,7 @@ impl ProofStamp<Uncompressed> {
         let mut right_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in right_desc {
             right_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            right_digests.insert(
-                descriptor
-                    .digest(pair)
-                    .map_err(TransformError::ActionDigest)?,
-            );
+            right_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in right_fees {
             right_tachygrams.insert(change);
@@ -1080,8 +1052,7 @@ impl ProofStamp<Uncompressed> {
                 right_stamp.anchor,
                 right_stamp.proof,
             ),
-        )
-        .map_err(TransformError::ProofFailed)?;
+        )?;
 
         let tachygram_set = tachygrams
             .iter()
@@ -1095,8 +1066,7 @@ impl ProofStamp<Uncompressed> {
                     anchor,
                 )),
                 rng,
-            )
-            .map_err(TransformError::ProofFailed)?
+            )?
             .proof()
             .clone();
 
@@ -1132,8 +1102,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`TransformError`] if an action digest cannot be computed or a
-    /// proof-system step fails.
+    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the divisor"
@@ -1152,16 +1121,12 @@ impl ProofStamp<Uncompressed> {
             &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, TransformError> {
+    ) -> Result<Self, ragu_core::Error> {
         let mut digests = BTreeSet::new();
         let mut tachygrams_all = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
             tachygrams_all.extend(<[Tachygram; 2]>::from(pair));
-            digests.insert(
-                descriptor
-                    .digest(pair)
-                    .map_err(TransformError::ActionDigest)?,
-            );
+            digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in fees {
             tachygrams_all.insert(change);
@@ -1172,11 +1137,7 @@ impl ProofStamp<Uncompressed> {
         let mut divisor_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in divisor_desc {
             divisor_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            divisor_digests.insert(
-                descriptor
-                    .digest(pair)
-                    .map_err(TransformError::ActionDigest)?,
-            );
+            divisor_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in divisor_fees {
             divisor_tachygrams.insert(change);
@@ -1208,26 +1169,20 @@ impl ProofStamp<Uncompressed> {
             .proof
             .carry::<Stamp>((divisor_bridge.into(), divisor_stamp.anchor));
 
-        let (pcd, ()) = app
-            .fuse(
-                rng,
-                StampUnmerge,
-                witness::stamp_unmerge(
-                    (*dividend_pcd.data(), *divisor_pcd.data()),
-                    quotient_action_set,
-                    quotient_tachygram_set,
-                ),
-                dividend_pcd,
-                divisor_pcd,
-            )
-            .map_err(TransformError::ProofFailed)?;
+        let (pcd, ()) = app.fuse(
+            rng,
+            StampUnmerge,
+            witness::stamp_unmerge(
+                (*dividend_pcd.data(), *divisor_pcd.data()),
+                quotient_action_set,
+                quotient_tachygram_set,
+            ),
+            dividend_pcd,
+            divisor_pcd,
+        )?;
 
         let anchor = pcd.data().1;
-        let proof = app
-            .rerandomize(pcd, rng)
-            .map_err(TransformError::ProofFailed)?
-            .proof()
-            .clone();
+        let proof = app.rerandomize(pcd, rng)?.proof().clone();
 
         Ok(Self {
             anchor,

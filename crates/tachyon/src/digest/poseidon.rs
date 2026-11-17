@@ -85,12 +85,12 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 pub fn action_digest(cv: EpAffine, rk: EpAffine, (first, second): (Fp, Fp)) -> Fp {
     #[expect(
         clippy::expect_used,
-        reason = "callers reject the identity or upstream generation establishes nonidentity"
+        reason = "descriptor reading rejects identities; generated or hand-built inputs must be non-identity"
     )]
     let (cv_x, cv_y) = cv.coordinates().expect("cv must not be the identity");
     #[expect(
         clippy::expect_used,
-        reason = "callers reject the identity or upstream generation establishes nonidentity"
+        reason = "descriptor reading rejects identities; generated or hand-built inputs must be non-identity"
     )]
     let (rk_x, rk_y) = rk.coordinates().expect("rk must not be the identity");
 

@@ -340,7 +340,7 @@ fn duplicated_spend_cannot_inflate() {
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap();
-    let action_digest = descriptor.digest(pair).unwrap();
+    let action_digest = descriptor.digest(pair);
     let fee_digest = bundle.fee.digest(bundle.fee_auth);
     assert!(
         !bundle
@@ -771,7 +771,7 @@ fn read_bounds_the_fee() {
 }
 
 #[test]
-fn read_rejects_identity_fee_commitments() {
+fn read_rejects_identity_action_and_fee_points() {
     let app = &application();
     let (_, bundle) = spend(app);
     let mut count = Vec::new();
@@ -786,6 +786,22 @@ fn read_rejects_identity_fee_commitments() {
     let mut stripped = Vec::new();
     bundle.strip().write(&mut stripped).unwrap();
     let identity = <[u8; 32]>::from(value::Commitment::from(Ep::identity()));
+    for (point_at, message) in [
+        (actions_at, "action commitment is the identity"),
+        (actions_at + 32, "action verification key is the identity"),
+    ] {
+        let mut invalid_action = bytes.clone();
+        invalid_action[point_at..point_at + 32].copy_from_slice(&identity);
+        let mut stripped_action = stripped.clone();
+        stripped_action[point_at..point_at + 32].copy_from_slice(&identity);
+        for action_error in [
+            Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*invalid_action).unwrap_err(),
+            TachyonBundle::read(&*stripped_action).unwrap_err(),
+        ] {
+            assert_eq!(action_error.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(action_error.to_string(), message);
+        }
+    }
     let mut invalid = bytes;
     invalid[cv_feemax_at..cv_feemax_at + 32].copy_from_slice(&identity);
     let mut invalid_stripped = stripped;
@@ -984,14 +1000,11 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
     let (first, second) = bundle.action_auth[0].1;
-    let action_digest = bundle.actions[0].digest((first, second)).unwrap();
+    let action_digest = bundle.actions[0].digest((first, second));
     let mut bytes = Vec::new();
 
     bundle.action_auth[0].1 = (second, first);
-    assert_eq!(
-        bundle.actions[0].digest((second, first)).unwrap(),
-        action_digest
-    );
+    assert_eq!(bundle.actions[0].digest((second, first)), action_digest);
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.action_auth, bundle.action_auth);

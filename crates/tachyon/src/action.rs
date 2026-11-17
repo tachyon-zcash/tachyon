@@ -12,7 +12,7 @@ use crate::{
     keys::{private, public},
     note::Note,
     pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError, Effect, Tachygram, effect},
+    primitives::{ActionDigest, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
 
@@ -35,13 +35,12 @@ pub struct Descriptor {
 impl Descriptor {
     /// Derive the action digest.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(
-        &self,
-        tachygrams: (Tachygram, Tachygram),
-    ) -> Result<ActionDigest, ActionDigestError> {
+    /// Panics if `cv` or `rk` is the identity point. Descriptor reading rejects
+    /// both identities; hand-built descriptors must uphold this requirement.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
         ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
@@ -50,10 +49,22 @@ impl Descriptor {
     /// # Errors
     ///
     /// Returns an error if reading fails or either component is not a
-    /// canonical encoding.
+    /// canonical encoding of a non-identity point.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
+        if EpAffine::from(cv).is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "action commitment is the identity",
+            ));
+        }
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
+        if EpAffine::from(rk).is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "action verification key is the identity",
+            ));
+        }
         Ok(Self { cv, rk })
     }
 
@@ -174,13 +185,12 @@ impl<E: Effect> Plan<E> {
 
     /// Derive the action digest.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(
-        &self,
-        tachygrams: (Tachygram, Tachygram),
-    ) -> Result<ActionDigest, ActionDigestError> {
+    /// Panics if this plan's value commitment or `rk` is the identity point.
+    /// Callers constructing plans must ensure both points are non-identity.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
         ActionDigest::new(self.cv(), self.rk, tachygrams)
     }
 

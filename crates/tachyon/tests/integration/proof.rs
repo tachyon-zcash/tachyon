@@ -478,12 +478,10 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     assert_eq!(
         action_commit,
         Eq::from(
-            ActionSetPoly::from_iter([plan
-                .digest((
-                    Tachygram::from(mk.derive_nullifier(spend_epoch)),
-                    Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
-                ))
-                .unwrap()])
+            ActionSetPoly::from_iter([plan.digest((
+                Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
+            ))])
             .commit()
         )
         .to_affine()
@@ -988,7 +986,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     assert_eq!(
         pcd.commitments()[..2],
         [
-            Eq::from(ActionSetPoly::from_iter([plan.digest(pair).unwrap()]).commit()).to_affine(),
+            Eq::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()).to_affine(),
             Eq::from(
                 TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
             )
@@ -996,7 +994,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         ]
     );
     let foreign = action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv);
-    assert_ne!(foreign.digest(pair).unwrap(), plan.digest(pair).unwrap());
+    assert_ne!(foreign.digest(pair), plan.digest(pair));
 }
 
 #[test]

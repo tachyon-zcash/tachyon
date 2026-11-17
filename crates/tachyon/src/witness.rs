@@ -446,16 +446,11 @@ pub fn output_action(
     let (cm, pad, cv) = left;
     let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
-    #[expect(
-        clippy::expect_used,
-        reason = "identity cv or rk is a degenerate input"
-    )]
     let digest = ActionDigest::new(
         cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
         (cm, pad),
-    )
-    .expect("action digest");
+    );
 
     (
         theta,
@@ -484,16 +479,11 @@ pub fn spend_action(
     let (cm, nf_current, nf_next, _anchor, _pk, cv) = left;
     let alpha = theta.randomizer::<effect::Spend>(cm);
 
-    #[expect(
-        clippy::expect_used,
-        reason = "identity cv or rk is a degenerate input"
-    )]
     let digest = ActionDigest::new(
         cv,
         pak.ak.derive_action_public(&alpha),
         (Tachygram::from(nf_current), Tachygram::from(nf_next)),
-    )
-    .expect("action digest");
+    );
 
     (
         theta,

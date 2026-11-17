@@ -118,7 +118,7 @@ use rand_core::CryptoRng;
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    ActionDigest, ActionDigestError, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     digest::blake2b,
     fee,
     keys::{private, public},
@@ -126,7 +126,7 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, ProofStamp, StampState, StrippedStamp, TransformError,
+        self, ProofStamp, StampState, StrippedStamp,
         proof::{App, pool},
     },
     value,
@@ -322,9 +322,6 @@ pub enum VerifyCoverageError {
     /// A tachygram repeats among the covered bundles.
     #[display("tachygrams are not unique")]
     DuplicateTachygrams,
-    /// A covered action has no digest.
-    #[display("action digest error: {_0}")]
-    ActionDigest(ActionDigestError),
     /// The covered bundles' tachygrams do not reproduce the stamp's set
     /// commitment, or number more than one set polynomial has roots. The
     /// stamp does not cover exactly this bundle and these adjuncts as given.
@@ -664,15 +661,15 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     ///
     /// # Errors
     ///
-    /// Returns [`TransformError`] if an action digest cannot be computed or
-    /// a proof-system step fails. Empty `spans` leave the bundle unchanged.
+    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Empty `spans` leave the bundle unchanged.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, TransformError> {
+    ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
@@ -769,9 +766,8 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// # Errors
     ///
     /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
-    /// a digest cannot be computed, or the covered tachygrams number more than
-    /// one set polynomial has roots or do not reproduce the tachygram set
-    /// commitment the stamp carries.
+    /// or the covered tachygrams number more than one set polynomial has roots
+    /// or do not reproduce the tachygram set commitment the stamp carries.
     pub fn verify_covered(
         &self,
         adjuncts: &[&Bundle<StrippedStamp>],
@@ -808,11 +804,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
                         return Err(VerifyCoverageError::DuplicateTachygrams);
                     }
                 }
-                digests.push(
-                    descriptor
-                        .digest(pair)
-                        .map_err(VerifyCoverageError::ActionDigest)?,
-                );
+                digests.push(descriptor.digest(pair));
             }
             if !fee_entries.insert(<[u8; 40]>::from(fee_descriptor)) {
                 return Err(VerifyCoverageError::DuplicateFees);

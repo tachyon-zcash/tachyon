@@ -21,7 +21,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     fee,
     stamp::{
-        self, ProveError, TransformError,
+        self, ProveError,
         proof::{
             App,
             stamp::{Stamp, StampMerge},
@@ -161,8 +161,8 @@ fn plan_prove_rejects_invalid_inputs() {
                 rng,
                 app,
                 [
-                    plan_a.digest(swapped_pairs[&plan_a.descriptor()]).unwrap(),
-                    plan_b.digest(swapped_pairs[&plan_b.descriptor()]).unwrap(),
+                    plan_a.digest(swapped_pairs[&plan_a.descriptor()]),
+                    plan_b.digest(swapped_pairs[&plan_b.descriptor()]),
                     fee_digest
                 ]
             )
@@ -187,9 +187,7 @@ fn plan_prove_rejects_invalid_inputs() {
                 rng,
                 app,
                 [
-                    foreign_a
-                        .digest(foreign_pairs[&foreign_a.descriptor()])
-                        .unwrap(),
+                    foreign_a.digest(foreign_pairs[&foreign_a.descriptor()]),
                     fee_digest
                 ]
             )
@@ -248,7 +246,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         assert!(pairs.values().all(|&(first, second)| first < second));
         let digests: Vec<ActionDigest> = pairs
             .iter()
-            .map(|(desc, &pair)| desc.digest(pair).unwrap())
+            .map(|(desc, &pair)| desc.digest(pair))
             .chain([fee::Descriptor {
                 cv_feemax: max_fee_note.cv_feemax(),
                 v_fee: value::Positive::ZERO,
@@ -381,7 +379,7 @@ fn overlapping_stamps_cannot_aggregate() {
                 left_covered,
                 (right.clone(), [0; 32], right_covered.0, right_covered.1),
             ),
-            Err(TransformError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+            Err(ragu_core::Error::InvalidWitness(err))
                 if err.to_string() == expected
         );
 
@@ -390,7 +388,7 @@ fn overlapping_stamps_cannot_aggregate() {
         for (descriptors, fees) in [left_covered, right_covered] {
             for (descriptor, &pair) in descriptors {
                 merged_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-                digests.push(descriptor.digest(pair).unwrap());
+                digests.push(descriptor.digest(pair));
             }
             for (descriptor, &change) in fees {
                 merged_tachygrams.push(change);
@@ -438,15 +436,13 @@ fn verify_proof_action_multiset_invariants() {
             digests.as_slice(),
             &[random_action(rng)
                 .0
-                .digest((Tachygram::random(rng), Tachygram::random(rng)))
-                .unwrap()],
+                .digest((Tachygram::random(rng), Tachygram::random(rng)))],
         ]
         .concat(),
         [
             &[random_action(rng)
                 .0
-                .digest((Tachygram::random(rng), Tachygram::random(rng)))
-                .unwrap()],
+                .digest((Tachygram::random(rng), Tachygram::random(rng)))],
             &digests[1..],
         ]
         .concat(),
@@ -569,9 +565,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let foreign = BTreeMap::from([(random_action(rng).0, *descriptors.values().next().unwrap())]);
     assert_matches!(
         stamp.lift(rng, app, &foreign, &fees, vec![span]),
-        Err(TransformError::ProofFailed(
-            ragu_core::Error::InvalidWitness(_)
-        ))
+        Err(ragu_core::Error::InvalidWitness(_))
     );
 }
 
@@ -590,9 +584,6 @@ fn empty_lift_does_not_digest_invalid_coverage() {
         .map(|(&desc, &(_, pair))| (desc, pair))
         .collect();
     let fees = BTreeMap::from([(invalid.fee, invalid.fee_auth)]);
-    invalid.actions[0]
-        .digest(invalid.action_auth[0].1)
-        .unwrap_err();
 
     // Even unusable coverage maps must not be inspected for an empty lift.
     bundle
@@ -638,7 +629,7 @@ fn merge_after_lift() {
                 &desc_b, &fees_b
             ),
         ),
-        Err(TransformError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+        Err(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "StampMerge: anchors must match"
     );
 
@@ -686,9 +677,7 @@ fn mismatched_merge_descriptors_fail_verification() {
                 &fees_b,
             ),
         ),
-        Err(TransformError::ProofFailed(
-            ragu_core::Error::InvalidWitness(_)
-        ))
+        Err(ragu_core::Error::InvalidWitness(_))
     );
 
     let honest = merged(app, &bundle_a, &bundle_b).stamp;

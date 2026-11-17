@@ -101,7 +101,7 @@ fn fee_fuse_binds_its_sets() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, max_fee_note);
 
-    let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1).unwrap()]);
+    let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
     let action_tachygrams = left
         .action_auth
         .iter()
@@ -170,7 +170,7 @@ fn fee_fuse_slack_boundaries() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, wallet.random_note(300));
-    let digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1).unwrap()]);
+    let digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
     let action_tachygrams = left
         .action_auth
         .iter()

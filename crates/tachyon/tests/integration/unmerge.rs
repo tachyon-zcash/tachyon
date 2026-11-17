@@ -12,7 +12,7 @@ use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, bundle,
     stamp::{
-        self, ProofStamp, TransformError,
+        self, ProofStamp,
         proof::stamp::{Stamp, StampUnmerge},
     },
     value, witness,
@@ -292,7 +292,7 @@ fn unmerge_by_a_lifted_divisor() {
             (&all_desc, &all_fees),
             (earlier.stamp, earlier_txid, &early_desc, &early_fees),
         ),
-        Err(TransformError::ProofFailed(ragu_core::Error::InvalidWitness(err)))
+        Err(ragu_core::Error::InvalidWitness(err))
             if err.to_string() == "StampUnmerge: anchors must match"
     );
 
@@ -511,9 +511,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             ),
             (reproven.stamp, divisor_txid, &divisor_desc, &divisor_fees),
         ),
-        Err(TransformError::ProofFailed(
-            ragu_core::Error::InvalidWitness(_)
-        ))
+        Err(ragu_core::Error::InvalidWitness(_))
     );
 }
 
