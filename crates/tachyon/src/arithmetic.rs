@@ -6,13 +6,9 @@ use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
     field::Field as _,
-    polynomial::vanishing_polynomial,
 };
 
 use crate::pasta::Fp;
-
-/// Roots per leaf of the [`poly_with_roots`] product tree.
-const ROOT_CHUNK: usize = 128;
 
 /// The product of `left` and `right`, empty when either factor is empty.
 /// Udon computes the product over a domain large enough to avoid wraparound;
@@ -67,41 +63,4 @@ pub(crate) fn poly_mul(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
         .expect("serial transform needs no scratch");
     out.truncate(result_len);
     out
-}
-
-/// The monic polynomial whose roots are `roots`, with multiplicity.
-/// Use udon's quadratic routine on bounded leaves and combine them with FFT
-/// products so large sets do not require quadratic work.
-#[expect(
-    clippy::expect_used,
-    reason = "each leaf spans its roots and leading one; the nonempty product tree has a root"
-)]
-pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
-    if roots.is_empty() {
-        return vec![Fp::ONE];
-    }
-
-    let mut polys: Vec<Vec<Fp>> = roots
-        .chunks(ROOT_CHUNK)
-        .map(|chunk| {
-            let mut leaf = vec![Fp::ZERO; chunk.len() + 1];
-            vanishing_polynomial(Fp::as_slice(chunk), Fp::as_slice_mut(&mut leaf))
-                .expect("leaf spans its roots and leading one");
-            leaf
-        })
-        .collect();
-
-    while polys.len() > 1 {
-        let mut next = Vec::with_capacity(polys.len().div_ceil(2));
-        let mut iter = polys.into_iter();
-        while let Some(first) = iter.next() {
-            next.push(match iter.next() {
-                Some(second) => poly_mul(&first, &second),
-                None => first,
-            });
-        }
-        polys = next;
-    }
-
-    polys.into_iter().next().expect("nonempty product tree")
 }

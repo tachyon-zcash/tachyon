@@ -28,7 +28,9 @@ use alloc::{vec, vec::Vec};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use udon::{
     field::Field as _,
-    polynomial::{InterpolationError, InterpolationPlan, divide_monic_in_place},
+    polynomial::{
+        InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
+    },
 };
 
 use crate::{arithmetic, pasta::Fp};
@@ -108,7 +110,7 @@ pub(crate) fn split(
 #[must_use]
 #[expect(
     clippy::expect_used,
-    reason = "the interpolation buffers are sized to the point count and the divisor is monic"
+    reason = "the buffers are sized for each operation and udon writes a monic divisor"
 )]
 pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
@@ -143,7 +145,9 @@ pub(crate) fn decomposition(
         .expect("interpolation values and buffers match the point count");
         coeffs
     };
-    let vanishing = arithmetic::poly_with_roots(&abscissas);
+    let mut vanishing = vec![Fp::ZERO; len + 1];
+    vanishing_polynomial(Fp::as_slice(&abscissas), Fp::as_slice_mut(&mut vanishing))
+        .expect("the buffer fits the abscissas and leading one");
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
         interpolant_coeffs.clone_from(&vanishing);
     }
