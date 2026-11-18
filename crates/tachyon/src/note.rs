@@ -82,28 +82,19 @@ pub struct Note {
 impl Note {
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
-    ///
-    /// # Panics
-    ///
-    /// Panics if $r$ does not fit a [`value::Trapdoor`]. The caller that builds
-    /// the max fee note confirms that it does.
     #[must_use]
     #[expect(
         clippy::expect_used,
-        reason = "p < q, so every Fp repr is canonical in Fq; the caller confirms the blind fits"
+        clippy::missing_panics_doc,
+        reason = "p < q, so every Fp repr is canonical in Fq"
     )]
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {
         let blind =
             poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::try_from(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
-            .expect("the max fee note's blind fits a value trapdoor")
+        value::ValueTrapdoor(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// The max fee commitment, `cv_feemax`.
-    ///
-    /// # Panics
-    ///
-    /// Panics where [`derive_feemax_blind`](Self::derive_feemax_blind) does.
     #[must_use]
     pub fn cv_feemax(&self) -> value::Commitment {
         self.derive_feemax_blind().commit(-self.value)
