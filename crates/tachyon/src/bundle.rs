@@ -666,7 +666,8 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -775,7 +776,8 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
     pub fn verify_covered(
         &self,
         adjuncts: &[&Bundle<StrippedStamp>],
@@ -877,7 +879,8 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
