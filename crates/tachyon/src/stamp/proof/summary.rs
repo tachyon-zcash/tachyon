@@ -22,7 +22,7 @@ use ragu::{
 };
 use udon::field::Field as _;
 
-use super::stamp::FoldedStamp;
+use super::stamp::TachygramSet;
 use crate::{
     digest::poseidon,
     gadgets,
@@ -39,8 +39,8 @@ impl OnlinePoly for TachygramAccumulator {}
 /// One summarized run of an epoch's stamps.
 ///
 /// The [`TachygramAccumulator`] contains every tachygram from the stamps
-/// folded over `(anchor_prev, anchor_end]`; the [`FoldedStamp`] is the last
-/// folded stamp's.
+/// in `(anchor_prev, anchor_end]`; the [`TachygramSet`] holds the last stamp's
+/// tachygrams.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
@@ -55,7 +55,7 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for Summary {
     /// `(epoch, anchor_prev, anchor_end)`
     type Data = (EpochIndex, Anchor, Anchor);
-    type OnlinePolyCommit = (TachygramAccumulator, FoldedStamp);
+    type OnlinePolyCommit = (TachygramAccumulator, TachygramSet);
     type Output = Kind![Fp; SummaryOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(9);
@@ -89,15 +89,15 @@ impl Header<Fp> for Summary {
     }
 }
 
-/// Start a summary from one stamp. The step performs the same fold as
-/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
+/// Start a summary from one stamp. The anchor absorbs the stamp's bridge
+/// hash as in [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
 ///
 /// # Soundness
 ///
-/// `anchor_prev` and `epoch` are free witnesses. Consensus computes each fold
-/// with the epoch of the block that contains the stamp.
-/// The accumulator and folded stamp carry the same stamp set and open once
-/// each at the challenge.
+/// `anchor_prev` and `epoch` are free witnesses. Consensus uses the epoch of
+/// the block that contains the stamp when advancing the anchor.
+/// The accumulator and [`TachygramSet`] carry the same stamp set and open
+/// once each at the challenge.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -120,7 +120,7 @@ impl Step<Pasta> for SummarySeed {
         let stamp = witness.2.as_ref().iter_coeffs().collect::<Vec<_>>();
         Ok(Prepared::new()
             .poly(TachygramAccumulator, stamp.clone())
-            .poly(FoldedStamp, stamp))
+            .poly(TachygramSet, stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -158,7 +158,7 @@ impl Step<Pasta> for SummarySeed {
         )?;
         let z = oracles.zeta().clone();
         let accumulator_at_z = oracles.output(TachygramAccumulator).open(dr, &z)?;
-        let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
+        let stamp_at_z = oracles.output(TachygramSet).open(dr, &z)?;
         accumulator_at_z.enforce_equal(dr, &stamp_at_z)?;
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
@@ -190,11 +190,11 @@ impl Step<Pasta> for SummarySeed {
     }
 }
 
-/// Fold the next stamp into the accumulator while the anchor absorbs the
+/// Extend the accumulator with the next stamp while the anchor absorbs the
 /// stamp's bridge hash.
 ///
 /// The left and output accumulators hold the accumulated sets; the output
-/// folded stamp holds the stamp, each opened once.
+/// [`TachygramSet`] holds the next stamp's tachygrams. Each is opened once.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
@@ -220,7 +220,7 @@ impl Step<Pasta> for SummaryAdvance {
                 witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
             )
             .poly(
-                FoldedStamp,
+                TachygramSet,
                 witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
             ))
     }
@@ -253,7 +253,7 @@ impl Step<Pasta> for SummaryAdvance {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let z = oracles.zeta().clone();
         let accumulator_at_z = oracles.left(TachygramAccumulator).open(dr, &z)?;
-        let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
+        let stamp_at_z = oracles.output(TachygramSet).open(dr, &z)?;
         let extended_at_z = oracles.output(TachygramAccumulator).open(dr, &z)?;
         let folded = accumulator_at_z.mul(dr, &stamp_at_z)?;
         extended_at_z.enforce_equal(dr, &folded)?;

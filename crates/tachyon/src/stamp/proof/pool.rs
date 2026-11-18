@@ -37,7 +37,7 @@ use udon::{curve::Projective as _, field::Field as _};
 use super::{
     delegation::{NfSeq, NoteNullifiers},
     qr::{QrBucket, QrContents},
-    stamp::FoldedStamp,
+    stamp::TachygramSet,
 };
 use crate::{
     bridge_hash::bridge_hash,
@@ -233,7 +233,7 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for AnchorSpan {
     /// `(anchor_start, anchor_end)`
     type Data = (Anchor, Anchor);
-    type OnlinePolyCommit = (AnchorSet, FoldedStamp);
+    type OnlinePolyCommit = (AnchorSet, TachygramSet);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(14);
@@ -305,7 +305,7 @@ impl Step<Pasta> for AnchorSpanSeed {
                     .collect::<Vec<_>>(),
             )
             .poly(
-                FoldedStamp,
+                TachygramSet,
                 witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
             ))
     }
@@ -346,7 +346,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let z = oracles.zeta().clone();
-        let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
+        let stamp_at_z = oracles.output(TachygramSet).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         let anchor = poseidon::circuit::anchor_next_stamp(

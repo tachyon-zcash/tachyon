@@ -52,14 +52,6 @@ pub struct TachygramSet;
 
 impl OnlinePoly for TachygramSet {}
 
-/// The polynomial whose roots are the tachygrams of the stamp the producing
-/// step folds into its anchor. A header that carries it keeps it last, where
-/// the bridge hash the fold absorbs digests it.
-#[derive(Clone, Copy, Debug)]
-pub struct FoldedStamp;
-
-impl OnlinePoly for FoldedStamp {}
-
 /// Non-empty proven action content with no fee in its lineage.
 ///
 /// The output polynomials are the action-digest and tachygram sets. Each leaf

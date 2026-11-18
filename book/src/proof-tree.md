@@ -23,7 +23,7 @@ The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` co
 ### Bootstrapping a spendable
 
 A spendable starts when `SpendableInit` consumes a `NoteNullifiers`.
-It witnesses `(anchor_prev, creation_set, creation_epoch)` with the creation set as its `FoldedStamp` polynomial. It takes `cm` from the range header, opens that polynomial at `cm` for zero, so `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, creation_epoch, anchor)`.
+It witnesses `(anchor_prev, creation_set, creation_epoch)` with the creation set as its `TachygramSet` polynomial. It takes `cm` from the range header, opens that polynomial at `cm` for zero, so `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, creation_epoch, anchor)`.
 Its anchor, the position immediately after the creation stamp, is $\mathsf{Poseidon}_\texttt{Tachyon-AnchorSt}(\mathsf{anchor\_prev}, \mathsf{creation\_epoch}, x(B), y(B))$ for $B$ the bridge hash of the creation set.
 `anchor_prev` is a free witness, so the anchor binds only downstream: lift adjacency threads it to the eventual spend anchor, which consensus checks for chain membership, and a chain node's preimage fixes the real predecessor, the real creation epoch, and the real cm-stamp.
 
@@ -213,8 +213,8 @@ for the witnessed `extended` $E$, the input's `elapsed` $P$ in its `NfSeq`, and 
 ### Summaries
 
 A `Summary` carries `(epoch, anchor_prev, anchor_end)` with the accumulator as its `TachygramAccumulator` polynomial: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
-`SummarySeed` places one stamp's tachygram set as both the accumulator and the `FoldedStamp` and checks them equal at $\zeta$. It folds that set's bridge hash into `anchor_end` with the same $\texttt{Tachyon-AnchorSt}$ fold `AnchorSpanSeed` applies to the bridge hash of its own `FoldedStamp`.
-`SummaryAdvance` takes the next stamp's set as its `FoldedStamp`, checks at $\zeta$ that its accumulator is the input accumulator times that set, and advances `anchor_end` by the set's bridge hash.
+`SummarySeed` places one stamp's tachygram set in both the accumulator and the `TachygramSet` slot and checks them equal at $\zeta$. The anchor absorbs the stamp's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
+`SummaryAdvance` takes the next stamp's set as its `TachygramSet` and checks at $\zeta$ that its accumulator is the input accumulator times that set. The anchor absorbs that stamp's bridge hash to advance `anchor_end`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
 No step joins two summaries directly: each enters through `QrSummaryIntake`, and `QrIntakeMerge` joins the intakes when the first's `anchor_end` meets the second's `anchor_prev`.
@@ -643,8 +643,8 @@ flowchart LR
 
 | Header | Fields | Slots |
 | ------ | ------ | ----- |
-| AnchorSpan | (anchor_start, anchor_end) | AnchorSet: members; FoldedStamp |
-| Summary | (epoch, anchor_prev, anchor_end) | TachygramAccumulator: accumulator; FoldedStamp |
+| AnchorSpan | (anchor_start, anchor_end) | AnchorSet: members; TachygramSet |
+| Summary | (epoch, anchor_prev, anchor_end) | TachygramAccumulator: accumulator; TachygramSet |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | QrContents: contents |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | QrResidues: residue; QrNonResidues: non_residue |
 | QrSideSelection | QrIntakeSides fields, including non_residue_hash | QrInterpolant: interpolant; QrQuotient: quotient |
@@ -655,13 +655,13 @@ flowchart LR
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) | NfSeq |
 | NoteSecret | (cm, note, mk) | — |
 | NoteNullifiers | (cm, epoch_start, epoch_end) | NfSeq: nullifier sequence |
-| NoteSpendable | (cm, epoch_current, anchor) | FoldedStamp |
+| NoteSpendable | (cm, epoch_current, anchor) | TachygramSet |
 | OutputHeader | (cm, pad, cv) | — |
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) | — |
 | Actions | (anchor) | ActionSet: action set; TachygramSet: tachygram set |
 | Stamp | (tachygram_set_bridge, anchor) | ActionSet: action set; TachygramSet: tachygram set |
 
-Slots lists each header's polynomial kinds in slot order, with the contents consumers read; — marks a header whose slots are padding. A kind listed without contents is one no consumer reads: `UnspentBind` keeps the complement as the `NfSeq` of its `NoteUnspent`, and a `FoldedStamp` holds the tachygram set of the stamp whose bridge hash the producing step folds into the header's anchor. `AnchorSpanSeed` keeps the stamp it folds, `SpendableInit` the creation set, and a `Summary` the last folded stamp's set.
+Slots lists each header's polynomial kinds in slot order, with the contents consumers read; — marks a header whose slots are padding. A kind listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeq` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, `TachygramSet` holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
 `contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's second slot: `QrContents`, `QrNonResidues` and `TachygramSet`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's `QrNonResidues`, not of the selection's own `QrQuotient`.
 

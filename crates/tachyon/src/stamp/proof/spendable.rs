@@ -26,7 +26,7 @@ use super::{
     delegation::NoteNullifiers,
     pool::NoteUnspent,
     qr::{QrBucket, QrContents},
-    stamp::FoldedStamp,
+    stamp::TachygramSet,
 };
 use crate::{
     digest::poseidon,
@@ -53,7 +53,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
-    type OnlinePolyCommit = (Padding, FoldedStamp);
+    type OnlinePolyCommit = (Padding, TachygramSet);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -123,7 +123,7 @@ impl Step<Pasta> for SpendableInit {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
-            FoldedStamp,
+            TachygramSet,
             witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
         ))
     }
@@ -178,7 +178,7 @@ impl Step<Pasta> for SpendableInit {
             ],
         )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;
+        let evaluation = oracles.output(TachygramSet).open(dr, &nullifiers.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (cm, ..) = left.take();
