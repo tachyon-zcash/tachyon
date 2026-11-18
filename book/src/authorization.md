@@ -125,6 +125,7 @@ Tachyon uses Pedersen commitments on the Pallas curve for value hiding:
 $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 
 where $v$ is the signed integer value (positive for spends, negative for outputs) and `rcv` is a random[^rcv-note] trapdoor in $\mathbb{F}_q$.
+The stamp steps multiply by the 254 bits of `rcv`, so the planner selects `rcv` again whenever it is at or above $2^{254}$, as it does for `theta`.
 
 [^rcv-note]: `rcv` is currently sampled as a uniformly random scalar (`Fq::random`). This derivation may be revised in the future to incorporate a hash of the note commitment or other action-specific data.
 

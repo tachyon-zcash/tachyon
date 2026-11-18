@@ -48,15 +48,9 @@ impl Trapdoor {
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
-    /// Generate a random trapdoor for an action, selecting again while it
-    /// exceeds the [`Fp::CAPACITY`] bits the stamp steps read it from.
+    /// Generate a random trapdoor for an action.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        loop {
-            let trapdoor = Self(Fq::random(|bytes| rng.fill_bytes(bytes)));
-            if trapdoor.fits_base_field_capacity() {
-                return trapdoor;
-            }
-        }
+        Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Whether the trapdoor's integer value fits the [`Fp::CAPACITY`] bits the

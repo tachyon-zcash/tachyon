@@ -17,7 +17,7 @@ fn digest_panics_on_identity_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let rk = private::ActionSigningKey::new(
-        &ActionEntropy::random::<effect::Output>(rng, cm).randomizer::<effect::Output>(cm),
+        &ActionEntropy::random(rng).randomizer::<effect::Output>(cm),
     )
     .derive_action_public();
     let pair = (Tachygram::random(rng), Tachygram::random(rng));

@@ -41,26 +41,9 @@ impl ActionEntropy {
         Fp::from_bytes(bytes).map(Self)
     }
 
-    /// Sample fresh entropy for an action of effect `E` on the note committing
-    /// to `cm`, selecting again while its randomizer exceeds the
-    /// [`Fp::CAPACITY`] bits the stamp steps read it from.
-    ///
-    /// Entropy obtained another way, such as [`from_bytes`](Self::from_bytes),
-    /// whose randomizer lands there yields a proof that doesn't verify.
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub fn random<E: Effect>(rng: &mut impl CryptoRng, cm: note::Commitment) -> Self {
-        loop {
-            let theta = Self(Fp::random(|bytes| rng.fill_bytes(bytes)));
-            let alpha_fits_base_field_capacity = !E::derive_alpha(theta, cm)
-                .to_le_bits()
-                .as_ref()
-                .iter()
-                .skip(Fp::CAPACITY as usize)
-                .any(|&bit| bit);
-            if alpha_fits_base_field_capacity {
-                return theta;
-            }
-        }
+    /// Sample fresh per-action entropy.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
@@ -91,6 +74,22 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
     pub(crate) Fq,
     #[into(skip)] pub(crate) PhantomData<S>,
 );
+
+impl<S: sealed::RandomizerState> ActionRandomizer<S> {
+    /// Whether the randomizer's integer value fits the [`Fp::CAPACITY`] bits
+    /// the stamp steps read it from.
+    #[must_use]
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn fits_base_field_capacity(self) -> bool {
+        !self
+            .0
+            .to_le_bits()
+            .as_ref()
+            .iter()
+            .skip(Fp::CAPACITY as usize)
+            .any(|&bit| bit)
+    }
+}
 
 #[cfg(test)]
 mod tests;

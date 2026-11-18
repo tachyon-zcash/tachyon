@@ -5,6 +5,7 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
+use rand_core::CryptoRng;
 use udon::curve::Affine as _;
 
 use crate::{
@@ -129,18 +130,32 @@ impl<E: Effect> PartialOrd for Plan<E> {
 }
 
 impl Plan<effect::Spend> {
-    /// Assemble a spend action plan.
+    /// Plan a spend of `note` with fresh $\theta$ and $\mathsf{rcv}$, selecting
+    /// each again while it, or $\alpha$ for $\theta$, exceeds the
+    /// [`Fp::CAPACITY`](crate::pasta::Fp::CAPACITY) bits the stamp steps read
+    /// it from.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
     #[must_use]
     pub fn spend(
+        rng: &mut impl CryptoRng,
         note: Note,
-        theta: ActionEntropy,
-        rcv: value::Trapdoor,
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Spend>(cm);
+        let (theta, alpha) = loop {
+            let theta = ActionEntropy::random(rng);
+            let alpha = theta.randomizer::<effect::Spend>(cm);
+            if alpha.fits_base_field_capacity() {
+                break (theta, alpha);
+            }
+        };
+        let rcv = loop {
+            let rcv = value::Trapdoor::random(rng);
+            if rcv.fits_base_field_capacity() {
+                break rcv;
+            }
+        };
 
         Self {
             rk: derive_rk(alpha),
@@ -153,13 +168,28 @@ impl Plan<effect::Spend> {
 }
 
 impl Plan<effect::Output> {
-    /// Assemble an output action plan.
+    /// Plan an output of `note` with fresh $\theta$ and $\mathsf{rcv}$,
+    /// selecting each again while it, or $\alpha$ for $\theta$, exceeds the
+    /// [`Fp::CAPACITY`](crate::pasta::Fp::CAPACITY) bits the stamp steps read
+    /// it from.
     ///
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
     #[must_use]
-    pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
+    pub fn output(rng: &mut impl CryptoRng, note: Note) -> Self {
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Output>(cm);
+        let (theta, alpha) = loop {
+            let theta = ActionEntropy::random(rng);
+            let alpha = theta.randomizer::<effect::Output>(cm);
+            if alpha.fits_base_field_capacity() {
+                break (theta, alpha);
+            }
+        };
+        let rcv = loop {
+            let rcv = value::Trapdoor::random(rng);
+            if rcv.fits_base_field_capacity() {
+                break rcv;
+            }
+        };
         let rsk = private::ActionSigningKey::new(&alpha);
 
         Self {

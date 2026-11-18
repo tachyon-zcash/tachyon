@@ -12,8 +12,8 @@ use zcash_tachyon::{
     TachygramSetPoly, action,
     constants::EPOCH_MAX,
     digest::poseidon,
-    effect,
     entropy::ActionEntropy,
+    keys::private,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::{Eq, Fp},
@@ -338,7 +338,7 @@ fn spend_rejects_invalid_note() {
 
     let bind_pcd = honest_spend_bind(rng, app, &user, &note, spendable_pcd);
     assert!(app.verify_uncompressed(&bind_pcd, &mut *rng).unwrap());
-    let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
+    let theta = ActionEntropy::random(rng);
     let (forged_action, ()) = app
         .fuse(
             rng,
@@ -371,7 +371,7 @@ fn step_accepts_zero_value_note() {
             witness::output_bind(((), ()), zero_output, rcv),
         )
         .unwrap();
-    let theta = ActionEntropy::random::<effect::Output>(rng, zero_output.commitment());
+    let theta = ActionEntropy::random(rng);
     let anchor = Anchor::random(rng);
     let (output_action, ()) = app
         .fuse(
@@ -411,8 +411,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spend_epoch = height.epoch();
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
+    let plan = action::Plan::spend(rng, note, |alpha| user.pak.ak.derive_action_public(&alpha));
 
     let spendable = user.spendable_init(app, &pool, &note, height);
     let secret = user.note_secret(app, note);
@@ -420,17 +419,14 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             spend::SpendBind,
-            witness::spend_bind((*spendable.data(), *secret.data()), rcv),
+            witness::spend_bind((*spendable.data(), *secret.data()), plan.rcv),
             spendable,
             secret,
         )
         .unwrap();
-    let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
-    let (.., foreign_action_set, _) = witness::spend_action(
-        (*bind_pcd.data(), ()),
-        ActionEntropy::random::<effect::Spend>(rng, note.commitment()),
-        user.pak,
-    );
+    let valid = witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak);
+    let (.., foreign_action_set, _) =
+        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
 
     for (action_witness, expected) in [
         (
@@ -469,15 +465,12 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
+            witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
     let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
@@ -927,8 +920,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random::<effect::Output>(rng, note.commitment());
+    let plan = action::Plan::output(rng, note);
     let anchor = Anchor::random(rng);
     let pad = Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
@@ -941,7 +933,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .seed(
             rng,
             output::OutputBind,
-            witness::output_bind(((), ()), note, rcv),
+            witness::output_bind(((), ()), note, plan.rcv),
         )
         .unwrap();
     assert_eq!(
@@ -949,15 +941,12 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         (
             Tachygram::from(note.commitment()),
             pad,
-            rcv.commit(-note.value),
+            plan.rcv.commit(-note.value),
         )
     );
-    let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
-    let (.., foreign_action_set, _) = witness::output_action(
-        (*bind_pcd.data(), ()),
-        ActionEntropy::random::<effect::Output>(rng, note.commitment()),
-        anchor,
-    );
+    let valid = witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor);
+    let (.., foreign_action_set, _) =
+        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
     for (action_witness, expected) in [
         (
@@ -996,14 +985,13 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
     assert_eq!(*pcd.data(), anchor);
-    let plan = action::Plan::output(note, theta, rcv);
     let pair = (Tachygram::from(note.commitment()), pad);
     assert_eq!(
         pcd.commitments()[..2],
@@ -1015,7 +1003,13 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             .to_affine(),
         ]
     );
-    let foreign = action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv);
+    let foreign_note = WalletSim::random(rng).random_note(200);
+    let foreign = action::Plan {
+        note: foreign_note,
+        rk: private::ActionSigningKey::new(&plan.theta.randomizer(foreign_note.commitment()))
+            .derive_action_public(),
+        ..plan
+    };
     assert_ne!(foreign.digest(pair), plan.digest(pair));
 }
 
