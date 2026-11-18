@@ -281,10 +281,10 @@ A modified descriptor breaks both checks. Changing a pair's members breaks stamp
 
 ## Partially Created Transactions
 
-A partially created transaction (PCZT) carries a Tachyon bundle between devices before it is complete. Each field a role writes is optional, and a role fills absent fields without overwriting present ones.
+A partially created transaction (PCZT) carries a Tachyon bundle between devices before it is complete. Effects and signing fill absent fields without overwriting present ones. The prover can merge partials and replace the stamp and its authorization data by stamping again, including for a zero-action bundle.
 
 - **Effects.** The planner or the custody device fixes each action's `theta` and `rcv`, and derives `cv`, `rk` and $\cv_\feemax$. Every later signer and prover uses those values.
-- **Signing.** Custody signs the spends it owns and every unsigned output. A spend owned by another key carries that key's `ak`, so every custody derives the same `rk`. An output or max fee note owned by custody takes custody's own payment key.
+- **Signing.** Custody signs the spends it owns and every unsigned output. The planner or custody resolving an unspecified spend owner records its own `ak`; spends for other keys specify their `ak` upfront. Later signers use the recorded owners and derive the same `rk`. An output or max fee note owned by custody takes custody's own payment key.
 - **Binding.** Whoever holds every `rcv` and the max fee note signs `binding_sig`.
 - **Proving.** Each spend is proved by a holder of its `pak`, and each output by anyone holding its note, `theta` and `rcv`. `Actions` proofs over disjoint sets of actions at one anchor merge with [`ActionMerge`](./proof-tree.md#spending), and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee once. A bundle with no actions uses $\mathsf{FeeSeed}$.
 - **Combining.** Copies of one partial bundle combine field by field, and two different values for one field conflict.

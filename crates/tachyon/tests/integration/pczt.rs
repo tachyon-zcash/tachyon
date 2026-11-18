@@ -7,7 +7,7 @@ use ragu_core::pasta::Pasta;
 use ragu_pcd::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, Note,
+    Anchor, Note, Tachygram,
     pasta::Fp,
     pczt::{self, CombineError, ExtractError, NoteOpening, Slot},
     stamp::proof::{App, delegation, spendable},
@@ -31,8 +31,11 @@ fn spendables(
     Anchor,
 ) {
     let mut pool = PoolSim::genesis_with(vec![]);
-    let cms = notes.iter().map(|&(_, note)| note.commitment()).collect();
-    pool.mine(vec![cms]);
+    let tachygrams = notes
+        .iter()
+        .map(|&(_, note)| Tachygram::from(note.commitment()))
+        .collect();
+    pool.mine(vec![tachygrams]);
     let height = pool.height();
     let inputs: Vec<_> = notes
         .iter()
@@ -192,20 +195,23 @@ fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
         Some(alice_ak),
         vec![],
     );
-    bundle.add_spend(alice_note, Some(alice_ak));
+    bundle.add_spend(alice_note, None);
     bundle.add_spend(bob_note, Some(bob_ak));
     bundle.add_output(WalletSim::random(&mut rng).random_note(110).into(), None);
 
     let sighash = bundle
         .authorize(&mut rng, &alice.sk, |digest| mock_sighash(*digest))
         .unwrap();
-    assert!(bundle.spends[0].sig.is_some());
+    assert_eq!(bundle.spends[0].owner, Some(alice_ak));
+    let alice_sig = bundle.spends[0].sig.unwrap();
     assert!(bundle.spends[1].sig.is_none());
 
     let bob_sighash = bundle
         .authorize(&mut rng, &bob.sk, |digest| mock_sighash(*digest))
         .unwrap();
     assert_eq!(bob_sighash, sighash);
+    assert_eq!(bundle.spends[0].owner, Some(alice_ak));
+    assert_eq!(bundle.spends[0].sig, Some(alice_sig));
     assert!(bundle.spends[1].sig.is_some());
     bundle.sign_binding(&mut rng, &sighash).unwrap();
 

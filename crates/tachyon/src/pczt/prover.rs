@@ -159,8 +159,8 @@ impl Bundle {
         Ok(())
     }
 
-    /// Apply `fee` to the partial covering every action, and set the stamp.
-    /// The partial is kept, so the fee can be changed by stamping again.
+    /// Apply `fee` to the partial covering every action, replacing any prior
+    /// stamp and its authorization data. The partial is kept for restamping.
     ///
     /// # Errors
     ///
@@ -193,7 +193,8 @@ impl Bundle {
         Ok(())
     }
 
-    /// Stamp a bundle with no actions at `anchor`, at a zero fee.
+    /// Stamp a bundle with no actions at `anchor`, at a zero fee, replacing
+    /// any prior stamp and its authorization data.
     ///
     /// # Errors
     ///

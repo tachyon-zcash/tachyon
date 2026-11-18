@@ -2,8 +2,9 @@
 //!
 //! A [`Bundle`] carries a Tachyon bundle through the PCZT roles. Each field a
 //! role writes is optional, so copies can be passed between parties,
-//! combined, and redacted. A role fills absent fields and never overwrites a
-//! present one.
+//! combined, and redacted. Effects and signing fill absent fields without
+//! replacing present ones. Proving can merge partials and replace the stamp
+//! and its authorization data via [`Bundle::stamp`] or [`Bundle::seed_stamp`].
 //!
 //! - Constructor: [`Bundle::new`], [`Bundle::add_spend`],
 //!   [`Bundle::add_output`].
@@ -104,8 +105,10 @@ pub struct Action<E: Effect> {
 
     /// The spend validating key of the note's owner.
     ///
-    /// A spend is signed by the custody holding this key. An absent owner
-    /// is the custody that authorizes the bundle. An output or max fee note
+    /// A spend is signed by the custody holding this key. If absent for a
+    /// spend, the first effects derivation that resolves it records its own
+    /// validating key. Set the owner explicitly for spends belonging to a
+    /// different key. An output or max fee note
     /// whose owner is the authorizing custody's key takes that custody's
     /// payment key.
     pub owner: Option<SpendValidatingKey>,

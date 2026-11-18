@@ -54,7 +54,8 @@ impl Bundle {
     ///
     /// Fills every absent `theta` and `rcv`, and derives each action's `cv`
     /// and `rk` and the max fee note's `cv_feemax`. A spend's `rk` uses its
-    /// owner's key, or `pak`'s when it has none. An output or max fee note
+    /// owner's key. An absent spend owner is filled with `pak`'s validating
+    /// key when deriving that spend's effects. An output or max fee note
     /// owned by `pak`'s key takes `pak`'s payment key.
     ///
     /// # Errors
@@ -258,11 +259,14 @@ impl Bundle {
                 cv: effect::Spend::commit_value(rcv, note.value),
                 rk: owner.derive_action_public(&alpha),
             };
-            spend.cv.get_or_insert(descriptor.cv);
-            spend.rk.get_or_insert(descriptor.rk);
             if !descriptors.insert(descriptor) {
                 return Err(SignerError::DuplicateDescriptor(slot));
             }
+            // Record the owner with the derived effects so a later custody
+            // does not reinterpret an unspecified owner as its own key.
+            spend.owner.get_or_insert(owner);
+            spend.cv.get_or_insert(descriptor.cv);
+            spend.rk.get_or_insert(descriptor.rk);
             balance += i128::from(note.value);
             spends.push((alpha, owner == *ak));
         }
