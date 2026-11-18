@@ -8,6 +8,13 @@ use lazy_static::lazy_static;
 /// BLAKE2b-256 digest for transaction digest contributions (ZIP 244 leaves).
 ///
 /// `updater` feeds the preimage into the personalized state.
+///
+/// # Panics
+///
+/// Panics if `personalization` exceeds 16 bytes, or if the finalized digest is
+/// not 32 bytes long. The hasher is configured for that length, so the latter
+/// is unreachable.
+#[must_use]
 fn hasher_256(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::State)) -> [u8; 32] {
     let mut state = Params::new()
         .hash_length(32)
@@ -26,6 +33,13 @@ fn hasher_256(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::St
 /// BLAKE2b-512 digest for key derivation preimages.
 ///
 /// `updater` feeds the preimage into the personalized state.
+///
+/// # Panics
+///
+/// Panics if `personalization` exceeds 16 bytes, or if the finalized digest is
+/// not 64 bytes long. The hasher is configured for that length, so the latter
+/// is unreachable.
+#[must_use]
 fn hasher_512(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::State)) -> [u8; 64] {
     let mut state = Params::new()
         .hash_length(64)

@@ -14,6 +14,13 @@ use crate::pasta::{Fp, Fq};
 use crate::{note, value};
 
 /// Embeds a base-field element in the scalar field, which is larger.
+///
+/// # Panics
+///
+/// Panics if the base-field representation is not canonical in the scalar
+/// field. This is unreachable because `p < q`, so every `Fp` value is a valid
+/// `Fq` representation.
+#[must_use]
 #[expect(
     clippy::expect_used,
     reason = "p < q, so every Fp repr is canonical in Fq"
@@ -32,10 +39,12 @@ mod sealed {
 pub trait Effect: sealed::Sealed {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
+    #[must_use]
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq;
 
     /// Commit to this effect's signed value contribution using the given
     /// trapdoor.
+    #[must_use]
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment;
 }
 

@@ -40,6 +40,7 @@ pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
 
 /// The class multiplier $c$ of a side: $1$ on the residue side, the quadratic
 /// non-residue otherwise.
+#[must_use]
 pub(crate) const fn class_multiplier(side: bool) -> Fp {
     if side { Fp::ONE } else { QUADRATIC_NON_RESIDUE }
 }
