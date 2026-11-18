@@ -1,5 +1,7 @@
 //! Unsigned integers held as their bits inside a circuit.
 
+use alloc::vec::Vec;
+
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -54,12 +56,7 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// The value the bits encode.
     pub(crate) fn pack(&self, dr: &mut D) -> Result<Element<'dr, D>> {
-        let Ok([packed]) = <[Element<'dr, D>; 1]>::try_from(multipack(dr, &self.bits)?) else {
-            return Err(Error::InvalidWitness(
-                "the bits pack into one element".into(),
-            ));
-        };
-        Ok(packed)
+        Ok(single_packed_element(multipack(dr, &self.bits)?))
     }
 
     pub(crate) const fn bits(&self) -> &FixedVec<Boolean<'dr, D>, ConstLen<BITS>> {
@@ -73,6 +70,17 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
         let slack = Element::constant(dr, Fp::from(maximum)).sub(dr, &packed);
         Self::from_element(dr, &slack)
     }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "every Uint packing width fits one field element"
+)]
+fn single_packed_element<'dr, D: Driver<'dr>>(packed: Vec<Element<'dr, D>>) -> Element<'dr, D> {
+    let [element] = <[_; 1]>::try_from(packed)
+        .map_err(|_elements| ())
+        .expect("the bits pack into one element");
+    element
 }
 
 #[cfg(test)]
