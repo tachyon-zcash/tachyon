@@ -144,7 +144,7 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    let (swapped, swapped_pairs, _, _) = plan
+    let (swapped, swapped_pairs, ..) = plan
         .prove(
             rng,
             app,
@@ -172,7 +172,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
-    let (foreign, foreign_pairs, _, _) = stamp::Plan::new(
+    let (foreign, foreign_pairs, ..) = stamp::Plan::new(
         vec![(foreign_a.descriptor(), theta_a, rcv_a)],
         vec![],
         anchor,

@@ -473,7 +473,8 @@ impl Plan {
     /// Derives each `alpha` from the action's `theta` and the commitment of
     /// its note.
     ///
-    /// Returns the descriptor-keyed action signatures and the binding signature.
+    /// Returns the descriptor-keyed action signatures and the binding
+    /// signature.
     ///
     /// # Errors
     ///
@@ -483,7 +484,8 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), value::OutOfRange> {
+    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), value::OutOfRange>
+    {
         self.value_balance()?;
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
@@ -507,7 +509,8 @@ impl Plan {
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
     ///
-    /// Returns the descriptor-keyed action signatures and the binding signature.
+    /// Returns the descriptor-keyed action signatures and the binding
+    /// signature.
     ///
     /// # Errors
     ///
@@ -571,14 +574,18 @@ impl Plan {
         self.value_balance().expect("planned balance is in range")
     }
 
-    /// Assemble the bundle from signatures and independently produced proof data.
+    /// Assemble the bundle from signatures and independently produced proof
+    /// data.
     ///
     /// # Panics
     ///
     /// Panics if the plan, signature and tachygram pair keys differ or the
     /// plan's balance is out of range.
     #[must_use]
-    #[expect(clippy::type_complexity, reason = "takes the prover's outputs as returned")]
+    #[expect(
+        clippy::type_complexity,
+        reason = "takes the prover's outputs as returned"
+    )]
     pub fn assemble(
         &self,
         (action_sigs, binding_sig): (BTreeMap<action::Descriptor, action::Signature>, Signature),
