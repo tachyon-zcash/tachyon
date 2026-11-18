@@ -959,6 +959,10 @@ impl ProofStamp<Uncompressed> {
     /// Returns [`ragu_core::Error`] if a proof-system operation fails.
     /// Empty `spans` leave the stamp unchanged before
     /// inspecting the descriptors.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -1001,6 +1005,10 @@ impl ProofStamp<Uncompressed> {
     /// # Errors
     ///
     /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the absorbed side"
@@ -1103,6 +1111,10 @@ impl ProofStamp<Uncompressed> {
     /// # Errors
     ///
     /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
     #[expect(
         clippy::type_complexity,
         reason = "the stamp, txid and covered bundles of the divisor"

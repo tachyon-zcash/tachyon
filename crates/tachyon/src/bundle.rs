@@ -663,6 +663,10 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     ///
     /// Returns [`ragu_core::Error`] if a proof-system operation fails.
     /// Empty `spans` leave the bundle unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -768,6 +772,10 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
     /// or the covered tachygrams number more than one set polynomial has roots
     /// or do not reproduce the tachygram set commitment the stamp carries.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
     pub fn verify_covered(
         &self,
         adjuncts: &[&Bundle<StrippedStamp>],
@@ -866,6 +874,10 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// Returns [`VerificationError`] if any of those checks fails, or if the
     /// proof is disproved.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or `rk`.
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
