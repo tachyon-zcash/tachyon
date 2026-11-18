@@ -228,7 +228,7 @@ pub(crate) fn bob(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Unco
     )
 }
 
-/// The three fees differ because unmerge_keeps_the_dividend_fee depends on
+/// The three fees differ because `unmerge_keeps_the_dividend_fee` depends on
 /// that.
 pub(crate) fn outputs_with_fees(
     app: &App<'_>,

@@ -164,6 +164,8 @@ impl QrClassRoot {
     /// `discriminant`, in depth order.
     #[must_use]
     pub fn along(value: Fp, discriminant: QrDiscriminant) -> [Self; QrProfile::MAX_DEPTH] {
+        use udon::field::Field as _;
+
         let mut shifted = value + Fp::from(discriminant);
         array::from_fn(|_| {
             let class = Self::of(shifted, Fp::ZERO);

@@ -22,12 +22,14 @@ use zcash_tachyon::{
 };
 
 use super::fixtures::application;
-use crate::fixtures::pool::{PoolSim, random_block, random_block_with};
+use crate::fixtures;
+use crate::fixtures::pool::PoolSim;
 use crate::fixtures::qr::QrIntakeEntry;
-use crate::fixtures::wallet::{WalletSim, alice, later_output, shared_sk};
+use crate::fixtures::wallet;
+use crate::fixtures::wallet::{WalletSim, alice, later_output};
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
-    pool.mine(random_block_with(rng, &[vec![cm]], 4));
+    pool.mine(fixtures::pool::random_block_with(rng, &[vec![cm]], 4));
     pool.height()
 }
 
@@ -74,7 +76,7 @@ fn honest_spend_bind(
 fn spendable_init_rejects_tg_absent() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
 
     let nf_header = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
@@ -102,7 +104,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let nf: [Nullifier; 4] =
@@ -158,8 +160,8 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
 fn anchor_span_holds_the_anchors_its_folds_produce() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(2, |_| random_block(rng, 1, 2));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
+    pool.advance(2, |_| fixtures::pool::random_block(rng, 1, 2));
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
@@ -178,7 +180,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
 fn stamp_lift_accepts_only_anchors_the_span_holds() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
@@ -248,8 +250,8 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
 fn anchor_span_fuse_rejects_invalid_compositions() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
-    pool.advance(2, |_| random_block(rng, 1, 1));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
+    pool.advance(2, |_| fixtures::pool::random_block(rng, 1, 1));
 
     let left = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(1));
     let left_members = pool.anchors_in(BlockHeight(1)..=BlockHeight(1));
@@ -307,7 +309,7 @@ fn spend_rejects_invalid_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let other = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
     let note = user.random_note(500);
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable_pcd = user.spendable_init(app, &pool, &note, height);
@@ -349,7 +351,7 @@ fn spend_rejects_invalid_note() {
 fn step_accepts_zero_value_note() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
 
     let zero_output = Note {
         pk: user.pak.derive_payment_key(),
@@ -378,7 +380,7 @@ fn step_accepts_zero_value_note() {
         .unwrap();
     assert!(app.verify_uncompressed(&output_action, &mut *rng).unwrap());
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
     let zero_spend = user.random_note(0);
     let height = mine_cm_block(rng, &mut pool, zero_spend.commitment());
     let spendable_pcd = user.spendable_init(app, &pool, &zero_spend, height);
@@ -399,10 +401,10 @@ fn step_accepts_zero_value_note() {
 fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spend_epoch = height.epoch();
     let rcv = value::Trapdoor::random(rng);
@@ -498,7 +500,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
 fn lift_crosses_a_stampless_epoch() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
@@ -520,7 +522,7 @@ fn lift_crosses_a_stampless_epoch() {
 fn unspent_bind_rejects_a_forged_member() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let pool = PoolSim::shared();
 
@@ -556,7 +558,7 @@ fn unspent_bind_rejects_a_forged_member() {
 fn unspent_bind_window_may_end_at_the_final_epoch() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
@@ -591,7 +593,7 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
 fn unspent_bind_rejects_mismatched_sequences() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let other = PoolSim::shared_note(700);
     let pool = PoolSim::shared();
@@ -676,7 +678,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
 fn unspent_bind_rejects_uncovered_end() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let pool = PoolSim::shared();
     let mk = user.pak.nk.derive_note_private(note.psi);
@@ -703,7 +705,7 @@ fn unspent_bind_rejects_uncovered_end() {
 fn spendable_lift_rejects_mismatched_segments() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
@@ -757,7 +759,7 @@ fn spendable_lift_rejects_mismatched_segments() {
 fn note_seed_derives_the_payment_key_from_pak() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let stranger = WalletSim::random(rng);
     let note = user.random_note(500);
 
@@ -782,7 +784,7 @@ fn note_seed_derives_the_payment_key_from_pak() {
 fn nullifier_derive_rejects_invalid_windows() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let other = user.random_note(700);
     let secret = user.note_secret(app, note);
@@ -826,7 +828,7 @@ fn nullifier_derive_rejects_invalid_windows() {
 fn nullifier_fuse_rejects_unjoinable_ranges() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let other = user.random_note(700);
 
@@ -865,13 +867,13 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
 fn spend_bind_derives_a_pair_across_a_group_boundary() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
-    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
+    let mut pool = PoolSim::genesis_with(fixtures::pool::random_block(rng, 1, 50));
     while pool.height() < EpochIndex::new(3).first_block() {
-        pool.advance(1, |_| random_block(rng, 1, 2));
+        pool.advance(1, |_| fixtures::pool::random_block(rng, 1, 2));
     }
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
@@ -898,7 +900,7 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
 fn output_action_commits_to_the_plan_and_the_note_pair() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let note = WalletSim::new(shared_sk()).random_note(200);
+    let note = WalletSim::new(wallet::shared_sk()).random_note(200);
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let plan = action::Plan::output(note, theta, rcv);
@@ -993,7 +995,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
 fn nullifier_fuse_concatenates_adjacent_windows() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
 
@@ -1041,7 +1043,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
 fn unspent_bind_rejects_a_wrong_epoch_member() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
@@ -1070,7 +1072,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
 fn multi_window_span_binds_once() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let note = PoolSim::shared_note(500);
 

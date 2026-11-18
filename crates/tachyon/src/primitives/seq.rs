@@ -54,6 +54,8 @@ impl NfSeqPoly {
 
 impl Default for NfSeqPoly {
     fn default() -> Self {
+        use udon::field::Field as _;
+
         Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
     }
 }

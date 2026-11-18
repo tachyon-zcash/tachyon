@@ -15,12 +15,13 @@ use zcash_tachyon::{
 };
 
 use super::fixtures::application;
+use crate::fixtures;
 use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet;
 use crate::fixtures::wallet::{
     WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, merged, output_plan,
-    outputs_with_fees, shared_sk,
+    outputs_with_fees,
 };
-use crate::fixtures::{mock_sighash, mock_txid};
 
 #[test]
 fn unmerge_removes_a_divisor_across_merge_boundaries() {
@@ -72,7 +73,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         .chain(&carol_fees)
         .map(|(&desc, &change)| (desc, change))
         .collect();
-    let (bob_txid, carol_txid) = (mock_txid(&bob), mock_txid(&carol));
+    let (bob_txid, carol_txid) = (fixtures::mock_txid(&bob), fixtures::mock_txid(&carol));
     let all_three = merged(app, &alice, &bob)
         .stamp
         .merge(
@@ -122,13 +123,13 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         let stripped: Vec<_> = adjuncts.into_iter().map(bundle::Bundle::strip).collect();
         assert_eq!(
             unmerged.stamp.adjuncts,
-            stripped.iter().map(mock_txid).collect()
+            stripped.iter().map(fixtures::mock_txid).collect()
         );
         unmerged
             .verify(
                 rng,
                 app,
-                &mock_sighash(unmerged.commitment()),
+                &fixtures::mock_sighash(unmerged.commitment()),
                 &stripped.iter().collect::<Vec<_>>(),
             )
             .unwrap();
@@ -173,7 +174,7 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .chain(&carol_fees)
         .map(|(&desc, &change)| (desc, change))
         .collect();
-    let (alice_txid, bob_txid) = (mock_txid(&alice), mock_txid(&bob));
+    let (alice_txid, bob_txid) = (fixtures::mock_txid(&alice), fixtures::mock_txid(&bob));
 
     let on_alice = alice
         .stamp
@@ -198,7 +199,7 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         )
         .unwrap();
     assert!(kept.is_autonome());
-    kept.verify(rng, app, &mock_sighash(kept.commitment()), &[])
+    kept.verify(rng, app, &fixtures::mock_sighash(kept.commitment()), &[])
         .unwrap();
 
     let mut hostless = alice.clone();
@@ -213,7 +214,12 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unwrap();
     assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
     assert_matches!(
-        hostless.verify(rng, app, &mock_sighash(hostless.commitment()), &[]),
+        hostless.verify(
+            rng,
+            app,
+            &fixtures::mock_sighash(hostless.commitment()),
+            &[]
+        ),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
@@ -246,7 +252,7 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .verify(
             rng,
             app,
-            &mock_sighash(carol.commitment()),
+            &fixtures::mock_sighash(carol.commitment()),
             &[&stripped_bob],
         )
         .unwrap();
@@ -261,7 +267,7 @@ fn unmerge_by_a_lifted_divisor() {
     let (_, mut later) = later_output(app);
     let lifted_bundle = lifted(app, &earlier, pool, BlockHeight(1)..=BlockHeight(2));
     let lifted_divisor = lifted_bundle.stamp.clone();
-    let earlier_txid = mock_txid(&earlier);
+    let earlier_txid = fixtures::mock_txid(&earlier);
     let dividend = merged(app, &later, &lifted_bundle).stamp;
     let [early_desc, late_desc]: [BTreeMap<_, _>; 2] = [&earlier, &later].map(|bundle| {
         bundle
@@ -303,7 +309,7 @@ fn unmerge_by_a_lifted_divisor() {
         )
         .unwrap();
     later
-        .verify(rng, app, &mock_sighash(later.commitment()), &[])
+        .verify(rng, app, &fixtures::mock_sighash(later.commitment()), &[])
         .unwrap();
 }
 
@@ -327,7 +333,12 @@ fn unmerge_by_itself_leaves_no_leaves() {
             rng,
             app,
             (&desc, &fees),
-            (alice.stamp.clone(), mock_txid(&alice), &desc, &fees),
+            (
+                alice.stamp.clone(),
+                fixtures::mock_txid(&alice),
+                &desc,
+                &fees,
+            ),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, []).unwrap());
@@ -335,7 +346,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
 
     alice.stamp = quotient;
     assert_matches!(
-        alice.verify(rng, app, &mock_sighash(alice.commitment()), &[]),
+        alice.verify(rng, app, &fixtures::mock_sighash(alice.commitment()), &[]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
@@ -346,7 +357,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
 fn unmerge_splitting_a_bundle() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let anchor = PoolSim::shared().mint_anchor();
     let (alice_plan, alice) = alice(app);
     let kept_plan = output_plan(rng, wallet.random_note(300));
@@ -366,7 +377,7 @@ fn unmerge_splitting_a_bundle() {
     let signatures = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -392,7 +403,7 @@ fn unmerge_splitting_a_bundle() {
         .map(|(&desc, &(_, pair))| (desc, pair))
         .collect();
     let whole_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
-    let part_txid = mock_txid(&alice);
+    let part_txid = fixtures::mock_txid(&alice);
     let part = alice.stamp;
 
     let quotient = whole
@@ -410,7 +421,7 @@ fn unmerge_splitting_a_bundle() {
 
     whole.stamp = quotient;
     assert_matches!(
-        whole.verify(rng, app, &mock_sighash(whole.commitment()), &[]),
+        whole.verify(rng, app, &fixtures::mock_sighash(whole.commitment()), &[]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
@@ -421,7 +432,7 @@ fn unmerge_splitting_a_bundle() {
 fn unmerge_rejects_a_reproven_note_as_divisor() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let anchor = Anchor::random(rng);
     let note = wallet.random_note(300);
     let max_fee_note = wallet.random_note(100);
@@ -432,7 +443,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         let signatures = plan
             .sign(
                 rng,
-                &mock_sighash(plan.commitment().unwrap()),
+                &fixtures::mock_sighash(plan.commitment().unwrap()),
                 &wallet.sk.derive_auth_private(),
             )
             .unwrap();
@@ -467,7 +478,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             ),
             (
                 other.stamp.clone(),
-                mock_txid(&other),
+                fixtures::mock_txid(&other),
                 &other
                     .actions
                     .iter()
@@ -478,7 +489,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             ),
         )
         .unwrap();
-    let divisor_txid = mock_txid(&reproven);
+    let divisor_txid = fixtures::mock_txid(&reproven);
     let divisor_desc = reproven
         .actions
         .iter()

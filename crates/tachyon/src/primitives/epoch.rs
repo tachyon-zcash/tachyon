@@ -1,4 +1,4 @@
-use core::ops;
+use core::ops::Sub;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
 
@@ -80,7 +80,7 @@ impl From<EpochIndex> for Fp {
     }
 }
 
-impl ops::Sub<Self> for EpochIndex {
+impl Sub<Self> for EpochIndex {
     type Output = EpochDiff;
 
     fn sub(self, rhs: Self) -> Self::Output {

@@ -1,6 +1,6 @@
 //! Fees and fee descriptors.
 
-use core::cmp;
+use core::cmp::Ordering;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use udon::curve::Affine as _;
@@ -38,14 +38,14 @@ impl Descriptor {
 }
 
 impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Descriptor {
     /// Orders fee descriptors by their coverage entries.
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         <[u8; 40]>::from(*self).cmp(&<[u8; 40]>::from(*other))
     }
 }

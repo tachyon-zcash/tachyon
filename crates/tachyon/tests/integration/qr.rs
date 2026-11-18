@@ -25,7 +25,8 @@ use crate::fixtures::qr::{
     EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
     scaled_qr_contents, shared_discriminant,
 };
-use crate::fixtures::wallet::{WalletSim, shared_sk};
+use crate::fixtures::wallet;
+use crate::fixtures::wallet::WalletSim;
 
 #[test]
 fn qr_summary_intake_starts_a_root_from_a_summary() {
@@ -300,7 +301,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
 fn scaled_qr_buckets_answer_as_honest_buckets() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(279);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(700);
     let epoch = EpochIndex::new(0);
     let cm = Tachygram::from(note.commitment());
@@ -451,7 +452,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
 fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(280);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(700);
     let cm = Tachygram::from(note.commitment());
     let nf = user
@@ -1291,7 +1292,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let epoch3 = epoch2.next().unwrap();
     let epoch4 = epoch3.next().unwrap();
     let pool = PoolSim::shared();
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let [nf2, nf3] = [epoch2, epoch3].map(|epoch| mk.derive_nullifier(epoch));
@@ -1339,7 +1340,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let epoch0 = EpochIndex::new(0);
@@ -1409,7 +1410,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
 fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(196);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let epoch = EpochIndex::new(0);
     let pool = PoolSim::shared();
@@ -1456,7 +1457,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
 fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let pool = PoolSim::shared();
@@ -1519,7 +1520,7 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
 fn qr_spendable_init_rejects_an_absent_commitment() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
     let pool = PoolSim::shared();
@@ -1777,7 +1778,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
 fn unspent_lift_carries_a_spendable() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
@@ -1811,7 +1812,7 @@ fn unspent_lift_rejects_invalid_extensions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (epoch0, epoch1, epoch2) = (EpochIndex::new(0), EpochIndex::new(1), EpochIndex::new(2));
     let pool = PoolSim::shared();
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
     let [nf0, nf1] = [epoch0, epoch1].map(|epoch| mk.derive_nullifier(epoch));

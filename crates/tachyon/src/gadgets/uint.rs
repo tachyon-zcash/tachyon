@@ -7,7 +7,7 @@ use ragu::drivers::{Driver, DriverValue};
 use ragu::gadgets::Gadget;
 use ragu::maybe::Maybe as _;
 use ragu::primitives::vec::{ConstLen, FixedVec};
-use ragu::primitives::{Boolean, Element, GadgetExt as _, multipack};
+use ragu::primitives::{Boolean, Element, GadgetExt as _};
 use udon::field::Field;
 
 use crate::pasta::Fp;
@@ -47,7 +47,8 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// The value the bits encode.
     pub(crate) fn pack(&self, dr: &mut D) -> Result<Element<'dr, D>> {
-        Ok(single_packed_element(multipack(dr, &self.bits)?))
+        let packed = ragu::primitives::multipack(dr, &self.bits)?;
+        Ok(single_packed_element(packed))
     }
 
     pub(crate) const fn bits(&self) -> &FixedVec<Boolean<'dr, D>, ConstLen<BITS>> {

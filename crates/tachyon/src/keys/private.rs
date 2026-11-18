@@ -282,6 +282,8 @@ impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
     fn from(trapdoors: I) -> Self {
+        use udon::field::Field as _;
+
         let sum: Fq = trapdoors
             .into_iter()
             .fold(Fq::ZERO, |acc, rcv| acc + Fq::from(rcv));

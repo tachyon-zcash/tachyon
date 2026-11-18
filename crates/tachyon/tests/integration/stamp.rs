@@ -24,12 +24,13 @@ use zcash_tachyon::{
 };
 
 use super::fixtures::application;
+use crate::fixtures;
 use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet;
 use crate::fixtures::wallet::{
     WalletSim, alice, alice_output_note, bob, later_output, lifted, merged, output_plan,
-    random_action, shared_sk, spend,
+    random_action, spend,
 };
-use crate::fixtures::{mock_sighash, mock_txid};
 
 fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
@@ -77,7 +78,7 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
 fn plan_prove_rejects_invalid_inputs() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let other = WalletSim::random(rng);
     let pool = PoolSim::shared();
     let note_a = PoolSim::shared_note(500);
@@ -190,7 +191,7 @@ fn plan_prove_rejects_invalid_inputs() {
 fn plan_prove_lifts_a_spend_along_spans() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
+    let user = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let note = PoolSim::shared_note(500);
     let cm_height = BlockHeight(1);
@@ -284,7 +285,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
 fn overlapping_stamps_cannot_aggregate() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let pool = PoolSim::shared();
     let anchor = pool.mint_anchor();
     let (_, alice_bundle) = alice(app);
@@ -323,7 +324,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let signatures = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -642,7 +643,12 @@ fn merge_after_lift() {
             rng,
             app,
             (&desc_a, &fees_a),
-            (stamp_b.clone(), mock_txid(&bundle_b), &desc_b, &fees_b),
+            (
+                stamp_b.clone(),
+                fixtures::mock_txid(&bundle_b),
+                &desc_b,
+                &fees_b,
+            ),
         )
         .unwrap();
     assert!(
@@ -693,7 +699,7 @@ fn mismatched_merge_descriptors_fail_verification() {
             (&desc_a, &fees_a),
             (
                 bundle_b.stamp.clone(),
-                mock_txid(&bundle_b),
+                fixtures::mock_txid(&bundle_b),
                 &desc_b,
                 &fees_b,
             ),

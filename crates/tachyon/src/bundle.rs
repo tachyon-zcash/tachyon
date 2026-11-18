@@ -107,7 +107,6 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::iter;
-use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
@@ -402,6 +401,8 @@ impl Plan {
     /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
     /// Intermediate accumulating states are not constrained.
     pub fn value_balance(&self) -> Result<value::Balance, value::OutOfRange> {
+        use core::ops::Neg as _;
+
         value::Balance::try_from(
             self.iter_actions(
                 |plan| i128::from(plan.note.value),

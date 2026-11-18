@@ -1,8 +1,7 @@
 //! Tachyon Action descriptions.
 
 use alloc::vec::Vec;
-use core::cmp;
-use core::cmp::Ord;
+use core::cmp::{Ord, Ordering};
 use core::marker::PhantomData;
 
 use corez::io::{self, Read, Write};
@@ -91,13 +90,13 @@ impl Descriptor {
 }
 
 impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Descriptor {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         {
             EpAffine::from(self.cv)
                 .to_bytes()
@@ -134,7 +133,7 @@ impl<E: Effect> PartialEq for Plan<E> {
 }
 
 impl<E: Effect> PartialOrd for Plan<E> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.descriptor().partial_cmp(&other.descriptor())
     }
 }
@@ -231,13 +230,13 @@ impl<E: Effect> Plan<E> {
 pub struct Signature(pub(crate) reddsa::Signature<ActionAuth>);
 
 impl PartialOrd for Signature {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Signature {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         let bytes: [u8; 64] = self.0.into();
         let other_bytes: [u8; 64] = other.0.into();
         bytes.cmp(&other_bytes)

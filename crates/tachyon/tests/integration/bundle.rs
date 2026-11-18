@@ -23,12 +23,12 @@ use zcash_tachyon::stamp::{self, ProofStamp, StrippedStamp};
 use zcash_tachyon::{BlockHeight, SignatureError, Tachygram, action, effect, fee, value, *};
 
 use super::fixtures::application;
+use crate::fixtures;
 use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet;
 use crate::fixtures::wallet::{
-    WalletSim, alice, entry_spends, merged, output_plan, random_action, shared_sk, spend,
-    zero_action,
+    WalletSim, alice, entry_spends, merged, output_plan, random_action, spend, zero_action,
 };
-use crate::fixtures::{mock_sighash, mock_txid};
 
 #[test]
 fn sign_and_apply_signatures_verify_every_plan_shape() {
@@ -52,7 +52,7 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
                 .collect(),
             wallet.random_note(0),
         );
-        let sighash = mock_sighash(plan.commitment().unwrap());
+        let sighash = fixtures::mock_sighash(plan.commitment().unwrap());
         let signatures = plan.sign(rng, &sighash, &ask).unwrap();
         plan.verify_signatures(&sighash, &signatures).unwrap();
         let (authorized, _) = signatures;
@@ -64,13 +64,13 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
 #[test]
 fn apply_signatures_rejects_wrong_sig_count() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let ask = wallet.sk.derive_auth_private();
     let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
     let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
     let spend_c = spend_plan_at(rng, &wallet, &ask, 300);
     let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = fixtures::mock_sighash(plan.commitment().unwrap());
     let sig = ask
         .derive_action_private(
             &spend_a
@@ -105,7 +105,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
     let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
 
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = fixtures::mock_sighash(plan.commitment().unwrap());
     let (action_sigs, _) = plan.sign(rng, &sighash, &ask).unwrap();
     let mut sigs: Vec<action::Signature> = action_sigs.into_values().collect();
 
@@ -125,11 +125,11 @@ fn assemble_joins_by_descriptor() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (plan, original) = spend(app);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let signatures = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -158,7 +158,7 @@ fn assemble_joins_by_descriptor() {
         pairs.values().copied().collect::<Vec<_>>()
     );
     joined
-        .verify(rng, app, &mock_sighash(joined.commitment()), &[])
+        .verify(rng, app, &fixtures::mock_sighash(joined.commitment()), &[])
         .unwrap();
 }
 
@@ -168,11 +168,11 @@ fn assemble_panics_on_mismatched_descriptors() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (plan, original) = spend(app);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let signatures = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -205,7 +205,7 @@ fn edited_bundles_fail_binding_verification() {
     ] {
         assert_ne!(edited.commitment(), original.commitment());
         assert_matches!(
-            edited.verify_signatures(&mock_sighash(edited.commitment())),
+            edited.verify_signatures(&fixtures::mock_sighash(edited.commitment())),
             Err(SignatureError::Binding(_))
         );
     }
@@ -213,16 +213,20 @@ fn edited_bundles_fail_binding_verification() {
 
 #[test]
 fn no_bundle_commitment_differs_from_empty_bundle() {
-    let empty_plan = Plan::new(vec![], vec![], WalletSim::new(shared_sk()).random_note(0));
+    let empty_plan = Plan::new(
+        vec![],
+        vec![],
+        WalletSim::new(wallet::shared_sk()).random_note(0),
+    );
     assert_ne!(*blake2b::COMMIT_NO_BUNDLE, empty_plan.commitment().unwrap());
 }
 
 #[test]
 fn zero_action_bundle_requires_a_zero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let max_fee_note = WalletSim::new(shared_sk()).random_note(0);
+    let max_fee_note = WalletSim::new(wallet::shared_sk()).random_note(0);
     let plan = Plan::new(vec![], vec![], max_fee_note);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = fixtures::mock_sighash(plan.commitment().unwrap());
     for value_balance in [0i64, 1] {
         let bundle = Bundle {
             actions: vec![],
@@ -271,7 +275,7 @@ fn zero_action_bundle_requires_a_zero_balance() {
 fn duplicated_spend_cannot_inflate() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let note = PoolSim::shared_note(1000);
     let pool = PoolSim::shared();
     let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
@@ -292,7 +296,7 @@ fn duplicated_spend_cannot_inflate() {
     let doubled = 2 * i64::try_from(u64::from(note.value)).unwrap();
     let value_balance = value::Balance::try_from(doubled).unwrap();
     let action_bytes: Vec<[u8; 64]> = [descriptor, descriptor].into_iter().collect();
-    let sighash = mock_sighash(blake2b::bundle_commitment(
+    let sighash = fixtures::mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
         &cv_feemax.into(),
@@ -329,7 +333,7 @@ fn duplicated_spend_cannot_inflate() {
     assert_eq!(err.to_string(), "tachygrams are not unique");
 
     bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .verify_signatures(&fixtures::mock_sighash(bundle.commitment()))
         .unwrap();
     let action_digest = descriptor.digest(pair);
     let fee_digest = bundle.fee.digest(bundle.fee_auth);
@@ -340,7 +344,7 @@ fn duplicated_spend_cannot_inflate() {
     );
 
     assert_matches!(
-        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
+        bundle.verify(rng, app, &fixtures::mock_sighash(bundle.commitment()), &[]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::DuplicateActions
         ))
@@ -353,7 +357,7 @@ fn based_aggregate_with_two_adjuncts() {
     let rng = &mut StdRng::seed_from_u64(0);
     let [(_, autonome_a), (_, autonome_b), (_, mut becomes_based)] = entry_spends(app);
 
-    let sighash = mock_sighash(becomes_based.commitment());
+    let sighash = fixtures::mock_sighash(becomes_based.commitment());
 
     let based_desc = becomes_based
         .actions
@@ -377,7 +381,10 @@ fn based_aggregate_with_two_adjuncts() {
         .map(|bundle| (bundle.fee, bundle.fee_auth))
         .collect();
     let innocent_stamp = merged(app, &autonome_a, &autonome_b).stamp;
-    let (txid_a, txid_b) = (mock_txid(&autonome_a), mock_txid(&autonome_b));
+    let (txid_a, txid_b) = (
+        fixtures::mock_txid(&autonome_a),
+        fixtures::mock_txid(&autonome_b),
+    );
     assert_eq!(innocent_stamp.adjuncts, BTreeSet::from([txid_b]));
 
     let based_stamp = becomes_based
@@ -444,7 +451,7 @@ fn autonome_verify_rejects_flipped_signatures() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = spend(app);
-    let sighash = mock_sighash(bundle.commitment());
+    let sighash = fixtures::mock_sighash(bundle.commitment());
     bundle.verify(rng, app, &sighash, &[]).unwrap();
 
     let mut binding_bytes = Vec::new();
@@ -477,7 +484,7 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
     let (first, rest) = bundle.action_auth.split_at_mut(1);
     mem::swap(&mut first[0].1.1, &mut rest[0].1.1);
     assert_matches!(
-        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
+        bundle.verify(rng, app, &fixtures::mock_sighash(bundle.commitment()), &[]),
         Err(VerificationError::Disproved)
     );
 }
@@ -501,7 +508,7 @@ fn stamped_bundle_round_trips() {
     assert_eq!(decoded.fee_auth, stamped.fee_auth);
     assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
     decoded
-        .verify(rng, app, &mock_sighash(decoded.commitment()), &[])
+        .verify(rng, app, &fixtures::mock_sighash(decoded.commitment()), &[])
         .unwrap();
     let compressed = Bundle {
         stamp: stamped.stamp.compress(rng, app).unwrap(),
@@ -526,7 +533,7 @@ fn stamped_bundle_round_trips() {
     assert_eq!(block.fee_auth, decoded.fee_auth);
     assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
     Bundle::<StrippedStamp>::try_from(erased).unwrap_err();
-    let sighash = mock_sighash(block.commitment());
+    let sighash = fixtures::mock_sighash(block.commitment());
     block.verify(rng, app, &sighash, &[]).unwrap();
     let (mut stripped_block, mut stripped_decoded) = (Vec::new(), Vec::new());
     block.clone().strip().write(&mut stripped_block).unwrap();
@@ -564,7 +571,7 @@ fn read_preserves_action_order() {
     let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
-    let sighash = mock_sighash(blake2b::bundle_commitment(
+    let sighash = fixtures::mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&descriptors),
         value_balance.into(),
         &cv_feemax.into(),
@@ -636,7 +643,7 @@ fn stripped_bundle_round_trips() {
         assert_eq!(decoded.fee.v_fee, stripped.fee.v_fee);
         assert_eq!(decoded.fee_auth, stripped.fee_auth);
         decoded
-            .verify_signatures(&mock_sighash(decoded.commitment()))
+            .verify_signatures(&fixtures::mock_sighash(decoded.commitment()))
             .unwrap();
     }
 }
@@ -817,13 +824,13 @@ fn bundles_round_trip_at_action_count_limits() {
     let app = &application();
     let (_, stamped) = alice(app);
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let max_fee_note = wallet.random_note(0);
     let plan = Plan::new(vec![], vec![], max_fee_note);
     let (_, binding_sig) = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -937,9 +944,15 @@ fn auth_digest_invariants() {
     // Set by hand so that only the list differs from `stamped`. A merge would
     // also change the proof and the tachygram set.
     let mut aggregate_a = stamped.clone();
-    aggregate_a.stamp.adjuncts.insert(mock_txid(&stripped));
+    aggregate_a
+        .stamp
+        .adjuncts
+        .insert(fixtures::mock_txid(&stripped));
     let mut aggregate_b = stamped.clone();
-    aggregate_b.stamp.adjuncts.insert(mock_txid(&stripped));
+    aggregate_b
+        .stamp
+        .adjuncts
+        .insert(fixtures::mock_txid(&stripped));
     aggregate_b.stamp.adjuncts.insert([0x11u8; 32]);
     assert_eq!(stripped.commitment(), commitment);
     assert_ne!(stripped.auth_digest(), auth_digest);
@@ -1004,7 +1017,7 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.action_auth, bundle.action_auth);
-    let verified = decoded.verify(rng, app, &mock_sighash(decoded.commitment()), &[]);
+    let verified = decoded.verify(rng, app, &fixtures::mock_sighash(decoded.commitment()), &[]);
     assert_eq!(verified.unwrap(), decoded.stamp.tachygram_set);
 
     bundle.action_auth[0].1 = (first, first);
@@ -1297,11 +1310,11 @@ fn verify_covered_rejects_an_edited_tachygram() {
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let signatures = plan
         .sign(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &fixtures::mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
@@ -1366,11 +1379,11 @@ fn memo_round_trips_and_rejects_truncation() {
 fn plan_memo_reaches_the_signed_bundle() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
+    let wallet = WalletSim::new(wallet::shared_sk());
     let memo = vec![0x7fu8; 900];
     let (plan, original) = alice(app);
     let bundle_plan = plan.with_memo(memo.clone());
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let sighash = fixtures::mock_sighash(bundle_plan.commitment().unwrap());
 
     let signatures = bundle_plan
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
@@ -1472,7 +1485,7 @@ fn bundle_lift_over_an_aggregate() {
                 (&zero_desc, &zero_fees),
                 (
                     adjunct_stamp,
-                    mock_txid(&autonome_a),
+                    fixtures::mock_txid(&autonome_a),
                     &adjunct_desc,
                     &adjunct_fees,
                 ),
@@ -1482,7 +1495,10 @@ fn bundle_lift_over_an_aggregate() {
     };
     assert_eq!(
         innocent.stamp.adjuncts,
-        BTreeSet::from([mock_txid(&autonome_a), mock_txid(&autonome_b)])
+        BTreeSet::from([
+            fixtures::mock_txid(&autonome_a),
+            fixtures::mock_txid(&autonome_b)
+        ])
     );
 
     let adjunct_a = autonome_a.strip();
@@ -1491,7 +1507,7 @@ fn bundle_lift_over_an_aggregate() {
         .verify(
             rng,
             app,
-            &mock_sighash(innocent.commitment()),
+            &fixtures::mock_sighash(innocent.commitment()),
             &[&adjunct_a, &adjunct_b],
         )
         .unwrap();

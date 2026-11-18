@@ -1,6 +1,5 @@
 use core::array;
 
-use ragu::PoseidonPermutation as _;
 use ragu::pasta::PoseidonFp;
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
@@ -65,6 +64,8 @@ fn derive_window_reaches_the_final_epoch() {
 #[test]
 #[should_panic(expected = "epoch index above EPOCH_MAX")]
 fn derive_window_rejects_a_window_past_the_final_epoch() {
+    use ragu::PoseidonPermutation as _;
+
     let rng = &mut StdRng::seed_from_u64(0);
     let mk = NoteMasterKey(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let epoch_start = EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap()
