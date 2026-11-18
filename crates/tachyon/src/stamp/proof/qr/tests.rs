@@ -26,9 +26,9 @@ impl Step<Pasta> for ShiftedBucketSeal {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let mut contents = left.polynomial(QrContents).to_vec();
+        let mut contents = left.polynomial(TachygramSet).to_vec();
         contents[0] += witness.1;
-        Ok(Prepared::new().poly(QrContents, contents))
+        Ok(Prepared::new().poly(TachygramSet, contents))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -91,9 +91,9 @@ impl Step<Pasta> for ShiftedBucketSeal {
             )
         });
         let zeta = oracles.zeta().clone();
-        let contents = oracles.left(QrContents).open(dr, &zeta)?;
+        let contents = oracles.left(TachygramSet).open(dr, &zeta)?;
         oracles
-            .output(QrContents)
+            .output(TachygramSet)
             .open(dr, &zeta)?
             .enforce_equal(dr, &contents)?;
         Ok((
@@ -165,7 +165,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(QrContents, [Fp::ONE, witness.3]))
+        Ok(Prepared::new().poly(TachygramSet, [Fp::ONE, witness.3]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -191,7 +191,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let zeta = oracles.zeta().clone();
-        let contents = oracles.output(QrContents).open(dr, &zeta)?;
+        let contents = oracles.output(TachygramSet).open(dr, &zeta)?;
         let one = Element::constant(dr, Fp::ONE);
         contents.enforce_equal(dr, &one)?;
         let anchor_element = Element::alloc(

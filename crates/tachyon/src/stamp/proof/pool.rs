@@ -36,7 +36,7 @@ use udon::{curve::Projective as _, field::Field as _};
 
 use super::{
     delegation::NoteNullifiers,
-    qr::{QrBucket, QrContents},
+    qr::QrBucket,
 };
 use crate::{
     bridge_hash::bridge_hash,
@@ -655,7 +655,7 @@ impl Step<Pasta> for UnspentLift {
         .eval(dr, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z.enforce_equal(dr, &expected_extended)?;
-        let contents_at_value = oracles.right(QrContents).open(dr, &value_element)?;
+        let contents_at_value = oracles.right(TachygramSet).open(dr, &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
             contents_at_value.value().map(Clone::clone),

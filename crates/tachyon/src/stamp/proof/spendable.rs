@@ -25,7 +25,7 @@ use ragu::{
 use super::{
     delegation::NoteNullifiers,
     pool::NoteUnspent,
-    qr::{QrBucket, QrContents},
+    qr::QrBucket,
 };
 use crate::{
     digest::poseidon,
@@ -264,7 +264,7 @@ impl Step<Pasta> for QrSpendableInit {
         // bucket directly.
         epoch_next.enforce_equal(dr, &unspent.epoch_next)?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.right(QrContents).open(dr, &unspent.cm)?;
+        let evaluation = oracles.right(TachygramSet).open(dr, &unspent.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();

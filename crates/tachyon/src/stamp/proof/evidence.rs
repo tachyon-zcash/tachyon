@@ -28,15 +28,15 @@ use ragu::{
 };
 use udon::curve::Affine as _;
 
-use super::qr::{QrBucket, QrBucketOutput, QrContents};
+use super::qr::{QrBucket, QrBucketOutput};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
-        TachygramSetPoly,
+        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSet,
+        TachygramSetBridge, TachygramSetPoly,
     },
 };
 
@@ -687,7 +687,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
 /// Two permutations (the leaf digest).
-/// [`QrContents`] holds the contents and opens once. Its bridge hash enters the
+/// [`TachygramSet`] holds the contents and opens once. Its bridge hash enters the
 /// leaf.
 ///
 /// # Soundness
@@ -727,7 +727,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
-            QrContents,
+            TachygramSet,
             witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
         ))
     }
@@ -770,7 +770,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             ],
         };
         let zeta = oracles.zeta().clone();
-        oracles.output(QrContents).open(dr, &zeta)?;
+        oracles.output(TachygramSet).open(dr, &zeta)?;
         let leaf = poseidon::circuit::evidence_tree_leaf(
             dr,
             &fields.epoch,

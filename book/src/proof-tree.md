@@ -269,7 +269,7 @@ The framework's challenge zeta fixes both input headers and their slots; the sid
 Every step of one network classifies at the progression carried by its headers.
 Split opens its input and two output polynomials once at its product challenge.
 Selection opens the non-residue input at the exceptional point and produces the two hint commitments, opening each hint once at zeta so it stays committed rather than held to 1.
-Descent opens the split's `QrResidues` and `QrNonResidues` and the selection's `QrInterpolant` and `QrQuotient` once each at zeta, selects the sibling evaluation with its staged bit, and forwards the selected child as its `QrContents`, whose one opening at zeta checks the copy.
+Descent opens the split's `QrResidues` and `QrNonResidues` and the selection's `QrInterpolant` and `QrQuotient` once each at zeta, selects the sibling evaluation with its staged bit, and forwards the selected child as its `TachygramSet`, whose one opening at zeta checks the copy.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
@@ -384,7 +384,7 @@ Binding the profile into the leaf is what makes the replay safe: a real bucket's
 Leaf and node digests use different domains, $\texttt{Tachyon-QrBucket}$ and $\texttt{Tachyon-EvidNode}$, so no path can stop one level short and present a node as a bucket.
 
 A leaf digest absorbs eight elements, two permutations at rate four. A node absorbs four, one permutation.
-No evidence step multiplies a point. Only `EvidenceTreeOpen` opens a polynomial: its output's `QrContents`, once at $\zeta$, so that Ragu does not hold the slot to the constant 1.
+No evidence step multiplies a point. Only `EvidenceTreeOpen` opens a polynomial: its output's `TachygramSet`, once at $\zeta$, so that Ragu does not hold the slot to the constant 1.
 Permutations per step:
 
 | Step | Permutations |
@@ -645,10 +645,10 @@ flowchart LR
 | ------ | ------ | ----- |
 | AnchorSpan | (anchor_start, anchor_end) | AnchorSet: members; TachygramSet |
 | Summary | (epoch, anchor_prev, anchor_end) | TachygramAccumulator: accumulator; TachygramSet |
-| QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | QrContents: contents |
+| QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | TachygramSet: contents |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | QrResidues: residue; QrNonResidues: non_residue |
 | QrSideSelection | QrIntakeSides fields, including non_residue_hash | QrInterpolant: interpolant; QrQuotient: quotient |
-| QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents_hash) | QrContents: contents |
+| QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents_hash) | TachygramSet: contents |
 | EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) | — |
 | EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) | — |
 | ArbitraryUnspent | (anchor_start, epoch_start, epoch_next, anchor_next) | NfSeq: elapsed |
@@ -663,7 +663,7 @@ flowchart LR
 
 Slots lists each header's polynomial kinds in slot order, with the contents consumers read; — marks a header whose slots are padding. A kind listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeq` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, `TachygramSet` holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
-`contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's second slot: `QrContents`, `QrNonResidues` and `TachygramSet`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's `QrNonResidues`, not of the selection's own `QrQuotient`.
+`contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's second slot: `QrNonResidues` for `non_residue_hash`, `TachygramSet` for the others. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's `QrNonResidues`, not of the selection's own `QrQuotient`.
 
 ## Steps
 
