@@ -363,10 +363,8 @@ impl Step<Pasta> for AnchorSpanSeed {
         // The span's one member is the fold just computed, so a member chosen
         // after the challenge takes a preimage of the fold.
         let members = oracles.output(AnchorSet).open(dr, &z)?;
-        let member_one = Element::constant(dr, Fp::ONE);
         let member_factor = z.sub(dr, &anchor);
-        let expected_members = member_one.mul(dr, &member_factor)?;
-        members.enforce_equal(dr, &expected_members)?;
+        members.enforce_equal(dr, &member_factor)?;
         let data = D::just(|| {
             let (anchor_start, ..) = witness.take();
             (anchor_start, Anchor::from(*anchor.value().take()))

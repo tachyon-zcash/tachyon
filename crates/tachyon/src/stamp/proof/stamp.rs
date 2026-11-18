@@ -273,10 +273,8 @@ impl Step<Pasta> for OutputAction {
         // step derives. `cv` carries the note's value; `rk` derives from
         // `alpha`, and so from `cm`.
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        let action_one = Element::constant(dr, Fp::ONE);
         let action_factor = z.sub(dr, &action_root);
-        let expected_action_set = action_one.mul(dr, &action_factor)?;
-        action_set.enforce_equal(dr, &expected_action_set)?;
+        action_set.enforce_equal(dr, &action_factor)?;
         // The stamp accumulator commits to exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -421,10 +419,8 @@ impl Step<Pasta> for SpendAction {
         // The action-set commitment commits to exactly the one action this
         // step derives; the root is in-circuit from the certified note.
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        let action_one = Element::constant(dr, Fp::ONE);
         let action_factor = z.sub(dr, &action_root);
-        let expected_action_set = action_one.mul(dr, &action_factor)?;
-        action_set.enforce_equal(dr, &expected_action_set)?;
+        action_set.enforce_equal(dr, &action_factor)?;
         // The stamp accumulator commits to exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
@@ -1083,15 +1079,11 @@ impl Step<Pasta> for FeeSeed {
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        let action_one = Element::constant(dr, Fp::ONE);
         let action_factor = z.sub(dr, &fee_digest);
-        let expected_action_set = action_one.mul(dr, &action_factor)?;
-        action_set.enforce_equal(dr, &expected_action_set)?;
+        action_set.enforce_equal(dr, &action_factor)?;
         let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
-        let tachygram_one = Element::constant(dr, Fp::ONE);
         let tachygram_factor = z.sub(dr, &fee_change);
-        let expected_tachygram_set = tachygram_one.mul(dr, &tachygram_factor)?;
-        tachygram_set.enforce_equal(dr, &expected_tachygram_set)?;
+        tachygram_set.enforce_equal(dr, &tachygram_factor)?;
         let tachygram_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
