@@ -74,7 +74,7 @@ extern crate alloc;
 
 use alloc::vec;
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu::{Polynomial, ProductionRank};
 use udon::{field::Field as _, polynomial::fold_weighted};
 
 use crate::pasta::Fp;

@@ -1,17 +1,17 @@
 //! Circuit mirror of [`Note`](crate::note::Note) derivations.
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
-};
-use ragu_primitives::{
-    Element, GadgetExt as _, Point,
-    allocator::Allocator,
-    decompose,
-    io::Write,
-    vec::{ConstLen, FixedVec},
+    primitives::{
+        Element, GadgetExt as _, Point,
+        allocator::Allocator,
+        decompose,
+        io::Write,
+        vec::{ConstLen, FixedVec},
+    },
 };
 
 use crate::{
