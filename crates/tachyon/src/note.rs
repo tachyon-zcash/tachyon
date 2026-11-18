@@ -41,7 +41,7 @@ use crate::{
     digest::poseidon,
     keys::PaymentKey,
     nullifier,
-    pasta::{Fp, Fq},
+    pasta::{self, Fp},
     primitives::Tachygram,
     value,
 };
@@ -82,16 +82,18 @@ pub struct Note {
 impl Note {
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the blind's digest is at least $2^{254}$, which no fee step
+    /// proves and which occurs with probability about $2^{-129}$.
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        clippy::missing_panics_doc,
-        reason = "p < q, so every Fp repr is canonical in Fq"
-    )]
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {
-        let blind =
-            poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+        value::Trapdoor::from_scalar(pasta::digest_scalar(poseidon::feemax_blind(
+            Fp::from(self.pk),
+            Fp::from(self.psi),
+            Fp::from(self.rcm),
+        )))
     }
 
     /// The max fee commitment, `cv_feemax`.

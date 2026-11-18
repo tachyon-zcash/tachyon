@@ -2,6 +2,7 @@ use ragu_primitives::Simulator;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
+use crate::pasta;
 
 #[test]
 fn blind_multiplication_is_the_blind_times_the_base() {
@@ -30,34 +31,54 @@ fn blind_multiplication_is_the_blind_times_the_base() {
 }
 
 #[test]
-fn digest_multiplication_is_the_canonical_digest_times_the_base() {
+fn digest_multiplication_accepts_254_bit_digests_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);
     let start = *ACTION_AUTH_GENERATOR * Fq::random(|bytes| rng.fill_bytes(bytes));
-    for digest in [
+    let accepted = [
         Fp::ONE,
-        -Fp::ONE,
-        Fp::from(2).pow_u64(254),
+        Fp::from(2).pow_u64(254) - Fp::ONE,
         Fp::random(|bytes| rng.fill_bytes(bytes)),
+    ];
+    let rejected = [Fp::from(2).pow_u64(254), -Fp::ONE];
+    for (fixed_base, base, onto) in [
+        (&*G_BASE, *ACTION_AUTH_GENERATOR, None),
+        (&*G_BASE, *ACTION_AUTH_GENERATOR, Some(start)),
+        (&*R_BASE, *orchard::VALUE_COMMIT_R, None),
     ] {
-        let scalar = Fq::from_bytes(digest.to_bytes()).unwrap();
-        for (fixed_base, base, onto) in [
-            (&*G_BASE, *ACTION_AUTH_GENERATOR, None),
-            (&*G_BASE, *ACTION_AUTH_GENERATOR, Some(start)),
-            (&*R_BASE, *orchard::VALUE_COMMIT_R, None),
-        ] {
+        for digest in accepted {
             Simulator::<Fp>::simulate(digest, |dr, witness| {
                 let element = Element::alloc(dr, &mut (), witness)?;
                 let onto_point = onto
                     .map(|point| Point::constant(dr, point.to_affine()))
                     .transpose()?;
                 let point = fixed_base.mul_digest(dr, &element, onto_point.as_ref())?;
-                let expected = base * scalar + onto.unwrap_or_else(Ep::identity);
+                let expected =
+                    base * pasta::digest_scalar(digest) + onto.unwrap_or_else(Ep::identity);
                 assert_eq!(point.value().take(), expected.to_affine());
                 Ok(())
             })
             .unwrap();
         }
+        for digest in rejected {
+            Simulator::<Fp>::simulate(digest, |dr, witness| {
+                let element = Element::alloc(dr, &mut (), witness)?;
+                let onto_point = onto
+                    .map(|point| Point::constant(dr, point.to_affine()))
+                    .transpose()?;
+                fixed_base.mul_digest(dr, &element, onto_point.as_ref())?;
+                Ok(())
+            })
+            .map(|_| ())
+            .unwrap_err();
+        }
     }
+}
+
+/// The native embedding refuses the smallest digest the circuit rejects.
+#[test]
+#[should_panic(expected = "a Poseidon digest is below 2^254")]
+fn digest_scalar_rejects_wider_digests() {
+    let _ = pasta::digest_scalar(Fp::from(2).pow_u64(254));
 }
 
 #[test]

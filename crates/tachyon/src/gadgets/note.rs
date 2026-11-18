@@ -66,10 +66,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         })
     }
 
-    /// The canonical Fp digest representing the native maximum-fee blind.
+    /// The Fp digest representing the native maximum-fee blind.
     ///
-    /// Fixed-base digest multiplication embeds this scalar into Fq canonically,
-    /// as the native derivation does.
+    /// Fixed-base digest multiplication reads it as a 254-bit scalar, as the
+    /// native derivation does.
     pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }

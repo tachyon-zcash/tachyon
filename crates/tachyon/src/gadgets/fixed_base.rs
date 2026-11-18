@@ -31,7 +31,7 @@ use ragu_core::{
     maybe::Maybe as _,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, Point, multiadd, multipack,
+    Boolean, Element, GadgetExt as _, Point, decompose, multiadd,
     vec::{ConstLen, FixedVec},
 };
 use udon::{
@@ -357,32 +357,20 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
 }
 
 impl FixedBase<85> {
-    /// $\[h\]B + P$ for the canonical value of a digest $h$. The 255 bits are
-    /// compared against $p - 1$, so $h$ and $h + p$ cannot both decode.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "multipack splits 255 bits into a 254-bit and a 1-bit chunk"
-    )]
+    /// $\[h\]B + P$ for a digest $h$ below $2^{254}$, unsatisfiable for any
+    /// larger $h$. Its 254 bits are unique without a comparison against $p$,
+    /// and the 255th bit the table reads is pinned to zero.
     pub(crate) fn mul_digest<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         digest: &Element<'dr, D>,
         onto: Option<&Point<'dr, D, EpAffine>>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let bits = FixedVec::<_, ConstLen<255>>::try_from_fn(|index| {
-            Boolean::alloc(
-                dr,
-                &mut (),
-                digest
-                    .value()
-                    .map(|candidate| candidate.to_le_bits().as_ref()[index]),
-            )
-        })?;
-        let packed = multipack(dr, &bits)?;
-        let high = packed[1].scale(dr, Coeff::Arbitrary(Fp::from(2).pow_u64(254)));
-        packed[0].add(dr, &high).enforce_equal(dr, digest)?;
-        Self::enforce_canonical(dr, &bits)?;
-        self.multiply(dr, &bits, onto)
+        let mut bits = decompose(dr, &mut (), digest)?;
+        let top = Boolean::alloc(dr, &mut (), D::just(|| false))?;
+        top.element().enforce_zero(dr)?;
+        bits.push(top);
+        self.multiply(dr, &FixedVec::<_, ConstLen<255>>::try_from(bits)?, onto)
     }
 
     /// $\[k\]B$ for some $k$ whose 255 free bits nothing recomposes: $r$ or
@@ -403,37 +391,6 @@ impl FixedBase<85> {
             )
         })?;
         self.multiply(dr, &bits, None)
-    }
-
-    /// Compares the canonical field bits with $p - 1$, sharing a product across
-    /// each maximal zero run. Its sum has at most 254 Boolean terms and cannot
-    /// wrap.
-    #[expect(clippy::indexing_slicing, reason = "fixed 255-bit canonical encoding")]
-    fn enforce_canonical<'dr, D: Driver<'dr, F = Fp>>(
-        dr: &mut D,
-        bits: &FixedVec<Boolean<'dr, D>, ConstLen<255>>,
-    ) -> Result<()> {
-        let maximum = (-Fp::ONE).to_le_bits();
-        let mut equal = bits[254].element();
-        let mut run = Element::zero(dr);
-        let mut pending = false;
-        for index in (0..254).rev() {
-            if maximum.as_ref()[index] {
-                if pending {
-                    equal.mul(dr, &run)?.enforce_zero(dr)?;
-                    run = Element::zero(dr);
-                    pending = false;
-                }
-                equal = equal.mul(dr, &bits[index].element())?;
-            } else {
-                run = run.add(dr, &bits[index].element());
-                pending = true;
-            }
-        }
-        if pending {
-            equal.mul(dr, &run)?.enforce_zero(dr)?;
-        }
-        Ok(())
     }
 }
 

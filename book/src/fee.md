@@ -31,6 +31,8 @@ r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\pk, \psi, \rcm),
 $$
 
 with $r$ embedded in the scalar field.
+The fee steps multiply by the 254 bits of $r$, so an opening whose $r$ is at or above $2^{254}$ has no proof.
+A uniform $r$ reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
 The blind binds the fee change note's owner fields into $\cv_\feemax$. Each
 max fee note takes a fresh secret $\rcm$, because reusing an opening reuses
 $r$.

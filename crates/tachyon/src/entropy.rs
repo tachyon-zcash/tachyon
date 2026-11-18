@@ -50,6 +50,11 @@ impl ActionEntropy {
     ///
     /// Spend and output use distinct Poseidon domains, so the two randomizers
     /// are independent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the randomizer's digest is at least $2^{254}$, which no stamp
+    /// step proves and which occurs with probability about $2^{-129}$.
     #[must_use]
     pub fn randomizer<E: Effect>(&self, cm: note::Commitment) -> ActionRandomizer<E> {
         ActionRandomizer(E::derive_alpha(*self, cm), PhantomData)
