@@ -170,15 +170,9 @@ impl Step<Pasta> for SpendableInit {
         // so the proof certifies the fold of the epoch and the stamp's bridge hash;
         // consensus membership of the eventual spend anchor binds the rest
         // (see the step doc).
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
+        let stamp_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_hash)?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;
         evaluation.enforce_zero(dr)?;

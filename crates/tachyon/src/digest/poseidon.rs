@@ -443,15 +443,12 @@ pub(crate) mod circuit {
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
         epoch: &Element<'dr, D>,
-        bridge_hash: &[Element<'dr, D>; 2],
+        bridge_hash: &Point<'dr, D, EpAffine>,
     ) -> Result<Element<'dr, D>> {
-        let sponge = init(dr, ANCHOR_STAMP_DOMAIN);
-        absorb(
-            dr,
-            sponge,
-            [anchor_prev, epoch, &bridge_hash[0], &bridge_hash[1]],
-        )?
-        .squeeze(dr)
+        let mut sponge = init(dr, ANCHOR_STAMP_DOMAIN);
+        sponge = absorb(dr, sponge, [anchor_prev, epoch])?;
+        bridge_hash.write(dr, &mut sponge)?;
+        sponge.squeeze(dr)
     }
 
     pub(crate) fn anchor_next_epoch<'dr, D: Driver<'dr, F = Fp>>(
@@ -470,10 +467,10 @@ pub(crate) mod circuit {
         anchor_next: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
         profile: (&Element<'dr, D>, &Element<'dr, D>),
-        bridge_hash: &[Element<'dr, D>; 2],
+        bridge_hash: &Point<'dr, D, EpAffine>,
     ) -> Result<Element<'dr, D>> {
-        let sponge = init(dr, QR_BUCKET_DOMAIN);
-        absorb(
+        let mut sponge = init(dr, QR_BUCKET_DOMAIN);
+        sponge = absorb(
             dr,
             sponge,
             [
@@ -483,11 +480,10 @@ pub(crate) mod circuit {
                 discriminant,
                 profile.0,
                 profile.1,
-                &bridge_hash[0],
-                &bridge_hash[1],
             ],
-        )?
-        .squeeze(dr)
+        )?;
+        bridge_hash.write(dr, &mut sponge)?;
+        sponge.squeeze(dr)
     }
 
     pub(crate) fn evidence_tree_node<'dr, D: Driver<'dr, F = Fp>>(

@@ -351,15 +351,9 @@ impl Step<Pasta> for AnchorSpanSeed {
         let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
+        let stamp_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_hash)?;
         // The span's one member is the fold just computed, so a member chosen
         // after the challenge takes a preimage of the fold.
         let members = oracles.output(AnchorSet).open(dr, &z)?;

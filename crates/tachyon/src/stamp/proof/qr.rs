@@ -37,8 +37,8 @@ use ragu_pcd::{
     header::{Header, OnlinePoly, Padding, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
-use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu_primitives::{Boolean, Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use udon::{curve::EndomorphismAffine, field::Field as _};
 
 use super::{
     delegation::NfSeq,
@@ -164,12 +164,13 @@ impl Header<Fp> for QrIntake {
 pub struct QrIntakeSides;
 
 #[derive(Gadget, Write)]
-pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
+pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     /// The intake being split.
     #[ragu(gadget)]
     pub intake: QrIntakeOutput<'dr, D>,
     /// Bridge hash of the split's non-residue polynomial.
-    pub non_residue_hash: [Element<'dr, D>; 2],
+    #[ragu(gadget)]
+    pub non_residue_hash: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for QrIntakeSides {
@@ -184,7 +185,7 @@ impl Header<Fp> for QrIntakeSides {
         TachygramSetBridge,
     );
     type OnlinePolyCommit = (QrResidues, QrNonResidues);
-    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
+    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(10);
 
@@ -193,15 +194,6 @@ impl Header<Fp> for QrIntakeSides {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
-        )]
-        let non_residue_hash = witness.as_ref().map(|&(.., non_residue_hash)| {
-            EpAffine::from(non_residue_hash)
-                .coordinates()
-                .expect("bridge hash is not the identity")
-        });
         Ok(QrIntakeSidesOutput {
             intake: QrIntake::encode(
                 dr,
@@ -212,18 +204,12 @@ impl Header<Fp> for QrIntakeSides {
                     },
                 ),
             )?,
-            non_residue_hash: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    non_residue_hash.as_ref().map(|coordinates| coordinates.0),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    non_residue_hash.as_ref().map(|coordinates| coordinates.1),
-                )?,
-            ],
+            non_residue_hash: Point::alloc(
+                dr,
+                witness
+                    .as_ref()
+                    .map(|&(.., non_residue_hash)| EpAffine::from(non_residue_hash)),
+            )?,
         })
     }
 }
@@ -237,7 +223,7 @@ pub struct QrSideSelection;
 impl Header<Fp> for QrSideSelection {
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type OnlinePolyCommit = (QrInterpolant, QrQuotient);
-    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
+    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(16);
 
@@ -418,15 +404,9 @@ impl Step<Pasta> for QrStampIntakeSeed {
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
+        let stamp_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_hash)?;
         let data = D::just(|| {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
             let () = left.take();
@@ -712,25 +692,18 @@ impl Step<Pasta> for QrIntakeSplit {
         let one = Element::constant(dr, Fp::ONE);
         contents_at_z.sub(dr, &one).enforce_nonzero(dr)?;
 
-        let non_residue_hash = [
-            oracles.bridge_hash().x().clone(),
-            oracles.bridge_hash().y().clone(),
-        ];
-        let [first, second] = non_residue_hash.each_ref().map(Element::value);
+        let non_residue_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let bridge_value = non_residue_hash.value();
         let data = D::just(|| {
             let (epoch, anchor_prev, anchor_end, discriminant, profile) = left.take();
             let () = right.take();
-            #[expect(clippy::expect_used, reason = "Ragu supplies commitment coordinates")]
-            let bridge_hash = EpAffine::from_xy(*first.take(), *second.take())
-                .map(TachygramSetBridge::from)
-                .expect("bridge commitment lies on the curve");
             (
                 epoch,
                 anchor_prev,
                 anchor_end,
                 discriminant,
                 profile,
-                bridge_hash,
+                TachygramSetBridge::from(bridge_value.take()),
             )
         });
         let fields = QrIntakeSidesOutput {
@@ -911,13 +884,9 @@ impl Step<Pasta> for QrSideDescend {
         ] {
             source.enforce_equal(dr, selected)?;
         }
-        for (source, selected) in sides
+        sides
             .non_residue_hash
-            .iter()
-            .zip(&selection.non_residue_hash)
-        {
-            source.enforce_equal(dr, selected)?;
-        }
+            .enforce_equal(dr, &selection.non_residue_hash)?;
         let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
         let discriminant_element = sides
             .intake
@@ -992,7 +961,7 @@ impl Step<Pasta> for QrSideDescend {
 pub struct QrBucket;
 
 #[derive(Gadget, Write)]
-pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
+pub struct QrBucketOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
@@ -1000,7 +969,8 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub discriminant: Element<'dr, D>,
     #[ragu(gadget)]
     pub profile: gadgets::qr::QrProfile<'dr, D>,
-    pub contents_hash: [Element<'dr, D>; 2],
+    #[ragu(gadget)]
+    pub contents_hash: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for QrBucket {
@@ -1015,7 +985,7 @@ impl Header<Fp> for QrBucket {
         TachygramSetBridge,
     );
     type OnlinePolyCommit = (Padding, QrContents);
-    type Output = Kind![Fp; QrBucketOutput<'_, _>];
+    type Output = Kind![Fp; QrBucketOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(11);
 
@@ -1024,15 +994,6 @@ impl Header<Fp> for QrBucket {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
-        )]
-        let contents_hash = witness.as_ref().map(|&(.., contents_hash)| {
-            EpAffine::from(contents_hash)
-                .coordinates()
-                .expect("bridge hash is not the identity")
-        });
         Ok(QrBucketOutput {
             epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
@@ -1065,18 +1026,12 @@ impl Header<Fp> for QrBucket {
                 allocator,
                 witness.as_ref().map(|&(.., profile, _)| profile),
             )?,
-            contents_hash: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    contents_hash.as_ref().map(|coordinates| coordinates.0),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    contents_hash.as_ref().map(|coordinates| coordinates.1),
-                )?,
-            ],
+            contents_hash: Point::alloc(
+                dr,
+                witness
+                    .as_ref()
+                    .map(|&(.., contents_hash)| EpAffine::from(contents_hash)),
+            )?,
         })
     }
 }
@@ -1182,25 +1137,17 @@ impl Step<Pasta> for QrBucketSeal {
             anchor_next: crossing,
             discriminant: intake.discriminant.clone(),
             profile: intake.profile.clone(),
-            contents_hash: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            contents_hash: gadgets::bridge_hash::point(dr, oracles.bridge_hash())?,
         };
-        let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let data = D::just(|| {
             let (epoch, anchor_prev, _, discriminant, profile) = left.take();
-            #[expect(clippy::expect_used, reason = "Ragu supplies commitment coordinates")]
-            let contents_hash = EpAffine::from_xy(*hash_x.take(), *hash_y.take())
-                .map(TachygramSetBridge::from)
-                .expect("bridge commitment lies on the curve");
             (
                 epoch,
                 anchor_prev,
                 Anchor::from(*fields.anchor_next.value().take()),
                 discriminant,
                 profile,
-                contents_hash,
+                TachygramSetBridge::from(fields.contents_hash.value().take()),
             )
         });
         let zeta = oracles.zeta().clone();

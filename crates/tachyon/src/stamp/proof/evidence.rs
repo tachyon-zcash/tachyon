@@ -28,14 +28,13 @@ use ragu_pcd::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::curve::Affine as _;
 
 use super::qr::{QrBucket, QrBucketOutput, QrContents};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
     gadgets,
-    pasta::{EpAffine, Fp},
+    pasta::Fp,
     primitives::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
         TachygramSetPoly,
@@ -766,10 +765,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                 &mut (),
                 witness.as_ref().map(|&(profile, _)| profile),
             )?,
-            contents_hash: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            contents_hash: gadgets::bridge_hash::point(dr, oracles.bridge_hash())?,
         };
         let zeta = oracles.zeta().clone();
         oracles.output(QrContents).open(dr, &zeta)?;
@@ -783,23 +779,16 @@ impl Step<Pasta> for EvidenceTreeOpen {
             &fields.contents_hash,
         )?;
         tree.root.enforce_equal(dr, &leaf)?;
-        let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let output = D::just(|| {
             let (profile, _) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
-            #[expect(
-                clippy::expect_used,
-                reason = "the oracle supplies commitment coordinates"
-            )]
-            let contents_hash = EpAffine::from_xy(*hash_x.take(), *hash_y.take())
-                .expect("the bridge hash commitment is a curve point");
             (
                 epoch,
                 anchor_start,
                 anchor_next,
                 discriminant,
                 profile,
-                TachygramSetBridge::from(contents_hash),
+                TachygramSetBridge::from(fields.contents_hash.value().take()),
             )
         });
         Ok((

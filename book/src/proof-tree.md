@@ -167,6 +167,7 @@ A step stages a witnessed scalar to fix it before $\zeta$.
 The challenge is not bound to the output header.
 A step checks a relation between slots by opening them at $\zeta$, or at a scalar fixed before $\zeta$: an input header field or a staged value.
 The bridge hash, written $x(B), y(B)$ by coordinates, is a Pallas point that binds the commitment in the header's second slot.
+A step reads its own bridge hash, and a header encodes one, as a point constrained to the curve.
 A step opens each slot at most once. Ragu holds an output slot the step does not open to the constant 1, so a step that prepares any other polynomial there cannot prove. An opened slot holds only what the step's constraints on its opening require, so a consumer relies only on slots the producing step constrains.
 
 ## Soundness

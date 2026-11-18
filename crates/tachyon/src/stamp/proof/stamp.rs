@@ -21,7 +21,10 @@ use ragu_primitives::{
     io::Write,
     vec::{ConstLen, FixedVec},
 };
-use udon::{curve::Affine as _, field::Field as _};
+use udon::{
+    curve::{Affine as _, EndomorphismAffine},
+    field::Field as _,
+};
 
 use super::{
     output::OutputHeader,
@@ -121,16 +124,17 @@ impl Header<Fp> for Actions {
 pub struct Stamp;
 
 #[derive(Gadget, Write)]
-pub struct StampOutput<'dr, D: Driver<'dr>> {
+pub struct StampOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub anchor: Element<'dr, D>,
-    pub tachygram_set_bridge: [Element<'dr, D>; 2],
+    #[ragu(gadget)]
+    pub tachygram_set_bridge: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for Stamp {
     /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);
     type OnlinePolyCommit = (ActionSet, TachygramSet);
-    type Output = Kind![Fp; StampOutput<'_, _>];
+    type Output = Kind![Fp; StampOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(6);
 
@@ -139,37 +143,16 @@ impl Header<Fp> for Stamp {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
-        )]
-        let tachygram_set_bridge = witness.as_ref().map(|fields| {
-            EpAffine::from(fields.0)
-                .coordinates()
-                .expect("bridge hash is not the identity")
-        });
         Ok(StampOutput {
             anchor: Element::alloc(
                 dr,
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            tachygram_set_bridge: [
-                Element::alloc(
-                    dr,
-                    allocator,
-                    tachygram_set_bridge
-                        .as_ref()
-                        .map(|coordinates| coordinates.0),
-                )?,
-                Element::alloc(
-                    dr,
-                    allocator,
-                    tachygram_set_bridge
-                        .as_ref()
-                        .map(|coordinates| coordinates.1),
-                )?,
-            ],
+            tachygram_set_bridge: Point::alloc(
+                dr,
+                witness.as_ref().map(|fields| EpAffine::from(fields.0)),
+            )?,
         })
     }
 }
@@ -513,21 +496,12 @@ impl Step<Pasta> for StampMerge {
         merged_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
-        let tachygram_set_bridge = [
-            oracles.bridge_hash().x().clone(),
-            oracles.bridge_hash().y().clone(),
-        ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let tachygram_set_bridge = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let bridge_value = tachygram_set_bridge.value();
         let anchor_value = left_anchor_element.value();
         let data = D::just(|| {
-            #[expect(
-                clippy::expect_used,
-                reason = "the oracle supplies commitment coordinates"
-            )]
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
-                .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                TachygramSetBridge::from(bridge_value.take()),
                 Anchor::from(*anchor_value.take()),
             )
         });
@@ -716,10 +690,7 @@ impl Step<Pasta> for StampLift {
         });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: anchor_end,
-            tachygram_set_bridge: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            tachygram_set_bridge: gadgets::bridge_hash::point(dr, oracles.bridge_hash())?,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
@@ -944,20 +915,11 @@ impl Step<Pasta> for FeeFuse {
             output_value.enforce_equal(dr, &expected)?;
         }
         let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
-        let tachygram_set_bridge = [
-            oracles.bridge_hash().x().clone(),
-            oracles.bridge_hash().y().clone(),
-        ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let tachygram_set_bridge = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let bridge_value = tachygram_set_bridge.value();
         let data = D::just(|| {
-            #[expect(
-                clippy::expect_used,
-                reason = "the oracle supplies commitment coordinates"
-            )]
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
-                .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                TachygramSetBridge::from(bridge_value.take()),
                 Anchor::from(*anchor.value().take()),
             )
         });
@@ -1084,21 +1046,12 @@ impl Step<Pasta> for FeeSeed {
         let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
         let tachygram_factor = z.sub(dr, &fee_change);
         tachygram_set.enforce_equal(dr, &tachygram_factor)?;
-        let tachygram_set_bridge = [
-            oracles.bridge_hash().x().clone(),
-            oracles.bridge_hash().y().clone(),
-        ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let tachygram_set_bridge = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let bridge_value = tachygram_set_bridge.value();
         let anchor_value = anchor_element.value();
         let data = D::just(|| {
-            #[expect(
-                clippy::expect_used,
-                reason = "the oracle supplies commitment coordinates"
-            )]
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
-                .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                TachygramSetBridge::from(bridge_value.take()),
                 Anchor::from(*anchor_value.take()),
             )
         });
@@ -1209,21 +1162,12 @@ impl Step<Pasta> for StampUnmerge {
         dividend_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
-        let tachygram_set_bridge = [
-            oracles.bridge_hash().x().clone(),
-            oracles.bridge_hash().y().clone(),
-        ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let tachygram_set_bridge = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let bridge_value = tachygram_set_bridge.value();
         let anchor_value = left_anchor_element.value();
         let data = D::just(|| {
-            #[expect(
-                clippy::expect_used,
-                reason = "the oracle supplies commitment coordinates"
-            )]
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
-                .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                TachygramSetBridge::from(bridge_value.take()),
                 Anchor::from(*anchor_value.take()),
             )
         });

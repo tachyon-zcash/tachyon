@@ -70,24 +70,17 @@ impl Step<Pasta> for ShiftedBucketSeal {
             anchor_next: crossing,
             discriminant: intake.discriminant.clone(),
             profile: intake.profile.clone(),
-            contents_hash: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            contents_hash: gadgets::bridge_hash::point(dr, oracles.bridge_hash())?,
         };
-        let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let data = D::just(|| {
             let (epoch, anchor_prev, _, discriminant, profile) = left.take();
-            let contents_hash = TachygramSetBridge::from(
-                EpAffine::from_xy(*hash_x.take(), *hash_y.take()).unwrap(),
-            );
             (
                 epoch,
                 anchor_prev,
                 Anchor::from(*fields.anchor_next.value().take()),
                 discriminant,
                 profile,
-                contents_hash,
+                TachygramSetBridge::from(fields.contents_hash.value().take()),
             )
         });
         let zeta = oracles.zeta().clone();
