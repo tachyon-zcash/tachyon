@@ -34,7 +34,7 @@ use ragu_pcd::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 
 use super::{
     delegation::{NfSeq, NoteNullifiers},
@@ -42,6 +42,7 @@ use super::{
     stamp::FoldedStamp,
 };
 use crate::{
+    bridge_hash::bridge_hash,
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
@@ -294,7 +295,11 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
         // The witness phase rejects the empty stamp at its polynomial opening.
-        let anchor_end = witness.0.fold_stamp(witness.1, &witness.2.commit());
+        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+            witness.0.into(),
+            witness.1.into(),
+            bridge_hash(witness.2.commit().as_ref().to_affine()),
+        ));
         Ok(Prepared::new()
             .poly(
                 AnchorSet,

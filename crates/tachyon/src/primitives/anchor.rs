@@ -73,22 +73,12 @@ impl Anchor {
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
-            Ok(self.fold_stamp(epoch, &stamp_commit))
+            Ok(Self(poseidon::anchor_next_stamp(
+                self.0,
+                epoch.into(),
+                bridge_hash(stamp_commit.as_ref().to_affine()),
+            )))
         }
-    }
-
-    /// The advance [`next_stamp`](Self::next_stamp) makes, without its checks:
-    /// the empty stamp folds like any other.
-    ///
-    /// # Panics
-    ///
-    /// If the commitment is the identity.
-    pub(crate) fn fold_stamp(self, epoch: EpochIndex, stamp_commit: &TachygramSetCommit) -> Self {
-        Self(poseidon::anchor_next_stamp(
-            self.0,
-            epoch.into(),
-            bridge_hash(stamp_commit.as_ref().to_affine()),
-        ))
     }
 
     /// Advance the anchor into `epoch` with a boundary digest.
