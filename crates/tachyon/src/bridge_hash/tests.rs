@@ -5,6 +5,9 @@ use crate::pasta::{Eq, Fp};
 use crate::primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly};
 use crate::stamp::proof::new_application;
 
+/// # Panics
+///
+/// Panics if setup fails or the native hash differs from the application hash.
 #[test]
 fn bridge_hash_matches_application() {
     let app = new_application().unwrap();
@@ -19,6 +22,9 @@ fn bridge_hash_matches_application() {
     }
 }
 
+/// # Panics
+///
+/// Panics if the tachygram set commitment is the identity.
 #[test]
 #[should_panic(expected = "tachygram set commitment is not the identity")]
 fn bridge_hash_panics_on_the_identity() {

@@ -2,6 +2,10 @@ use ragu::primitives::Simulator;
 
 use super::*;
 
+/// # Panics
+///
+/// Panics if decomposition accepts or rejects a value contrary to its bit
+/// width.
 #[test]
 fn from_element_accepts_exactly_its_width() {
     let decompose = |value: Fp| {
@@ -20,6 +24,10 @@ fn from_element_accepts_exactly_its_width() {
     }
 }
 
+/// # Panics
+///
+/// Panics if the bound accepts or rejects a value contrary to the specified
+/// maximum.
 #[test]
 fn enforce_max_accepts_up_to_the_maximum() {
     let bound = |value: Fp| {

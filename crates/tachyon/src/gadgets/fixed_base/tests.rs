@@ -6,6 +6,10 @@ use super::*;
 use crate::gadgets::uint::Uint;
 use crate::gadgets::value::Positive;
 
+/// # Panics
+///
+/// Panics if simulation fails or the blind multiplication differs from native
+/// multiplication.
 #[test]
 fn blind_multiplication_reads_the_low_254_bits() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -47,6 +51,10 @@ fn blind_multiplication_reads_the_low_254_bits() {
     }
 }
 
+/// # Panics
+///
+/// Panics if a fixture cannot be decoded or simulation disagrees with the
+/// expected bit-width bound.
 #[test]
 fn multiplication_accepts_254_bit_elements_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -93,6 +101,10 @@ fn multiplication_accepts_254_bit_elements_and_rejects_wider() {
     }
 }
 
+/// # Panics
+///
+/// Panics if simulation fails or the value multiplication differs from native
+/// multiplication.
 #[test]
 fn value_multiplication_reads_the_low_51_bits() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -124,6 +136,10 @@ fn value_multiplication_reads_the_low_51_bits() {
     }
 }
 
+/// # Panics
+///
+/// Panics if a blind fixture cannot be decoded or simulation disagrees with
+/// the native fee commitment.
 #[test]
 fn fee_commitment_spans_zero_to_max_money() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -159,6 +175,11 @@ fn fee_commitment_spans_zero_to_max_money() {
 /// Every input below forces an addition onto an operand with the same x
 /// coordinate: an identity result, a doubling at the top entry, or a blind
 /// point that meets the value prefix.
+///
+/// # Panics
+///
+/// Panics if simulation accepts an exceptional addition that the gadget must
+/// reject.
 #[test]
 fn exceptional_additions_are_rejected() {
     Simulator::<Fp>::simulate(Fq::ZERO, |dr, witness| {

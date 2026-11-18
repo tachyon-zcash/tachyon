@@ -3,6 +3,9 @@ use udon::field::Field as _;
 
 use super::*;
 
+/// # Panics
+///
+/// Panics if simulation disagrees with the amount range.
 #[test]
 fn from_bits_accepts_up_to_max_money() {
     let amount = |value: Fp| {
@@ -19,6 +22,9 @@ fn from_bits_accepts_up_to_max_money() {
     amount(Fp::from(MAX_MONEY + 1)).unwrap_err();
 }
 
+/// # Panics
+///
+/// Panics if simulation disagrees with the expected split range.
 #[test]
 fn split_rejects_a_part_above_the_total() {
     let split = |part: Fp| {

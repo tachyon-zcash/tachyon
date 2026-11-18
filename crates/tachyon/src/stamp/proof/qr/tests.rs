@@ -15,7 +15,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
     type Left = QrIntake;
     type Output = QrBucket;
     type Right = ();
-    /// `(anchor_final_prev, shift)`
+    /// `(anchor_final_prev, shift)`.
     type Witness<'source> = (Anchor, Fp);
 
     const INDEX: Index = QrBucketSeal::INDEX;
@@ -104,6 +104,9 @@ impl Step<Pasta> for ShiftedBucketSeal {
     }
 }
 
+/// # Panics
+///
+/// Panics if setup fails or sealing does not reject the substituted contents.
 #[test]
 fn qr_bucket_seal_rejects_substituted_contents() {
     let app = new_application().unwrap();
@@ -154,7 +157,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor, epoch, discriminant, linear)`
+    /// `(anchor, epoch, discriminant, linear)`.
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, Fp);
 
     const INDEX: Index = QrEmptyIntakeSeed::INDEX;
@@ -232,6 +235,9 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     }
 }
 
+/// # Panics
+///
+/// Panics if setup fails or the seed does not reject the nonempty output slot.
 #[test]
 fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
     let app = new_application().unwrap();

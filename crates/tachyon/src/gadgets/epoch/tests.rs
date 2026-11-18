@@ -2,6 +2,9 @@ use ragu::primitives::Simulator;
 
 use super::*;
 
+/// # Panics
+///
+/// Panics if simulation disagrees with the expected epoch boundary.
 #[test]
 fn next_rejects_the_final_epoch() {
     let next = |index: u32| {
@@ -17,6 +20,9 @@ fn next_rejects_the_final_epoch() {
     next(EPOCH_MAX).unwrap_err();
 }
 
+/// # Panics
+///
+/// Panics if simulation fails or a group starts at an unexpected epoch.
 #[test]
 fn group_clears_the_two_low_bits() {
     for (index, group_start) in [(0, 0), (EPOCH_MAX, EPOCH_MAX - 3)] {

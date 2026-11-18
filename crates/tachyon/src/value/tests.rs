@@ -12,12 +12,19 @@ use crate::stamp::proof::output::OutputBind;
 use crate::stamp::proof::stamp::{FeeFuse, OutputAction};
 use crate::{nullifier, witness};
 
+/// # Panics
+///
+/// Panics if debug output exposes the trapdoor or differs from the redacted
+/// form.
 #[test]
 fn debug_value_trapdoor_redacts_scalar() {
     let rcv = ValueTrapdoor(Fq::from(0xfaceu64));
     assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
 }
 
+/// # Panics
+///
+/// Panics if a value is accepted or rejected outside the expected bounds.
 #[test]
 fn positive_spans_zero_to_max_money() {
     for (input, accepted) in [
@@ -30,6 +37,9 @@ fn positive_spans_zero_to_max_money() {
     }
 }
 
+/// # Panics
+///
+/// Panics if setup fails or the proof does not reject the oversized maximum.
 #[test]
 fn fee_fuse_rejects_maximum_above_max_money() {
     let app = new_application().unwrap();

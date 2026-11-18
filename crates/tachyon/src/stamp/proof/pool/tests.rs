@@ -5,6 +5,10 @@ use super::*;
 use crate::stamp::proof::new_application;
 use crate::witness;
 
+/// # Panics
+///
+/// Panics if application setup fails or the stamp span cannot be proved and
+/// verified.
 #[test]
 fn anchor_span_seed_proves_a_stamp() {
     let app = new_application().unwrap();
@@ -17,6 +21,10 @@ fn anchor_span_seed_proves_a_stamp() {
     assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
 }
 
+/// # Panics
+///
+/// Panics if application setup fails or the empty stamp is not rejected as
+/// expected.
 #[test]
 fn anchor_span_seed_refuses_an_empty_stamp() {
     let app = new_application().unwrap();
