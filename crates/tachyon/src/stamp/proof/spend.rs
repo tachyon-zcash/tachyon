@@ -172,7 +172,7 @@ impl Step<Pasta> for SpendBind {
         })?;
 
         let blind_point =
-            fixed_base::R_BASE.mul_scalar(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+            fixed_base::R_BASE.mul_unbound(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
         let cv = secret
             .note
             .value

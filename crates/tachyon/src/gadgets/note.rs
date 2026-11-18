@@ -68,7 +68,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// The Fp digest representing the native maximum-fee blind.
     ///
-    /// Fixed-base element multiplication reads its 254 bits as the scalar the
+    /// Fixed-base multiplication reads its 254 bits as the scalar the
     /// native derivation embeds in Fq, so a blind at or above $2^{254}$ has no
     /// proof.
     pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
@@ -85,7 +85,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         let total = slack.pack(dr)?.add(dr, &self.value);
         Element::constant(dr, Fp::from(MAX_MONEY)).enforce_equal(dr, &total)?;
         let blind = self.derive_feemax_blind(dr)?;
-        let blind_point = fixed_base::R_BASE.mul_element(dr, &blind, None)?;
+        let blind_point = fixed_base::R_BASE.mul(dr, &blind)?;
         fixed_base::FEE_V_BASE.mul_amount(dr, slack, &blind_point)
     }
 
@@ -94,7 +94,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;
-        fixed_base::R_BASE.mul_element(dr, &blind, None)
+        fixed_base::R_BASE.mul(dr, &blind)
     }
 
     /// Derives the note commitment from the supplied fields.

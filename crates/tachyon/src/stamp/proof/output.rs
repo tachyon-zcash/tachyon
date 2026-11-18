@@ -143,7 +143,7 @@ impl Step<Pasta> for OutputBind {
             ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
         })?;
         let blind_point =
-            fixed_base::R_BASE.mul_scalar(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
+            fixed_base::R_BASE.mul_unbound(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
         let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
         let output = D::just(|| {
             (

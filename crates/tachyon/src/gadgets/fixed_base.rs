@@ -284,49 +284,65 @@ impl<const W: usize> FixedBase<W> {
         Ok([prefix, top])
     }
 
-    /// $\[k\]B + C + P$ for the binary value $k$ of `bits`, joining `onto`
-    /// ($P$, when present) between the prefix and the top entry. The result
-    /// is allocated as a [`Point`] constrained equal to the computed
-    /// coordinates.
+    /// $\[k\]B + C$ for the binary value $k$ of `bits`.
     fn multiply<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
         bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
-        onto: Option<&Point<'dr, D, EpAffine>>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let [mut sum, top] = self.prefix_and_top(dr, bits)?;
-        if let Some(point) = onto {
-            let mut coordinates = Vec::new();
-            point.write(dr, &mut coordinates)?;
-            let Ok([x, y]) = <[Element<'dr, D>; 2]>::try_from(coordinates) else {
-                return Err(Error::InvalidWitness(
-                    "a point writes two coordinates".into(),
-                ));
-            };
-            sum = add_checked(dr, sum.each_ref(), [&x, &y])?;
-        }
-        let result = add_checked(dr, sum.each_ref(), top.each_ref())?;
-        let [x, y] = result.each_ref().map(Element::value);
-        let point = Point::alloc(
-            dr,
-            D::try_just(|| {
-                EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                    Error::InvalidWitness("fixed-base result is not on the curve".into())
-                })
-            })?,
-        )?;
-        let mut written = Vec::new();
-        point.write(dr, &mut written)?;
-        let Ok([written_x, written_y]) = <[Element<'dr, D>; 2]>::try_from(written) else {
+        let [prefix, top] = self.prefix_and_top(dr, bits)?;
+        add_top(dr, &prefix, &top)
+    }
+
+    /// $\[k\]B + C + P$ for the binary value $k$ of `bits`, joining `point`
+    /// ($P$) between the prefix and the top entry.
+    fn multiply_and_add<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
+        point: &Point<'dr, D, EpAffine>,
+    ) -> Result<Point<'dr, D, EpAffine>> {
+        let [prefix, top] = self.prefix_and_top(dr, bits)?;
+        let mut coordinates = Vec::new();
+        point.write(dr, &mut coordinates)?;
+        let Ok([x, y]) = <[Element<'dr, D>; 2]>::try_from(coordinates) else {
             return Err(Error::InvalidWitness(
                 "a point writes two coordinates".into(),
             ));
         };
-        let [computed_x, computed_y] = result.each_ref();
-        written_x.enforce_equal(dr, computed_x)?;
-        written_y.enforce_equal(dr, computed_y)?;
-        Ok(point)
+        let sum = add_checked(dr, prefix.each_ref(), [&x, &y])?;
+        add_top(dr, &sum, &top)
     }
+}
+
+/// Adds the selected `top` entry to `sum`, allocating the result as a
+/// [`Point`] constrained equal to the computed coordinates.
+fn add_top<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    sum: &[Element<'dr, D>; 2],
+    top: &[Element<'dr, D>; 2],
+) -> Result<Point<'dr, D, EpAffine>> {
+    let result = add_checked(dr, sum.each_ref(), top.each_ref())?;
+    let [x, y] = result.each_ref().map(Element::value);
+    let point = Point::alloc(
+        dr,
+        D::try_just(|| {
+            EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
+                Error::InvalidWitness("fixed-base result is not on the curve".into())
+            })
+        })?,
+    )?;
+    let mut written = Vec::new();
+    point.write(dr, &mut written)?;
+    let Ok([written_x, written_y]) = <[Element<'dr, D>; 2]>::try_from(written) else {
+        return Err(Error::InvalidWitness(
+            "a point writes two coordinates".into(),
+        ));
+    };
+    let [computed_x, computed_y] = result.each_ref();
+    written_x.enforce_equal(dr, computed_x)?;
+    written_y.enforce_equal(dr, computed_y)?;
+    Ok(point)
 }
 
 /// Adds `point` to `sum` in four gates, constraining their x coordinates
@@ -357,8 +373,8 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
 }
 
 impl FixedBase<85> {
-    /// Whether [`mul_element`](Self::mul_element) and
-    /// [`mul_scalar`](Self::mul_scalar) prove a multiplication by `scalar`:
+    /// Whether [`mul`](Self::mul), [`mul_and_add`](Self::mul_and_add) and
+    /// [`mul_unbound`](Self::mul_unbound) prove a multiplication by `scalar`:
     /// its integer value is below $2^{254}$.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn accepts(scalar: Fq) -> bool {
@@ -370,20 +386,27 @@ impl FixedBase<85> {
             .any(|&bit| bit)
     }
 
-    /// $\[h\]B + P$ for an element $h$ below $2^{254}$, unsatisfiable for any
-    /// larger $h$. Its 254 bits are unique without a comparison against $p$,
-    /// and the 255th bit the table reads is pinned to zero.
-    pub(crate) fn mul_element<'dr, D: Driver<'dr, F = Fp>>(
+    /// $\[h\]B$ for an element $h$ below $2^{254}$, unsatisfiable for any
+    /// larger $h$.
+    pub(crate) fn mul<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         element: &Element<'dr, D>,
-        onto: Option<&Point<'dr, D, EpAffine>>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let mut bits = decompose(dr, &mut (), element)?;
-        let top = Boolean::alloc(dr, &mut (), D::just(|| false))?;
-        top.element().enforce_zero(dr)?;
-        bits.push(top);
-        self.multiply(dr, &FixedVec::<_, ConstLen<255>>::try_from(bits)?, onto)
+        let bits = Self::element_bits(dr, element)?;
+        self.multiply(dr, &bits)
+    }
+
+    /// $\[h\]B + P$ for an element $h$ below $2^{254}$, unsatisfiable for any
+    /// larger $h$.
+    pub(crate) fn mul_and_add<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        element: &Element<'dr, D>,
+        point: &Point<'dr, D, EpAffine>,
+    ) -> Result<Point<'dr, D, EpAffine>> {
+        let bits = Self::element_bits(dr, element)?;
+        self.multiply_and_add(dr, &bits, point)
     }
 
     /// $\[r\]B$ for a scalar $r$ below $2^{254}$, read as 254 free bits with
@@ -391,7 +414,7 @@ impl FixedBase<85> {
     /// $2^{254}$ has no proof. Nothing recomposes the bits: sound only for a
     /// blind nothing else binds.
     #[expect(clippy::indexing_slicing, reason = "native fixed field representation")]
-    pub(crate) fn mul_scalar<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_unbound<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         scalar: &DriverValue<D, Fq>,
@@ -406,7 +429,20 @@ impl FixedBase<85> {
             )
         })?;
         bits[254].element().enforce_zero(dr)?;
-        self.multiply(dr, &bits, None)
+        self.multiply(dr, &bits)
+    }
+
+    /// The bits of `element`: 254 from ragu's `decompose`, unique without a
+    /// comparison against $p$, and the 255th the table reads pinned to zero.
+    fn element_bits<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        element: &Element<'dr, D>,
+    ) -> Result<FixedVec<Boolean<'dr, D>, ConstLen<255>>> {
+        let mut bits = decompose(dr, &mut (), element)?;
+        let top = Boolean::alloc(dr, &mut (), D::just(|| false))?;
+        top.element().enforce_zero(dr)?;
+        bits.push(top);
+        FixedVec::try_from(bits)
     }
 }
 
@@ -420,7 +456,7 @@ impl FixedBase<17> {
         value: &Uint<'dr, D, 51>,
         onto: &Point<'dr, D, EpAffine>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        self.multiply(dr, value.bits(), Some(onto))
+        self.multiply_and_add(dr, value.bits(), onto)
     }
 }
 

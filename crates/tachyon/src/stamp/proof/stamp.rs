@@ -251,7 +251,7 @@ impl Step<Pasta> for OutputAction {
         let cm_root = output_header.cm.clone();
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
-        let rk = fixed_base::G_BASE.mul_element(dr, &alpha, None)?;
+        let rk = fixed_base::G_BASE.mul(dr, &alpha)?;
         let action_root = poseidon::circuit::action_digest(
             dr,
             &output_header.cv,
@@ -397,7 +397,7 @@ impl Step<Pasta> for SpendAction {
         pk.enforce_equal(dr, &derived_pk)?;
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
-        let rk = fixed_base::G_BASE.mul_element(dr, &alpha, Some(&ak))?;
+        let rk = fixed_base::G_BASE.mul_and_add(dr, &alpha, &ak)?;
         let action_root = poseidon::circuit::action_digest(dr, &cv, &rk, (&nf_current, &nf_next))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
         let staged_root = &oracles.staged()[0];
