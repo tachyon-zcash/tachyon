@@ -144,7 +144,7 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    let (swapped, swapped_pairs, _) = plan
+    let (swapped, swapped_pairs, _, _) = plan
         .prove(
             rng,
             app,
@@ -172,7 +172,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
-    let (foreign, foreign_pairs, _) = stamp::Plan::new(
+    let (foreign, foreign_pairs, _, _) = stamp::Plan::new(
         vec![(foreign_a.descriptor(), theta_a, rcv_a)],
         vec![],
         anchor,
@@ -234,7 +234,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
             pool.anchor_span(app, middle..=plan_height),
         ],
     ] {
-        let (stamp, pairs, cm_change) = plan
+        let (stamp, pairs, cm_change, v_fee) = plan
             .clone()
             .prove(
                 rng,
@@ -249,7 +249,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
             .map(|(desc, &pair)| desc.digest(pair))
             .chain([fee::Descriptor {
                 cv_feemax: max_fee_note.cv_feemax(),
-                v_fee: value::Positive::ZERO,
+                v_fee,
             }
             .digest(cm_change)])
             .collect();
@@ -300,14 +300,14 @@ fn overlapping_stamps_cannot_aggregate() {
     let output_a = alice_bundle.stamp;
     let (_, _, plan_b) = output_plan(rng, alice_note);
     let max_fee_note = wallet.random_note(0);
-    let (output_b, desc_b, change_b) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
+    let (output_b, desc_b, change_b, v_fee) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![])
         .unwrap();
     let fees_b = BTreeMap::from([(
         fee::Descriptor {
             cv_feemax: max_fee_note.cv_feemax(),
-            v_fee: value::Positive::ZERO,
+            v_fee,
         },
         change_b,
     )]);
@@ -321,14 +321,14 @@ fn overlapping_stamps_cannot_aggregate() {
     });
     let (_, _, output) = output_plan(rng, wallet.random_note(600));
     let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
-    let signed = plan
+    let signatures = plan
         .sign(
             rng,
             &mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let (second_spend_stamp, pairs, cm_change) = plan
+    let proof = plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(
             rng,
@@ -337,7 +337,7 @@ fn overlapping_stamps_cannot_aggregate() {
             vec![(wallet.note_secret(app, note), spendable, vec![])],
         )
         .unwrap();
-    let spend_b = signed.stamp(second_spend_stamp, pairs, value::Positive::ZERO, cm_change);
+    let spend_b = plan.assemble(signatures, proof);
     let fixture_pairs = spend_a
         .actions
         .iter()

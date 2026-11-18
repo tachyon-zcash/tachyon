@@ -361,18 +361,18 @@ fn unmerge_splitting_a_bundle() {
 
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
-    let (stamp, pairs, cm_change) = plan
+    let proof = plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![])
         .unwrap();
-    let mut whole = plan
+    let signatures = plan
         .sign(
             rng,
             &mock_sighash(plan.commitment().unwrap()),
             &wallet.sk.derive_auth_private(),
         )
-        .unwrap()
-        .stamp(stamp, pairs, value::Positive::ZERO, cm_change);
+        .unwrap();
+    let mut whole = plan.assemble(signatures, proof);
     let kept_index = whole
         .actions
         .iter()
@@ -431,18 +431,18 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
     let [original, reproven] = [(), ()].map(|()| {
         let output = output_plan(rng, note).2;
         let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
-        let signed = plan
+        let signatures = plan
             .sign(
                 rng,
                 &mock_sighash(plan.commitment().unwrap()),
                 &wallet.sk.derive_auth_private(),
             )
             .unwrap();
-        let (stamp, pairs, cm_change) = plan
+        let proof = plan
             .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, vec![])
             .unwrap();
-        signed.stamp(stamp, pairs, fee, cm_change)
+        plan.assemble(signatures, proof)
     });
     let (_, other) = wallet.bundle(
         app,

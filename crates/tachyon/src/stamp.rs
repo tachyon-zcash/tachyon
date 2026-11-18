@@ -419,8 +419,7 @@ impl Plan {
     /// Prove a single [`ProofStamp`] for this plan.
     ///
     /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
-    /// and the fee change. Each pair has the smaller tachygram first; the
-    /// caller joins these independently produced values with signed data.
+    /// the fee change, and the fee. Each pair has the smaller tachygram first.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -450,7 +449,7 @@ impl Plan {
     /// actions and the max fee note's value is nonzero.
     #[expect(
         clippy::type_complexity,
-        reason = "each spend's secret, spendable and spans; the stamp, pairs and change output"
+        reason = "each spend's secret, spendable and spans; the stamp and its authorization data"
     )]
     #[expect(
         clippy::too_many_lines,
@@ -471,6 +470,7 @@ impl Plan {
             ProofStamp<Uncompressed>,
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             Tachygram,
+            value::Positive,
         ),
         ProveError,
     > {
@@ -640,6 +640,7 @@ impl Plan {
             },
             descriptors,
             change,
+            self.fee,
         ))
     }
 }

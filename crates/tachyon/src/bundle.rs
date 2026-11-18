@@ -2,7 +2,6 @@
 //!
 //! A bundle is parameterized by stamp state `S: StampState`.
 //! Its body is constant through stamp transformations; only the stamp changes.
-//! [`Unproven`] holds signed effecting data before it is joined with a proof.
 //!
 //! - `Bundle<ProofStamp<P>>`: bundle with a proof stamp, listing the txids of
 //!   the other transactions whose bundles it covers
@@ -200,31 +199,6 @@ pub struct Bundle<S: StampState + ?Sized> {
 
     /// Bundle stamp, kept last to permit a dynamically sized stamp state.
     pub stamp: S,
-}
-
-/// A signed bundle awaiting its independently produced proof authorization.
-///
-/// `Unproven` has no wire representation and cannot be serialized.
-///
-/// ```compile_fail,E0599
-/// use zcash_tachyon::Unproven;
-///
-/// fn serialize(bundle: &Unproven) {
-///     bundle.write(&mut Vec::<u8>::new()); // no `write` on `Unproven`
-/// }
-/// ```
-#[derive(Clone, Debug)]
-pub struct Unproven {
-    /// Net value of spends minus outputs and max fee.
-    pub value_balance: value::Balance,
-    /// Action signatures keyed by descriptor.
-    pub action_sigs: BTreeMap<action::Descriptor, action::Signature>,
-    /// The max fee note's value commitment.
-    pub cv_feemax: value::Commitment,
-    /// Binding signature over the transaction sighash.
-    pub binding_sig: Signature,
-    /// Opaque recipient-directed payload, empty when absent.
-    pub memo: Vec<u8>,
 }
 
 impl<S: StampState + 'static> PartialEq for Bundle<S> {
@@ -499,8 +473,7 @@ impl Plan {
     /// Derives each `alpha` from the action's `theta` and the commitment of
     /// its note.
     ///
-    /// To confirm correct application, call [`Unproven::verify_signatures`] on
-    /// the return value.
+    /// Returns the descriptor-keyed action signatures and the binding signature.
     ///
     /// # Errors
     ///
@@ -510,7 +483,8 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<Unproven, value::OutOfRange> {
+    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), value::OutOfRange> {
+        self.value_balance()?;
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
@@ -527,20 +501,13 @@ impl Plan {
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
-        Ok(Unproven {
-            value_balance: self.value_balance()?,
-            action_sigs: authorized,
-            cv_feemax: self.max_fee_note.cv_feemax(),
-            binding_sig: self.derive_bsk_private().sign(rng, sighash),
-            memo: self.memo.clone(),
-        })
+        Ok((authorized, self.derive_bsk_private().sign(rng, sighash)))
     }
 
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
     ///
-    /// To confirm correct application, call [`Unproven::verify_signatures`] on
-    /// the return value.
+    /// Returns the descriptor-keyed action signatures and the binding signature.
     ///
     /// # Errors
     ///
@@ -551,9 +518,8 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         authorized: BTreeMap<action::Descriptor, action::Signature>,
-    ) -> Result<Unproven, PlanError> {
-        let value_balance = self
-            .value_balance()
+    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), PlanError> {
+        self.value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
 
         if self.descriptors() != authorized.keys().copied().collect() {
@@ -561,27 +527,7 @@ impl Plan {
         }
         let binding_sig = self.derive_bsk_private().sign(rng, sighash);
 
-        Ok(Unproven {
-            action_sigs: authorized,
-            value_balance,
-            cv_feemax: self.max_fee_note.cv_feemax(),
-            binding_sig,
-            memo: self.memo.clone(),
-        })
-    }
-}
-
-impl Unproven {
-    /// Digest the signed bundle's effecting data.
-    #[must_use]
-    pub fn commitment(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self.action_sigs.keys().copied().collect();
-        blake2b::bundle_commitment(
-            &blake2b::action_descriptor_digest(&descriptors),
-            self.value_balance.into(),
-            &self.cv_feemax.into(),
-            &blake2b::memo_digest(&self.memo),
-        )
+        Ok((authorized, binding_sig))
     }
 
     /// Verify the binding signature and each keyed action signature.
@@ -589,17 +535,30 @@ impl Unproven {
     /// # Errors
     ///
     /// Returns [`SignatureError`] if any signature is invalid.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan's balance is out of range or the signature keys do
+    /// not match the plan.
+    pub fn verify_signatures(
+        &self,
+        sighash: &[u8; 32],
+        (action_sigs, binding_sig): &(BTreeMap<action::Descriptor, action::Signature>, Signature),
+    ) -> Result<(), SignatureError> {
+        assert!(
+            self.descriptors().iter().eq(action_sigs.keys()),
+            "action descriptors do not match"
+        );
         let bvk = public::BindingVerificationKey::derive(
-            self.action_sigs
+            action_sigs
                 .keys()
                 .map(|desc| desc.cv)
-                .chain([self.cv_feemax]),
-            self.value_balance,
+                .chain([self.max_fee_note.cv_feemax()]),
+            self.signed_balance(),
         );
-        bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
-        for (desc, sig) in &self.action_sigs {
+        bvk.verify(sighash, binding_sig)
+            .map_err(|_err| SignatureError::Binding(*binding_sig))?;
+        for (desc, sig) in action_sigs {
             desc.rk
                 .verify(sighash, sig)
                 .map_err(|_err| SignatureError::Action(*sig))?;
@@ -607,25 +566,34 @@ impl Unproven {
         Ok(())
     }
 
-    /// Join signed data with independently proved authorization data.
+    #[expect(clippy::expect_used, reason = "signing checks the planned balance")]
+    fn signed_balance(&self) -> value::Balance {
+        self.value_balance().expect("planned balance is in range")
+    }
+
+    /// Assemble the bundle from signatures and independently produced proof data.
     ///
     /// # Panics
     ///
-    /// Panics if the signature and tachygram pair maps have different keys.
+    /// Panics if the plan, signature and tachygram pair keys differ or the
+    /// plan's balance is out of range.
     #[must_use]
-    pub fn stamp(
-        self,
-        stamp: ProofStamp<stamp::Uncompressed>,
-        pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
-        fee: value::Positive,
-        cm_change: Tachygram,
+    #[expect(clippy::type_complexity, reason = "takes the prover's outputs as returned")]
+    pub fn assemble(
+        &self,
+        (action_sigs, binding_sig): (BTreeMap<action::Descriptor, action::Signature>, Signature),
+        (stamp, pairs, cm_change, fee): (
+            ProofStamp<stamp::Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+            value::Positive,
+        ),
     ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
         assert!(
-            self.action_sigs.keys().eq(pairs.keys()),
+            self.descriptors().iter().eq(action_sigs.keys()) && action_sigs.keys().eq(pairs.keys()),
             "action descriptors do not match"
         );
-        let (actions, action_auth) = self
-            .action_sigs
+        let (actions, action_auth) = action_sigs
             .into_iter()
             .zip(pairs)
             .map(|((desc, sig), (_, pair))| (desc, (sig, pair)))
@@ -633,14 +601,14 @@ impl Unproven {
         Bundle {
             actions,
             action_auth,
-            value_balance: self.value_balance,
+            value_balance: self.signed_balance(),
             fee: fee::Descriptor {
-                cv_feemax: self.cv_feemax,
+                cv_feemax: self.max_fee_note.cv_feemax(),
                 v_fee: fee,
             },
             fee_auth: cm_change,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
+            binding_sig,
+            memo: self.memo.clone(),
             stamp,
         }
     }
@@ -1123,9 +1091,6 @@ impl Bundle<StrippedStamp> {
 }
 
 /// A Tachyon bundle in one of its valid wire states.
-///
-/// The `Unproven` intermediate state is outside this enum because it has no
-/// wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug, From, IsVariant, TryInto)]
 pub enum TachyonBundle {

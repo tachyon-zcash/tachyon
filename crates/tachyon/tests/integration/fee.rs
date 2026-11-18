@@ -76,18 +76,20 @@ fn fee_less_output_bundle(
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
-        plan.sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
-        .unwrap()
-        .stamp(
+        let signatures = plan
+            .sign(
+                rng,
+                &mock_sighash(plan.commitment().unwrap()),
+                &wallet.sk.derive_auth_private(),
+            )
+            .unwrap();
+        let proof = (
             stamp,
             BTreeMap::from([(output_plan.descriptor(), (cm.min(pad), cm.max(pad)))]),
-            value::Positive::ZERO,
             max_fee_note.commitment().into(),
-        )
+            value::Positive::ZERO,
+        );
+        plan.assemble(signatures, proof)
     })
 }
 
@@ -236,24 +238,23 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     )];
     let commitment = at_fixture_fee.commitment();
     let sighash = mock_sighash(commitment);
+    let signatures = (
+        at_fixture_fee
+            .actions
+            .iter()
+            .zip(&at_fixture_fee.action_auth)
+            .map(|(&descriptor, &(sig, _))| (descriptor, sig))
+            .collect::<BTreeMap<_, _>>(),
+        at_fixture_fee.binding_sig,
+    );
 
     let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
         let fee = value::Positive::try_from(amount).unwrap();
-        let (stamp, pairs, cm_change) = bundle_plan
+        let proof = bundle_plan
             .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
-        let mut bundle = at_fixture_fee.clone();
-        bundle.action_auth = bundle
-            .actions
-            .iter()
-            .zip(&bundle.action_auth)
-            .map(|(desc, &(sig, _))| (sig, pairs[desc]))
-            .collect();
-        bundle.fee.v_fee = fee;
-        bundle.fee_auth = cm_change;
-        bundle.stamp = stamp;
-        bundle
+        bundle_plan.assemble(signatures.clone(), proof)
     });
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {

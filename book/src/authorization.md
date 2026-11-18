@@ -31,7 +31,7 @@ flowchart TB
     output_alpha -->|"rsk = alpha"| sign
 
     sign(("sign(rsk, sighash)"))
-    sign --- action["Unproven entry { descriptor (cv, rk) => sig }"]
+    sign --- action["Action signature entry { descriptor (cv, rk) => sig }"]
 ```
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
@@ -179,7 +179,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
-Authorizing and binding produce a signed `Unproven`, without pairs, fee, change, or stamp. Proving returns a proof stamp, a descriptor-keyed pair map, and the change commitment. `Unproven::stamp` joins them with the caller's chosen fee, checking that the signature and pair maps have identical keys. The paths can run in either order or concurrently.
+Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
 
 ```mermaid
 flowchart LR
@@ -249,7 +249,7 @@ flowchart LR
         bsk 
         sign_binding_sig(("sign"))
     end
-    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> unproven
+    action_plan & max_fee_note --- bsk --- sign_binding_sig ==> signatures
     sighash === sign_binding_sig
 
     sighash ~~~ authorization
@@ -260,9 +260,10 @@ flowchart LR
         end
     end
     sighash === sign_action
-    action_plan --- rsk --- sign_action ==> unproven
+    action_plan --- rsk --- sign_action ==> signatures
 
-    unproven["signed Unproven"] --> join{"checked stamp join"}
+    signatures["action and binding signatures"] --> join{"assemble bundle"}
+    pczt --> join
     pairs --> join
     proved_stamp & chosen_fee & proved_change --> join
     join --> action & action_auth & binding_sig & stamp & fee & cm_change
@@ -277,7 +278,7 @@ A modified descriptor breaks both checks. Changing a pair's members breaks stamp
 
 ## Detailed Sequence
 
-The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through proving, `Unproven::stamp` through the checked join, and `Bundle::verify` through consensus.
+The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through proving, `bundle::Plan::assemble` through assembly, and `Bundle::verify` through consensus.
 Custody is drawn as a separate participant for a device-split integration that does not exist yet.
 `Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
@@ -358,7 +359,7 @@ par Authorizing
             note over User: every planned descriptor (cv, rk) has exactly one signature
             note over User: bsk = Sum rcv_i + r
             note over User: binding_sig = Sign(bsk, sighash)
-            note over User: Unproven { action_sigs: descriptor to signature map, value_balance, cv_feemax, binding_sig, memo }
+            note over User: signatures (descriptor to signature map, binding_sig)
         end
     end
 
@@ -438,13 +439,13 @@ and Proving
         note over Stamper: adjuncts = empty
         destroy Stamper
         note over Stamper: each pair smaller tachygram first, pairs in descriptor order
-        Stamper ->> User: (ProofStamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map, cm_change)
+        Stamper ->> User: (ProofStamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map, cm_change, fee)
     end
 end
 
 critical stamp
-    note over User: Unproven::stamp(stamp, pairs, fee, cm_change), using the stamp plan's fee
-    note over User: panic if the descriptor key sets differ
+    note over User: bundle::Plan::assemble(signatures, proof)
+    note over User: panic if the plan, signature, and pair descriptor keys differ
     note over User: join maps in descriptor order into actions[] and action_auth[] (signature, pair) tuples
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
