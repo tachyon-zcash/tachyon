@@ -29,54 +29,15 @@ pub mod summary;
 use alloc::boxed::Box;
 
 use ragu_acceleration::AcceleratedProver;
-use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
-use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_core::pasta::Pasta;
 use ragu_pcd::{Application, ApplicationBuilder};
-use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS};
-use udon::curve::{Affine as _, Projective as _};
 
-use crate::{
-    pasta,
-    pasta::{EpAffine, EqAffine},
-};
+use crate::pasta;
 
 /// Eight payload elements for QR split/selection and bucket headers and one
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
-
-/// Computes the value `Application::bridge_hash` returns, without an
-/// application. The test in `proof/tests.rs` pins it to the application's
-/// result.
-///
-/// # Panics
-///
-/// Panics if `commitment` is the identity.
-pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
-    #[expect(
-        clippy::expect_used,
-        reason = "no set polynomial commits to the identity"
-    )]
-    let (x, y) = commitment
-        .coordinates()
-        .expect("tachygram set commitment is not the identity");
-    // The bridge stage starts after the endoscalar values, rounded up to whole
-    // gates.
-    let x_wire = (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).next_multiple_of(2);
-    let y_wire = x_wire + 1;
-    let generators = Pasta::nested_generators(pasta::baked()).g();
-    #[expect(
-        clippy::expect_used,
-        reason = "the baked setup holds a nested generator for every ProductionRank degree"
-    )]
-    let generator = |wire| {
-        generators
-            .get(wire_degree::<ProductionRank>(wire))
-            .expect("the baked setup has the bridge generators")
-    };
-    let g_x = generator(x_wire);
-    let g_y = generator(y_wire);
-    (g_x.to_projective() * x + g_y.to_projective() * y).to_affine()
-}
 
 /// The Tachyon Ragu application, with accelerated proving and reference
 /// verification kernels.
@@ -136,6 +97,3 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
         .finalize(pasta::baked())
         .map(Box::new)
 }
-
-#[cfg(test)]
-mod tests;

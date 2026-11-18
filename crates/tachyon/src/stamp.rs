@@ -24,7 +24,7 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
-    App, HEADER_SIZE, bridge_hash, output,
+    App, HEADER_SIZE, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
@@ -41,6 +41,7 @@ use udon::{
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
+    bridge_hash::bridge_hash,
     bundle::StateByte,
     digest::{blake2b, poseidon},
     effect,
