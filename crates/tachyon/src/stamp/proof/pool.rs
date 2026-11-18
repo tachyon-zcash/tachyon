@@ -357,7 +357,10 @@ impl Step<Pasta> for AnchorSpanSeed {
             dr,
             &previous,
             &epoch_element,
-            oracles.bridge_hash(),
+            &[
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         )?;
         // The span's one member is the fold just computed, so a member chosen
         // after the challenge takes a preimage of the fold.

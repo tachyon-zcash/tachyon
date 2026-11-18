@@ -419,7 +419,10 @@ impl Step<Pasta> for QrStampIntakeSeed {
             dr,
             &previous,
             &epoch_element,
-            oracles.bridge_hash(),
+            &[
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         )?;
         let data = D::just(|| {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
