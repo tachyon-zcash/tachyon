@@ -487,13 +487,14 @@ impl EvidenceTreeEntry {
         leaf: &EvidenceLeaf,
     ) -> ragu_core::Result<QrBucketEntry> {
         let mut node = self.pcd.clone();
-        for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-            #[expect(
-                clippy::expect_used,
-                reason = "the fixture pads paths to descent chunks"
-            )]
-            let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk)
-                .expect("fixture paths contain only complete descent chunks");
+        let paths = leaf
+            .path
+            .chunks(evidence::EvidenceTreeDescend::LEVELS)
+            .map(|chunk| {
+                <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk)
+                    .expect("the fixture pads paths to complete descent chunks")
+            });
+        for path in paths {
             let witness = witness::evidence_tree_descend((*node.data(), ()), path);
             let (pcd, ()) = app.fuse(
                 rng,

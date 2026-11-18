@@ -921,10 +921,6 @@ impl Step<Pasta> for QrSideDescend {
             .stage([Fp::from(u64::from(witness.0))]))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep the single-use selection binding and descent identity together"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,

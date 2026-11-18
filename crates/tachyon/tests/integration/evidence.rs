@@ -304,9 +304,9 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
             .0;
     }
     let QrProfile { depth, bits } = leaf.profile();
-    let mut substituted: Vec<_> = leaf.contents.as_ref().iter_coeffs().collect();
-    substituted[0] += Fp::ONE;
-    let substituted = TachygramSetPoly::arbitrary(Polynomial::from_coeffs(substituted));
+    let mut shifted_coeffs: Vec<_> = leaf.contents.as_ref().iter_coeffs().collect();
+    shifted_coeffs[0] += Fp::ONE;
+    let substituted = TachygramSetPoly::arbitrary(Polynomial::from_coeffs(shifted_coeffs));
     for (opened, profile, contents) in vec![
         (tree.pcd, leaf.profile(), leaf.contents.clone()),
         (
