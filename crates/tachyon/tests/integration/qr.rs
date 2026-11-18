@@ -3,6 +3,14 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem, slice};
 
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    pasta::Pasta,
+};
+use ragu_pcd::{
+    header::Header,
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -20,7 +28,6 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    WithPolynomials,
     pool::PoolSim,
     qr::{
         EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
@@ -46,7 +53,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
         *root.pcd.data(),
         (epoch0, Anchor::default(), anchor_end, disc, QrProfile::ROOT)
     );
-    assert_eq!(root.pcd.commitments()[0], acc_commit);
+    assert_eq!(root.pcd.commitments()[1], acc_commit);
     assert!(app.verify_uncompressed(&root.pcd, &mut *rng).unwrap());
 }
 
@@ -281,7 +288,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     let [rootless] = root_single.split_with_factors(rng, app, [!side], &split);
     assert!(app.verify_uncompressed(&rootless.pcd, &mut *rng).unwrap());
     assert_ne!(
-        rootless.pcd.commitments()[0],
+        rootless.pcd.commitments()[1],
         Eq::from(scaled_qr_contents(&[], Fp::ONE).commit()).to_affine()
     );
     let deep = Fp::from(11u64);
@@ -538,7 +545,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
     let (_epoch, _start, _next, _discriminant, bucket_profile, _contents_hash) = *bucket.pcd.data();
     assert_eq!(bucket_profile.depth, u32::BITS);
     assert_eq!(
-        bucket.pcd.commitments()[0],
+        bucket.pcd.commitments()[1],
         Eq::from(members.into_iter().collect::<TachygramSetPoly>().commit()).to_affine()
     );
     for member in [exceptional, companion] {
@@ -736,7 +743,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 )
             );
             assert_eq!(
-                child.commitments()[0],
+                child.commitments()[1],
                 Eq::from(
                     side_members
                         .iter()
@@ -1002,7 +1009,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let (.., child_profile) = *child.data();
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
     assert_eq!(
-        child.commitments()[0],
+        child.commitments()[1],
         Eq::from(
             padded_non_residue
                 .iter()
@@ -1105,7 +1112,7 @@ fn qr_intake_merge_joins_two_spans() {
         (epoch, start, end, discriminant, QrProfile::ROOT)
     );
     assert_eq!(
-        merged.commitments()[0],
+        merged.commitments()[1],
         Eq::from(union.commit()).to_affine()
     );
     assert!(app.verify_uncompressed(&merged, &mut *rng).unwrap());
@@ -1247,7 +1254,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
     let value = Fp::from(Tachygram::from(PoolSim::shared_note(500).commitment()));
     let intake = pool.qr_intake(app, span0, disc, value, 2);
     let (epoch, anchor_prev, _, _, profile) = *intake.pcd.data();
-    let contents = intake.pcd.commitments()[0];
+    let contents = intake.pcd.commitments()[1];
     let bucket = pool.qr_bucket(app, span0, disc, value, 2, Anchor::from(Fp::ZERO));
 
     assert_eq!(
@@ -1261,7 +1268,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             TachygramSetBridge::from(app.bridge_hash(Eq::from(contents).to_affine()).unwrap()),
         )
     );
-    assert_eq!(bucket.pcd.commitments()[0], contents);
+    assert_eq!(bucket.pcd.commitments()[1], contents);
     assert!(app.verify_uncompressed(&bucket.pcd, &mut *rng).unwrap());
 }
 
@@ -1286,6 +1293,51 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
+/// [`qr::QrEmptyIntakeSeed`] preparing the nonconstant contents `1 + X`.
+struct NonemptyIntakeSeed;
+
+impl Step<Pasta> for NonemptyIntakeSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = qr::QrIntake;
+    type Right = ();
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
+
+    const INDEX: Index = qr::QrEmptyIntakeSeed::INDEX;
+
+    fn prepare(
+        &self,
+        _: &Self::Witness<'_>,
+        _: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(qr::QrContents, [Fp::ONE, Fp::ONE]))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let (encoded, data) = qr::QrEmptyIntakeSeed::synthesize(dr, oracles, witness, left, right)?;
+        Ok((encoded, data, D::unit()))
+    }
+}
+
 #[test]
 fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
     let app = &application();
@@ -1296,16 +1348,7 @@ fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
         EpochIndex::new(0),
         QrDiscriminant::random(rng),
     );
-    let (forged, ()) = app
-        .seed(
-            rng,
-            WithPolynomials(
-                qr::QrEmptyIntakeSeed,
-                [vec![Fp::ONE, Fp::ONE], vec![Fp::ONE]],
-            ),
-            witness,
-        )
-        .unwrap();
+    let (forged, ()) = app.seed(rng, NonemptyIntakeSeed, witness).unwrap();
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
@@ -1334,7 +1377,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!((epoch, anchor_start, anchor_next), (epoch3, entry3, entry4));
     assert_eq!(profile, QrProfile::ROOT);
     assert_eq!(
-        bucket.pcd.commitments()[0],
+        bucket.pcd.commitments()[1],
         Eq::from(iter::empty().collect::<TachygramSetPoly>().commit()).to_affine()
     );
 

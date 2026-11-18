@@ -19,13 +19,17 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
 
-use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
+use super::{
+    delegation::NoteNullifiers,
+    pool::NoteUnspent,
+    qr::{QrBucket, QrContents},
+    stamp::FoldedStamp,
+};
 use crate::{
     digest::poseidon,
     gadgets, note,
@@ -51,6 +55,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
+    type OnlinePolyCommit = (Padding, FoldedStamp);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -89,7 +94,8 @@ impl Header<Fp> for NoteSpendable {
 /// # Soundness
 ///
 /// `anchor_prev`, `creation_epoch` and the creation set close through
-/// consensus anchor membership: the fold absorbs the epoch and O1's bridge hash
+/// consensus anchor membership: the fold absorbs the epoch and the creation
+/// set's bridge hash
 /// $B$, a genuine chain node is `H(prev || epoch || x(B) || y(B))` under the
 /// stamp domain, and preimage resistance forces all three once the eventual
 /// spend's anchor is consensus-checked, a wrong epoch landing off the published
@@ -112,22 +118,22 @@ impl Step<Pasta> for SpendableInit {
 
     const INDEX: Index = Index::new(4);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            alloc::vec![Fp::ONE],
-            witness.1.as_ref().iter_coeffs().collect(),
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(
+            FoldedStamp,
+            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
+        ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -171,7 +177,7 @@ impl Step<Pasta> for SpendableInit {
             oracles.bridge_hash(),
         )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let evaluation = oracles.query(dr, Slot::output(1), &nullifiers.cm)?;
+        let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
         })?;
@@ -229,7 +235,7 @@ impl Step<Pasta> for QrSpendableInit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -287,7 +293,7 @@ impl Step<Pasta> for QrSpendableInit {
                 )
             })?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.query(dr, Slot::right(0), &unspent.cm)?;
+        let evaluation = oracles.right(QrContents).open(dr, &unspent.cm)?;
         evaluation.enforce_zero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
         })?;
@@ -344,7 +350,7 @@ impl Step<Pasta> for SpendableLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

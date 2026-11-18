@@ -30,7 +30,7 @@ use alloc::boxed::Box;
 
 use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
-use ragu_pcd::{Application, ApplicationBuilder, RegistryTags};
+use ragu_pcd::{Application, ApplicationBuilder};
 use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS};
 use udon::curve::{Affine as _, Projective as _};
 
@@ -80,7 +80,7 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
 /// The Tachyon Ragu application.
 pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
 
-/// Builds the Tachyon application with the baked setup and fixed registry tags.
+/// Builds the Tachyon application with the baked setup.
 ///
 /// Building runs the full setup, so a caller builds one application per
 /// worker, keeps it on that worker and lends `&app` to each proof
@@ -91,13 +91,7 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
 /// Returns an error if step registration or application finalization fails.
 #[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
 pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
-    // Registry tags use the fixed Tachyon beacon and configuration digest.
-    let manifest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .hash(b"Tachyon PCD: Pasta, R13, H9, steps 0..38, ragu a73db816");
-    let tags = RegistryTags::<Pasta>::from_beacon(b"Tachyon registry beacon", manifest.as_bytes());
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .with_registry_tags(tags, manifest.as_bytes())?
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?

@@ -31,13 +31,17 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, OnlinePoly, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
-use super::{delegation::NoteNullifiers, qr::QrBucket};
+use super::{
+    delegation::{NfSeq, NoteNullifiers},
+    qr::{QrBucket, QrContents},
+    stamp::FoldedStamp,
+};
 use crate::{
     digest::poseidon,
     gadgets, note,
@@ -48,6 +52,12 @@ use crate::{
     },
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
+
+/// The polynomial whose roots are the anchors an [`AnchorSpan`] folds to.
+#[derive(Clone, Copy, Debug)]
+pub struct AnchorSet;
+
+impl OnlinePoly for AnchorSet {}
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///
@@ -93,6 +103,7 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for ArbitraryUnspent {
     /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
+    type OnlinePolyCommit = (NfSeq, Padding);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(1);
@@ -150,6 +161,7 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteUnspent {
     /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
+    type OnlinePolyCommit = (NfSeq, Padding);
     type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(3);
@@ -224,6 +236,7 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for AnchorSpan {
     /// `(anchor_start, anchor_end)`
     type Data = (Anchor, Anchor);
+    type OnlinePolyCommit = (AnchorSet, FoldedStamp);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(14);
@@ -271,29 +284,34 @@ impl Step<Pasta> for AnchorSpanSeed {
 
     const INDEX: Index = Index::new(31);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
         let anchor_end = witness
             .0
             .next_stamp(witness.1, &witness.2.commit())
             .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        Ok([
-            AnchorSetPoly::from_iter([anchor_end])
-                .as_ref()
-                .iter_coeffs()
-                .collect(),
-            witness.2.as_ref().iter_coeffs().collect(),
-        ])
+        Ok(Prepared::new()
+            .poly(
+                AnchorSet,
+                AnchorSetPoly::from_iter([anchor_end])
+                    .as_ref()
+                    .iter_coeffs()
+                    .collect::<Vec<_>>(),
+            )
+            .poly(
+                FoldedStamp,
+                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
+            ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -326,7 +344,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let z = oracles.zeta().clone();
-        let stamp_at_z = oracles.query(dr, Slot::output(1), &z)?;
+        let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z
             .sub(dr, &one)
@@ -338,10 +356,11 @@ impl Step<Pasta> for AnchorSpanSeed {
             &epoch_element,
             oracles.bridge_hash(),
         )?;
+        let members = oracles.output(AnchorSet).open(dr, &z)?;
         enforce_poly_roots(
             dr,
-            oracles,
-            &Slot::output(0),
+            &z,
+            &members,
             array::from_ref(&anchor),
             "AnchorSpanSeed: members must contain the resulting anchor",
         )?;
@@ -385,22 +404,22 @@ impl Step<Pasta> for AnchorSpanFuse {
 
     const INDEX: Index = Index::new(32);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.0.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(
+            AnchorSet,
+            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
+        ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -434,12 +453,15 @@ impl Step<Pasta> for AnchorSpanFuse {
             let (_, right_anchor_end) = right.take();
             (left_anchor_start, right_anchor_end)
         });
+        let z = oracles.zeta().clone();
+        let left_members = oracles.left(AnchorSet).open(dr, &z)?;
+        let right_members = oracles.right(AnchorSet).open(dr, &z)?;
+        let combined = oracles.output(AnchorSet).open(dr, &z)?;
         enforce_poly_product(
             dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::right(0),
-            &Slot::output(0),
+            &left_members,
+            &right_members,
+            &combined,
             "AnchorSpanFuse: combined is not the union of the halves",
         )?;
         let fields = AnchorSpanOutput {
@@ -473,22 +495,19 @@ impl Step<Pasta> for UnspentFuse {
 
     const INDEX: Index = Index::new(2);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.0.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(NfSeq, witness.0.as_ref().iter_coeffs().collect::<Vec<_>>()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -535,12 +554,15 @@ impl Step<Pasta> for UnspentFuse {
                 right_anchor_next,
             )
         });
+        let z = oracles.zeta().clone();
+        let left_elapsed = oracles.left(NfSeq).open(dr, &z)?;
+        let right_elapsed = oracles.right(NfSeq).open(dr, &z)?;
+        let combined = oracles.output(NfSeq).open(dr, &z)?;
         enforce_poly_product(
             dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::right(0),
-            &Slot::output(0),
+            &left_elapsed,
+            &right_elapsed,
+            &combined,
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
         let fields = ArbitraryUnspentOutput {
@@ -598,31 +620,21 @@ impl Step<Pasta> for UnspentLift {
     const INDEX: Index = Index::new(24);
     const NUM_STAGED: usize = 1;
 
-    fn staged(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Vec<Fp>> {
-        Ok(alloc::vec![Fp::from(witness.0)])
-    }
-
-    fn polynomials(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.3.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new()
+            .poly(NfSeq, witness.3.as_ref().iter_coeffs().collect::<Vec<_>>())
+            .stage([Fp::from(witness.0)]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -683,8 +695,8 @@ impl Step<Pasta> for UnspentLift {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let elapsed_at_z = oracles.query(dr, Slot::left(0), &z)?;
-        let extended_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let elapsed_at_z = oracles.left(NfSeq).open(dr, &z)?;
+        let extended_at_z = oracles.output(NfSeq).open(dr, &z)?;
         let factor = gadgets::indexed_multiset::Member {
             index: (*bucket.epoch).clone(),
             value: value_element.clone(),
@@ -698,7 +710,7 @@ impl Step<Pasta> for UnspentLift {
                     "UnspentLift: extended is not elapsed with the tested pair".into(),
                 )
             })?;
-        let contents_at_value = oracles.query(dr, Slot::right(0), &value_element)?;
+        let contents_at_value = oracles.right(QrContents).open(dr, &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
             contents_at_value.value().map(Clone::clone),
@@ -775,22 +787,19 @@ impl Step<Pasta> for UnspentBind {
 
     const INDEX: Index = Index::new(3);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.0.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(NfSeq, witness.0.as_ref().iter_coeffs().collect::<Vec<_>>()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -817,12 +826,15 @@ impl Step<Pasta> for UnspentBind {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
+        let z = oracles.zeta().clone();
+        let elapsed = oracles.left(NfSeq).open(dr, &z)?;
+        let complement = oracles.output(NfSeq).open(dr, &z)?;
+        let derivation = oracles.right(NfSeq).open(dr, &z)?;
         enforce_poly_product(
             dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::output(0),
-            &Slot::right(0),
+            &elapsed,
+            &complement,
+            &derivation,
             "UnspentBind: sequence does not match the derivation",
         )?;
         // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`

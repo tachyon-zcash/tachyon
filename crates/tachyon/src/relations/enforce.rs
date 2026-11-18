@@ -1,6 +1,8 @@
 //! The framework commits the prover-supplied polynomials before deriving the
-//! Fiat-Shamir challenge $z$. Each relation checks its algebraic identity at
-//! $z$ through [`Oracles::query`]. The proof system verifies the openings.
+//! Fiat-Shamir challenge $z$. Each relation checks its algebraic identity over
+//! openings at $z$ that its caller makes through
+//! [`Oracle::open`](ragu_pcd::step::Oracle::open). The proof system verifies
+//! the openings.
 //!
 //! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
 //! into `z`, so the operands are fixed *before* `z` exists and the identity at
@@ -11,8 +13,8 @@
 //!
 //! # Caller obligation: binding
 //!
-//! These relations prove the identity among the polynomials in the slots;
-//! pinning *which* polynomials those are is the caller's job. Every operand the
+//! These relations prove the identity among the opened polynomials; pinning
+//! *which* polynomials those are is the caller's job. Every operand the
 //! surrounding statement relies on must have its commitment grounded in a
 //! statement-fixed value -- a public input, a prior-step output, a
 //! transcript/header-absorbed value, or a consensus/output-checked commitment
@@ -25,32 +27,19 @@
 //! This principle is common to all of these relations; each states which
 //! operands it covers and any relation-specific nuance.
 //!
-//! Implementation invariant: the eval fed to each identity check is the same
-//! eval emitted in that operand's opening claim (one `query` call per
-//! operand). A refactor that recomputed or separately witnessed the evals could
-//! let the checked value diverge from the opened one and break soundness.
+//! Caller invariant: each operand value passed to a relation is the value
+//! [`Oracle::open`](ragu_pcd::step::Oracle::open) returned for that operand
+//! at `z`. A caller that recomputed or separately witnessed a value could let
+//! the checked value diverge from the opened one and break soundness.
 
 use ragu_core::{Error, Result, drivers::Driver};
-use ragu_pcd::step::{Oracles, Slot};
 use ragu_primitives::{Element, GadgetExt as _};
 use udon::field::Field as _;
 
 use crate::pasta::Fp;
 
-pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-    left: Slot,
-    right: Slot,
-) -> Result<()> {
-    let z = oracles.zeta().clone();
-    let left_value = oracles.query(dr, left, &z)?;
-    let right_value = oracles.query(dr, right, &z)?;
-    left_value.enforce_equal(dr, &right_value)
-}
-
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
-/// among three committed polynomials by opening all three at a Fiat-Shamir
+/// among three committed polynomials from their openings at a Fiat-Shamir
 /// challenge.
 ///
 /// `product` is prover-supplied and the relation works only from the three
@@ -67,25 +56,20 @@ pub(crate) fn enforce_poly_equal<'dr, D: Driver<'dr, F = Fp>>(
 /// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-    multiplicand: &Slot,
-    multiplier: &Slot,
-    product: &Slot,
+    multiplicand: &Element<'dr, D>,
+    multiplier: &Element<'dr, D>,
+    product: &Element<'dr, D>,
     err: &'static str,
 ) -> Result<()> {
-    let z = oracles.zeta().clone();
-    let multiplicand_value = oracles.query(dr, *multiplicand, &z)?;
-    let multiplier_value = oracles.query(dr, *multiplier, &z)?;
-    let product_value = oracles.query(dr, *product, &z)?;
-    let expected = multiplicand_value.mul(dr, &multiplier_value)?;
-    product_value
+    let expected = multiplicand.mul(dr, multiplier)?;
+    product
         .enforce_equal(dr, &expected)
         .map_err(|_err| Error::InvalidWitness(err.into()))
 }
 
 /// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
-/// given roots by opening the accumulator at a Fiat-Shamir challenge and
-/// comparing against the product of the root factors, computed in cheap field
+/// given roots from the accumulator's opening at a Fiat-Shamir challenge,
+/// compared against the product of the root factors, computed in cheap field
 /// operations.
 ///
 /// `accumulator` is prover-supplied and the relation works only from its
@@ -104,19 +88,17 @@ pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
 /// `N` fixes the root count at compile time.
 pub(crate) fn enforce_poly_roots<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-    accumulator: &Slot,
+    z: &Element<'dr, D>,
+    accumulator: &Element<'dr, D>,
     roots: &[Element<'dr, D>; N],
     err: &'static str,
 ) -> Result<()> {
-    let z = oracles.zeta().clone();
-    let accumulator_value = oracles.query(dr, *accumulator, &z)?;
     let mut expected = Element::constant(dr, Fp::ONE);
     for root in roots {
         let factor = z.sub(dr, root);
         expected = expected.mul(dr, &factor)?;
     }
-    accumulator_value
+    accumulator
         .enforce_equal(dr, &expected)
         .map_err(|_err| Error::InvalidWitness(err.into()))
 }

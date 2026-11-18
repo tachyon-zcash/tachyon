@@ -1,5 +1,14 @@
 use core::iter;
 
+use ragu_circuits::polynomials::sparse::Polynomial;
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    pasta::Pasta,
+};
+use ragu_pcd::{
+    header::Header,
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -12,10 +21,57 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
-    WithPolynomials,
     pool::PoolSim,
     qr::{QrIntakeEntry, shared_discriminant},
 };
+
+/// [`qr::QrBucketSeal`] with the constant coefficient of its prepared contents
+/// shifted by `self.0`.
+struct ShiftedBucketSeal(Fp);
+
+impl Step<Pasta> for ShiftedBucketSeal {
+    type Aux<'source> = ();
+    type Left = qr::QrIntake;
+    type Output = qr::QrBucket;
+    type Right = ();
+    type Witness<'source> = (Anchor,);
+
+    const INDEX: Index = qr::QrBucketSeal::INDEX;
+
+    fn prepare(
+        &self,
+        _: &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        let mut contents = left.polynomial(qr::QrContents).to_vec();
+        contents[0] += self.0;
+        Ok(Prepared::new().poly(qr::QrContents, contents))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let (encoded, data) = qr::QrBucketSeal::synthesize(dr, oracles, &witness, left, right)?;
+        Ok((encoded, data, D::unit()))
+    }
+}
 
 #[test]
 fn evidence_tree_admission_rejects_substituted_contents() {
@@ -28,25 +84,16 @@ fn evidence_tree_admission_rejects_substituted_contents() {
     let intake = pool.qr_root(app, span0, disc);
     let intake_pcd = intake.pcd;
     let bucket = pool.epoch_bucket(app, epoch0);
-    let honest = intake_pcd.polynomials()[0].clone();
-    let mut substituted = honest.clone();
-    substituted[0] += Fp::ONE;
-    for polynomials in [
-        [substituted.clone(), honest.clone()],
-        [honest, substituted.clone()],
-        [substituted.clone(), substituted],
-    ] {
-        let (forged, ()) = app
-            .fuse(
-                rng,
-                WithPolynomials(qr::QrBucketSeal, polynomials),
-                witness::qr_bucket_seal((*intake_pcd.data(), ()), Anchor::from(Fp::ZERO)),
-                intake_pcd.clone(),
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .unwrap();
-        assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
-    }
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            ShiftedBucketSeal(Fp::ONE),
+            witness::qr_bucket_seal((*intake_pcd.data(), ()), Anchor::from(Fp::ZERO)),
+            intake_pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     let (accepted, ()) = app
         .fuse(
             rng,
@@ -325,6 +372,9 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
             .0;
     }
     let QrProfile { depth, bits } = leaf.profile();
+    let mut substituted: Vec<_> = leaf.contents.as_ref().iter_coeffs().collect();
+    substituted[0] += Fp::ONE;
+    let substituted = TachygramSetPoly::arbitrary(Polynomial::from_coeffs(substituted));
     for (opened, profile, contents) in vec![
         (tree.pcd, leaf.profile(), leaf.contents.clone()),
         (
@@ -344,6 +394,7 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
             leaf.contents.clone(),
         ),
         (node.clone(), leaf.profile(), other_contents),
+        (node.clone(), leaf.profile(), substituted),
     ]
     .into_boxed_slice()
     {
@@ -359,31 +410,14 @@ fn evidence_tree_descend_and_open_reject_forgeries() {
         assert!(!app.verify_uncompressed(&forged_open, &mut *rng).unwrap());
     }
 
-    let honest: Vec<_> = leaf.contents.as_ref().iter_coeffs().collect();
-    let mut substituted = honest.clone();
-    substituted[0] += Fp::ONE;
-    for (polynomials, accepted) in [
-        ([honest.clone(), honest.clone()], true),
-        ([substituted.clone(), honest.clone()], false),
-        ([honest, substituted.clone()], false),
-        ([substituted.clone(), substituted], false),
-    ] {
-        let (opened, ()) = app
-            .fuse(
-                rng,
-                WithPolynomials(evidence::EvidenceTreeOpen, polynomials),
-                witness::evidence_tree_open(
-                    (*node.data(), ()),
-                    leaf.profile(),
-                    leaf.contents.clone(),
-                ),
-                node.clone(),
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .unwrap();
-        assert_eq!(
-            app.verify_uncompressed(&opened, &mut *rng).unwrap(),
-            accepted,
-        );
-    }
+    let (opened, ()) = app
+        .fuse(
+            rng,
+            evidence::EvidenceTreeOpen,
+            witness::evidence_tree_open((*node.data(), ()), leaf.profile(), leaf.contents.clone()),
+            node,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(app.verify_uncompressed(&opened, &mut *rng).unwrap());
 }

@@ -4,18 +4,9 @@ use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::ops::Deref;
 use std::{sync::Mutex, thread};
 
-use ragu_core::{
-    drivers::{Driver, DriverValue},
-    pasta::Pasta,
-};
-use ragu_pcd::{
-    header::Header,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
-};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     bundle::Bundle,
-    pasta::Fp,
     stamp::{self, StampState, proof::App},
 };
 
@@ -98,59 +89,6 @@ impl<V: Clone> Proved<V> {
             *stored = Some(prove(&mut keyed_rng(name, key)));
         }
         stored.as_ref().unwrap().clone()
-    }
-}
-
-pub(crate) struct WithPolynomials<S>(pub S, pub [Vec<Fp>; 2]);
-
-impl<S: Step<Pasta>> Step<Pasta> for WithPolynomials<S> {
-    type Aux<'source> = S::Aux<'source>;
-    type Left = S::Left;
-    type Output = S::Output;
-    type Right = S::Right;
-    type Witness<'source> = S::Witness<'source>;
-
-    const INDEX: Index = S::INDEX;
-    const NUM_STAGED: usize = S::NUM_STAGED;
-
-    fn staged(
-        &self,
-        witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        right: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Vec<Fp>> {
-        self.0.staged(witness, left, right)
-    }
-
-    fn polynomials(
-        &self,
-        _: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok(self.1.clone())
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        self.0.witness(dr, oracles, witness, left, right)
     }
 }
 

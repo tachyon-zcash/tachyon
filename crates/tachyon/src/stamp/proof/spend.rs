@@ -9,7 +9,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
@@ -58,6 +58,7 @@ impl Header<Fp> for SpendHeader {
         PaymentKey,
         value::Commitment,
     );
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -135,7 +136,7 @@ impl Step<Pasta> for SpendBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

@@ -128,7 +128,7 @@ impl QrIntakeEntry {
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
         key.extend_from_slice(&profile.bits.to_le_bytes());
-        key.extend_from_slice(&Eq::from(self.pcd.commitments()[0]).to_affine().to_bytes());
+        key.extend_from_slice(&Eq::from(self.pcd.commitments()[1]).to_affine().to_bytes());
         key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
         SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
     }

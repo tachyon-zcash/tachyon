@@ -9,7 +9,7 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
@@ -43,6 +43,7 @@ pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = 
 impl Header<Fp> for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -89,7 +90,7 @@ impl Step<Pasta> for OutputBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

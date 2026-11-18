@@ -1,6 +1,6 @@
 //! The relations the proof system enforces.
 //!
-//! [`enforce`] checks polynomial identities by opening fixed slots at the
-//! framework's challenge through a driver and `Oracles`.
+//! [`enforce`] checks polynomial identities over values a step opened from
+//! its `Oracles`.
 
 pub(crate) mod enforce;

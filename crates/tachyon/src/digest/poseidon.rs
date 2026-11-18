@@ -285,6 +285,7 @@ pub(crate) mod circuit {
         drivers::Driver,
         pasta::{Pasta, PoseidonFp},
     };
+    use ragu_pcd::step::BridgeHash;
     use ragu_primitives::{
         Element, GadgetExt as _, Point,
         poseidon::{Sponge, SpongeState},
@@ -443,13 +444,13 @@ pub(crate) mod circuit {
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
         epoch: &Element<'dr, D>,
-        bridge_hash: &[Element<'dr, D>; 2],
+        bridge_hash: &BridgeHash<'dr, D>,
     ) -> Result<Element<'dr, D>> {
         let sponge = init(dr, ANCHOR_STAMP_DOMAIN);
         absorb(
             dr,
             sponge,
-            [anchor_prev, epoch, &bridge_hash[0], &bridge_hash[1]],
+            [anchor_prev, epoch, bridge_hash.x(), bridge_hash.y()],
         )?
         .squeeze(dr)
     }

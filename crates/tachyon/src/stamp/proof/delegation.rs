@@ -19,8 +19,8 @@ use ragu_core::{
     pasta::{Pasta, PoseidonFp},
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, OnlinePoly, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};
@@ -36,6 +36,13 @@ use crate::{
     relations::enforce::enforce_poly_product,
     value,
 };
+
+/// The polynomial whose roots are a sequence of nullifiers, each indexed by
+/// its epoch.
+#[derive(Clone, Copy, Debug)]
+pub struct NfSeq;
+
+impl OnlinePoly for NfSeq {}
 
 /// A note's certified record: its commitment, its opening, and its master key
 /// (wallet-only).
@@ -58,6 +65,7 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; NoteSecretOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(8);
@@ -119,6 +127,7 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteNullifiers {
     /// `(cm, epoch_start, epoch_end)`
     type Data = (note::Commitment, EpochIndex, EpochIndex);
+    type OnlinePolyCommit = (NfSeq, Padding);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
@@ -183,7 +192,7 @@ impl Step<Pasta> for NoteSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -299,25 +308,15 @@ impl Step<Pasta> for NullifierDerive {
     const INDEX: Index = Index::new(1);
     const NUM_STAGED: usize = 1;
 
-    fn staged(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Vec<Fp>> {
-        Ok(alloc::vec![Fp::from(witness.0)])
-    }
-
-    fn polynomials(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.1.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new()
+            .poly(NfSeq, witness.1.as_ref().iter_coeffs().collect::<Vec<_>>())
+            .stage([Fp::from(witness.0)]))
     }
 
     #[expect(
@@ -329,7 +328,7 @@ impl Step<Pasta> for NullifierDerive {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -379,7 +378,7 @@ impl Step<Pasta> for NullifierDerive {
         let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
         let epoch_end = epoch_start.add(dr, &width);
         let z = oracles.zeta().clone();
-        let seq_at_z = oracles.query(dr, Slot::output(0), &z)?;
+        let seq_at_z = oracles.output(NfSeq).open(dr, &z)?;
         // The window's members at `z`, encoded in-circuit from the
         // sponge-derived nullifiers and their epochs.
         let mut window_at_z = Element::constant(dr, Fp::ONE);
@@ -456,22 +455,19 @@ impl Step<Pasta> for NullifierFuse {
 
     const INDEX: Index = Index::new(12);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.0.as_ref().iter_coeffs().collect(),
-            alloc::vec![Fp::ONE],
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(NfSeq, witness.0.as_ref().iter_coeffs().collect::<Vec<_>>()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -506,12 +502,15 @@ impl Step<Pasta> for NullifierFuse {
             .map_err(|_err| {
                 ragu_core::Error::InvalidWitness("NullifierFuse: ranges not contiguous".into())
             })?;
+        let z = oracles.zeta().clone();
+        let left_seq = oracles.left(NfSeq).open(dr, &z)?;
+        let right_seq = oracles.right(NfSeq).open(dr, &z)?;
+        let merged_seq = oracles.output(NfSeq).open(dr, &z)?;
         enforce_poly_product(
             dr,
-            oracles,
-            &Slot::left(0),
-            &Slot::right(0),
-            &Slot::output(0),
+            &left_seq,
+            &right_seq,
+            &merged_seq,
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         let data = D::just(|| {

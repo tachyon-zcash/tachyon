@@ -24,13 +24,13 @@ use ragu_core::{
     pasta::Pasta,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::curve::Affine as _;
 
-use super::qr::{QrBucket, QrBucketOutput};
+use super::qr::{QrBucket, QrBucketOutput, QrContents};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
@@ -40,7 +40,6 @@ use crate::{
         Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
         TachygramSetPoly,
     },
-    relations::enforce::enforce_poly_equal,
 };
 
 /// A Poseidon Merkle root over one network's sealed buckets.
@@ -70,6 +69,7 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for EvidenceTree {
     /// `(epoch, anchor_start, anchor_next, discriminant, root)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(12);
@@ -145,6 +145,7 @@ impl Header<Fp> for EvidenceTreePair {
         EvidenceTreeRoot,
         EvidenceTreeRoot,
     );
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; EvidenceTreePairOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(13);
@@ -224,7 +225,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -345,7 +346,7 @@ impl Step<Pasta> for EvidenceTreePairFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -447,7 +448,7 @@ impl Step<Pasta> for EvidenceTreeFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -558,7 +559,7 @@ impl Step<Pasta> for EvidenceTreeCap {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -656,7 +657,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -746,7 +747,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
 /// Two permutations (the leaf digest).
-/// O0/O1 hold the contents and open once each. O1's bridge hash enters the
+/// [`QrContents`] holds the contents and opens once. Its bridge hash enters the
 /// leaf.
 ///
 /// # Soundness
@@ -779,22 +780,22 @@ impl Step<Pasta> for EvidenceTreeOpen {
 
     const INDEX: Index = Index::new(29);
 
-    fn polynomials(
+    fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<[Vec<Fp>; 2]> {
-        Ok([
-            witness.1.as_ref().iter_coeffs().collect(),
-            witness.1.as_ref().iter_coeffs().collect(),
-        ])
+    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+        Ok(Prepared::new().poly(
+            QrContents,
+            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
+        ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -823,9 +824,13 @@ impl Step<Pasta> for EvidenceTreeOpen {
                 &mut (),
                 witness.as_ref().map(|&(profile, _)| profile),
             )?,
-            contents_hash: oracles.bridge_hash().clone(),
+            contents_hash: [
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         };
-        enforce_poly_equal(dr, oracles, Slot::output(0), Slot::output(1))?;
+        let zeta = oracles.zeta().clone();
+        oracles.output(QrContents).open(dr, &zeta)?;
         let leaf = poseidon::circuit::evidence_tree_leaf(
             dr,
             &fields.epoch,
