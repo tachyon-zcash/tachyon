@@ -22,14 +22,20 @@ fn verify_side(
     h: &Polynomial<Fp, ProductionRank>,
 ) {
     let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
-    let mut lhs = arithmetic::poly_mul(&dense(u), &dense(u));
-    if lhs.len() < 2 {
-        lhs.resize(2, Fp::ZERO);
+    let [u_degree, q_degree, h_degree] = [u, &q, h].map(|poly| {
+        poly.iter_stored_coeffs()
+            .last()
+            .map_or(0, |(degree, _)| degree)
+    });
+    let degree_bound = (2 * u_degree).max(q_degree + h_degree).max(1);
+    // Agreement at more distinct points than the degree bound proves the full
+    // coefficient identity, without multiplying coefficient vectors here.
+    for at in (0..=u64::try_from(degree_bound).unwrap()).map(Fp::from) {
+        assert_eq!(
+            u.eval(at).square() - class * (at + shift),
+            q.eval(at) * h.eval(at)
+        );
     }
-    lhs[0] -= class * shift;
-    lhs[1] -= class;
-    let rhs = arithmetic::poly_mul(&dense(&q), &dense(h));
-    assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
     for &(abscissa, root) in points {
         assert_eq!(u.eval(abscissa), root);
     }

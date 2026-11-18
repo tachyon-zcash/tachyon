@@ -26,7 +26,6 @@ pub mod stamp;
 pub mod value;
 pub mod witness;
 
-mod arithmetic;
 mod bridge_hash;
 mod collections;
 mod gadgets;
