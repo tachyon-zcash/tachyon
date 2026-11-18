@@ -2,17 +2,15 @@
 
 extern crate alloc;
 
-use ragu_core::{
+use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
-};
-use ragu_pcd::{
-    header::{Header, Padding, Suffix},
+    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, Index, Oracles, Step},
 };
-use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
@@ -67,7 +65,7 @@ impl Header<Fp> for SpendHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(SpendHeaderOutput {
             cm: Element::alloc(
                 dr,
@@ -140,7 +138,7 @@ impl Step<Pasta> for SpendBind {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

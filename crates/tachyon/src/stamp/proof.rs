@@ -39,10 +39,7 @@ pub mod summary;
 
 use alloc::boxed::Box;
 
-use ragu_acceleration::AcceleratedProver;
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
-use ragu_pcd::{Application, ApplicationBuilder};
+use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank, pasta::Pasta};
 
 use crate::pasta;
 
@@ -64,7 +61,7 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, Accel
 ///
 /// Returns an error if step registration or application finalization fails.
 #[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
-pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
+pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
