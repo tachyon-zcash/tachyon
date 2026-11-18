@@ -12,11 +12,11 @@ use crate::{
     keys::{private, public},
     note::Note,
     pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
+    primitives::{ActionDigest, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
 
-/// The simple fields of an action, without the signature.
+/// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
     /// Value commitment (EpAffine).
@@ -35,11 +35,13 @@ pub struct Descriptor {
 impl Descriptor {
     /// Derive the action digest.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
+    /// Panics if `cv` or `rk` is the identity point. Descriptor reading rejects
+    /// both identities; hand-built descriptors must uphold this requirement.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
+        ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -47,10 +49,22 @@ impl Descriptor {
     /// # Errors
     ///
     /// Returns an error if reading fails or either component is not a
-    /// canonical encoding.
+    /// canonical encoding of a non-identity point.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
+        if EpAffine::from(cv).is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "action commitment is the identity",
+            ));
+        }
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
+        if EpAffine::from(rk).is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "action verification key is the identity",
+            ));
+        }
         Ok(Self { cv, rk })
     }
 
@@ -171,11 +185,13 @@ impl<E: Effect> Plan<E> {
 
     /// Derive the action digest.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv(), self.rk)
+    /// Panics if this plan's value commitment or `rk` is the identity point.
+    /// Callers constructing plans must ensure both points are non-identity.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
+        ActionDigest::new(self.cv(), self.rk, tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.
@@ -184,80 +200,6 @@ impl<E: Effect> Plan<E> {
         Descriptor {
             cv: self.cv(),
             rk: self.rk,
-        }
-    }
-}
-
-/// An authorized Tachyon action.
-///
-/// - `cv`: Commitment to a value effect
-/// - `rk`: Public key (randomized counterpart to `rsk`)
-/// - `sig`: Signature (by single-use `rsk`) over transaction sighash
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Action {
-    /// Value commitment.
-    ///
-    /// $$
-    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
-    /// $$
-    pub cv: value::Commitment,
-
-    /// Randomized action verification key $\mathsf{rk}$.
-    pub rk: public::ActionVerificationKey,
-
-    /// RedPallas spend auth signature over the transaction sighash.
-    pub sig: Signature,
-}
-
-impl From<(Descriptor, Signature)> for Action {
-    fn from((desc, sig): (Descriptor, Signature)) -> Self {
-        Self {
-            cv: desc.cv,
-            rk: desc.rk,
-            sig,
-        }
-    }
-}
-
-impl Action {
-    /// Derive the action digest.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
-    }
-
-    /// Obtain a descriptor for this action.
-    #[must_use]
-    pub const fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            cv: self.cv,
-            rk: self.rk,
-        }
-    }
-}
-
-impl PartialOrd for Action {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Action {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.descriptor()
-            .cmp(&other.descriptor())
-            .then(self.sig.cmp(&other.sig))
-    }
-}
-
-impl From<Action> for Descriptor {
-    fn from(action: Action) -> Self {
-        Self {
-            cv: action.cv,
-            rk: action.rk,
         }
     }
 }

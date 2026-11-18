@@ -13,7 +13,7 @@ It merges the three stamps.
 The merged stamp sits on $A$ and covers the actions and fees of $A$, $X$ and $Y$.
 
 The aggregator publishes $A$ with that stamp.
-A miner that includes it also includes $X$ and $Y$ as [adjuncts](../aggregation.md#strip-to-produce-adjuncts), with their stamps stripped and replaced by pointers to $A$.
+A miner that includes it also includes $X$ and $Y$ as [adjuncts](../aggregation.md#strip-to-produce-adjuncts), with their stamps stripped and their `txid`s listed by $A$.
 If another aggregator merges $A$ into something larger first, $A$ becomes one of its adjuncts in turn.
 
 Folding its own actions into $A$ is one of the reasons to aggregate.
@@ -37,7 +37,7 @@ A transparent aggregate can be split into any subset of its bundles by that part
 
 Two things make aggregates transparent in practice.
 
-- Keep every input you merged and the order you merged them in, with the signed bundles, their descriptors and the fee each was merged at.
+- Keep every input you merged and the order you merged them in, with the signed bundles, their action pairs, and the fee and fee change each was merged with.
 - Cache recent mempool autonomes and aggregates.
 
 Hold both until the end of the epoch after the working aggregate's anchor epoch.
@@ -53,7 +53,7 @@ Work at a current-epoch [anchor](../anchor.md) and lift every input to it before
 Lifts cannot cross an [epoch boundary](../anchor.md#epoch-boundary).
 An aggregate started in one epoch is finished within the following epoch or rebuilt.
 
-Compare candidates' [tachygrams](../tachygrams.md) with each other and with the working aggregate, and merge a disjoint set.
+Derive candidates' [tachygram unions](../tachygrams.md#tachygram-sets) from their covered bundles' action pairs and fee changes, compare them with each other and with the working aggregate, and merge a disjoint set.
 Keep the stamps of the overlapping candidates you passed over.
 The block may include one of those instead.
 
@@ -65,12 +65,12 @@ If cooperative aggregators decline to stack such aggregates, the cost of withhol
 
 Call the working stamp $W$.
 Find which of $W$'s bundles the block includes by comparing action descriptors, which are public on both sides.
-Compare fees separately, because the block may carry a bundle at a different fee than $W$ holds it at.
+Compare action pairs, fees, and fee changes separately, because a spend re-proven at another epoch has a different pair, and the block may carry a bundle at a different fee than $W$ holds it at.
 Compare tachygrams too, because a conflicting spend of the same note has a different descriptor and the same nullifiers.
 Every match has to come out of $W$ before $W$ can be published, because consensus rejects a tachygram published twice within [two epochs](../tachygrams.md#consensus-validation).
 
 What comes out is the bundle as it was merged into $W$, at the fee $W$ holds.
-The stamp in the block may cover other bundles or carry a different fee.
+The bundle in the block may use a different fee, and its stamp may cover other bundles.
 It is the right divisor only when it covers exactly what $W$ holds.
 
 The simple case is a block that includes $X$ as an autonome.
@@ -115,12 +115,16 @@ Rebuild instead when that is less work than the divisions and merges needed.
 
 $Q$ can go back on $A$ only if it still covers $A$'s own actions and fee.
 If the block included $A$'s bundle too, the remaining work has to go into a different complete aggregate.
-Dividing $A$ out does not undo a merge into $A$, so $Q$ still carries $A$'s fee and no bundle it covers can carry it.
-Merge $Q$ into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, and the merged stamp keeps that bundle's fee.
+Dividing $A$ out produces a proof-only quotient; it does not change $A$'s bundle body, including its fee and fee change.
+Such a $Q$ covers only the transactions it lists.
+It has no transaction it covers without listing, so no `txid` is correct for it, and it is not a valid argument to `merge` or `unmerge`.
+Both accept it, and a stamp built from it can list a transaction it does not cover or omit one it does, which consensus rejects.
+Move $W$ first instead: merge it into the stamp of a bundle outside it, such as a new bundle of the aggregator's own, with $A$'s `txid`, then divide out what the block included.
+The new host's fee and fee change remain in its bundle body, and at every step the stamp's adjunct list names exactly the other transactions it covers.
 
 ## At the miner
 
-Include eligible, disjoint public aggregates as they are, together with every bundle they cover, stripped to point at the aggregate version in the block.
+Include eligible, disjoint public aggregates as they are, together with every bundle they cover, stripped and listed by `txid` in the aggregate version in the block.
 
 Where two candidate aggregates overlap, remove the overlap from one of them with cached autonomes or a divisor built from stamps you hold, instead of rebuilding either.
 Spend the saved proving time on an aggregate of your own.

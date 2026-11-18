@@ -12,8 +12,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Tachygram,
-    action::{self, Action},
+    Anchor, BlockHeight, EpochIndex, Tachygram, action,
     bundle::{self, Bundle},
     effect,
     entropy::ActionEntropy,
@@ -28,9 +27,9 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use super::{Proved, keyed_rng, mock_sighash, pool::PoolSim, qr::QrBucketEntry};
+use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBucketEntry};
 
-pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
+pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
@@ -41,8 +40,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
         WalletSim::new(shared_sk()).random_note(0),
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let unproven = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-    unproven.actions[0]
+    let (action_sigs, _) = bundle_plan.sign(rng, &sighash, &ask).unwrap();
+    action_sigs.into_iter().next().unwrap()
 }
 
 pub fn output_plan<RNG: CryptoRng>(
@@ -63,12 +62,28 @@ pub(crate) fn other_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0B0B_05EE_D000_0001))
 }
 
-fn stamp_key(stamp: &ProofStamp<stamp::Uncompressed>) -> Vec<u8> {
+fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
+    let stamp = &bundle.stamp;
     let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
-    key.extend_from_slice(&stamp.coverage);
-    key.extend_from_slice(&u32::try_from(stamp.tachygrams.len()).unwrap().to_le_bytes());
-    for member in &stamp.tachygrams {
-        key.extend_from_slice(&Fp::from(*member).to_bytes());
+    key.extend_from_slice(&u32::try_from(stamp.adjuncts.len()).unwrap().to_le_bytes());
+    for txid in &stamp.adjuncts {
+        key.extend_from_slice(txid);
+    }
+    stamp.tachygram_set.write(&mut key).unwrap();
+    // The action digest binds each action's pair; the union does not.
+    // Keep the collection passed to merge/lift in the key.
+    key.extend_from_slice(&u32::try_from(bundle.actions.len()).unwrap().to_le_bytes());
+    for descriptor in &bundle.actions {
+        descriptor.write(&mut key).unwrap();
+    }
+    key.extend_from_slice(&<[u8; 40]>::from(bundle.fee));
+    for tachygram in bundle
+        .action_auth
+        .iter()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .chain([bundle.fee_auth])
+    {
+        key.extend_from_slice(&Fp::from(tachygram).to_bytes());
     }
     key
 }
@@ -79,19 +94,35 @@ pub(crate) fn merged(
     right: &Bundle<ProofStamp<stamp::Uncompressed>>,
 ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
     static MERGES: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
-    let mut key = stamp_key(&left.stamp);
-    key.extend_from_slice(&stamp_key(&right.stamp));
+    let right_txid = mock_txid(right);
+    let mut key = stamp_key(left);
+    key.extend_from_slice(&stamp_key(right));
+    key.extend_from_slice(&right_txid);
     let stamp = MERGES.get(&key, |rng| {
         left.stamp
             .clone()
             .merge(
                 rng,
                 app,
-                (left.descriptors().collect(), [left.fee_descriptor()].into()),
+                (
+                    &left
+                        .actions
+                        .iter()
+                        .copied()
+                        .zip(left.action_auth.iter().map(|&(_, pair)| pair))
+                        .collect(),
+                    &BTreeMap::from([(left.fee, left.fee_auth)]),
+                ),
                 (
                     right.stamp.clone(),
-                    right.descriptors().collect(),
-                    [right.fee_descriptor()].into(),
+                    right_txid,
+                    &right
+                        .actions
+                        .iter()
+                        .copied()
+                        .zip(right.action_auth.iter().map(|&(_, pair)| pair))
+                        .collect(),
+                    &BTreeMap::from([(right.fee, right.fee_auth)]),
                 ),
             )
             .unwrap()
@@ -110,7 +141,7 @@ pub(crate) fn lifted(
 ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
     static LIFTS: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("lifted_bundle");
     let span = pool.anchor_span(app, range);
-    let mut key = stamp_key(&bundle.stamp);
+    let mut key = stamp_key(bundle);
     key.extend_from_slice(&Fp::from(span.data().0).to_bytes());
     key.extend_from_slice(&Fp::from(span.data().1).to_bytes());
     let stamp = LIFTS.get(&key, |rng| {
@@ -120,8 +151,13 @@ pub(crate) fn lifted(
             .lift(
                 rng,
                 app,
-                &bundle.descriptors().collect(),
-                &[bundle.fee_descriptor()].into(),
+                &bundle
+                    .actions
+                    .iter()
+                    .copied()
+                    .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
+                    .collect(),
+                &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 vec![span],
             )
             .unwrap()
@@ -350,14 +386,15 @@ impl WalletSim {
                 .collect();
             let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
             let sighash = mock_sighash(plan.commitment().unwrap());
-            let signed = plan
+            let signatures = plan
                 .sign(rng, &sighash, &self.sk.derive_auth_private())
                 .unwrap();
-            let stamp = plan
+            let proof = plan
                 .stamp_plan(anchor, fee)
                 .prove(rng, app, &self.pak, spend_pcds)
                 .unwrap();
-            (plan, signed.stamp(stamp))
+            let bundle = plan.assemble(signatures, proof);
+            (plan, bundle)
         })
     }
 
