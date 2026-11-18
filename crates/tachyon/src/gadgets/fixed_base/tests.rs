@@ -1,10 +1,11 @@
-use ragu_primitives::Simulator;
+use ragu_primitives::{Simulator, decompose};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
+use crate::gadgets::uint::Uint;
 
 #[test]
-fn unbound_multiplication_accepts_254_bit_scalars_and_rejects_wider() {
+fn blind_multiplication_accepts_254_bit_scalars_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut accepted = Vec::from([
         Fq::ONE,
@@ -19,7 +20,8 @@ fn unbound_multiplication_accepts_254_bit_scalars_and_rejects_wider() {
     }));
     for scalar in accepted {
         Simulator::<Fp>::simulate(scalar, |dr, witness| {
-            let point = R_BASE.mul_unbound(dr, &witness)?;
+            let bits = Uint::<_, 254>::alloc(dr, witness)?;
+            let point = R_BASE.mul(dr, bits.bits())?;
             assert_eq!(
                 point.value().take(),
                 (*orchard::VALUE_COMMIT_R * scalar).to_affine()
@@ -30,7 +32,8 @@ fn unbound_multiplication_accepts_254_bit_scalars_and_rejects_wider() {
     }
     for scalar in [Fq::from(2).pow_u64(254), -Fq::ONE] {
         Simulator::<Fp>::simulate(scalar, |dr, witness| {
-            R_BASE.mul_unbound(dr, &witness)?;
+            let bits = Uint::<_, 254>::alloc(dr, witness)?;
+            R_BASE.mul(dr, bits.bits())?;
             Ok(())
         })
         .map(|_| ())
@@ -60,12 +63,14 @@ fn multiplication_accepts_254_bit_elements_and_rejects_wider() {
         {
             let result = Simulator::<Fp>::simulate(digest, |dr, witness| {
                 let element = Element::alloc(dr, &mut (), witness)?;
+                let bits =
+                    FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &element)?)?;
                 let point = match added {
                     Some(native) => {
                         let gadget = Point::constant(dr, native.to_affine())?;
-                        fixed_base.mul_and_add(dr, &element, &gadget)?
+                        fixed_base.mul_and_add(dr, &bits, &gadget)?
                     },
-                    None => fixed_base.mul(dr, &element)?,
+                    None => fixed_base.mul(dr, &bits)?,
                 };
                 let scalar = Fq::from_bytes(digest.to_bytes()).unwrap();
                 let expected = base * scalar + added.unwrap_or_else(Ep::identity);
@@ -96,9 +101,10 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         let blind = Fq::random(|bytes| rng.fill_bytes(bytes));
         for amount in &accepted {
             Simulator::<Fp>::simulate(Fp::from(*amount), |dr, witness| {
-                let value = Uint::alloc(dr, witness)?;
-                let blind_point = R_BASE.mul_unbound(dr, &Simulator::<Fp>::just(|| blind))?;
-                let point = fixed_base.mul_amount(dr, &value, &blind_point)?;
+                let value = Uint::<_, 51>::alloc(dr, witness)?;
+                let blind_bits = Uint::<_, 254>::alloc(dr, Simulator::<Fp>::just(|| blind))?;
+                let blind_point = R_BASE.mul(dr, blind_bits.bits())?;
+                let point = fixed_base.mul_and_add(dr, value.bits(), &blind_point)?;
                 let expected = *orchard::VALUE_COMMIT_R * blind + base * Fq::from(*amount);
                 assert_eq!(point.value().take(), expected.to_affine());
                 Ok(())
@@ -107,9 +113,10 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         }
         for amount in rejected {
             Simulator::<Fp>::simulate(amount, |dr, witness| {
-                let value = Uint::alloc(dr, witness)?;
-                let blind_point = R_BASE.mul_unbound(dr, &Simulator::<Fp>::just(|| blind))?;
-                fixed_base.mul_amount(dr, &value, &blind_point)?;
+                let value = Uint::<_, 51>::alloc(dr, witness)?;
+                let blind_bits = Uint::<_, 254>::alloc(dr, Simulator::<Fp>::just(|| blind))?;
+                let blind_point = R_BASE.mul(dr, blind_bits.bits())?;
+                fixed_base.mul_and_add(dr, value.bits(), &blind_point)?;
                 Ok(())
             })
             .map(|_| ())
@@ -126,12 +133,14 @@ fn fee_commitment_spans_zero_to_max_money() {
     for maximum in [0, 1, MAX_MONEY, MAX_MONEY + 1] {
         let result = Simulator::<Fp>::simulate(maximum, |dr, witness| {
             let digest = Element::constant(dr, blind);
-            let slack = Uint::alloc(
+            let slack = Uint::<_, 51>::alloc(
                 dr,
                 witness.map(|value| Fp::from(MAX_MONEY) - Fp::from(value)),
             )?;
-            let blind_point = R_BASE.mul(dr, &digest)?;
-            let point = FEE_V_BASE.mul_amount(dr, &slack, &blind_point)?;
+            let digest_bits =
+                FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &digest)?)?;
+            let blind_point = R_BASE.mul(dr, &digest_bits)?;
+            let point = FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)?;
             let expected = *orchard::VALUE_COMMIT_R * blind_scalar
                 - *orchard::VALUE_COMMIT_V * Fq::from(maximum);
             assert_eq!(point.value().take(), expected.to_affine());
@@ -152,14 +161,16 @@ fn fee_commitment_spans_zero_to_max_money() {
 #[test]
 fn exceptional_additions_are_rejected() {
     Simulator::<Fp>::simulate(Fq::ZERO, |dr, witness| {
-        R_BASE.mul_unbound(dr, &witness)?;
+        let bits = Uint::<_, 254>::alloc(dr, witness)?;
+        R_BASE.mul(dr, bits.bits())?;
         Ok(())
     })
     .map(|_| ())
     .unwrap_err();
     Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
         let element = Element::alloc(dr, &mut (), witness)?;
-        G_BASE.mul(dr, &element)?;
+        let bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &element)?)?;
+        G_BASE.mul(dr, &bits)?;
         Ok(())
     })
     .map(|_| ())
@@ -170,7 +181,8 @@ fn exceptional_additions_are_rejected() {
     let doubling = Fq::from(2).pow_u64(253)
         - Fq::from(4) * (0..84).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::ONE);
     Simulator::<Fp>::simulate(doubling, |dr, witness| {
-        R_BASE.mul_unbound(dr, &witness)?;
+        let bits = Uint::<_, 254>::alloc(dr, witness)?;
+        R_BASE.mul(dr, bits.bits())?;
         Ok(())
     })
     .map(|_| ())
@@ -181,9 +193,9 @@ fn exceptional_additions_are_rejected() {
         *orchard::VALUE_COMMIT_V * (0..16).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::from(2));
     for onto in [prefix, -prefix] {
         Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
-            let value = Uint::alloc(dr, witness)?;
+            let value = Uint::<_, 51>::alloc(dr, witness)?;
             let blind_point = Point::constant(dr, onto.to_affine())?;
-            V_BASE.mul_amount(dr, &value, &blind_point)?;
+            V_BASE.mul_and_add(dr, value.bits(), &blind_point)?;
             Ok(())
         })
         .map(|_| ())

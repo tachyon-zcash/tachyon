@@ -142,9 +142,14 @@ impl Step<Pasta> for OutputBind {
         pad.clone().enforce_nonzero(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
         })?;
-        let blind_point =
-            fixed_base::R_BASE.mul_unbound(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
-        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
+        // The blind's 254 bits are free: nothing else binds rcv, and their
+        // binary value below 2^254 is the scalar.
+        let blind_bits = gadgets::uint::Uint::<_, 254>::alloc(
+            dr,
+            witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)),
+        )?;
+        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
+        let cv = fixed_base::NEG_V_BASE.mul_and_add(dr, amount.bits(), &blind_point)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),

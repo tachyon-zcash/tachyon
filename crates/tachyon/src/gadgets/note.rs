@@ -6,7 +6,13 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe as _,
 };
-use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
+use ragu_primitives::{
+    Boolean, Element, GadgetExt as _, Point,
+    allocator::Allocator,
+    decompose,
+    io::Write,
+    vec::{ConstLen, FixedVec},
+};
 
 use crate::{
     constants::MAX_MONEY,
@@ -66,13 +72,16 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         })
     }
 
-    /// The Fp digest representing the native maximum-fee blind.
-    ///
-    /// Fixed-base multiplication reads its 254 bits as the scalar the
-    /// native derivation embeds in Fq, so a blind at or above $2^{254}$ has no
-    /// proof.
-    pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
-        poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
+    /// The bits of the native maximum-fee blind's Fp digest, from ragu's
+    /// `decompose`. They recompose to the digest, so they are its canonical
+    /// bits and their value is the scalar the native derivation embeds in Fq;
+    /// a digest at or above $2^{254}$ has no proof.
+    pub(crate) fn derive_feemax_blind(
+        &self,
+        dr: &mut D,
+    ) -> Result<FixedVec<Boolean<'dr, D>, ConstLen<254>>> {
+        let blind = poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)?;
+        FixedVec::try_from(decompose(dr, &mut (), &blind)?)
     }
 
     /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
@@ -86,7 +95,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         Element::constant(dr, Fp::from(MAX_MONEY)).enforce_equal(dr, &total)?;
         let blind = self.derive_feemax_blind(dr)?;
         let blind_point = fixed_base::R_BASE.mul(dr, &blind)?;
-        fixed_base::FEE_V_BASE.mul_amount(dr, slack, &blind_point)
+        fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
 
     /// Enforces a zero `value` and returns the max fee commitment for it: the

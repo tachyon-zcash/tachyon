@@ -10,7 +10,7 @@ use ragu_primitives::{
     Boolean, Element, GadgetExt as _, multipack,
     vec::{ConstLen, FixedVec},
 };
-use udon::field::Field as _;
+use udon::field::Field;
 
 use crate::pasta::Fp;
 
@@ -23,8 +23,9 @@ pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
-    /// Allocates the bits of `value`, which must fit `BITS` bits.
-    pub(crate) fn alloc(dr: &mut D, value: DriverValue<D, Fp>) -> Result<Self> {
+    /// Allocates the bits of `value`, an element of either Pasta field, which
+    /// must fit `BITS` bits.
+    pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
         let bits = D::try_just(|| {
             let bits = value.take().to_le_bits();
             if bits.as_ref().iter().skip(BITS).any(|bit| *bit) {

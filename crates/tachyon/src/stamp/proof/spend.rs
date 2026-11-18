@@ -17,7 +17,7 @@ use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    gadgets::fixed_base,
+    gadgets::{fixed_base, uint::Uint},
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
@@ -171,13 +171,15 @@ impl Step<Pasta> for SpendBind {
             ragu_core::Error::InvalidWitness("SpendBind: next-epoch nullifier is zero".into())
         })?;
 
-        let blind_point =
-            fixed_base::R_BASE.mul_unbound(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+        // The blind's 254 bits are free: nothing else binds rcv, and their
+        // binary value below 2^254 is the scalar.
+        let blind_bits = Uint::<_, 254>::alloc(dr, witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
         let cv = secret
             .note
             .value
             .to_bits(dr)
-            .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
+            .and_then(|bits| fixed_base::V_BASE.mul_and_add(dr, bits.bits(), &blind_point))?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();
