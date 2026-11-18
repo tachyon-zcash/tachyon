@@ -6,8 +6,8 @@ use crate::{digest::poseidon, note, primitives::effect};
 #[test]
 fn randomizer_embeds_the_poseidon_output() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let theta = ActionEntropy::random(rng);
     let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
+    let theta = ActionEntropy::random::<effect::Spend>(rng, cm);
 
     let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
     let output: Fq = theta.randomizer::<effect::Output>(cm).into();

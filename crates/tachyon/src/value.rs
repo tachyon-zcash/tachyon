@@ -14,6 +14,7 @@ use crate::{
         MAX_MONEY,
         orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
     },
+    gadgets::fixed_base::FixedBase,
     pasta::{Ep, EpAffine, Fq},
 };
 
@@ -48,11 +49,12 @@ impl Trapdoor {
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
-    /// Generate a nonzero random trapdoor for an action.
+    /// Generate a nonzero random trapdoor for an action, selecting again while
+    /// it is zero or at least $2^{254}$, which no value commitment step proves.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         loop {
             let scalar = Fq::random(|bytes| rng.fill_bytes(bytes));
-            if scalar != Fq::ZERO {
+            if scalar != Fq::ZERO && FixedBase::<85>::accepts(scalar) {
                 return Self(scalar);
             }
         }

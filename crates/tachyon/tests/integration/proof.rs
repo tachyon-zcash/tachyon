@@ -12,6 +12,7 @@ use zcash_tachyon::{
     TachygramSetPoly, action,
     constants::EPOCH_MAX,
     digest::poseidon,
+    effect,
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
@@ -337,7 +338,7 @@ fn spend_rejects_invalid_note() {
 
     let bind_pcd = honest_spend_bind(rng, app, &user, &note, spendable_pcd);
     assert!(app.verify_uncompressed(&bind_pcd, &mut *rng).unwrap());
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
     let (forged_action, ()) = app
         .fuse(
             rng,
@@ -370,7 +371,7 @@ fn step_accepts_zero_value_note() {
             witness::output_bind(((), ()), zero_output, rcv),
         )
         .unwrap();
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Output>(rng, zero_output.commitment());
     let anchor = Anchor::random(rng);
     let (output_action, ()) = app
         .fuse(
@@ -411,7 +412,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spend_epoch = height.epoch();
     let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
 
     let spendable = user.spendable_init(app, &pool, &note, height);
     let secret = user.note_secret(app, note);
@@ -425,8 +426,11 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         )
         .unwrap();
     let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
-    let (.., foreign_action_set, _) =
-        witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
+    let (.., foreign_action_set, _) = witness::spend_action(
+        (*bind_pcd.data(), ()),
+        ActionEntropy::random::<effect::Spend>(rng, note.commitment()),
+        user.pak,
+    );
 
     for (action_witness, expected) in [
         (
@@ -924,7 +928,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
     let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Output>(rng, note.commitment());
     let anchor = Anchor::random(rng);
     let pad = Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
@@ -949,8 +953,11 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         )
     );
     let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
-    let (.., foreign_action_set, _) =
-        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
+    let (.., foreign_action_set, _) = witness::output_action(
+        (*bind_pcd.data(), ()),
+        ActionEntropy::random::<effect::Output>(rng, note.commitment()),
+        anchor,
+    );
 
     for (action_witness, expected) in [
         (

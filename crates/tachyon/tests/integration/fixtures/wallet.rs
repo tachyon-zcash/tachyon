@@ -49,7 +49,7 @@ pub fn output_plan<RNG: CryptoRng>(
     note: Note,
 ) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
     let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Output>(rng, note.commitment());
     let plan = action::Plan::output(note, theta, rcv);
     (rcv, theta, plan)
 }
@@ -169,7 +169,7 @@ pub(crate) fn lifted(
 }
 
 pub(crate) fn spend_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_note("spend fee", 0)
+    WalletSim::new(shared_sk()).labelled_max_fee_note("spend fee", 0)
 }
 
 pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
@@ -186,7 +186,7 @@ pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Un
 }
 
 pub(crate) fn spend_with_fee_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_note("spend with fee maximum", 300)
+    WalletSim::new(shared_sk()).labelled_max_fee_note("spend with fee maximum", 300)
 }
 
 pub(crate) fn spend_with_fee(
@@ -205,7 +205,7 @@ pub(crate) fn spend_with_fee(
 }
 
 pub(crate) fn alice_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_note("alice fee", 0)
+    WalletSim::new(shared_sk()).labelled_max_fee_note("alice fee", 0)
 }
 
 pub(crate) fn alice_output_note() -> Note {
@@ -369,7 +369,7 @@ impl WalletSim {
                     |height| self.spendable_init(app, pool, &note, height),
                 );
                 let rcv = value::Trapdoor::random(rng);
-                let theta = ActionEntropy::random(rng);
+                let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
                 spend_plans.push(action::Plan::spend(note, theta, rcv, |alpha| {
                     self.pak.ak.derive_action_public(&alpha)
                 }));
@@ -380,7 +380,7 @@ impl WalletSim {
                 .copied()
                 .map(|note| {
                     let rcv = value::Trapdoor::random(rng);
-                    let theta = ActionEntropy::random(rng);
+                    let theta = ActionEntropy::random::<effect::Output>(rng, note.commitment());
                     action::Plan::output(note, theta, rcv)
                 })
                 .collect();
@@ -439,6 +439,21 @@ impl WalletSim {
             psi: nullifier::Trapdoor::random(&mut rng),
             rcm: note::CommitmentTrapdoor::random(&mut rng),
         }
+    }
+
+    /// A [`labelled_note`](Self::labelled_note) built as a max fee note.
+    pub fn labelled_max_fee_note(&self, label: &str, value: u64) -> Note {
+        let mut key = u32::try_from(label.len()).unwrap().to_le_bytes().to_vec();
+        key.extend_from_slice(label.as_bytes());
+        key.extend_from_slice(&value.to_le_bytes());
+        let mut rng = keyed_rng("labelled note", &key);
+        let psi = nullifier::Trapdoor::random(&mut rng);
+        Note::max_fee(
+            &mut rng,
+            self.sk.derive_payment_key(),
+            value::Positive::try_from(value).unwrap(),
+            psi,
+        )
     }
 
     pub fn random_note(&self, value_amount: u64) -> Note {

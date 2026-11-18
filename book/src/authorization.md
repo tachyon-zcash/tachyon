@@ -42,6 +42,7 @@ $$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \maths
 `theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
 The stamp steps multiply by the output's 254 bits, so an output at or above $2^{254}$ has no proof.
 A uniform output reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
+The planner selects `theta` again whenever the action's `alpha` reaches it. This is planner behaviour, not a consensus or circuit rule; a `theta` chosen otherwise only risks a proof that doesn't verify.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,

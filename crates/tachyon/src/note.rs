@@ -39,6 +39,7 @@ use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
+    gadgets::fixed_base::FixedBase,
     keys::PaymentKey,
     nullifier,
     pasta::{Fp, Fq},
@@ -80,6 +81,30 @@ pub struct Note {
 }
 
 impl Note {
+    /// A max fee note with a fresh $rcm$, selecting again while its feemax
+    /// blind is at least $2^{254}$, which no fee step proves.
+    ///
+    /// A max fee note built another way whose blind lands there yields a proof
+    /// that doesn't verify.
+    pub fn max_fee(
+        rng: &mut impl CryptoRng,
+        pk: PaymentKey,
+        value: value::Positive,
+        psi: nullifier::Trapdoor,
+    ) -> Self {
+        loop {
+            let note = Self {
+                pk,
+                value,
+                psi,
+                rcm: CommitmentTrapdoor::random(rng),
+            };
+            if FixedBase::<85>::accepts(note.derive_feemax_blind().into()) {
+                return note;
+            }
+        }
+    }
+
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
     #[must_use]

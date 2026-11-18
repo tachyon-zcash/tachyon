@@ -17,7 +17,7 @@ use rand_core::CryptoRng;
 use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action, bundle,
+    action, bundle, effect,
     entropy::ActionEntropy,
     fee,
     stamp::{
@@ -97,11 +97,17 @@ fn plan_prove_rejects_invalid_inputs() {
     let sp_b = user.spendable_init(app, pool, &note_b, height);
     let anchor = sp_a.data().2;
 
-    let (rcv_a, theta_a) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
+    let (rcv_a, theta_a) = (
+        value::Trapdoor::random(rng),
+        ActionEntropy::random::<effect::Spend>(rng, note_a.commitment()),
+    );
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let (rcv_b, theta_b) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
+    let (rcv_b, theta_b) = (
+        value::Trapdoor::random(rng),
+        ActionEntropy::random::<effect::Spend>(rng, note_b.commitment()),
+    );
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
@@ -208,7 +214,10 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let spendable = user.spendable_init(app, pool, &note, cm_height);
     let plan_anchor = pool.block(plan_height).anchor();
 
-    let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
+    let (rcv, theta) = (
+        value::Trapdoor::random(rng),
+        ActionEntropy::random::<effect::Spend>(rng, note.commitment()),
+    );
     let spend = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
@@ -323,7 +332,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let note = PoolSim::shared_note(1000);
     let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
     let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
+    let theta = ActionEntropy::random::<effect::Spend>(rng, note.commitment());
     let spend_plan = action::Plan::spend(note, theta, rcv, |alpha| {
         wallet.pak.ak.derive_action_public(&alpha)
     });

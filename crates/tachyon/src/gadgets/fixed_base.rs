@@ -357,6 +357,19 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
 }
 
 impl FixedBase<85> {
+    /// Whether [`mul_element`](Self::mul_element) and
+    /// [`mul_scalar`](Self::mul_scalar) prove a multiplication by `scalar`:
+    /// its integer value is below $2^{254}$.
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn accepts(scalar: Fq) -> bool {
+        !scalar
+            .to_le_bits()
+            .as_ref()
+            .iter()
+            .skip(Fp::CAPACITY as usize)
+            .any(|&bit| bit)
+    }
+
     /// $\[h\]B + P$ for an element $h$ below $2^{254}$, unsatisfiable for any
     /// larger $h$. Its 254 bits are unique without a comparison against $p$,
     /// and the 255th bit the table reads is pinned to zero.

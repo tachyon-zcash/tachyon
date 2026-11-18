@@ -11,6 +11,7 @@ use rand_core::CryptoRng;
 use udon::field::Field as _;
 
 use crate::{
+    gadgets::fixed_base::FixedBase,
     note,
     pasta::{Fp, Fq},
     primitives::Effect,
@@ -41,9 +42,19 @@ impl ActionEntropy {
         Fp::from_bytes(bytes).map(Self)
     }
 
-    /// Sample fresh per-action entropy.
-    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
+    /// Sample fresh entropy for an action of effect `E` on the note committing
+    /// to `cm`, selecting again while its randomizer is at least $2^{254}$,
+    /// which no stamp step proves.
+    ///
+    /// Entropy obtained another way, such as [`from_bytes`](Self::from_bytes),
+    /// whose randomizer lands there yields a proof that doesn't verify.
+    pub fn random<E: Effect>(rng: &mut impl CryptoRng, cm: note::Commitment) -> Self {
+        loop {
+            let theta = Self(Fp::random(|bytes| rng.fill_bytes(bytes)));
+            if FixedBase::<85>::accepts(E::derive_alpha(theta, cm)) {
+                return theta;
+            }
+        }
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
