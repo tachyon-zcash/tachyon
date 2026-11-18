@@ -11,7 +11,6 @@
     clippy::too_many_arguments,
     clippy::type_complexity,
     missing_docs,
-    unreachable_pub,
     reason = "test code"
 )]
 

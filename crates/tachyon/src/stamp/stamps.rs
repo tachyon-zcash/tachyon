@@ -1,6 +1,4 @@
-//! Stamps and anchors.
-
-extern crate alloc;
+//! Stamp states, proof formats, and proving plans.
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};

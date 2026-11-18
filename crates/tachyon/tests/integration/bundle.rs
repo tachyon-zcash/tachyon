@@ -20,7 +20,11 @@ use zcash_tachyon::entropy::ActionEntropy;
 use zcash_tachyon::keys::private;
 use zcash_tachyon::pasta::{Ep, Eq, Fp};
 use zcash_tachyon::stamp::{self, ProofStamp, StrippedStamp};
-use zcash_tachyon::{BlockHeight, SignatureError, Tachygram, action, effect, fee, value, *};
+use zcash_tachyon::{
+    Anchor, BlockHeight, Bundle, CompactSize, EpochIndex, SignatureError, Tachygram,
+    TachygramSetCommit, TachygramSetPoly, TachyonBundle, VerificationError, VerifyCoverageError,
+    action, effect, fee, value,
+};
 
 use super::fixtures::application;
 use crate::fixtures;

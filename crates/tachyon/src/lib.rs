@@ -3,8 +3,6 @@
 //! The Tachyon shielded transaction protocol.
 
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 #[cfg(feature = "std")]
 extern crate std;
 

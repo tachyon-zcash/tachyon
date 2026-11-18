@@ -25,7 +25,10 @@
 //! unchanged, binds nothing until a public input, a header or a consensus check
 //! fixes it.
 
-#![allow(missing_docs, reason = "todo")]
+#![allow(
+    missing_docs,
+    reason = "circuit implementation details; public proof contracts are documented separately"
+)]
 
 pub mod delegation;
 pub mod evidence;
@@ -61,7 +64,10 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, Accel
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
+#[expect(
+    clippy::large_stack_frames,
+    reason = "Ragu's registration chain carries the application builder by value; the debug frame is tracked until that API can reduce it"
+)]
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
