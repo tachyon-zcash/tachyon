@@ -68,8 +68,6 @@
 //! Specifying $i_\mathsf{max} + 1$ below $\lfloor\sqrt{p/3}\rfloor$ is
 //! sufficient to prevent collisions.
 
-#![allow(clippy::min_ident_chars, reason = "just for fun")]
-
 extern crate alloc;
 
 use alloc::vec;

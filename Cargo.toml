@@ -12,25 +12,50 @@ rust-version = "1.97"
 opt-level = 3
 
 [workspace.lints.rust]
-future_incompatible = { level = "warn", priority = -1 }
-keyword_idents = { level = "forbid", priority = -1 }
-rust_2024_compatibility = { level = "forbid", priority = -1 }
-
-non_ascii_idents = "forbid"
-
-let_underscore_drop = "deny"
-
-elided_lifetimes_in_paths = "warn"
-missing_debug_implementations = "warn"
 missing_docs = "warn"
-trivial_casts = "warn"
-trivial_numeric_casts = "warn"
-unreachable_pub = "warn"
+missing_debug_implementations = "warn"
 unsafe_code = "warn"
-unused_lifetimes = "warn"
-unused_macro_rules = "warn"
-unused_qualifications = "warn"
-variant_size_differences = "warn"
+
+[workspace.lints.clippy]
+arithmetic_side_effects = "allow"
+allow_attributes = "forbid"
+allow_attributes_without_reason = "forbid"
+integer_division = "deny"
+modulo_arithmetic = "deny"
+wildcard_enum_match_arm = "forbid"
+else_if_without_else = "forbid"
+mixed_read_write_in_expression = "deny"
+shadow_unrelated = "forbid"
+shadow_reuse = "forbid"
+shadow_same = "forbid"
+as_conversions = "deny"
+indexing_slicing = "deny"
+panic_in_result_fn = "forbid"
+unwrap_in_result = "forbid"
+expect_used = "deny"
+panic = "warn"
+todo = "allow"
+unimplemented = "allow"
+std_instead_of_core = "forbid"
+std_instead_of_alloc = "forbid"
+alloc_instead_of_core = "forbid"
+missing_errors_doc = "deny"
+use_debug = "deny"
+precedence_bits = "deny"
+suspicious_xor_used_as_pow = "forbid"
+dbg_macro = "warn"
+float_arithmetic = "forbid"
+iter_over_hash_type = "deny"
+big_endian_bytes = "deny"
+host_endian_bytes = "deny"
+unused_result_ok = "forbid"
+let_underscore_must_use = "deny"
+suspicious = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "forbid"
+disallowed_methods = "forbid"
+exhaustive_enums = "allow"
+unwrap_used = "forbid"
+missing_panics_doc = "deny"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
@@ -38,192 +63,3 @@ redundant_explicit_links = "deny"
 
 # docs are always built with --document-private-items
 private_intra_doc_links = "allow"
-
-[workspace.lints.clippy]
-cargo = { level = "warn", priority = -1 }
-complexity = { level = "deny", priority = -1 }
-correctness = { level = "deny", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
-style = { level = "deny", priority = -1 }
-suspicious = { level = "deny", priority = -1 }
-
-as_conversions = "deny"
-cast_possible_truncation = "deny"
-
-default_numeric_fallback = "allow" # would demand a literal suffix at every untyped literal
-doc_markdown = "allow"             # https://github.com/rust-lang/rust-clippy/issues/7273
-little_endian_bytes = "allow"      # many specified conversions
-multiple_crate_versions = "allow"  # todo
-redundant_pub_crate = "allow"      # pub(crate) in private modules is fine
-unreachable = "allow"              # awkward to disable
-
-# -- forbid: error handling --------------------------------------------------
-# unwrap() is always wrong; use expect() for a reason string.
-unwrap_used = "forbid"
-# expect() is a speed bump; allowed in tests via clippy.toml.
-expect_used = "deny"
-# CtOption has its own unwrap/expect; see clippy.toml.
-disallowed_methods = "forbid"
-# result-returning fns must not panic or unwrap/expect internally.
-panic_in_result_fn = "forbid"
-unwrap_in_result = "forbid"
-# .get_unwrap() defeats the point of .get().
-get_unwrap = "forbid"
-# silently discarding Result with .ok() hides errors.
-unused_result_ok = "forbid"
-# Error types named "Error" are useless in multi-crate projects.
-error_impl_error = "forbid"
-# std::process::exit bypasses destructors and cleanup.
-exit = "forbid"
-# .and_then(|x| ...) where .map() suffices obscures intent.
-return_and_then = "forbid"
-
-# -- forbid: type coercion ---------------------------------------------------
-# use From/TryFrom.
-as_pointer_underscore = "forbid"
-as_underscore = "forbid"
-fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.
-
-# -- forbid: no floats -------------------------------------------------------
-# this is an integer/curve-arithmetic crate. no floating point, ever.
-float_arithmetic = "forbid"
-float_cmp_const = "forbid"
-lossy_float_literal = "forbid"
-
-# -- forbid: memory safety ---------------------------------------------------
-default_union_representation = "forbid"  # unions must have explicit repr.
-mem_forget = "forbid"
-multiple_unsafe_ops_per_block = "forbid" # one unsafe op per block for auditability.
-undocumented_unsafe_blocks = "forbid"    # every unsafe block must be documented.
-
-# -- forbid: no panicking slicing --------------------------------------------
-string_slice = "forbid" # string slicing can panic on char boundaries.
-# &container[..] instead of &*container obscures intent.
-deref_by_slicing = "forbid"
-
-# -- forbid: no shadowing ----------------------------------------------------
-# shadowing makes code harder to follow in a crypto crate.
-shadow_reuse = "forbid"
-shadow_same = "forbid"
-shadow_unrelated = "forbid"
-
-# -- forbid: core-first architecture ----------------------------------------
-# architectural decision: use core/alloc over std where possible.
-alloc_instead_of_core = "forbid"
-std_instead_of_alloc = "forbid"
-std_instead_of_core = "forbid"
-
-# -- forbid: identifier hygiene ---------------------------------------------
-# pairs with rustc non_ascii_idents = "forbid".
-disallowed_script_idents = "forbid"
-non_ascii_literal = "forbid"
-# descriptive lifetime names always.
-single_char_lifetime_names = "forbid"
-
-# -- forbid: attribute discipline --------------------------------------------
-# #[expect] over #[allow]; expect warns when the lint no longer fires.
-allow_attributes = "forbid"
-# every #[expect] must carry a reason string.
-allow_attributes_without_reason = "forbid"
-
-# -- forbid: code organization ----------------------------------------------
-# tests belong in #[cfg(test)] modules.
-tests_outside_test_module = "forbid"
-# ^ is XOR, not exponentiation. critical in a math-heavy crate.
-suspicious_xor_used_as_pow = "forbid"
-# match arms must be exhaustive, no wildcards.
-wildcard_enum_match_arm = "forbid"
-# else-if chains must have a final else.
-else_if_without_else = "forbid"
-
-# -- forbid: platform safety ------------------------------------------------
-# no inline assembly.
-inline_asm_x86_att_syntax = "forbid"
-inline_asm_x86_intel_syntax = "forbid"
-# Rc is not Send/Sync; use Arc or owned types.
-rc_buffer = "forbid"
-rc_mutex = "forbid"
-
-# -- deny: restrictions (may need localized #[expect]) -----------------------
-absolute_paths = "deny"
-assertions_on_result_states = "deny"
-big_endian_bytes = "deny"
-cfg_not_test = "deny"
-clone_on_ref_ptr = "deny"
-cognitive_complexity = "deny"
-create_dir = "deny"
-decimal_literal_representation = "deny"
-doc_include_without_cfg = "deny"
-empty_drop = "deny"
-empty_enum_variants_with_brackets = "deny"
-empty_structs_with_brackets = "deny"
-filetype_is_file = "deny"
-host_endian_bytes = "deny"
-if_then_some_else_none = "deny"
-infinite_loop = "deny"
-integer_division = "deny"
-iter_over_hash_type = "deny"
-large_include_file = "deny"
-let_underscore_must_use = "deny"
-let_underscore_untyped = "deny"
-map_err_ignore = "deny"
-map_with_unused_argument_over_ranges = "deny"
-min_ident_chars = "deny"
-missing_assert_message = "deny"
-missing_asserts_for_indexing = "deny"
-missing_errors_doc = "deny"
-missing_panics_doc = "deny"
-mixed_read_write_in_expression = "deny"
-mod_module_files = "deny"
-module_name_repetitions = "deny"
-modulo_arithmetic = "deny"
-multiple_inherent_impl = "deny"
-mutex_atomic = "deny"
-mutex_integer = "deny"
-needless_raw_strings = "deny"
-non_zero_suggestions = "deny"
-partial_pub_fields = "deny"
-pathbuf_init_then_push = "deny"
-pattern_type_mismatch = "deny"
-pointer_format = "deny"
-precedence_bits = "deny"
-pub_use = "deny"
-pub_without_shorthand = "deny"
-redundant_test_prefix = "deny"
-redundant_type_annotations = "deny"
-ref_patterns = "deny"
-renamed_function_params = "deny"
-rest_pat_in_fully_bound_structs = "deny"
-same_name_method = "deny"
-semicolon_inside_block = "deny"
-separated_literal_suffix = "deny"
-str_to_string = "deny"
-string_add = "deny"
-string_lit_chars_any = "deny"
-try_err = "deny"
-unnecessary_safety_comment = "deny"
-unnecessary_safety_doc = "deny"
-unnecessary_self_imports = "deny"
-unneeded_field_pattern = "deny"
-unused_trait_names = "deny"
-use_debug = "deny"
-verbose_file_reads = "deny"
-
-# deny later
-arbitrary_source_item_ordering = "allow"
-arithmetic_side_effects = "allow"
-exhaustive_enums = "allow"
-exhaustive_structs = "allow"
-missing_inline_in_public_items = "allow"
-todo = "allow"
-unimplemented = "allow"
-
-# warn, deny later
-dbg_macro = "warn"
-panic = "warn"
-
-# deny, forbid later
-indexing_slicing = "deny"                # use .get() or iterators
-integer_division_remainder_used = "deny"

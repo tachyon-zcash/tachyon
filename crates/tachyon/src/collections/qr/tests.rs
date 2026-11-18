@@ -1,5 +1,3 @@
-#![allow(clippy::min_ident_chars, reason = "test code")]
-
 use core::iter;
 
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};

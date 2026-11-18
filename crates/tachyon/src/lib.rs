@@ -4,7 +4,6 @@
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(clippy::pub_use, reason = "exporting items for consumers")]
 
 #[cfg(feature = "std")]
 extern crate std;

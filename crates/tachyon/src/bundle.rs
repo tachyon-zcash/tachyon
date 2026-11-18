@@ -1108,7 +1108,6 @@ impl Bundle<StrippedStamp> {
 }
 
 /// A Tachyon bundle in one of its valid wire states.
-#[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug, From, IsVariant, TryInto)]
 pub enum TachyonBundle {
     /// No bundle.
@@ -1121,7 +1120,6 @@ pub enum TachyonBundle {
 
 impl PartialEq for TachyonBundle {
     fn eq(&self, other: &Self) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => other.is_no_bundle(),
             Self::Proven(ref bundle) => {
@@ -1152,7 +1150,6 @@ impl TachyonBundle {
     /// Borrow the inner bundle as a trait object, if it exists.
     #[must_use]
     pub fn as_dyn(&self) -> Option<&Bundle<dyn StampState>> {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => None,
             Self::Proven(ref bundle) => Some(bundle),
@@ -1188,7 +1185,6 @@ impl TachyonBundle {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => StateByte::NoBundle.write(writer),
             Self::Proven(ref stamped) => stamped.write(writer),
@@ -1200,7 +1196,6 @@ impl TachyonBundle {
     /// on the variant.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::AUTH_DIGEST_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.auth_digest(),
@@ -1212,7 +1207,6 @@ impl TachyonBundle {
     /// variant.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::COMMIT_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.commitment(),
@@ -1223,7 +1217,6 @@ impl TachyonBundle {
     /// Whether this bundle has a proof stamp listing at least one adjunct.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
@@ -1234,7 +1227,6 @@ impl TachyonBundle {
     /// Whether this bundle has a proof stamp listing no adjuncts.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_autonome(),

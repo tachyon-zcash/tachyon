@@ -60,7 +60,6 @@ pub const EPOCH_SIZE: u32 = if cfg!(feature = "test-epoch-size") {
 /// Maximum epoch index: every block height maps to an epoch.
 #[expect(
     clippy::integer_division,
-    clippy::integer_division_remainder_used,
     reason = "the trailing epoch is partial; flooring is the intended index"
 )]
 pub const EPOCH_MAX: u32 = BLOCK_MAX / EPOCH_SIZE;

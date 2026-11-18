@@ -29,9 +29,7 @@ impl NoteMasterKey {
     #[must_use]
     #[expect(
         clippy::as_conversions,
-        clippy::cast_possible_truncation,
         clippy::indexing_slicing,
-        clippy::integer_division_remainder_used,
         reason = "the remainder indexes an array of PoseidonFp::RATE"
     )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
@@ -57,10 +55,8 @@ impl NoteMasterKey {
     #[must_use]
     #[expect(
         clippy::as_conversions,
-        clippy::cast_possible_truncation,
         clippy::indexing_slicing,
         clippy::integer_division,
-        clippy::integer_division_remainder_used,
         reason = "both widths are small powers of two and divide exactly"
     )]
     pub fn derive_window(&self, epoch_start: EpochIndex) -> [Nullifier; NF_DERIVATION_WIDTH] {

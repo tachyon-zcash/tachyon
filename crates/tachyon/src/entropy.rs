@@ -31,7 +31,6 @@ use crate::{
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub struct ActionEntropy(#[debug(skip)] pub(crate) Fp);
 
 impl ActionEntropy {

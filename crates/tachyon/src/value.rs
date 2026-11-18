@@ -41,7 +41,6 @@ pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
 /// ($\mathbb{F}_q$, Pallas scalar field).
 #[derive(Clone, Copy, Debug, Default, Into)]
-#[expect(clippy::module_name_repetitions, reason = "deliberate name")]
 pub struct ValueTrapdoor(#[debug(skip)] pub(crate) Fq);
 
 impl Trapdoor {
@@ -78,7 +77,6 @@ impl Trapdoor {
 /// where $\mathcal{V}$, $\mathcal{R}$ are generator points
 /// shared with Orchard (§5.4.8.3).
 #[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
-#[expect(clippy::module_name_repetitions, reason = "deliberate name")]
 pub struct ValueCommitment(#[debug(skip)] Ep);
 
 impl From<EpAffine> for Commitment {

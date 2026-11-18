@@ -17,8 +17,6 @@
 //! block alignment is a consensus convention, with validators checking that
 //! anchor endpoints belong to the published per-block anchor sequence.
 
-#![allow(clippy::module_name_repetitions, reason = "intentional names")]
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},

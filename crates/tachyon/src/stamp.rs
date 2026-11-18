@@ -1,12 +1,5 @@
 //! Stamps and anchors.
 
-#![allow(clippy::module_name_repetitions, reason = "intentional names")]
-#![allow(
-    clippy::multiple_inherent_impl,
-    clippy::same_name_method,
-    reason = "todo: take read/write off StampState"
-)]
-
 extern crate alloc;
 
 pub mod proof;
@@ -450,10 +443,6 @@ impl Plan {
     #[expect(
         clippy::type_complexity,
         reason = "each spend's secret, spendable and spans; the stamp and its authorization data"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "proves, lifts and merges every planned action"
     )]
     pub fn prove<RNG: CryptoRng>(
         self,

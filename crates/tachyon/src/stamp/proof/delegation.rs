@@ -313,7 +313,6 @@ impl Step<Pasta> for NullifierDerive {
 
     #[expect(
         clippy::integer_division,
-        clippy::integer_division_remainder_used,
         clippy::indexing_slicing,
         reason = "the fixed sponge rate divides the window width; indices are fixed"
     )]
@@ -343,7 +342,6 @@ impl Step<Pasta> for NullifierDerive {
             let (epoch_start, _) = witness.take();
             #[expect(
                 clippy::as_conversions,
-                clippy::cast_possible_truncation,
                 reason = "the window width is a small constant"
             )]
             let epoch_end = EpochIndex::new(
