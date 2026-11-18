@@ -5,24 +5,24 @@ use super::*;
 use crate::pasta;
 
 #[test]
-fn blind_multiplication_is_the_blind_times_the_base() {
+fn scalar_multiplication_is_the_scalar_times_the_base() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut blinds = Vec::from([
+    let mut scalars = Vec::from([
         Fq::ONE,
         -Fq::ONE,
         Fq::from(2).pow_u64(254),
         Fq::random(|bytes| rng.fill_bytes(bytes)),
     ]);
     // Each digit in every window.
-    blinds.extend(
+    scalars.extend(
         (1..8).map(|digit| (0..85).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::from(digit))),
     );
-    for blind in blinds {
-        Simulator::<Fp>::simulate(blind, |dr, witness| {
-            let point = R_BASE.mul_blinding(dr, &witness)?;
+    for scalar in scalars {
+        Simulator::<Fp>::simulate(scalar, |dr, witness| {
+            let point = R_BASE.mul_scalar(dr, &witness)?;
             assert_eq!(
                 point.value().take(),
-                (*orchard::VALUE_COMMIT_R * blind).to_affine()
+                (*orchard::VALUE_COMMIT_R * scalar).to_affine()
             );
             Ok(())
         })
@@ -31,7 +31,7 @@ fn blind_multiplication_is_the_blind_times_the_base() {
 }
 
 #[test]
-fn digest_multiplication_accepts_254_bit_digests_and_rejects_wider() {
+fn element_multiplication_accepts_254_bit_elements_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);
     let start = *ACTION_AUTH_GENERATOR * Fq::random(|bytes| rng.fill_bytes(bytes));
     let accepted = [
@@ -51,7 +51,7 @@ fn digest_multiplication_accepts_254_bit_digests_and_rejects_wider() {
                 let onto_point = onto
                     .map(|point| Point::constant(dr, point.to_affine()))
                     .transpose()?;
-                let point = fixed_base.mul_digest(dr, &element, onto_point.as_ref())?;
+                let point = fixed_base.mul_element(dr, &element, onto_point.as_ref())?;
                 let expected =
                     base * pasta::digest_scalar(digest) + onto.unwrap_or_else(Ep::identity);
                 assert_eq!(point.value().take(), expected.to_affine());
@@ -65,7 +65,7 @@ fn digest_multiplication_accepts_254_bit_digests_and_rejects_wider() {
                 let onto_point = onto
                     .map(|point| Point::constant(dr, point.to_affine()))
                     .transpose()?;
-                fixed_base.mul_digest(dr, &element, onto_point.as_ref())?;
+                fixed_base.mul_element(dr, &element, onto_point.as_ref())?;
                 Ok(())
             })
             .map(|_| ())
@@ -78,7 +78,7 @@ fn digest_multiplication_accepts_254_bit_digests_and_rejects_wider() {
 #[test]
 #[should_panic(expected = "a Poseidon digest is below 2^254")]
 fn digest_scalar_rejects_wider_digests() {
-    let _ = pasta::digest_scalar(Fp::from(2).pow_u64(254));
+    let _scalar = pasta::digest_scalar(Fp::from(2).pow_u64(254));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         for amount in &accepted {
             Simulator::<Fp>::simulate(Fp::from(*amount), |dr, witness| {
                 let value = Uint::alloc(dr, witness)?;
-                let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
+                let blind_point = R_BASE.mul_scalar(dr, &Simulator::<Fp>::just(|| blind))?;
                 let point = fixed_base.mul_amount(dr, &value, &blind_point)?;
                 let expected = *orchard::VALUE_COMMIT_R * blind + base * Fq::from(*amount);
                 assert_eq!(point.value().take(), expected.to_affine());
@@ -107,7 +107,7 @@ fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
         for amount in rejected {
             Simulator::<Fp>::simulate(amount, |dr, witness| {
                 let value = Uint::alloc(dr, witness)?;
-                let blind_point = R_BASE.mul_blinding(dr, &Simulator::<Fp>::just(|| blind))?;
+                let blind_point = R_BASE.mul_scalar(dr, &Simulator::<Fp>::just(|| blind))?;
                 fixed_base.mul_amount(dr, &value, &blind_point)?;
                 Ok(())
             })
@@ -129,7 +129,7 @@ fn fee_commitment_spans_zero_to_max_money() {
                 dr,
                 witness.map(|value| Fp::from(MAX_MONEY) - Fp::from(value)),
             )?;
-            let blind_point = R_BASE.mul_digest(dr, &digest, None)?;
+            let blind_point = R_BASE.mul_element(dr, &digest, None)?;
             let point = FEE_V_BASE.mul_amount(dr, &slack, &blind_point)?;
             let expected = *orchard::VALUE_COMMIT_R * blind_scalar
                 - *orchard::VALUE_COMMIT_V * Fq::from(maximum);
@@ -151,14 +151,14 @@ fn fee_commitment_spans_zero_to_max_money() {
 #[test]
 fn exceptional_additions_are_rejected() {
     Simulator::<Fp>::simulate(Fq::ZERO, |dr, witness| {
-        R_BASE.mul_blinding(dr, &witness)?;
+        R_BASE.mul_scalar(dr, &witness)?;
         Ok(())
     })
     .map(|_| ())
     .unwrap_err();
     Simulator::<Fp>::simulate(Fp::ZERO, |dr, witness| {
         let element = Element::alloc(dr, &mut (), witness)?;
-        G_BASE.mul_digest(dr, &element, None)?;
+        G_BASE.mul_element(dr, &element, None)?;
         Ok(())
     })
     .map(|_| ())
@@ -169,7 +169,7 @@ fn exceptional_additions_are_rejected() {
     let doubling = Fq::from(2).pow_u64(253)
         - Fq::from(4) * (0..84).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::ONE);
     Simulator::<Fp>::simulate(doubling, |dr, witness| {
-        R_BASE.mul_blinding(dr, &witness)?;
+        R_BASE.mul_scalar(dr, &witness)?;
         Ok(())
     })
     .map(|_| ())

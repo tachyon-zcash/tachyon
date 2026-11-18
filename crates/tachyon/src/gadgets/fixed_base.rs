@@ -357,26 +357,27 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
 }
 
 impl FixedBase<85> {
-    /// $\[h\]B + P$ for a digest $h$ below $2^{254}$, unsatisfiable for any
+    /// $\[h\]B + P$ for an element $h$ below $2^{254}$, unsatisfiable for any
     /// larger $h$. Its 254 bits are unique without a comparison against $p$,
     /// and the 255th bit the table reads is pinned to zero.
-    pub(crate) fn mul_digest<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_element<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        digest: &Element<'dr, D>,
+        element: &Element<'dr, D>,
         onto: Option<&Point<'dr, D, EpAffine>>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let mut bits = decompose(dr, &mut (), digest)?;
+        let mut bits = decompose(dr, &mut (), element)?;
         let top = Boolean::alloc(dr, &mut (), D::just(|| false))?;
         top.element().enforce_zero(dr)?;
         bits.push(top);
         self.multiply(dr, &FixedVec::<_, ConstLen<255>>::try_from(bits)?, onto)
     }
 
-    /// $\[k\]B$ for some $k$ whose 255 free bits nothing recomposes: $r$ or
-    /// $r + q$, for a blind nothing else binds.
+    /// $\[k\]B$ for a scalar $r$ read as 255 free bits that nothing
+    /// recomposes, so $k$ is $r$ or $r + q$. Sound only for a blind nothing
+    /// else binds.
     #[expect(clippy::indexing_slicing, reason = "native fixed field representation")]
-    pub(crate) fn mul_blinding<'dr, D: Driver<'dr, F = Fp>>(
+    pub(crate) fn mul_scalar<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
         scalar: &DriverValue<D, Fq>,
