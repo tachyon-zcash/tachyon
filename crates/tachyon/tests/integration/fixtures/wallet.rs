@@ -15,7 +15,6 @@ use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, action,
     bundle::{self, Bundle},
     effect,
-    entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
@@ -33,7 +32,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
-    let (_, _, plan) = output_plan(rng, note);
+    let plan = output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
         vec![],
         vec![plan],
@@ -44,12 +43,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
     action_sigs.into_iter().next().unwrap()
 }
 
-pub fn output_plan<RNG: CryptoRng>(
-    rng: &mut RNG,
-    note: Note,
-) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
-    let plan = action::Plan::output(rng, note);
-    (plan.rcv, plan.theta, plan)
+pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
+    action::Plan::output(rng, note)
 }
 
 pub(crate) fn shared_sk() -> private::SpendingKey {

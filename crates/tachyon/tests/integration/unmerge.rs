@@ -355,7 +355,7 @@ fn unmerge_splitting_a_bundle() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::shared().mint_anchor();
     let (alice_plan, alice) = alice(app);
-    let (_, _, kept_plan) = output_plan(rng, wallet.random_note(300));
+    let kept_plan = output_plan(rng, wallet.random_note(300));
     let removed_plan = alice_plan
         .iter_actions(|_| None, |plan| Some(*plan))
         .flatten()
@@ -433,7 +433,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
     let max_fee_note = wallet.random_note(100);
     let fee = value::Positive::try_from(40u64).unwrap();
     let [original, reproven] = [(), ()].map(|()| {
-        let output = output_plan(rng, note).2;
+        let output = output_plan(rng, note);
         let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
         let signatures = plan
             .sign(

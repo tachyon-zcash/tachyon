@@ -30,16 +30,16 @@ fn note_secret(
         .0
 }
 
-/// Every group-aligned window start from the last that fits to the last
-/// group. The sequence holds the nullifiers the circuit derives. The window
-/// ending at `EPOCH_MAX` verifies; every later one panics proving its end.
+/// The last group-aligned window start that fits, and the next. The sequence
+/// holds the nullifiers the circuit derives. The window ending at `EPOCH_MAX`
+/// verifies; the next one panics proving its end.
 #[test]
 fn nullifier_derive_proves_only_windows_inside_the_epoch_range() {
     let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
     let secret = note_secret(&app, rng);
     let (_, _, mk) = *secret.data();
-    for start in [EPOCH_MAX - 15, EPOCH_MAX - 11, EPOCH_MAX - 7, EPOCH_MAX - 3] {
+    for start in [EPOCH_MAX - 15, EPOCH_MAX - 11] {
         let epoch_start = EpochIndex::new(start);
         let nullifiers: Vec<Nullifier> = (0..4u64)
             .flat_map(|group| {

@@ -209,12 +209,12 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let plan_anchor = pool.block(plan_height).anchor();
 
     let spend = action::Plan::spend(rng, note, |alpha| user.pak.ak.derive_action_public(&alpha));
-    let (out_rcv, out_theta, output) = output_plan(rng, user.random_note(200));
+    let output = output_plan(rng, user.random_note(200));
     let secret = user.note_secret(app, note);
     let max_fee_note = user.random_note(0);
     let plan = stamp::Plan::new(
         vec![(spend.descriptor(), spend.theta, spend.rcv)],
-        vec![(output.descriptor(), out_theta, output.note, out_rcv)],
+        vec![(output.descriptor(), output.theta, output.note, output.rcv)],
         plan_anchor,
         max_fee_note,
         value::Positive::ZERO,
@@ -303,7 +303,7 @@ fn overlapping_stamps_cannot_aggregate() {
         .collect();
     let fees_a = BTreeMap::from([(alice_bundle.fee, alice_bundle.fee_auth)]);
     let output_a = alice_bundle.stamp;
-    let (_, _, plan_b) = output_plan(rng, alice_note);
+    let plan_b = output_plan(rng, alice_note);
     let max_fee_note = wallet.random_note(0);
     let (output_b, desc_b, change_b, v_fee) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
@@ -322,7 +322,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let spend_plan = action::Plan::spend(rng, note, |alpha| {
         wallet.pak.ak.derive_action_public(&alpha)
     });
-    let (_, _, output) = output_plan(rng, wallet.random_note(600));
+    let output = output_plan(rng, wallet.random_note(600));
     let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
     let signatures = plan
         .sign(

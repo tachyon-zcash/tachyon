@@ -49,12 +49,12 @@ fn fee_less_output_bundle(
     ]
     .concat();
     FEE_LESS.get(&key, |rng| {
-        let (rcv, theta, output_plan) = output_plan(rng, note);
+        let output_plan = output_plan(rng, note);
         let (bind_pcd, ()) = app
             .seed(
                 rng,
                 output::OutputBind,
-                witness::output_bind(((), ()), output_plan.note, rcv),
+                witness::output_bind(((), ()), output_plan.note, output_plan.rcv),
             )
             .unwrap();
         let (cm, pad, _cv) = *bind_pcd.data();
@@ -62,7 +62,7 @@ fn fee_less_output_bundle(
             .fuse(
                 rng,
                 OutputAction,
-                witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+                witness::output_action((*bind_pcd.data(), ()), output_plan.theta, anchor),
                 bind_pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
