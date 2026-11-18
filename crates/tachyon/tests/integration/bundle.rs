@@ -54,7 +54,7 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)))
                 .collect(),
             wallet.random_note(0),
         );
@@ -552,13 +552,17 @@ fn read_preserves_action_order() {
 
     let note_a = wallet.random_note(200);
     let note_b = wallet.random_note(300);
-    let (rcv_a, theta_a, plan_a) = output_plan(rng, note_a);
-    let (rcv_b, theta_b, plan_b) = output_plan(rng, note_b);
-    let alpha_a = theta_a.randomizer::<effect::Output>(note_a.commitment());
-    let alpha_b = theta_b.randomizer::<effect::Output>(note_b.commitment());
+    let plan_a = output_plan(rng, note_a);
+    let plan_b = output_plan(rng, note_b);
+    let alpha_a = plan_a
+        .theta
+        .randomizer::<effect::Output>(note_a.commitment());
+    let alpha_b = plan_b
+        .theta
+        .randomizer::<effect::Output>(note_b.commitment());
     let mut items = [
-        (plan_a.descriptor(), alpha_a, rcv_a),
-        (plan_b.descriptor(), alpha_b, rcv_b),
+        (plan_a.descriptor(), alpha_a, plan_a.rcv),
+        (plan_b.descriptor(), alpha_b, plan_b.rcv),
     ];
     items.sort_by_key(|item| Reverse(item.0));
 
@@ -1227,7 +1231,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)))
                 .collect(),
             wallet.random_note(0),
         );
@@ -1431,6 +1435,7 @@ fn bundle_lift_preserves_coverage() {
     assert_eq!(lifted.stamp.anchor, pool.block(BlockHeight(2)).anchor());
     assert!(lifted.is_autonome());
     assert_eq!(lifted.verify_covered(&[]).unwrap(), covered);
+    assert!(lifted.verify_proof(rng, app, &covered.0).unwrap());
 }
 
 #[test]

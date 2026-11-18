@@ -40,6 +40,9 @@ $$ \alpha_{\text{spend}} = \text{Poseidon}_\text{Tachyon-Spend}(\theta, \mathsf{
 $$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \mathsf{cm}) $$
 
 `theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
+The stamp steps multiply by the output's 254 bits, so an output at or above $2^{254}$ has no proof.
+A uniform output reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
+The caller planning the action confirms that its `alpha` is below $2^{254}$, or it risks producing a proof that is false; nothing reselects `theta`.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,

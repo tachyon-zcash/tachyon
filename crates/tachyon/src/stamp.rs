@@ -24,15 +24,15 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
-    App, HEADER_SIZE, bridge_hash, output,
+    App, HEADER_SIZE, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::wire;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::pasta::Pasta;
+use ragu_pcd::wire;
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -41,6 +41,7 @@ use udon::{
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
+    bridge_hash::bridge_hash,
     bundle::StateByte,
     digest::{blake2b, poseidon},
     effect,
@@ -420,6 +421,7 @@ impl Plan {
     ///
     /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
     /// the fee change, and the fee. Each pair has the smaller tachygram first.
+    /// Successful construction does not guarantee that the stamp verifies.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -441,7 +443,7 @@ impl Plan {
     ///
     /// - [`ProveError::MissingPcd`] if the spend PCDs do not match the planned
     ///   spends, or a spend does not reach the plan's anchor.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::ProofFailed`] if Ragu cannot construct the proof.
     ///
     /// # Panics
     ///
@@ -461,9 +463,9 @@ impl Plan {
         app: &App<'_>,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<
         (
@@ -652,16 +654,16 @@ pub enum ProveError {
     /// Missing PCD inputs for the operation.
     #[display("missing pcd inputs: {_0}")]
     MissingPcd(Box<dyn error::Error + Send + Sync + 'static>),
-    /// Proof creation failed; carries the underlying step-level error.
+    /// Proof construction failed; carries the underlying Ragu error.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu_core::Error),
 }
 
 /// An uncompressed Ragu proof.
-pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+pub type Uncompressed = ragu_pcd::Proof<Pasta, ProductionRank>;
 
 /// A compressed Ragu proof.
-pub type Compressed = ragu::CompressedProof<Pasta>;
+pub type Compressed = ragu_pcd::CompressedProof<Pasta>;
 
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
@@ -785,7 +787,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
+        bind_pcd: ragu_pcd::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
@@ -925,7 +927,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
@@ -954,6 +956,8 @@ impl ProofStamp<Uncompressed> {
 
     /// Advances the stamp's anchor along `spans`, computing the action digests
     /// from the covered action and fee descriptors.
+    /// Successful construction does not guarantee that the lifted stamp
+    /// verifies.
     ///
     /// # Errors
     ///
@@ -970,7 +974,7 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);
@@ -987,6 +991,8 @@ impl ProofStamp<Uncompressed> {
     }
 
     /// Merges two stamps into one covering stamp.
+    /// Successful construction does not guarantee that the merged stamp
+    /// verifies.
     ///
     /// Each side supplies borrowed action and fee maps, from which the action
     /// digests and tachygrams for the merge proof are derived.
@@ -1096,7 +1102,8 @@ impl ProofStamp<Uncompressed> {
     ///
     /// Each side supplies borrowed action and fee maps. The quotient's action
     /// digests and tachygrams are the dividend's less the divisor's. A divisor
-    /// that does not divide this stamp fails in the proof system.
+    /// that does not divide this stamp can produce a proof that fails
+    /// verification, even when construction succeeds.
     ///
     /// The quotient lists this stamp's adjuncts less the divisor's adjuncts and
     /// `divisor_txid`, the txid of the one transaction the divisor covers

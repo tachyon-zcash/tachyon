@@ -635,6 +635,8 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
     /// `anchor_start` or one of its members.
+    /// Successful construction does not guarantee that the lifted stamp
+    /// verifies.
     ///
     /// # Errors
     ///
@@ -650,7 +652,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu_core::Error> {
         if spans.is_empty() {
             return Ok(self);

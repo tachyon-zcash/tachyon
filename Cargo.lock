@@ -8,7 +8,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5665045de74fda906c0abfaec40cf2551f88c34dccea869f3fe950dde7209764"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
 ]
@@ -176,7 +176,7 @@ checksum = "74ef43543e701c01ad77d3a5922755c6a1d71b22d942cb8042be4994b380caff"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -198,7 +198,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn",
+ "syn 2.0.118",
  "unicode-xid",
 ]
 
@@ -254,12 +254,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "241afe8c15ffa21933eaefe8a563af36fd9fc98a3e8a044e8f7db52eb1fae3d8"
 dependencies = [
  "addchain",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -415,6 +415,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -485,24 +495,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
-name = "ragu"
-version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
-dependencies = [
- "blake2b_simd",
- "ragu_backend",
- "ragu_circuits",
- "ragu_core",
- "ragu_pcd",
- "ragu_primitives",
- "rand",
- "zakura-udon",
-]
-
-[[package]]
 name = "ragu_acceleration"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "ragu_backend",
  "ragu_core",
@@ -512,7 +507,7 @@ dependencies = [
 [[package]]
 name = "ragu_backend"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "ragu_circuits",
  "ragu_core",
@@ -522,7 +517,7 @@ dependencies = [
 [[package]]
 name = "ragu_circuits"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "blake2b_simd",
  "ragu_core",
@@ -535,7 +530,7 @@ dependencies = [
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "ragu_macros",
  "tachyon-maybe-rayon",
@@ -546,20 +541,20 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.10",
 ]
 
 [[package]]
 name = "ragu_pcd"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "lazy_static",
  "ragu_acceleration",
@@ -577,7 +572,7 @@ dependencies = [
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=a1395401ae978a95a1423614e299dd48d550cdf5#a1395401ae978a95a1423614e299dd48d550cdf5"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379#6d1ac095ff50e444dd2d1dff0c5ccad9d4ecf379"
 dependencies = [
  "ragu_core",
  "ragu_macros",
@@ -675,7 +670,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -727,6 +722,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "tachyon-maybe-rayon"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -759,7 +765,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -818,7 +824,7 @@ checksum = "d674d135b4a8c1d7e813e2f8d1c9a58308aee4a680323066025e53132218bd91"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -864,7 +870,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "zakura-bento-core",
 ]
 
@@ -945,7 +951,7 @@ dependencies = [
  "ff",
  "group",
  "lazy_static",
- "ragu",
+ "ragu_acceleration",
  "ragu_circuits",
  "ragu_core",
  "ragu_pcd",
@@ -975,5 +981,5 @@ checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]

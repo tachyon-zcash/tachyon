@@ -132,6 +132,11 @@ impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
+    ///
+    /// # Caller contract
+    ///
+    /// The caller confirms that the randomizer $\alpha$ its `theta` gives fits
+    /// `Fp::CAPACITY` bits, or it risks producing a proof that is false.
     #[must_use]
     pub fn spend(
         note: Note,
@@ -156,6 +161,11 @@ impl Plan<effect::Output> {
     /// Assemble an output action plan.
     ///
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
+    ///
+    /// # Caller contract
+    ///
+    /// The caller confirms that the randomizer $\alpha$ its `theta` gives fits
+    /// `Fp::CAPACITY` bits, or it risks producing a proof that is false.
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();

@@ -80,13 +80,13 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
 
 #[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrIntake>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 #[derive(Clone)]
 pub(crate) struct QrBucketEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrBucket>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, qr::QrBucket>,
     pub members: Vec<Tachygram>,
 }
 
@@ -128,7 +128,7 @@ impl QrIntakeEntry {
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
         key.extend_from_slice(&profile.bits.to_le_bytes());
-        key.extend_from_slice(&Eq::from(self.pcd.commitments()[0]).to_affine().to_bytes());
+        key.extend_from_slice(&Eq::from(self.pcd.commitments()[1]).to_affine().to_bytes());
         key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
         SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
     }
@@ -260,7 +260,7 @@ impl EvidenceLeaf {
 
 #[derive(Clone)]
 pub(crate) struct EvidenceTreeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+    pub pcd: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
     pub real_leaves: usize,
 }
@@ -292,9 +292,9 @@ impl EvidenceTreeEntry {
             buckets: &[&QrBucketEntry],
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+        ) -> ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
             let [first, second] = <[_; 2]>::try_from(buckets).unwrap();
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
@@ -317,13 +317,13 @@ impl EvidenceTreeEntry {
             rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
-            left: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
-            right: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            left: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            right: ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+        ) -> ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
                 return pcd.clone();
@@ -341,11 +341,14 @@ impl EvidenceTreeEntry {
             buckets: &[&QrBucketEntry],
             pairs: &mut BTreeMap<
                 Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
             >,
-            trees: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>>,
+            trees: &mut BTreeMap<
+                Vec<u8>,
+                ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            >,
         ) -> (
-            ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
             Vec<EvidenceLeaf>,
         ) {
             let (left, right, leaves) = if buckets.len() == EVIDENCE_TREE_ARITY {
@@ -484,10 +487,14 @@ impl EvidenceTreeEntry {
         leaf: &EvidenceLeaf,
     ) -> ragu_core::Result<QrBucketEntry> {
         let mut node = self.pcd.clone();
-        for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-            let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).map_err(
-                |_error| ragu_core::Error::InvalidWitness("incomplete evidence path".into()),
-            )?;
+        let paths = leaf
+            .path
+            .chunks(evidence::EvidenceTreeDescend::LEVELS)
+            .map(|chunk| {
+                <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk)
+                    .expect("the fixture pads paths to complete descent chunks")
+            });
+        for path in paths {
             let witness = witness::evidence_tree_descend((*node.data(), ()), path);
             let (pcd, ()) = app.fuse(
                 rng,
@@ -529,7 +536,7 @@ impl QrBucketEntry {
         rng: &mut RNG,
         app: &App<'_>,
         nf: impl Fn(EpochIndex) -> Nullifier,
-    ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
         let (epoch, ..) = *self.pcd.data();
         let witness = witness::qr_unspent_init((*self.pcd.data(), ()), nf(epoch).into());
         let (segment, ()) = app

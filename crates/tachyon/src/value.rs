@@ -42,26 +42,15 @@ pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
 /// ($\mathbb{F}_q$, Pallas scalar field).
 #[derive(Clone, Copy, Debug, Default, Into)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueTrapdoor(#[debug(skip)] Fq);
+pub struct ValueTrapdoor(#[debug(skip)] pub(crate) Fq);
 
 impl Trapdoor {
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
-    /// Generate a nonzero random trapdoor for an action.
+    /// Generate a random trapdoor for an action.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        loop {
-            let scalar = Fq::random(|bytes| rng.fill_bytes(bytes));
-            if scalar != Fq::ZERO {
-                return Self(scalar);
-            }
-        }
-    }
-
-    /// A trapdoor derived from other secret data, such as a max fee note's
-    /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
-        Self(scalar)
+        Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Commit to a given value with this trapdoor.

@@ -48,7 +48,7 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
         &ProofStamp<stamp::Uncompressed>,
     ),
     (digests, tachygrams): (&[ActionDigest], &[Tachygram]),
-) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
+) -> ragu_pcd::Pcd<Pasta, ProductionRank, Stamp> {
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         app.bridge_hash(stamp_a.tachygram_set.as_ref().to_affine())
             .unwrap()
@@ -212,12 +212,12 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let spend = action::Plan::spend(note, theta, rcv, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
-    let (out_rcv, out_theta, output) = output_plan(rng, user.random_note(200));
+    let output = output_plan(rng, user.random_note(200));
     let secret = user.note_secret(app, note);
     let max_fee_note = user.random_note(0);
     let plan = stamp::Plan::new(
         vec![(spend.descriptor(), theta, rcv)],
-        vec![(output.descriptor(), out_theta, output.note, out_rcv)],
+        vec![(output.descriptor(), output.theta, output.note, output.rcv)],
         plan_anchor,
         max_fee_note,
         value::Positive::ZERO,
@@ -274,11 +274,19 @@ fn plan_prove_lifts_a_spend_along_spans() {
         pool.anchor_span(app, cm_height..=cm_height),
         pool.anchor_span(app, plan_height..=plan_height),
     ];
-    assert_matches!(
-        plan.prove(rng, app, &user.pak, vec![(secret, spendable, gapped)]),
-        Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(err))) if err.to_string()
-            == "ActionLift: actions anchor is neither the span's start nor a member"
-    );
+    let (forged, pairs, cm_change, v_fee) = plan
+        .prove(rng, app, &user.pak, vec![(secret, spendable, gapped)])
+        .unwrap();
+    let digests: Vec<ActionDigest> = pairs
+        .iter()
+        .map(|(desc, &pair)| desc.digest(pair))
+        .chain([fee::Descriptor {
+            cv_feemax: max_fee_note.cv_feemax(),
+            v_fee,
+        }
+        .digest(cm_change)])
+        .collect();
+    assert!(!forged.verify_proof(rng, app, digests).unwrap());
 }
 
 #[test]
@@ -298,7 +306,7 @@ fn overlapping_stamps_cannot_aggregate() {
         .collect();
     let fees_a = BTreeMap::from([(alice_bundle.fee, alice_bundle.fee_auth)]);
     let output_a = alice_bundle.stamp;
-    let (_, _, plan_b) = output_plan(rng, alice_note);
+    let plan_b = output_plan(rng, alice_note);
     let max_fee_note = wallet.random_note(0);
     let (output_b, desc_b, change_b, v_fee) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
@@ -319,7 +327,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let spend_plan = action::Plan::spend(note, theta, rcv, |alpha| {
         wallet.pak.ak.derive_action_public(&alpha)
     });
-    let (_, _, output) = output_plan(rng, wallet.random_note(600));
+    let output = output_plan(rng, wallet.random_note(600));
     let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
     let signatures = plan
         .sign(
@@ -357,29 +365,28 @@ fn overlapping_stamps_cannot_aggregate() {
         (
             (output_a.clone(), (&desc_a, &fees_a)),
             (output_b, (&desc_b, &fees_b)),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+            "two outputs of the same note",
         ),
         (
             (spend_a.stamp, (&fixture_pairs, &fixture_fees)),
             (spend_b.stamp, (&reproven_actions, &overlap_fees)),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+            "a spend reproven in both stamps",
         ),
         (
             (output_a.clone(), (&desc_a, &fees_a)),
             (output_a, (&desc_a, &fees_a)),
-            "StampMerge: merged action set must be the product of left and right action sets",
+            "a stamp merged with itself",
         ),
     ] {
-        assert_matches!(
-            left.clone().merge(
+        let merged = left
+            .clone()
+            .merge(
                 rng,
                 app,
                 left_covered,
                 (right.clone(), [0; 32], right_covered.0, right_covered.1),
-            ),
-            Err(ragu_core::Error::InvalidWitness(err))
-                if err.to_string() == expected
-        );
+            )
+            .unwrap();
 
         let mut digests = Vec::new();
         let mut merged_tachygrams = Vec::new();
@@ -393,6 +400,9 @@ fn overlapping_stamps_cannot_aggregate() {
                 digests.push(descriptor.digest(change));
             }
         }
+        let union: BTreeSet<ActionDigest> = digests.iter().copied().collect();
+        assert!(!merged.verify_proof(rng, app, union).unwrap(), "{expected}");
+
         let forged =
             forge_overlapping_merge(rng, app, (&left, &right), (&digests, &merged_tachygrams));
         let stamp = ProofStamp {
@@ -514,6 +524,11 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     assert_eq!(decoded.adjuncts, stamp.adjuncts);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
+    assert!(
+        decoded
+            .verify_proof(rng, app, digests.iter().copied())
+            .unwrap()
+    );
 
     let forged = ProofStamp {
         tachygram_set: TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
@@ -536,6 +551,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         .map(|(&desc, &(_, pair))| (desc, pair))
         .collect();
     let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
+    let fee_digest = alice.fee.digest(alice.fee_auth);
     let stamp = alice.stamp.clone();
     let lifted_to = BlockHeight(2);
 
@@ -560,10 +576,16 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     assert_eq!(lifted_decoded.adjuncts, stamp.adjuncts);
     assert!(lifted_decoded.verify_proof(rng, app, digests).unwrap());
 
-    let foreign = BTreeMap::from([(random_action(rng).0, *descriptors.values().next().unwrap())]);
-    assert_matches!(
-        stamp.lift(rng, app, &foreign, &fees, vec![span]),
-        Err(ragu_core::Error::InvalidWitness(_))
+    let foreign = random_action(rng).0;
+    let pair = *descriptors.values().next().unwrap();
+    let mismatched_descriptors = BTreeMap::from([(foreign, pair)]);
+    let mismatched = stamp
+        .lift(rng, app, &mismatched_descriptors, &fees, vec![span])
+        .unwrap();
+    assert!(
+        !mismatched
+            .verify_proof(rng, app, [foreign.digest(pair), fee_digest],)
+            .unwrap()
     );
 }
 
@@ -616,19 +638,26 @@ fn merge_after_lift() {
         .collect();
     let fees_b = BTreeMap::from([(bundle_b.fee, bundle_b.fee_auth)]);
 
-    assert_matches!(
-        stamp_a.clone().merge(
+    let digests: Vec<ActionDigest> = bundle_a
+        .verify_covered(&[])
+        .unwrap()
+        .0
+        .into_iter()
+        .chain(bundle_b.verify_covered(&[]).unwrap().0)
+        .collect();
+    let unlifted = stamp_a
+        .clone()
+        .merge(
             rng,
             app,
             (&desc_a, &fees_a),
-            (
-                stamp_b.clone(),
-                mock_txid(&bundle_b),
-                &desc_b, &fees_b
-            ),
-        ),
-        Err(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "StampMerge: anchors must match"
+            (stamp_b.clone(), mock_txid(&bundle_b), &desc_b, &fees_b),
+        )
+        .unwrap();
+    assert!(
+        !unlifted
+            .verify_proof(rng, app, digests.iter().copied())
+            .unwrap()
     );
 
     let lifted_a = lifted(app, &bundle_a, pool, BlockHeight(1)..=BlockHeight(2));
@@ -636,6 +665,7 @@ fn merge_after_lift() {
     assert_eq!(lifted_a.stamp.anchor, stamp_b.anchor);
     let combined = merged(app, &lifted_a, &bundle_b);
     assert_eq!(combined.stamp.anchor, lifted_a.stamp.anchor);
+    assert!(combined.stamp.verify_proof(rng, app, digests).unwrap());
 }
 
 #[test]
@@ -663,8 +693,10 @@ fn mismatched_merge_descriptors_fail_verification() {
         .chain(bundle_b.verify_covered(&[]).unwrap().0)
         .collect();
 
-    assert_matches!(
-        bundle_a.stamp.clone().merge(
+    let mismatched = bundle_a
+        .stamp
+        .clone()
+        .merge(
             rng,
             app,
             (&desc_a, &fees_a),
@@ -674,8 +706,22 @@ fn mismatched_merge_descriptors_fail_verification() {
                 &desc_b,
                 &fees_b,
             ),
-        ),
-        Err(ragu_core::Error::InvalidWitness(_))
+        )
+        .unwrap();
+    let mismatched_digests: Vec<ActionDigest> = bundle_a
+        .verify_covered(&[])
+        .unwrap()
+        .0
+        .into_iter()
+        .chain([
+            foreign.digest(bundle_b.action_auth[0].1),
+            bundle_b.fee.digest(bundle_b.fee_auth),
+        ])
+        .collect();
+    assert!(
+        !mismatched
+            .verify_proof(rng, app, mismatched_digests)
+            .unwrap()
     );
 
     let honest = merged(app, &bundle_a, &bundle_b).stamp;

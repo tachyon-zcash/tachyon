@@ -2,7 +2,6 @@ extern crate alloc;
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
     vec,
 };
 use core::assert_matches;
@@ -50,12 +49,12 @@ fn fee_less_output_bundle(
     ]
     .concat();
     FEE_LESS.get(&key, |rng| {
-        let (rcv, theta, output_plan) = output_plan(rng, note);
+        let output_plan = output_plan(rng, note);
         let (bind_pcd, ()) = app
             .seed(
                 rng,
                 output::OutputBind,
-                witness::output_bind(((), ()), output_plan.note, rcv),
+                witness::output_bind(((), ()), output_plan.note, output_plan.rcv),
             )
             .unwrap();
         let (cm, pad, _cv) = *bind_pcd.data();
@@ -63,7 +62,7 @@ fn fee_less_output_bundle(
             .fuse(
                 rng,
                 OutputAction,
-                witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+                witness::output_action((*bind_pcd.data(), ()), output_plan.theta, anchor),
                 bind_pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -130,7 +129,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.1 = value::Positive::try_from(301).unwrap();
                 corrupt
             },
-            "FeeFuse: change is out of range",
+            "a fee above the maximum",
         ),
         (
             {
@@ -138,7 +137,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.2.0 = other.2.0.clone();
                 corrupt
             },
-            "FeeFuse: output action set must be the product of left and fee action sets",
+            "a substituted output action set",
         ),
         (
             {
@@ -146,20 +145,21 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.2.1 = other.2.1;
                 corrupt
             },
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
+            "a substituted output tachygram set",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    FeeFuse,
-                    corrupt,
-                    left.stamp.proof.clone().carry::<Actions>(anchor),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                FeeFuse,
+                corrupt,
+                left.stamp.proof.clone().carry::<Actions>(anchor),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 }
@@ -207,17 +207,16 @@ fn fee_fuse_slack_boundaries() {
         if maximum < MAX_MONEY {
             let mut corrupt = witness;
             corrupt.1 = value::Positive::try_from(maximum + 1).unwrap();
-            assert_matches!(
-                app.fuse(
+            let (forged, ()) = app
+                .fuse(
                     rng,
                     FeeFuse,
                     corrupt,
                     left_pcd.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
-                ).err(),
-                Some(ragu_core::Error::InvalidWitness(err))
-                    if err.to_string() == "FeeFuse: change is out of range"
-            );
+                )
+                .unwrap();
+            assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
         }
     }
 }
@@ -283,17 +282,16 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .chain([once.fee_auth])
             .collect(),
     );
-    assert_matches!(
-        app.fuse(
+    let (repeated, ()) = app
+        .fuse(
             rng,
             FeeFuse,
             repeated_witness.clone(),
             once.stamp.proof.clone().carry::<Actions>(anchor),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
-        .err(),
-        Some(ragu_core::Error::InvalidWitness(_))
-    );
+        .unwrap();
+    assert!(!app.verify_uncompressed(&repeated, &mut *rng).unwrap());
     let mut twice_stamp = once.stamp.clone();
     twice_stamp.tachygram_set = repeated_witness.2.1.commit();
     let twice = Bundle {
@@ -668,7 +666,7 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.0.value = value::Positive::try_from(1).unwrap();
                 corrupt
             },
-            "FeeSeed: maximum fee must be zero",
+            "a nonzero maximum fee",
         ),
         (
             {
@@ -676,7 +674,7 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.2 = other.2.clone();
                 corrupt
             },
-            "FeeSeed: fee action set does not commit to the fee digest",
+            "a substituted fee action set",
         ),
         (
             {
@@ -684,12 +682,13 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.3 = other.3.clone();
                 corrupt
             },
-            "FeeSeed: fee tachygram set does not commit to the fee change note",
+            "a substituted fee tachygram set",
         ),
     ] {
-        assert_matches!(
-            app.seed(rng, FeeSeed, corrupt).err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app.seed(rng, FeeSeed, corrupt).unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}"
         );
     }
 
