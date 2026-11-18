@@ -44,7 +44,7 @@ impl QrDiscriminant {
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
-/// A descent's interpolant hint.
+/// The polynomial interpolating one class's square roots.
 #[derive(Clone, Copy, Debug)]
 pub struct QrInterpolant;
 
@@ -73,7 +73,7 @@ pub struct QrInterpolantCommit(Eq);
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
-/// A descent's quotient hint.
+/// The quotient polynomial of one class decomposition.
 #[derive(Clone, Copy, Debug)]
 pub struct QrQuotient;
 

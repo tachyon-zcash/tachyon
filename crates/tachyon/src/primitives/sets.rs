@@ -114,8 +114,7 @@ impl AnchorSetCommit {
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
-/// The polynomial whose roots are a stamp's tachygrams. A header that carries
-/// it keeps it last, where the bridge hash digests it.
+/// The polynomial whose roots are a set of tachygrams.
 #[derive(Clone, Copy, Debug)]
 pub struct TachygramSet;
 
@@ -137,8 +136,7 @@ impl OnlinePoly for ActionSet {}
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
 
-/// The polynomial whose roots are the anchors an
-/// [`AnchorSpan`](crate::stamp::proof::pool::AnchorSpan) folds to.
+/// The polynomial whose roots are an anchor span's anchors.
 #[derive(Clone, Copy, Debug)]
 pub struct AnchorSet;
 
