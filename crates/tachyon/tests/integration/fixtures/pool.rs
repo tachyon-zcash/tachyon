@@ -56,7 +56,14 @@ pub fn random_block_with<RNG: CryptoRng>(
     stamps
 }
 
-pub type StampEntry = (Anchor, Vec<Tachygram>, TachygramSetCommit, Anchor);
+/// One stamp in a simulated block, with its entry and exit anchors.
+#[derive(Clone, Debug)]
+pub struct StampEntry {
+    pub anchor_prev: Anchor,
+    pub tachygrams: Vec<Tachygram>,
+    pub commit: TachygramSetCommit,
+    pub anchor_next: Anchor,
+}
 
 #[derive(Clone, Debug)]
 pub struct PoolSimBlock {
@@ -75,7 +82,12 @@ impl PoolSimBlock {
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
                 let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
                 anchor = stamp_after;
-                (stamp_prev, tgs, commit, stamp_after)
+                StampEntry {
+                    anchor_prev: stamp_prev,
+                    tachygrams: tgs,
+                    commit,
+                    anchor_next: stamp_after,
+                }
             })
             .collect();
         Self {
@@ -85,10 +97,9 @@ impl PoolSimBlock {
     }
 
     pub fn anchor(&self) -> Anchor {
-        match self.stamps.last() {
-            Some(&(_, _, _, anchor)) => anchor,
-            None => self.prev,
-        }
+        self.stamps
+            .last()
+            .map_or(self.prev, |stamp| stamp.anchor_next)
     }
 }
 
@@ -228,7 +239,7 @@ impl PoolSim {
             let members = self
                 .stamps_between(span.0, span.1)
                 .iter()
-                .flat_map(|stamp| stamp.1.iter().copied())
+                .flat_map(|stamp| stamp.tachygrams.iter().copied())
                 .collect();
             let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
             let (pcd, ()) = app
@@ -429,7 +440,7 @@ impl PoolSim {
             let members = self
                 .stamps_between(span.0, span.1)
                 .iter()
-                .flat_map(|stamp| stamp.1.iter().copied())
+                .flat_map(|stamp| stamp.tachygrams.iter().copied())
                 .collect::<Vec<_>>();
             let count = Self::leaves(&members, discriminant, 0);
             let mut layer = self.qr_intakes(app, span, discriminant, 2);
@@ -491,7 +502,7 @@ impl PoolSim {
 
     /// The anchor after the stamp that mints the shared notes.
     pub fn mint_anchor(&self) -> Anchor {
-        self.block(BlockHeight(1)).stamps[0].3
+        self.block(BlockHeight(1)).stamps[0].anchor_next
     }
 
     fn push_block(&mut self, prev: Anchor, stamps: Vec<Vec<Tachygram>>) {
@@ -500,8 +511,9 @@ impl PoolSim {
         if height.is_first_in_epoch() {
             self.anchor_index.insert(prev, (height, 0));
         }
-        for (position, &(_prev_anchor, _, _, anchor)) in block.stamps.iter().enumerate() {
-            self.anchor_index.insert(anchor, (height, position + 1));
+        for (position, stamp) in block.stamps.iter().enumerate() {
+            self.anchor_index
+                .insert(stamp.anchor_next, (height, position + 1));
         }
         self.history.push(block);
     }
@@ -535,11 +547,11 @@ impl PoolSim {
             .collect();
 
         let (first, rest) = entries.split_first().unwrap();
-        assert_eq!(first.0, start);
-        let mut cursor = first.3;
+        assert_eq!(first.anchor_prev, start);
+        let mut cursor = first.anchor_next;
         for entry in rest {
-            assert_eq!(entry.0, cursor);
-            cursor = entry.3;
+            assert_eq!(entry.anchor_prev, cursor);
+            cursor = entry.anchor_next;
         }
         assert_eq!(cursor, end);
 
@@ -574,7 +586,7 @@ impl PoolSim {
                 self.block(BlockHeight(height))
                     .stamps
                     .iter()
-                    .map(|stamp| stamp.3)
+                    .map(|stamp| stamp.anchor_next)
             })
             .collect()
     }
@@ -596,24 +608,39 @@ impl PoolSim {
         ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
             let (last, prefix) = stamps.split_last().unwrap();
             if prefix.is_empty() {
-                let key = [Fp::from(last.0).to_bytes(), Fp::from(last.3).to_bytes()].concat();
+                let key = [
+                    Fp::from(last.anchor_prev).to_bytes(),
+                    Fp::from(last.anchor_next).to_bytes(),
+                ]
+                .concat();
                 return SEEDS.get(&key, |rng| {
-                    let witness = witness::anchor_span_seed(((), ()), last.0, epoch, &last.1);
+                    let witness = witness::anchor_span_seed(
+                        ((), ()),
+                        last.anchor_prev,
+                        epoch,
+                        &last.tachygrams,
+                    );
                     let (seed, ()) = app.seed(rng, pool::AnchorSpanSeed, witness).unwrap();
                     seed
                 });
             }
             let key = [
-                Fp::from(prefix[0].0).to_bytes(),
-                Fp::from(last.3).to_bytes(),
+                Fp::from(prefix[0].anchor_prev).to_bytes(),
+                Fp::from(last.anchor_next).to_bytes(),
             ]
             .concat();
             SPANS.get(&key, |rng| {
                 let left = prove(app, epoch, prefix);
                 let right = prove(app, epoch, &stamps[stamps.len() - 1..]);
-                let members = prefix.iter().map(|stamp| stamp.3).collect::<Vec<_>>();
-                let witness =
-                    witness::anchor_span_fuse((*left.data(), *right.data()), &members, &[last.3]);
+                let members = prefix
+                    .iter()
+                    .map(|stamp| stamp.anchor_next)
+                    .collect::<Vec<_>>();
+                let witness = witness::anchor_span_fuse(
+                    (*left.data(), *right.data()),
+                    &members,
+                    &[last.anchor_next],
+                );
                 let (fused, ()) = app
                     .fuse(rng, pool::AnchorSpanFuse, witness, left, right)
                     .unwrap();
@@ -643,12 +670,12 @@ impl PoolSim {
             .seed(
                 rng,
                 summary::SummarySeed,
-                witness::summary_seed(((), ()), start, epoch, &first.1),
+                witness::summary_seed(((), ()), start, epoch, &first.tachygrams),
             )
             .unwrap();
-        let mut held = first.1.clone();
+        let mut held = first.tachygrams.clone();
         for stamp in rest {
-            let witness = witness::summary_advance((*pcd.data(), ()), &held, &stamp.1);
+            let witness = witness::summary_advance((*pcd.data(), ()), &held, &stamp.tachygrams);
             let (advanced, ()) = app
                 .fuse(
                     rng,
@@ -658,7 +685,7 @@ impl PoolSim {
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .unwrap();
-            held.extend(stamp.1.iter().copied());
+            held.extend(stamp.tachygrams.iter().copied());
             pcd = advanced;
         }
         pcd
@@ -752,7 +779,7 @@ impl PoolSim {
                     let summary = Self::prove_summary(rng, app, entry, epoch, &stamps);
                     let members = stamps
                         .iter()
-                        .flat_map(|stamp| stamp.1.iter().copied())
+                        .flat_map(|stamp| stamp.tachygrams.iter().copied())
                         .collect();
                     let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
                     let (pcd, ()) = app

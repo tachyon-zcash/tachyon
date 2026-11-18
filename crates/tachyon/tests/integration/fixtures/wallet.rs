@@ -345,10 +345,9 @@ impl WalletSim {
                     .iter()
                     .enumerate()
                     .find(|&(_, block)| {
-                        block
-                            .stamps
-                            .iter()
-                            .any(|stamp| stamp.3 == anchor && stamp.1.contains(&cm))
+                        block.stamps.iter().any(|stamp| {
+                            stamp.anchor_next == anchor && stamp.tachygrams.contains(&cm)
+                        })
                     })
                     .map(|(height, _)| BlockHeight::from(height));
                 let spendable = creation.map_or_else(
@@ -583,22 +582,25 @@ impl WalletSim {
                 .block(init_height)
                 .stamps
                 .iter()
-                .map(|stamp| stamp.1.clone())
+                .map(|stamp| stamp.tachygrams.clone())
                 .collect::<Vec<_>>();
             let cm_idx = stamps
                 .iter()
                 .position(|tgs| tgs.contains(&cm.into()))
                 .unwrap();
 
-            let anchor_prev = pool.block(init_height).stamps[..cm_idx]
-                .iter()
-                .fold(pool.block(init_height).prev, |anchor, stamp| {
-                    anchor.next_stamp(init_height.epoch(), &stamp.2).unwrap()
-                });
+            let anchor_prev = pool.block(init_height).stamps[..cm_idx].iter().fold(
+                pool.block(init_height).prev,
+                |anchor, stamp| {
+                    anchor
+                        .next_stamp(init_height.epoch(), &stamp.commit)
+                        .unwrap()
+                },
+            );
 
             (
                 anchor_prev,
-                pool.block(init_height).stamps[cm_idx].3,
+                pool.block(init_height).stamps[cm_idx].anchor_next,
                 stamps[cm_idx].clone(),
             )
         };
@@ -714,10 +716,11 @@ impl WalletSim {
             .history
             .iter()
             .position(|block| {
-                block
-                    .stamps
-                    .iter()
-                    .any(|stamp| stamp.1.contains(&Tachygram::from(note.commitment())))
+                block.stamps.iter().any(|stamp| {
+                    stamp
+                        .tachygrams
+                        .contains(&Tachygram::from(note.commitment()))
+                })
             })
             .unwrap();
         let creation = BlockHeight::from(creation_height).epoch();

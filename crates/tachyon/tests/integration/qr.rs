@@ -1441,7 +1441,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)
             .iter()
-            .all(|entry| entry.3 != unpublished)
+            .all(|entry| entry.anchor_next != unpublished)
     );
 
     let bound_next = user.note_unspent(app, pool, &note, (epoch_next, epoch_next.next().unwrap()));
