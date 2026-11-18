@@ -2,7 +2,6 @@ extern crate alloc;
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
     vec,
 };
 use core::assert_matches;
@@ -125,18 +124,18 @@ fn fee_fuse_binds_its_sets() {
 
     let mut over_maximum = valid.clone();
     over_maximum.1 = value::Positive::try_from(301).unwrap();
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                FeeFuse,
-                over_maximum,
-                left.stamp.proof.clone().carry::<Actions>(anchor),
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "value exceeds its bit width"
+    let (over_maximum_pcd, ()) = app
+        .fuse(
+            rng,
+            FeeFuse,
+            over_maximum,
+            left.stamp.proof.clone().carry::<Actions>(anchor),
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&over_maximum_pcd, &mut *rng)
+            .unwrap()
     );
 
     for (corrupt, expected) in [
@@ -216,17 +215,16 @@ fn fee_fuse_slack_boundaries() {
         if maximum < MAX_MONEY {
             let mut corrupt = witness;
             corrupt.1 = value::Positive::try_from(maximum + 1).unwrap();
-            assert_matches!(
-                app.fuse(
+            let (forged, ()) = app
+                .fuse(
                     rng,
                     FeeFuse,
                     corrupt,
                     left_pcd.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
-                ).err(),
-                Some(ragu_core::Error::InvalidWitness(err))
-                    if err.to_string() == "value exceeds its bit width"
-            );
+                )
+                .unwrap();
+            assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
         }
     }
 }

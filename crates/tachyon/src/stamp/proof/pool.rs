@@ -667,11 +667,10 @@ impl Step<Pasta> for UnspentLift {
             let (bucket_epoch, _, bucket_anchor_next, ..) = right.take();
             #[expect(
                 clippy::expect_used,
-                reason = "the epoch gadget checked this successor"
+                reason = "QrBucketSeal rejects the final epoch, so only a bucket proof that \
+                          doesn't verify carries it"
             )]
-            let epoch_next = bucket_epoch
-                .next()
-                .expect("the checked bucket epoch has a successor");
+            let epoch_next = bucket_epoch.next().expect("bucket epoch has a successor");
             (
                 unspent_anchor_start,
                 unspent_epoch_start,

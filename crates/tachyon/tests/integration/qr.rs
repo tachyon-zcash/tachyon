@@ -1735,19 +1735,16 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
         discriminant,
     );
     let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), anchor_final_prev);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                qr::QrBucketSeal,
-                witness,
-                intake.pcd,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "value exceeds its bit width"
-    );
+    let (sealed, ()) = app
+        .fuse(
+            rng,
+            qr::QrBucketSeal,
+            witness,
+            intake.pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&sealed, &mut *rng).unwrap());
 }
 
 #[test]

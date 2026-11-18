@@ -1417,7 +1417,11 @@ impl Step<Pasta> for QrUnspentInit {
 
         let output = D::just(|| {
             let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = left.take();
-            #[expect(clippy::expect_used, reason = "the epoch gadget checked the successor")]
+            #[expect(
+                clippy::expect_used,
+                reason = "QrBucketSeal rejects the final epoch, so only a bucket proof that \
+                          doesn't verify carries it"
+            )]
             let epoch_next = bucket_epoch.next().expect("bucket epoch has a successor");
             (
                 bucket_anchor_start,

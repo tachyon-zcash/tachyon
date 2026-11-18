@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use ragu_core::{
-    Error, Result,
+    Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
@@ -25,16 +25,11 @@ pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
-    /// Allocates the bits of `value`, an element of either Pasta field, which
-    /// must fit `BITS` bits.
+    /// Allocates the low `BITS` bits of `value`, an element of either Pasta
+    /// field. The bits are free: a caller whose value may be wider binds them
+    /// to it, as [`from_element`](Self::from_element) does.
     pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
-        let bits = D::try_just(|| {
-            let bits = value.take().to_le_bits();
-            if bits.as_ref().iter().skip(BITS).any(|bit| *bit) {
-                return Err(Error::InvalidWitness("value exceeds its bit width".into()));
-            }
-            Ok(bits)
-        })?;
+        let bits = value.map(|element| element.to_le_bits());
         Ok(Self {
             bits: FixedVec::try_from_fn(|index| {
                 Boolean::alloc(
