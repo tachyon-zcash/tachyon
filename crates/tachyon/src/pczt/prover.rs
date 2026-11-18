@@ -175,10 +175,10 @@ impl Bundle {
         let (Some(partial), 1) = (self.partials.first(), self.partials.len()) else {
             return Err(ProverError::Incomplete);
         };
-        if !partial.spends.iter().copied().eq(0..self.spends.len())
-            || !partial.outputs.iter().copied().eq(0..self.outputs.len())
-            || self.spends.is_empty() && self.outputs.is_empty()
-        {
+        let covers_spends = partial.spends.iter().copied().eq(0..self.spends.len());
+        let covers_outputs = partial.outputs.iter().copied().eq(0..self.outputs.len());
+        let has_actions = !self.spends.is_empty() || !self.outputs.is_empty();
+        if !(covers_spends && covers_outputs && has_actions) {
             return Err(ProverError::Incomplete);
         }
         let max_fee_note = self

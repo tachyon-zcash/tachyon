@@ -13,6 +13,7 @@ use crate::{
     fee,
     pasta::EpAffine,
     stamp::{ProofStamp, Uncompressed, proof::App},
+    value::Balance,
 };
 
 /// Errors from the transaction extractor role.
@@ -85,7 +86,7 @@ impl Bundle {
             .collect::<Option<Vec<i128>>>();
         if (self.spends.is_empty()
             && self.outputs.is_empty()
-            && self.value_balance != crate::value::Balance::ZERO)
+            && self.value_balance != Balance::ZERO)
             || values.is_some_and(|amounts| {
                 amounts.into_iter().sum::<i128>() != i128::from(self.value_balance)
             })
@@ -138,7 +139,7 @@ impl Bundle {
         if !action_sigs.keys().eq(pairs.keys()) {
             return Err(ExtractError::ActionMismatch);
         }
-        if pairs.values().any(|(first, second)| first >= second) {
+        if pairs.values().any(|&(first, second)| first >= second) {
             return Err(ExtractError::TachygramOrder);
         }
         let (actions, action_auth) = action_sigs
