@@ -1004,6 +1004,10 @@ impl<S: StampState> Bundle<S> {
         let mut memo: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 64];
         while memo.len() < n_memo {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "the loop condition bounds memo.len() below n_memo"
+            )]
             let take = (n_memo - memo.len()).min(chunk.len());
             let (prefix, _) = chunk.split_at_mut(take);
             reader.read_exact(prefix)?;

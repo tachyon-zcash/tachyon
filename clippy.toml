@@ -19,6 +19,29 @@ disallowed-macros = [
 ]
 enforced-import-renames = [{ path = "derive_more::Eq", rename = "TotalEq" }]
 
+# These operators implement field, group, or polynomial arithmetic, not
+# unchecked machine-integer arithmetic.
+arithmetic-side-effects-allowed = [
+  "udon::field::FieldAdapter",
+  "udon::curve::AffineAdapter",
+  "udon::curve::ProjectiveAdapter",
+  "zakura_udon::field::FieldAdapter",
+  "zakura_udon::curve::AffineAdapter",
+  "zakura_udon::curve::ProjectiveAdapter",
+  "zakura_udon::field::consumer::adapter::FieldAdapter",
+  "zakura_udon::curve::consumer::adapter::AffineAdapter",
+  "zakura_udon::curve::consumer::adapter::ProjectiveAdapter",
+  "FieldAdapter",
+  "AffineAdapter",
+  "ProjectiveAdapter",
+  "ValueCommitment",
+  "value::ValueCommitment",
+  "zcash_tachyon::value::ValueCommitment",
+  "NfSeqPoly",
+  "primitives::seq::NfSeqPoly",
+  "zcash_tachyon::primitives::seq::NfSeqPoly",
+]
+
 # error handling
 disallowed-methods = [
   { path = "subtle::CtOption::expect", replacement = "into_option().expect", reason = "convert to `Option` explicitly" },

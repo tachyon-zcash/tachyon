@@ -72,6 +72,10 @@ impl Effect for Output {
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "a positive note amount has a representable negative counterpart"
+        )]
         rcv.commit(-value)
     }
 }

@@ -35,6 +35,10 @@ impl NoteMasterKey {
         reason = "the fixed Poseidon rate and derivation window bound the conversions"
     )]
     #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the rate is nonzero and subtracting the remainder cannot underflow"
+    )]
+    #[expect(
         clippy::missing_panics_doc,
         reason = "the fixed Poseidon rate bounds the converted lane index on supported targets"
     )]
@@ -72,6 +76,10 @@ impl NoteMasterKey {
     #[expect(
         clippy::integer_division,
         reason = "the sponge rate divides the window width, and each slot belongs to its floored group index"
+    )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the rate is nonzero and a bounded epoch plus a fixed window offset fits u32"
     )]
     pub fn derive_window(&self, epoch_start: EpochIndex) -> [Nullifier; NF_DERIVATION_WIDTH] {
         assert_eq!(

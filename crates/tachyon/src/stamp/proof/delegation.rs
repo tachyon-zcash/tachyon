@@ -351,6 +351,10 @@ impl Step<Pasta> for NullifierDerive {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let output = D::just(|| {
             let (epoch_start, _) = witness.take();
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "a bounded epoch plus the fixed window offset fits u32; EpochIndex checks the protocol limit"
+            )]
             let epoch_end = EpochIndex::new(u32::from(epoch_start) + LAST_WINDOW_OFFSET);
             let (cm, ..) = left.take();
             (cm, epoch_start, epoch_end)

@@ -126,6 +126,10 @@ impl QrProfile {
             self.depth < u32::BITS,
             "profile has no bit left for another side"
         );
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "the descent guard bounds depth below the fixed maximum"
+        )]
         Self {
             depth: self.depth + 1,
             bits: (self.bits << 1) | u32::from(bit),

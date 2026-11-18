@@ -148,6 +148,10 @@ pub(crate) fn decomposition(
         .expect("interpolation values and buffers match the point count");
         coeffs
     };
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the input length is bounded by an allocated slice"
+    )]
     let mut vanishing = vec![Fp::ZERO; len + 1];
     vanishing_polynomial(Fp::as_slice(&abscissas), Fp::as_slice_mut(&mut vanishing))
         .expect("the buffer fits the abscissas and leading one");
@@ -156,6 +160,10 @@ pub(crate) fn decomposition(
     }
 
     let translate = [class * shift, class];
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the interpolant is nonempty and its allocated coefficient vector fits isize"
+    )]
     let dividend_len = (2 * interpolant_coeffs.len() - 1).max(translate.len());
     let domain = Fp::domain(dividend_len.next_power_of_two().trailing_zeros())
         .expect("the square fits the FFT domain");

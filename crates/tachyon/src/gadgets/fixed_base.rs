@@ -224,6 +224,10 @@ impl<const W: usize> FixedBase<W> {
         assert!(!base.is_identity(), "fixed bases must be nonidentity");
         let mut power = Fq::ONE;
         let mut offset = Fq::ZERO;
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "fixed tables use a nonzero window count"
+        )]
         let mut interior = Vec::with_capacity(W - 1);
         for _ in 1..W {
             interior.push(Window::new(&[2u64, 3, 4, 5, 6, 7, 8, 9].map(|digit| {
@@ -255,6 +259,10 @@ impl<const W: usize> FixedBase<W> {
     ///
     /// Panics if an interior addition has zero x difference. The window
     /// offsets rule this out for the supported bases and Boolean bits.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the asserted fixed window count bounds indices and bit offsets"
+    )]
     fn prefix_and_top<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,

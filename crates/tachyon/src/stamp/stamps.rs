@@ -388,6 +388,10 @@ impl Plan {
             clippy::expect_used,
             reason = "an excessive fee deliberately panics because it would produce negative change; see the Panics contract"
         )]
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "both amounts widen to i128 before subtraction"
+        )]
         let fee_change_note = Note {
             value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
                 .expect("fee should not exceed max fee"),
@@ -462,6 +466,10 @@ impl Plan {
 
         // Each entry pairs leaf stamp components with the descriptor of its
         // covered action; merges concatenate both.
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "both action vector lengths are bounded by isize::MAX"
+        )]
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spend_pcds.len() {

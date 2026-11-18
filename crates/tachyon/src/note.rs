@@ -96,6 +96,10 @@ impl Note {
 
     /// The max fee commitment, `cv_feemax`.
     #[must_use]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a positive note amount has a representable negative counterpart"
+    )]
     pub fn cv_feemax(&self) -> value::Commitment {
         self.derive_feemax_blind().commit(-self.value)
     }

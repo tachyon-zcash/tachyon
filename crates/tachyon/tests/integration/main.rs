@@ -1,9 +1,13 @@
 #![allow(
+    clippy::arithmetic_side_effects,
+    clippy::integer_division,
+    reason = "bounded integration fixture sizes and deliberate floor splits do not handle untrusted inputs"
+)]
+#![allow(
     clippy::as_conversions,
     reason = "fixed derivation widths and rates in integration fixtures fit u32"
 )]
 #![allow(
-    clippy::integer_division,
     clippy::too_many_arguments,
     clippy::type_complexity,
     missing_docs,

@@ -30,6 +30,10 @@ fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, ProductionRa
 /// # Panics
 ///
 /// Panics if the starting epoch is out of range or proving the window fails.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "the fixture widens the epoch to u64 and only supplies four fixed group offsets"
+)]
 fn derive_window(
     app: &App<'_>,
     rng: &mut StdRng,

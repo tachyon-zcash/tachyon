@@ -139,6 +139,10 @@ pub fn unspent_bind(
         clippy::expect_used,
         reason = "supported targets can index a window by its u32 epoch offset"
     )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "EpochIndex subtraction checks order"
+    )]
     let lo = usize::try_from(u32::from(epoch_start - nullifiers_epoch_start))
         .expect("the window offset fits usize");
     let (head, from_span) = window.split_at(lo);
@@ -605,6 +609,10 @@ pub fn fee_fuse(
     #[expect(
         clippy::expect_used,
         reason = "an excessive fee deliberately panics because it would produce negative change; see the Panics contract"
+    )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "both amounts widen to i128 before subtraction"
     )]
     let fee_change_note = Note {
         value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))

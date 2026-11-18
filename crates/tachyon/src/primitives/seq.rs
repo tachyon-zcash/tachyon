@@ -77,6 +77,10 @@ impl Mul for NfSeqPoly {
         clippy::expect_used,
         reason = "the FFT domain fits the product and expands onto itself"
     )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "nonempty polynomial lengths and their FFT scratch space are bounded by production rank"
+    )]
     fn mul(self, rhs: Self) -> Self {
         let [left, right] = [self.0, rhs.0].map(|poly| {
             let mut coeffs: Vec<Fp> = poly.iter_coeffs().collect();

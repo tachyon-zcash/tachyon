@@ -135,6 +135,10 @@ impl<const MIN: i64, const MAX: i64> Value<MIN, MAX> {
     ///
     /// This isn't a `Neg` impl because const generic expressions are unstable.
     #[must_use]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the value bounds exclude i64::MIN before negation"
+    )]
     pub const fn negate<const NEG_MAX: i64, const NEG_MIN: i64>(self) -> Value<NEG_MAX, NEG_MIN> {
         const {
             assert!(

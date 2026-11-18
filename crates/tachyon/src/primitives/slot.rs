@@ -26,6 +26,10 @@ impl<P, W> PolySlot<P, W> {
     /// Sets the output's polynomial at this slot to `polynomial`, without its
     /// trailing zeros.
     #[must_use]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "the last nonzero coefficient's index is less than the vector length, so adding one fits usize"
+    )]
     pub fn poly<O, I>(self, prepared: Prepared<Fp, O>, polynomial: &P) -> Prepared<Fp, O>
     where
         O: Header<Fp>,

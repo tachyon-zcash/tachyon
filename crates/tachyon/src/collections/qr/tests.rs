@@ -6,6 +6,10 @@ use rand::{Rng as _, SeedableRng as _};
 use super::*;
 use crate::collections::multiset;
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "the last occupied coefficient is within the allocated vector"
+)]
 fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
     let mut coeffs = poly.iter_coeffs().collect::<Vec<_>>();
     let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
@@ -26,6 +30,10 @@ fn verify_side(
             .last()
             .map_or(0, |(degree, _)| degree)
     });
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "production rank bounds the test polynomial degrees"
+    )]
     let degree_bound = (2 * u_degree).max(q_degree + h_degree).max(1);
     // Agreement at more distinct points than the degree bound proves the full
     // coefficient identity, without multiplying coefficient vectors here.
