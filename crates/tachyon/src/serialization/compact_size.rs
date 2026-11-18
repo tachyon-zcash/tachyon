@@ -13,7 +13,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 
 /// Canonicity errors for [`CompactSize`].
-#[derive(Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum CompactSizeError {
     /// The value should be in a different encoding form.
