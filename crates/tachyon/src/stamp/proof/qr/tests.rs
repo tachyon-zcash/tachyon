@@ -25,7 +25,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let mut contents = left.polynomial(QrContents).to_vec();
         contents[0] += witness.1;
         Ok(Prepared::new().poly(QrContents, contents))
@@ -38,7 +38,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -164,7 +164,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(QrContents, [Fp::ONE, witness.3]))
     }
 
@@ -175,7 +175,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

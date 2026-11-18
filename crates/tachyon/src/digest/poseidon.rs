@@ -8,13 +8,13 @@
 
 use core::array;
 
-use ragu_core::{
+use ragu::{
     PoseidonPermutation as _,
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe as _},
     pasta::PoseidonFp,
+    primitives::Element,
 };
-use ragu_primitives::Element;
 use udon::curve::Affine as _;
 
 use crate::{
@@ -280,15 +280,15 @@ pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
 pub(crate) mod circuit {
     use alloc::vec::Vec;
 
-    use ragu_core::{
+    use ragu::{
         Cycle as _, PoseidonPermutation as _, Result,
         drivers::Driver,
         pasta::{Pasta, PoseidonFp},
-    };
-    use ragu_primitives::{
-        Element, GadgetExt as _, Point,
-        poseidon::{Sponge, SpongeState},
-        vec::FixedVec,
+        primitives::{
+            Element, GadgetExt as _, Point,
+            poseidon::{Sponge, SpongeState},
+            vec::FixedVec,
+        },
     };
     use udon::field::Field as _;
 

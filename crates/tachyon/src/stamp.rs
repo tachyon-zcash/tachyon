@@ -30,9 +30,7 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::pasta::Pasta;
-use ragu_pcd::wire;
+use ragu::{ProductionRank, Rank as _, pasta::Pasta, pcd::wire};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -148,14 +146,14 @@ pub trait Proof: sealed::Sealed {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// Returns [`ragu::Error`] if the proof system fails. A disproved
     /// proof is reported as `Ok(false)`, not an error.
     fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu_core::Error>;
+    ) -> Result<bool, ragu::Error>;
 }
 
 impl Proof for Uncompressed {
@@ -176,7 +174,7 @@ impl Proof for Uncompressed {
         rng: &mut RNG,
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu_core::Error> {
+    ) -> Result<bool, ragu::Error> {
         let bridge = bridge_hash(header.1.as_ref().to_affine());
         let pcd = self.clone().carry::<Stamp>((bridge.into(), header.2));
         let [action_slot, tachygram_slot] = pcd.commitments();
@@ -187,7 +185,7 @@ impl Proof for Uncompressed {
         }
         let compressed = match app.compress(&pcd, rng) {
             Ok(compressed) => compressed,
-            Err(ragu_core::Error::InvalidWitness(_)) => return Ok(false),
+            Err(ragu::Error::InvalidWitness(_)) => return Ok(false),
             Err(error) => return Err(error),
         };
         app.verify_compressed(&compressed)
@@ -212,7 +210,7 @@ impl Proof for Compressed {
         _rng: &mut RNG,
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu_core::Error> {
+    ) -> Result<bool, ragu::Error> {
         let [action_slot, tachygram_slot] = self.online_commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
@@ -444,9 +442,9 @@ impl Plan {
         app: &App<'_>,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProvedStamp, ProveError> {
         if self.actions.spends.is_empty()
@@ -521,9 +519,9 @@ impl ActionsPlan {
         app: &App<'_>,
         pak: Option<&ProofAuthorizingKey>,
         spend_pcds: Vec<(
-            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ActionsProof, ProveError> {
         self.prove_inner(rng, app, pak, spend_pcds)?
@@ -540,9 +538,9 @@ impl ActionsPlan {
         app: &App<'_>,
         pak: Option<&ProofAuthorizingKey>,
         spend_pcds: Vec<(
-            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ActionsProof, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor of its
@@ -771,7 +769,7 @@ impl ProofStamp<Uncompressed> {
     fn finish<RNG: CryptoRng>(
         rng: &mut RNG,
         app: &App<'_>,
-        pcd: ragu_pcd::Pcd<Pasta, ProductionRank, Stamp>,
+        pcd: ragu::Pcd<Pasta, ProductionRank, Stamp>,
         mut tachygrams: BTreeSet<Tachygram>,
         change: Tachygram,
     ) -> Result<Self, ProveError> {
@@ -803,7 +801,7 @@ pub enum ProveError {
     MissingPcd(Box<dyn error::Error + Send + Sync + 'static>),
     /// Proof construction failed; carries the underlying Ragu error.
     #[display("proof failed: {_0}")]
-    ProofFailed(ragu_core::Error),
+    ProofFailed(ragu::Error),
     /// Spends were planned with no proof authorizing key.
     #[display("spends need a proof authorizing key")]
     MissingKey,
@@ -813,10 +811,10 @@ pub enum ProveError {
 }
 
 /// An uncompressed Ragu proof.
-pub type Uncompressed = ragu_pcd::Proof<Pasta, ProductionRank>;
+pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
 
 /// A compressed Ragu proof.
-pub type Compressed = ragu_pcd::CompressedProof<Pasta>;
+pub type Compressed = ragu::CompressedProof<Pasta>;
 
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
@@ -859,7 +857,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// Returns [`ragu::Error`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "the digests, tachygrams, anchor and proof of one stamp"
@@ -879,7 +877,7 @@ impl ProofStamp<Uncompressed> {
             Box<Uncompressed>,
             (Tachygram, Tachygram),
         ),
-        ragu_core::Error,
+        ragu::Error,
     > {
         let (bind_pcd, ()) = app.seed(
             rng,
@@ -931,7 +929,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// Returns [`ragu::Error`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "the digests, tachygrams, anchor and proof of one stamp"
@@ -940,7 +938,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         theta: ActionEntropy,
-        bind_pcd: ragu_pcd::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
+        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
@@ -950,7 +948,7 @@ impl ProofStamp<Uncompressed> {
             Box<Uncompressed>,
             (Tachygram, Tachygram),
         ),
-        ragu_core::Error,
+        ragu::Error,
     > {
         let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
         let alpha = theta.randomizer::<effect::Spend>(cm);
@@ -999,7 +997,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// Returns [`ragu::Error`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "the digests, tachygrams, anchor and proof of each stamp"
@@ -1026,7 +1024,7 @@ impl ProofStamp<Uncompressed> {
             Anchor,
             Box<Uncompressed>,
         ),
-        ragu_core::Error,
+        ragu::Error,
     > {
         let left_tg_poly = left_tachygrams
             .iter()
@@ -1074,14 +1072,14 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Returns [`ragu::Error`] if a proof-system operation fails.
     fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, ragu_core::Error> {
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+    ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
         let mut stamp_pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
@@ -1114,7 +1112,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Returns [`ragu::Error`] if a proof-system operation fails.
     /// Empty `spans` leave the stamp unchanged before
     /// inspecting the descriptors.
     ///
@@ -1127,8 +1125,8 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
-        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, ragu_core::Error> {
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+    ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
@@ -1164,7 +1162,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Returns [`ragu::Error`] if a proof-system operation fails.
     ///
     /// # Panics
     ///
@@ -1187,7 +1185,7 @@ impl ProofStamp<Uncompressed> {
             &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, ragu_core::Error> {
+    ) -> Result<Self, ragu::Error> {
         let mut left_digests = BTreeSet::new();
         let mut left_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in left_desc {
@@ -1271,7 +1269,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Returns [`ragu::Error`] if a proof-system operation fails.
     ///
     /// # Panics
     ///
@@ -1294,7 +1292,7 @@ impl ProofStamp<Uncompressed> {
             &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-    ) -> Result<Self, ragu_core::Error> {
+    ) -> Result<Self, ragu::Error> {
         let mut digests = BTreeSet::new();
         let mut tachygrams_all = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
@@ -1374,12 +1372,12 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if the proof system fails.
+    /// Returns [`ragu::Error`] if the proof system fails.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-    ) -> Result<ProofStamp<Compressed>, ragu_core::Error> {
+    ) -> Result<ProofStamp<Compressed>, ragu::Error> {
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
         let pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
         let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
@@ -1403,14 +1401,14 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// Returns [`ragu::Error`] if the proof system fails. A disproved
     /// proof is reported as `Ok(false)`, not an error.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-    ) -> Result<bool, ragu_core::Error> {
+    ) -> Result<bool, ragu::Error> {
         let action_set = ActionSetPoly::from_iter(action_digests);
 
         self.proof.verify(

@@ -27,4 +27,4 @@ pub type Eq = ProjectiveAdapter<Vesta>;
 /// Vesta in affine coordinates, including identity.
 pub type EqAffine = AffineAdapter<Vesta>;
 
-pub(crate) use ragu_pcd::pasta::baked;
+pub(crate) use ragu::pcd::pasta::baked;
