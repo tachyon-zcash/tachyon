@@ -578,7 +578,7 @@ fn unmerge_binds_its_sets() {
                 corrupt.0 = bob_actions;
                 corrupt
             },
-            "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
+            "a substituted quotient action set",
         ),
         (
             {
@@ -590,7 +590,7 @@ fn unmerge_binds_its_sets() {
                     .collect();
                 corrupt
             },
-            "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
+            "a quotient tachygram set with a swapped member",
         ),
     ] {
         let (forged, ()) = app

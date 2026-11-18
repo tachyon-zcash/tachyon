@@ -820,28 +820,28 @@ fn qr_side_descend_matches_selection_metadata() {
             start,
             discriminant,
             members.as_slice(),
-            "QrSideDescend: selection epoch does not match sides",
+            "a selection from another epoch",
         ),
         (
             epoch,
             foreign_start,
             discriminant,
             members.as_slice(),
-            "QrSideDescend: selection anchor_prev does not match sides",
+            "a selection from another start anchor",
         ),
         (
             epoch,
             start,
             discriminant,
             &members[..11],
-            "QrSideDescend: selection anchor_end does not match sides",
+            "a selection ending at another anchor",
         ),
         (
             epoch,
             start,
             foreign_discriminant,
             members.as_slice(),
-            "QrSideDescend: selection discriminant does not match sides",
+            "a selection under another discriminant",
         ),
     ] {
         let (foreign_root, ()) = app
@@ -1132,19 +1132,19 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
             Anchor::random(rng),
             epoch,
             discriminant,
-            "QrIntakeMerge: left.anchor_end must equal right.anchor_prev",
+            "intakes that do not meet",
         ),
         (
             junction,
             epoch.next().unwrap(),
             discriminant,
-            "QrIntakeMerge: inputs cover different epochs",
+            "intakes from different epochs",
         ),
         (
             junction,
             epoch,
             QrDiscriminant::random(rng),
-            "QrIntakeMerge: inputs derive from different discriminants",
+            "intakes under different discriminants",
         ),
     ] {
         let (right, ()) = app
@@ -1499,18 +1499,10 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
                 0,
                 Anchor::from(Fp::ZERO),
             ),
-            "QrSpendableInit: segment does not close where the bucket does",
+            "a bucket that closes elsewhere",
         ),
-        (
-            unspent0,
-            bucket1,
-            "QrSpendableInit: segment does not start in the bucket's epoch",
-        ),
-        (
-            unspent1,
-            elsewhere,
-            "QrSpendableInit: segment does not open where the bucket does",
-        ),
+        (unspent0, bucket1, "a bucket from another epoch"),
+        (unspent1, elsewhere, "a bucket that opens elsewhere"),
     ]
     .into_boxed_slice()
     {
@@ -1567,7 +1559,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 forged.1[0].1 += Fp::ONE;
                 forged
             },
-            "QR profile: root does not square to the claimed class",
+            "a root shifted by one",
         ),
         (
             bucket.pcd.clone(),
@@ -1576,7 +1568,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 forged.1[5].0 = !forged.1[5].0;
                 forged
             },
-            "QR profile: root does not square to the claimed class",
+            "a root with a flipped side",
         ),
         (
             bucket.pcd.clone(),
@@ -1585,7 +1577,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 forged.2 = array::from_fn(|position| position == 0 || position == 2);
                 forged
             },
-            "QR profile: depth mask is not a prefix",
+            "a depth mask that is not a prefix",
         ),
         (
             bucket.pcd.clone(),
@@ -1594,7 +1586,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 forged.2 = QrProfile { depth: 3, bits: 0 }.depth_mask();
                 forged
             },
-            "QR profile: depth mask does not match the bucket's depth",
+            "a depth mask deeper than the bucket",
         ),
         (
             bucket.pcd.clone(),
@@ -1606,7 +1598,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 );
                 forged
             },
-            "QrUnspentInit: sequence does not match the tested pair",
+            "a sequence with a foreign nullifier",
         ),
         (
             bucket.pcd.clone(),
@@ -1618,7 +1610,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                         .unwrap(),
                 ),
             ),
-            "QR profile: value does not take the bucket's profile",
+            "a value outside the bucket's profile",
         ),
     ]
     .into_boxed_slice()
@@ -1833,12 +1825,12 @@ fn unspent_lift_rejects_invalid_extensions() {
         (
             &past,
             witness::unspent_lift((*segment.data(), *past.pcd.data()), nf1.into(), &[nf0]),
-            "UnspentLift: the bucket does not start where the segment ends",
+            "a bucket from a later epoch",
         ),
         (
             &bucket,
             witness::unspent_lift((*segment.data(), *bucket.pcd.data()), nf1.into(), &[nf1]),
-            "UnspentLift: extended is not elapsed with the tested pair",
+            "an extension that repeats the tested nullifier",
         ),
         (
             &bucket,
@@ -1853,7 +1845,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 );
                 forged
             },
-            "UnspentLift: extended is not elapsed with the tested pair",
+            "an extension with a foreign nullifier",
         ),
         (
             &bucket,
@@ -1863,7 +1855,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                     QrClassRoot::along(Fp::random(|bytes| rng.fill_bytes(bytes)), discriminant);
                 forged
             },
-            "QR profile: root does not square to the claimed class",
+            "a root for another value",
         ),
     ] {
         let (forged, ()) = app

@@ -214,11 +214,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         (anchor_start, start_bundle, None),
         (members[0], inner_bundle, None),
         (anchor_end, end_bundle, None),
-        (
-            fork,
-            fork_bundle,
-            Some("StampLift: stamp anchor is neither the span's start nor a member"),
-        ),
+        (fork, fork_bundle, Some("a stamp anchor outside the span")),
     ] {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
@@ -274,7 +270,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         (
             witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set missing the right half",
         ),
         (
             witness::anchor_span_fuse(
@@ -287,12 +283,12 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                     .collect::<Vec<_>>(),
             ),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set with an extra member",
         ),
         (
             witness::anchor_span_fuse((*right.data(), *left.data()), &right_members, &left_members),
             (right, left),
-            "AnchorSpanFuse: spans do not share a vertex",
+            "spans fused in the wrong order",
         ),
     ]
     .into_boxed_slice()
@@ -439,7 +435,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "SpendAction: tachygram set does not commit to the nullifier pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -447,7 +443,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "SpendAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
         let (forged, ()) = app
@@ -624,7 +620,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 &user.covering_window(&other, &range),
                 &elapsed,
             ),
-            "UnspentBind: sequence does not match the derivation",
+            "a derivation of another note",
         ),
         (
             range,
@@ -636,7 +632,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence outside the range",
         ),
         (
             wide,
@@ -648,7 +644,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence with a foreign nullifier",
         ),
         (
             later,
@@ -657,7 +653,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 witness.0 = NfSeqPoly::new(EpochIndex::new(64), &[]);
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an empty elapsed sequence",
         ),
     ]
     .into_boxed_slice()
@@ -728,7 +724,7 @@ fn spendable_lift_rejects_mismatched_segments() {
                     pool.unspent(app, (epoch1, epoch2), |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &phantom)
             },
-            "SpendableLift: unspent cm does not match spendable",
+            "an unspent of another note",
         ),
         (
             {
@@ -736,11 +732,11 @@ fn spendable_lift_rejects_mismatched_segments() {
                     detached_segment(rng, app, epoch1, |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &note)
             },
-            "SpendableLift: unspent not adjacent to spendable",
+            "a detached unspent segment",
         ),
         (
             user.note_unspent(app, pool, &note, (epoch2, epoch3)),
-            "SpendableLift: segment does not start at the lineage epoch",
+            "a segment starting after the lineage epoch",
         ),
     ] {
         let (forged, ()) = app
@@ -800,7 +796,7 @@ fn nullifier_derive_rejects_invalid_windows() {
                 ((cm, note, user.pak.nk.derive_note_private(other.psi)), ()),
                 EpochIndex::new(16),
             ),
-            "NullifierDerive: sequence does not match the derived window",
+            "a window derived from another note",
         ),
         (
             {
@@ -809,7 +805,7 @@ fn nullifier_derive_rejects_invalid_windows() {
                 witness.0 = EpochIndex::new(14);
                 witness
             },
-            "NullifierDerive: epoch_start is not group-aligned",
+            "a start that is not group-aligned",
         ),
     ] {
         let (forged, ()) = app
@@ -841,13 +837,13 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             note,
             EpochIndex::new(32),
             EpochIndex::new(47),
-            "NullifierFuse: ranges not contiguous",
+            "ranges with a gap",
         ),
         (
             other,
             EpochIndex::new(16),
             EpochIndex::new(31),
-            "NullifierFuse: note commitments differ",
+            "ranges of different notes",
         ),
     ] {
         let left = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(15));
@@ -942,7 +938,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "OutputAction: tachygram set does not commit to the bound pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -950,7 +946,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "OutputAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
         let (forged, ()) = app

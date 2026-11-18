@@ -365,17 +365,17 @@ fn overlapping_stamps_cannot_aggregate() {
         (
             (output_a.clone(), (&desc_a, &fees_a)),
             (output_b, (&desc_b, &fees_b)),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+            "two outputs of the same note",
         ),
         (
             (spend_a.stamp, (&fixture_pairs, &fixture_fees)),
             (spend_b.stamp, (&reproven_actions, &overlap_fees)),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+            "a spend reproven in both stamps",
         ),
         (
             (output_a.clone(), (&desc_a, &fees_a)),
             (output_a, (&desc_a, &fees_a)),
-            "StampMerge: merged action set must be the product of left and right action sets",
+            "a stamp merged with itself",
         ),
     ] {
         let merged = left

@@ -122,30 +122,22 @@ fn fee_fuse_binds_its_sets() {
         &action_tachygrams,
     );
 
-    let mut over_maximum = valid.clone();
-    over_maximum.1 = value::Positive::try_from(301).unwrap();
-    let (over_maximum_pcd, ()) = app
-        .fuse(
-            rng,
-            FeeFuse,
-            over_maximum,
-            left.stamp.proof.clone().carry::<Actions>(anchor),
-            app.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    assert!(
-        !app.verify_uncompressed(&over_maximum_pcd, &mut *rng)
-            .unwrap()
-    );
-
     for (corrupt, expected) in [
+        (
+            {
+                let mut corrupt = valid.clone();
+                corrupt.1 = value::Positive::try_from(301).unwrap();
+                corrupt
+            },
+            "a fee above the maximum",
+        ),
         (
             {
                 let mut corrupt = valid.clone();
                 corrupt.2.0 = other.2.0.clone();
                 corrupt
             },
-            "FeeFuse: output action set must be the product of left and fee action sets",
+            "a substituted output action set",
         ),
         (
             {
@@ -153,7 +145,7 @@ fn fee_fuse_binds_its_sets() {
                 corrupt.2.1 = other.2.1;
                 corrupt
             },
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
+            "a substituted output tachygram set",
         ),
     ] {
         let (forged, ()) = app
@@ -674,7 +666,7 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.0.value = value::Positive::try_from(1).unwrap();
                 corrupt
             },
-            "FeeSeed: maximum fee must be zero",
+            "a nonzero maximum fee",
         ),
         (
             {
@@ -682,7 +674,7 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.2 = other.2.clone();
                 corrupt
             },
-            "FeeSeed: fee action set does not commit to the fee digest",
+            "a substituted fee action set",
         ),
         (
             {
@@ -690,7 +682,7 @@ fn fee_seed_binds_its_singletons_and_header() {
                 corrupt.3 = other.3.clone();
                 corrupt
             },
-            "FeeSeed: fee tachygram set does not commit to the fee change note",
+            "a substituted fee tachygram set",
         ),
     ] {
         let (forged, ()) = app.seed(rng, FeeSeed, corrupt).unwrap();
