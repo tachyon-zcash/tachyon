@@ -38,6 +38,10 @@ pub struct Note<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// Allocates the fields of a native note, range-checking its value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if field allocation or the amount range check fails.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -69,12 +73,22 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// The Fp digest representing the native maximum-fee blind, which the
     /// native derivation embeds in Fq as the scalar $r$.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the blind hash.
     pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }
 
     /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
     /// which this ties to `MAX_MONEY - value`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the slack does not match `MAX_MONEY - value`, the
+    /// blind does not fit the scalar width, or the driver rejects the
+    /// commitment computation.
     pub(crate) fn cv_feemax(
         &self,
         dr: &mut D,
@@ -92,6 +106,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// Enforces a zero `value` and returns the max fee commitment for it: the
     /// blind term alone, with no value term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the amount is nonzero, the blind does not fit the
+    /// scalar width, or the driver rejects the commitment computation.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;
@@ -104,12 +123,21 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// Derives the note commitment from the supplied fields.
     ///
     /// Does not bound `value` or check `rcm` nonzero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the note commitment hash.
     pub(crate) fn commitment(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::note_commitment(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }
 
     /// Derives the output's padding tachygram from the fields
     /// [`commitment`](Self::commitment) commits to.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the padding tachygram
+    /// hash.
     pub(crate) fn pad_tachygram(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::pad_tachygram(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }

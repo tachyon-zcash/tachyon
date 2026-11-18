@@ -37,17 +37,21 @@ use crate::{gadgets, value};
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
+/// Circuit representation of the wallet-only [`NoteSecret`] header.
 #[derive(Gadget, Write)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
+    /// Commitment to the note.
     pub cm: Element<'dr, D>,
+    /// The private opening of the note commitment.
     #[ragu(gadget)]
     pub note: gadgets::note::Note<'dr, D>,
+    /// The note's master key for deriving nullifiers.
     #[ragu(gadget)]
     pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
 
 impl Header<Fp> for NoteSecret {
-    /// `(cm, note, mk)`
+    /// `(cm, note, mk)`.
     type Data = (note::Commitment, Note, NoteMasterKey);
     type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; NoteSecretOutput<'_, _>];
@@ -109,7 +113,7 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteNullifiers {
-    /// `(cm, epoch_start, epoch_end)`
+    /// `(cm, epoch_start, epoch_end)`.
     type Data = (note::Commitment, EpochIndex, EpochIndex);
     type OnlinePolyCommit = (PolySlot<NfSeqPoly>, Padding);
     type Output = Kind![Fp; NoteNullifiersOutput<'_, _>];
@@ -163,7 +167,7 @@ impl Step<Pasta> for NoteSeed {
     type Left = ();
     type Output = NoteSecret;
     type Right = ();
-    /// `(value, psi, rcm, pak)`
+    /// `(value, psi, rcm, pak)`.
     type Witness<'source> = (
         value::Positive,
         nullifier::Trapdoor,
@@ -291,7 +295,7 @@ impl Step<Pasta> for NullifierDerive {
     type Left = NoteSecret;
     type Output = NoteNullifiers;
     type Right = ();
-    /// `(epoch_start, seq)`
+    /// `(epoch_start, seq)`.
     type Witness<'source> = (EpochIndex, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
@@ -400,11 +404,11 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
 /// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
-/// product
+/// product:
 ///
 /// $$
 ///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
-/// $$
+/// $$.
 ///
 /// since concatenation of disjoint ranges is exactly multiplication.
 ///
@@ -425,7 +429,7 @@ impl Step<Pasta> for NullifierFuse {
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
     type Right = NoteNullifiers;
-    /// `(merged_seq,)`
+    /// `(merged_seq,)`.
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(12);

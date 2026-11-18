@@ -82,7 +82,7 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for ArbitraryUnspent {
-    /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
+    /// `(anchor_start, epoch_start, epoch_next, anchor_next)`.
     type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
     type OnlinePolyCommit = (PolySlot<NfSeqPoly>, Padding);
     type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
@@ -140,7 +140,7 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteUnspent {
-    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
+    /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`.
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
     type OnlinePolyCommit = (PolySlot<NfSeqPoly>, Padding);
     type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
@@ -215,7 +215,7 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for AnchorSpan {
-    /// `(anchor_start, anchor_end)`
+    /// `(anchor_start, anchor_end)`.
     type Data = (Anchor, Anchor);
     type OnlinePolyCommit = (PolySlot<AnchorSetPoly>, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
@@ -263,7 +263,7 @@ impl Step<Pasta> for AnchorSpanSeed {
     type Left = ();
     type Output = AnchorSpan;
     type Right = ();
-    /// `(anchor_start, epoch, stamp)`
+    /// `(anchor_start, epoch, stamp)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(31);
@@ -374,7 +374,7 @@ impl Step<Pasta> for AnchorSpanFuse {
     type Left = AnchorSpan;
     type Output = AnchorSpan;
     type Right = AnchorSpan;
-    /// `(combined,)`
+    /// `(combined,)`.
     type Witness<'source> = (AnchorSetPoly,);
 
     const INDEX: Index = Index::new(32);
@@ -453,7 +453,7 @@ impl Step<Pasta> for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(combined_elapsed_seq,)`
+    /// `(combined_elapsed_seq,)`.
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(2);
@@ -558,7 +558,7 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, extended_seq)`
+    /// `(value, classes, mask, extended_seq)`.
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],
@@ -683,11 +683,11 @@ impl Step<Pasta> for UnspentLift {
 /// Consumes any [`NoteNullifiers`], `elapsed` covering
 /// `[epoch_start, epoch_next)`, one member per epoch:
 ///
-/// `nf_seq` factors as
+/// `nf_seq` factors as:
 ///
 /// $$
 ///   \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)
-/// $$
+/// $$.
 ///
 /// The complement holds the derivation's members outside the lineage: epochs
 /// below it, and the epochs it runs ahead of the exclusion evidence, since a
@@ -713,7 +713,7 @@ impl Step<Pasta> for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
     type Right = NoteNullifiers;
-    /// `(complement_seq,)`
+    /// `(complement_seq,)`.
     type Witness<'source> = (NfSeqPoly,);
 
     const INDEX: Index = Index::new(3);

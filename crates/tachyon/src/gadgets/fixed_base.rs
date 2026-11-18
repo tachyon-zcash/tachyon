@@ -1,20 +1,20 @@
 //! Halo2-style unsigned radix-8 fixed-base multiplication with a `+2` offset.
 //!
-//! Window $i$ holds little-endian bits of $k_i \in [0, 8)$. Interior windows
-//! add $[(k_i + 2) 8^i]B$, and the top window adds
+//! Window $i$ holds little-endian bits of $k_{i} \in [0, 8)$. Interior windows
+//! add $[(k_{i} + 2) 8^i]B$, and the top window adds
 //! $[k_{W-1} 8^{W-1} - \sum_{i < W-1} 2 \cdot 8^i]B + C$, so the
-//! multiplication computes $[\sum_i k_i 8^i]B + C$ for the binary value of the
-//! bits. Ragu has no lookups, so halo2's Lagrange interpolation becomes a
+//! multiplication computes $[\sum_{i} k_{i} 8^i]B + C$ for the binary value of
+//! the bits. Ragu has no lookups, so halo2's Lagrange interpolation becomes a
 //! two-gate selection precomputed per window (see [`Window`]).
 //!
 //! The running sum's coordinates are constrained directly. Each window's
 //! digit is selected exactly from Boolean bits, so for every assignment, free
 //! bits included, the interior prefix satisfies
-//! $0 < A_j \le 9(8^j - 1)/7 < 2 \cdot 8^j \le D_j$ and
-//! $A_j + D_j \le 9(8^{j+1} - 1)/7 < q$ for $j \le 83$: no interior addition
-//! meets equal or inverse operands, so its slope gate alone fixes the slope.
-//! No such bound covers the top addition or a join with a variable point, and
-//! there the multiplication constrains the x difference nonzero. A
+//! $0 < A_{j} \le 9(8^j - 1)/7 < 2 \cdot 8^j \le D_{j}$ and
+//! $A_{j} + D_{j} \le 9(8^{j+1} - 1)/7 < q$ for $j \le 83$: no interior
+//! addition meets equal or inverse operands, so its slope gate alone fixes the
+//! slope. No such bound covers the top addition or a join with a variable
+//! point, and there the multiplication constrains the x difference nonzero. A
 //! multiplication is therefore unsatisfiable when its result would be the
 //! identity (e.g. $k \equiv 0$ on a zero correction) or when the prefix equals
 //! the top entry, a doubling. A value multiplication joins onto the blind
@@ -168,6 +168,11 @@ impl Window {
 
     /// Selects the entry's coordinates in two gates, from bits that are each
     /// Boolean or constant zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate either of the two
+    /// multiplication gates.
     fn select<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
@@ -199,6 +204,12 @@ pub(crate) struct FixedBase<const W: usize> {
 }
 
 impl<const W: usize> FixedBase<W> {
+    /// Precomputes the interior and corrected top windows for `base`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `W` is zero, the base or any table entry is the identity, or
+    /// the resulting table does not admit the required two-gate selector.
     #[expect(
         clippy::expect_used,
         reason = "fixed tables must contain only finite points"
@@ -228,6 +239,16 @@ impl<const W: usize> FixedBase<W> {
     }
 
     /// Returns the interior prefix $A_{W-1}$ and the selected top entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot select an entry, allocate a slope,
+    /// or constrain an interior addition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an interior addition has zero x difference. The window
+    /// offsets rule this out for the supported bases and Boolean bits.
     #[expect(
         clippy::indexing_slicing,
         reason = "const assertions fix the bit count; new() constructs exactly W - 1 interior windows"
@@ -294,6 +315,11 @@ impl<const W: usize> FixedBase<W> {
 
     /// $\[k\]B + C$ for the binary value $k$ of `bits`: $3W$ bits, or $3W - 1$
     /// with the top window's high bit a constant zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver fails or the top addition has equal x
+    /// coordinates.
     pub(crate) fn mul<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
@@ -307,6 +333,11 @@ impl<const W: usize> FixedBase<W> {
     /// [`mul`](Self::mul), joining `point` ($P$) between the prefix and the top
     /// entry so that $k = 0$ yields $C + P$ rather than an identity
     /// intermediate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver fails or either checked addition has
+    /// equal x coordinates.
     pub(crate) fn mul_and_add<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
@@ -321,6 +352,11 @@ impl<const W: usize> FixedBase<W> {
 }
 
 /// The two coordinates `point` writes.
+///
+/// # Panics
+///
+/// Panics if writing fails or produces fewer than two elements. Writing a
+/// point into a vector always succeeds and emits two coordinates.
 #[expect(
     clippy::expect_used,
     reason = "a point writes its two coordinates, and a vector accepts every write"
@@ -339,6 +375,16 @@ fn coordinates<'dr, D: Driver<'dr, F = Fp>>(
 
 /// Adds the selected `top` entry to `sum`, allocating the result as a
 /// [`Point`] constrained equal to the computed coordinates.
+///
+/// # Errors
+///
+/// Returns an error if the checked addition fails, or if allocation or equality
+/// constraints for its output fail.
+///
+/// # Panics
+///
+/// Panics if the computed coordinates are not on the curve. Adding two
+/// valid curve points with distinct x coordinates cannot produce this case.
 fn add_top<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     sum: &[Element<'dr, D>; 2],
@@ -365,6 +411,11 @@ fn add_top<'dr, D: Driver<'dr, F = Fp>>(
 
 /// Adds `point` to `sum` in four gates, constraining their x coordinates
 /// distinct.
+///
+/// # Errors
+///
+/// Returns an error if the x coordinates coincide or the driver cannot
+/// constrain the addition.
 fn add_checked<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     sum: [&Element<'dr, D>; 2],
@@ -378,6 +429,11 @@ fn add_checked<'dr, D: Driver<'dr, F = Fp>>(
 
 /// Completes an addition onto `sum` from the slope and the other operand's x
 /// coordinate, in two gates.
+///
+/// # Errors
+///
+/// Returns an error if the driver cannot square the slope or multiply it by the
+/// x difference.
 fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
     dr: &mut D,
     [sum_x, sum_y]: [&Element<'dr, D>; 2],

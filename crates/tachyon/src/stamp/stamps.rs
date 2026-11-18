@@ -408,14 +408,14 @@ impl Plan {
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
-    /// [`ProofStamp::prove_spend`] proves the action at the spendable's
+    /// `ProofStamp::prove_spend` proves the action at the spendable's
     /// anchor. If that anchor differs from the plan's anchor, the spend comes
     /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
     /// polynomials. [`ActionLift`] moves the spend's actions along each span in
     /// order. The first span must contain the spendable's anchor, each later
     /// span must contain the previous span's `anchor_end`, and the last span
     /// must end at the plan's anchor. For each **output**,
-    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
+    /// `ProofStamp::prove_output` proves the action at the plan's anchor.
     ///
     /// The planned actions are recursively merged via [`ActionMerge`] into a
     /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
@@ -1231,6 +1231,11 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// Returns [`ragu::Error`] if the proof system fails. A disproved
     /// proof is reported as `Ok(false)`, not an error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `action_digests` yields more than 8191 items, counting
+    /// duplicates, or if their set encoding exceeds the supported FFT domain.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,

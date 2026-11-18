@@ -31,6 +31,10 @@ pub struct QrProfile<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// Allocates a header's profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot allocate either profile field.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -63,6 +67,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// The child profile on side `bit`. The parent's depth is checked below
     /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
     /// the new side.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the depth does not fit below `MAX_DEPTH` or the
+    /// driver cannot enforce the depth bound.
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
         Uint::<_, QR_DEPTH_BITS>::from_element(dr, &self.depth)?;
         let one = Element::constant(dr, Fp::ONE);
@@ -74,11 +83,16 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// At each discriminant $d_i$ of the progression from `discriminant`, the
-    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
+    /// At each discriminant $d_{i}$ of the progression from `discriminant`, the
+    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_{i}$ and the
     /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
     /// non-residue side. The depth mask must be a prefix of `depth` ones, and
     /// the selected sides must pack to `bits`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation fails or the root, zero-side, mask, or
+    /// profile constraints are unsatisfied.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,

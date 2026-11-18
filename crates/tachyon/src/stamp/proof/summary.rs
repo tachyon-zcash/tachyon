@@ -56,7 +56,7 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for Summary {
-    /// `(epoch, anchor_prev, anchor_end)`
+    /// `(epoch, anchor_prev, anchor_end)`.
     type Data = (EpochIndex, Anchor, Anchor);
     type OnlinePolyCommit = (
         PolySlot<TachygramSetPoly, Accumulated>,
@@ -112,7 +112,7 @@ impl Step<Pasta> for SummarySeed {
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp)`
+    /// `(anchor_prev, epoch, stamp)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
@@ -209,7 +209,7 @@ impl Step<Pasta> for SummaryAdvance {
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    /// `(extended, stamp)`
+    /// `(extended, stamp)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(14);

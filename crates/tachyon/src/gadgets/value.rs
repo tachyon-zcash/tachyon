@@ -42,6 +42,11 @@ impl<'dr, D: Driver<'dr>> Deref for Positive<'dr, D> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     /// Allocates `value` and bounds it to `0..=MAX_MONEY`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation, decomposition, or the amount range check
+    /// fails.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -53,6 +58,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     }
 
     /// The amount `bits` encodes, bounded by `MAX_MONEY`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if packing fails or the encoded amount exceeds
+    /// `MAX_MONEY`.
     pub(crate) fn from_bits(dr: &mut D, bits: &Uint<'dr, D, MONEY_BITS>) -> Result<Self> {
         bits.enforce_max(dr, MAX_MONEY)?;
         Ok(Self {
@@ -61,6 +71,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     }
 
     /// The amount `MAX_MONEY - slack`, with `slack` bounded by `MAX_MONEY`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if packing fails or the slack exceeds `MAX_MONEY`.
     pub(crate) fn from_slack(dr: &mut D, slack: &Uint<'dr, D, MONEY_BITS>) -> Result<Self> {
         Ok(Self {
             element: slack.enforce_max(dr, MAX_MONEY)?.pack(dr)?,
@@ -68,6 +82,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     }
 
     /// The zero amount, holding `element` to zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver fails to enforce that `element` is zero.
     pub(crate) fn from_zero(dr: &mut D, element: Element<'dr, D>) -> Result<Self> {
         element.enforce_zero(dr)?;
         Ok(Self { element })
@@ -75,6 +93,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
 
     /// `(part, self - part)`. Both fit the width of `MAX_MONEY` and sum to
     /// `self`, so neither wraps and both are amounts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or packing fails, or if the remainder
+    /// does not fit the amount bit width.
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, MONEY_BITS>::alloc(dr, part)?.pack(dr)?;
         let rest = self.element.sub(dr, &packed);
@@ -83,6 +106,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     }
 
     /// The amount's bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or packing fails, or if the bits cannot
+    /// recompose to the amount.
     pub(crate) fn to_bits(&self, dr: &mut D) -> Result<Uint<'dr, D, MONEY_BITS>> {
         Uint::from_element(dr, &self.element)
     }

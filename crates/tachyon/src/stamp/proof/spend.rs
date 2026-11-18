@@ -46,7 +46,7 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
 }
 
 impl Header<Fp> for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor, pk, cv)`
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`.
     type Data = (
         note::Commitment,
         Nullifier,
@@ -125,7 +125,7 @@ impl Step<Pasta> for SpendBind {
     type Left = NoteSpendable;
     type Output = SpendHeader;
     type Right = NoteSecret;
-    /// `(rcv,)`
+    /// `(rcv,)`.
     type Witness<'source> = (value::Trapdoor,);
 
     const INDEX: Index = Index::new(8);

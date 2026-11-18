@@ -36,7 +36,7 @@ pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = 
 }
 
 impl Header<Fp> for OutputHeader {
-    /// `(cm, pad, cv)`
+    /// `(cm, pad, cv)`.
     type Data = (Tachygram, Tachygram, value::Commitment);
     type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];

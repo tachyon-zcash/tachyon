@@ -42,7 +42,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for NoteSpendable {
-    /// `(cm, epoch_current, anchor)`
+    /// `(cm, epoch_current, anchor)`.
     type Data = (note::Commitment, EpochIndex, Anchor);
     type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
@@ -102,7 +102,7 @@ impl Step<Pasta> for SpendableInit {
     type Left = NoteNullifiers;
     type Output = NoteSpendable;
     type Right = ();
-    /// `(anchor_prev, creation_set, creation_epoch)`
+    /// `(anchor_prev, creation_set, creation_epoch)`.
     type Witness<'source> = (Anchor, TachygramSetPoly, EpochIndex);
 
     const INDEX: Index = Index::new(4);

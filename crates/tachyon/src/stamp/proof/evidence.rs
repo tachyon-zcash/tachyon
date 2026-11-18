@@ -60,7 +60,7 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for EvidenceTree {
-    /// `(epoch, anchor_start, anchor_next, discriminant, root)`
+    /// `(epoch, anchor_start, anchor_next, discriminant, root)`.
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
     type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
@@ -129,7 +129,7 @@ pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for EvidenceTreePair {
-    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
+    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`.
     type Data = (
         EpochIndex,
         Anchor,
@@ -584,7 +584,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
-    /// `(path)`
+    /// `(path)`.
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
     const INDEX: Index = Index::new(28);
@@ -710,7 +710,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
     type Left = EvidenceTree;
     type Output = QrBucket;
     type Right = ();
-    /// `(profile, contents)`
+    /// `(profile, contents)`.
     type Witness<'source> = (QrProfile, TachygramSetPoly);
 
     const INDEX: Index = Index::new(29);

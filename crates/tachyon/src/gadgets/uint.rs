@@ -24,6 +24,10 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     /// Allocates the low `BITS` bits of `value`, an element of either Pasta
     /// field. The bits are free: a caller whose value may be wider binds them
     /// to it, as [`from_element`](Self::from_element) does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot allocate the Boolean bits.
     pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
         let bits = value.map(|element| element.to_le_bits());
         Ok(Self {
@@ -39,6 +43,11 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     }
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if bit allocation or packing fails, or if the bits do
+    /// not recompose to `element`.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
         let uint = Self::alloc(dr, element.value().map(Clone::clone))?;
         uint.pack(dr)?.enforce_equal(dr, element)?;
@@ -46,6 +55,14 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     }
 
     /// The value the bits encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot pack the bits.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `BITS` does not pack into exactly one field element.
     pub(crate) fn pack(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         let packed = ragu::primitives::multipack(dr, &self.bits)?;
         Ok(single_packed_element(packed))
@@ -57,6 +74,11 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// Bounds the value to `0..=maximum` and returns `maximum - value`, which
     /// fits the same width: the two sum to `maximum`, so neither wraps.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if packing or bit allocation fails, or if the
+    /// difference from `maximum` does not fit in `BITS` bits.
     pub(crate) fn enforce_max(&self, dr: &mut D, maximum: u64) -> Result<Self> {
         let packed = self.pack(dr)?;
         let slack = Element::constant(dr, Fp::from(maximum)).sub(dr, &packed);
@@ -64,6 +86,11 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     }
 }
 
+/// Checks the fixed-width invariant separately from fallible driver packing.
+///
+/// # Panics
+///
+/// Panics if `packed` does not contain exactly one element.
 #[expect(
     clippy::expect_used,
     reason = "every Uint packing width fits one field element"

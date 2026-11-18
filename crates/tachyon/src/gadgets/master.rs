@@ -21,9 +21,14 @@ pub struct NoteMasterKey<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
-    /// The nullifier for `epoch`: entry $b_0 + 2 b_1$ of the
+    /// The nullifier for `epoch`: entry $b_{0} + 2 b_{1}$ of the
     /// `PoseidonFp::RATE`-element group starting at `epoch` with its two low
-    /// bits $b_0, b_1$ cleared.
+    /// bits $b_{0}, b_{1}$ cleared.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if epoch decomposition, sponge evaluation, or
+    /// conditional selection fails.
     pub(crate) fn derive_nullifier(
         &self,
         dr: &mut D,

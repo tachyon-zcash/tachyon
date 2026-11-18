@@ -1,14 +1,9 @@
 //! QR epoch evidence: one epoch's tachygrams partitioned by profile.
 //!
-//! Each depth classifies at a discriminant of the progression
-//!
-//! $$
-//!   R_j = R_0 + j,
-//! $$
-//!
-//! from a first discriminant $R_0$. Every header carries $R_0$, so depth $j$
-//! classifies at $R_j$, and a value takes the residue side there iff $x + R_j$
-//! is a square or zero.
+//! Each depth classifies at the progression `R_j = R_0 + j` from a first
+//! discriminant `R_0`. Every header carries `R_0`, so depth `j` classifies at
+//! `R_j`, and a value takes the residue side there iff `x + R_j` is a square
+//! or zero.
 //!
 //! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
 //! [`QrStampIntakeSeed`] from one unsummarized stamp, and
@@ -69,7 +64,7 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrIntake {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`.
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
     type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; QrIntakeOutput<'_, _>];
@@ -152,7 +147,7 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
 
 impl Header<Fp> for QrIntakeSides {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
-    /// non_residue_hash)`
+    /// non_residue_hash)`.
     type Data = (
         EpochIndex,
         Anchor,
@@ -244,7 +239,7 @@ impl Step<Pasta> for QrSummaryIntake {
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant)`
+    /// `(discriminant)`.
     type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(15);
@@ -335,7 +330,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor_prev, epoch, discriminant, stamp)`
+    /// `(anchor_prev, epoch, discriminant, stamp)`.
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetPoly);
 
     const INDEX: Index = Index::new(21);
@@ -454,7 +449,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor, epoch, discriminant)`
+    /// `(anchor, epoch, discriminant)`.
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
 
     const INDEX: Index = Index::new(23);
@@ -537,7 +532,7 @@ impl Step<Pasta> for QrIntakeMerge {
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    /// `(merged,)`
+    /// `(merged,)`.
     type Witness<'source> = (TachygramSetPoly,);
 
     const INDEX: Index = Index::new(16);
@@ -635,7 +630,7 @@ impl Step<Pasta> for QrIntakeSplit {
     type Left = QrIntake;
     type Output = QrIntakeSides;
     type Right = ();
-    /// `(non_residue, residue)`
+    /// `(non_residue, residue)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(17);
@@ -729,7 +724,7 @@ impl Step<Pasta> for QrSideSelect {
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
     type Right = ();
-    /// `(interpolant, quotient)`
+    /// `(interpolant, quotient)`.
     type Witness<'source> = (QrInterpolantPoly, QrQuotientPoly);
 
     const INDEX: Index = Index::new(38);
@@ -789,11 +784,11 @@ impl Step<Pasta> for QrSideSelect {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// With $s$ the sibling, $u$ its interpolant and $h$ the quotient,
+/// With $s$ the sibling, $u$ its interpolant and $h$ the quotient:
 ///
 /// $$
 ///   u(X)^2 - c \cdot (X + R) = s(X) \cdot h(X)
-/// $$
+/// $$.
 ///
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
 /// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
@@ -809,9 +804,9 @@ impl Step<Pasta> for QrSideSelect {
 /// the other class in the child. The child may hold a stray member of the
 /// sibling's class; consumers open it nonzero, so a stray member cannot pass a
 /// value that is present. $R$ is read off the header, so a descent classifies
-/// at the same $R_0$ as every other step of the network. The parent's depth is
-/// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
-/// one depth's paths have distinct profiles.
+/// at the same $R_{0}$ as every other step of the network. The parent's depth
+/// is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$
+/// and one depth's paths have distinct profiles.
 ///
 /// Opens both sides, the interpolant, the quotient and the selected output
 /// once each at $\zeta$.
@@ -823,7 +818,7 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit,)`
+    /// `(bit,)`.
     type Witness<'source> = (bool,);
 
     const INDEX: Index = Index::new(18);
@@ -971,7 +966,7 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
 
 impl Header<Fp> for QrBucket {
     /// `(epoch, anchor_start, anchor_next, discriminant, profile,
-    /// contents_hash)`
+    /// contents_hash)`.
     type Data = (
         EpochIndex,
         Anchor,
@@ -1095,7 +1090,7 @@ impl Step<Pasta> for QrBucketSeal {
     type Left = QrIntake;
     type Output = QrBucket;
     type Right = ();
-    /// `(anchor_final_prev)`
+    /// `(anchor_final_prev)`.
     type Witness<'source> = (Anchor,);
 
     const INDEX: Index = Index::new(20);
@@ -1190,15 +1185,15 @@ impl Step<Pasta> for QrBucketSeal {
 /// bucket at the value for nonzero. The `MAX_DEPTH` positions
 /// $j = 0, 1, \dots$ index the progression, so position $j$
 /// classifies at $R_j = R_0 + j$. With $x$ the value and $s_j = x +
-/// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
+/// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with:
 ///
 /// $$
 ///   r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j,
 ///   \qquad
 ///   b_j = 0 \implies s_j \neq 0.
-/// $$
+/// $$.
 ///
-/// A mask $m_j$ selects the bucket's path through two sums and a fold,
+/// A mask $m_j$ selects the bucket's path through two sums and a fold:
 ///
 /// $$
 ///   \sum_j m_j = \mathsf{depth},
@@ -1206,7 +1201,7 @@ impl Step<Pasta> for QrBucketSeal {
 ///   \sum_j j \cdot m_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
 ///   \qquad
 ///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
-/// $$
+/// $$.
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
 /// bucket's sides are the value's.
@@ -1245,7 +1240,7 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence)`
+    /// `(value, classes, mask, sequence)`.
     type Witness<'source> = (
         Tachygram,
         [QrClassRoot; QrProfile::MAX_DEPTH],

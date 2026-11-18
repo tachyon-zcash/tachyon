@@ -51,7 +51,7 @@ pub struct ActionsOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for Actions {
-    /// `anchor`
+    /// `anchor`.
     type Data = Anchor;
     type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; ActionsOutput<'_, _>];
@@ -93,7 +93,7 @@ pub struct StampOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for Stamp {
-    /// `(tachygram_set_bridge, anchor)`
+    /// `(tachygram_set_bridge, anchor)`.
     type Data = (TachygramSetBridge, Anchor);
     type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; StampOutput<'_, _>];
@@ -161,7 +161,7 @@ impl Step<Pasta> for OutputAction {
     type Left = OutputHeader;
     type Output = Actions;
     type Right = ();
-    /// `(theta, anchor, action_set, tachygram_set)`
+    /// `(theta, anchor, action_set, tachygram_set)`.
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(7);
@@ -282,7 +282,7 @@ impl Step<Pasta> for SpendAction {
     type Left = SpendHeader;
     type Output = Actions;
     type Right = ();
-    /// `(theta, pak, action_set, tachygram_set)`
+    /// `(theta, pak, action_set, tachygram_set)`.
     type Witness<'source> = (
         ActionEntropy,
         ProofAuthorizingKey,
@@ -410,7 +410,7 @@ impl Step<Pasta> for StampMerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(action_set, tachygram_set)`
+    /// `(action_set, tachygram_set)`.
     type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(10);
@@ -500,7 +500,7 @@ impl Step<Pasta> for ActionMerge {
     type Left = Actions;
     type Output = Actions;
     type Right = Actions;
-    /// `(action_set, tachygram_set)`
+    /// `(action_set, tachygram_set)`.
     type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(34);
@@ -570,7 +570,7 @@ impl Step<Pasta> for ActionMerge {
 ///
 /// $$
 ///   M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0
-/// $$
+/// $$.
 ///
 /// The output anchor is always `anchor_end`, because the members polynomial
 /// does not record the order of its members. A stamp already at `anchor_end`
@@ -589,7 +589,7 @@ impl Step<Pasta> for StampLift {
     type Left = Stamp;
     type Output = Stamp;
     type Right = AnchorSpan;
-    /// `(action_set,)`
+    /// `(action_set,)`.
     type Witness<'source> = (ActionSetPoly,);
 
     const INDEX: Index = Index::new(11);
@@ -761,7 +761,7 @@ impl Step<Pasta> for FeeFuse {
     type Left = Actions;
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`
+    /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`.
     type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
 
     const INDEX: Index = Index::new(33);
@@ -914,7 +914,7 @@ impl Step<Pasta> for FeeSeed {
     type Left = ();
     type Output = Stamp;
     type Right = ();
-    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
+    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`.
     type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(36);
@@ -1042,7 +1042,7 @@ impl Step<Pasta> for FeeSeed {
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
 ///
 /// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
-/// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its
+/// product $\prod_{i} (X - d_{i})$ over a multiset of leaf digests, and its
 /// tachygram polynomial is the product over exactly those leaves'
 /// tachygrams. The output is leaf-generated over the dividend's leaf
 /// multiset minus the divisor's, at the shared anchor.
@@ -1079,7 +1079,7 @@ impl Step<Pasta> for StampUnmerge {
     type Left = Stamp;
     type Output = Stamp;
     type Right = Stamp;
-    /// `(action_set, tachygram_set)`
+    /// `(action_set, tachygram_set)`.
     type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(37);

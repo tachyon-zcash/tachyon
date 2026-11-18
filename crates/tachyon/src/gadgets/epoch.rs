@@ -43,6 +43,10 @@ impl<'dr, D: Driver<'dr>> Deref for EpochIndex<'dr, D> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
     /// Allocates `epoch` and range-checks it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or the epoch range check fails.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -54,6 +58,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
     }
 
     /// The epoch `bits` encodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot pack the epoch bits.
     pub(crate) fn from_bits(dr: &mut D, bits: &Uint<'dr, D, EPOCH_BITS>) -> Result<Self> {
         Ok(Self {
             element: bits.pack(dr)?,
@@ -62,6 +70,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
 
     /// The epoch `bits` encodes, with its low `log2(RATE)` bits held to zero:
     /// the first epoch of a nullifier group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if packing fails or the group-alignment constraint is
+    /// unsatisfied.
     pub(crate) fn from_group_start(dr: &mut D, bits: &Uint<'dr, D, EPOCH_BITS>) -> Result<Self> {
         for (bit, _) in bits.bits().iter().zip(0..PoseidonFp::RATE.ilog2()) {
             bit.element().enforce_zero(dr)?;
@@ -71,6 +84,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
 
     /// The index after this one. Range-checks both this index and the
     /// result; unsatisfiable at `EPOCH_MAX`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a range check fails, including when this is the
+    /// final epoch, or if the driver fails.
     pub(crate) fn next(&self, dr: &mut D) -> Result<Self> {
         Uint::<_, EPOCH_BITS>::from_element(dr, &self.element)?;
         let one = Element::constant(dr, Fp::ONE);
@@ -81,6 +99,15 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
 
     /// Splits this index into the first epoch of its nullifier group and the
     /// two low bits that select within the group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if bit decomposition or the epoch range check fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the epoch decomposition supplies fewer than two bits. The
+    /// configured epoch width guarantees both low bits exist.
     pub(crate) fn group(&self, dr: &mut D) -> Result<(Element<'dr, D>, [Boolean<'dr, D>; 2])> {
         let bits = Uint::<_, EPOCH_BITS>::from_element(dr, &self.element)?;
         let mut low_bits = bits.bits().iter().cloned();
