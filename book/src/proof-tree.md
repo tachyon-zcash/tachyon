@@ -499,13 +499,18 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 ### Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
+Every stamp-producing operation rerandomizes its PCD before releasing a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge`, and `ProofStamp::lift` each call Ragu's `rerandomize` step on the `Stamp` PCD they built. Intermediate PCDs that stay inside the wallet, such as `NoteSecret`, `NoteSpendable`, a derivation window, or an `ArbitraryUnspent` segment, are not rerandomized.
 
-A PCD proof is a commitment to its own witness data. Two proofs built from overlapping private inputs are correlated as group elements, even when their public headers reveal nothing. The proof a wallet holds after `SpendBind` and the proof it publishes in a stamp share a lineage, so an observer holding both could link them, and an aggregator that merges two stamps sees both inputs directly.
+Stamps cross trust boundaries when a wallet publishes an autonome to the mempool and when an aggregator publishes a merged, lifted, or unmerged stamp while retaining the stamps it combined. Rerandomization at each handoff is required and is the mechanism intended to make a released stamp proof unlinkable to the private lineage that built it and to other releases from that lineage.
 
-A stamp crosses a trust boundary at exactly these points. A wallet hands an autonome to the p2p network; an aggregator hands a merged stamp onward while retaining the inputs it merged. Rerandomizing at each handoff replaces the proof with an unrelated one that verifies against the same header, so the released artifact carries no correlation back to the private lineage that produced it, and none forward to a later release of the same lineage.
+Ragu does not yet provide zero knowledge for either uncompressed or compressed stamp proofs, and its present rerandomizer does not yet establish unlinkability. `rerandomize` fuses the `Stamp` PCD with the application's cached seeded unit PCD, preserving the `Stamp` header and copying its `ActionSet` and `TachygramSet` polynomials. Without an accumulator randomizer at the fuse step, the resulting accumulator remains a deterministic function of the input PCD, the cached unit PCD, and the transcript challenges.
 
-The rule is that a proof leaving the process that built it is rerandomized first. Intermediate PCDs that stay inside a wallet, such as a derivation window or an `ArbitraryUnspent` segment, do not need it: nothing outside the wallet ever observes them.
+Because `rerandomize` runs after `FeeFuse`, `FeeSeed`, `StampMerge`, `StampLift`, or `StampUnmerge`, the released stamp proof's immediate predecessor headers are the public `Stamp` header `(tachygram_set_bridge, anchor)` and the unit header rather than wallet-private headers such as `NoteSecret` or `SpendHeader`. Beyond the `Stamp` header and the two public slot commitments, the serialized stamp proof bytes still disclose internal step data:
+
+- An uncompressed stamp proof, used in relay before block inclusion, serializes the rerandomization step's circuit identifier, both immediate predecessor headers, the bridge blinding scalar, the online slot openings, and the step's full stage, accumulator, and slot polynomials (whose stage wires record the predecessor stamp's commitments).
+- A compressed stamp proof, used in blocks, omits the full polynomials and earlier ancestors' headers, but its serialized instance and reduction messages carry the rerandomization circuit identifier, both immediate predecessor headers, the immediate predecessors' circuit identifiers and accumulator coordinates (identifying, for example, `FeeSeed` versus `FeeFuse` or `StampMerge`), online query points and evaluations, internal stage commitments, the bridge blinding scalar, accumulator scalars, and polynomial evaluations opened on both curves during compression.
+
+A stripped adjunct in a block carries no stamp proof bytes, though mempool observers may already hold its stamped relay version.
 
 ## Simple transaction
 

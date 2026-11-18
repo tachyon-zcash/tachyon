@@ -31,16 +31,14 @@ Each tachyaction is cryptographically bound to a pair of tachygrams. The pair is
 Each tachyaction contains:
 
 - `cv` - a 32-byte homomorphic commitment to the note's created or destroyed value
-- `rk` - a 32-byte public key[^ragu-rerandomization]
+- `rk` - a 32-byte randomized public key
 - `sig` - a 64-byte RedPallas[^redpallas] signature by `rk` over the transaction sighash
 
 The action digest binds `cv`, `rk`, and the pair through its sum and product. The signature signs the effecting descriptor `(cv, rk)` through the transaction sighash; the pair is authorization data. The wire separates descriptors, signatures, and pairs into effecting, signing, and proving sections of the body.
 
-[^ragu-rerandomization]: Ragu's [proof rerandomization](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization) conceals private proof inputs by selecting new unrelated proof inputs that verify identically.
-
 ### Tachystamp
 
-The **tachystamp** is a recursive zero-knowledge proof that all related tachyactions follow the correct rules.
+The **tachystamp** carries a recursive stamp proof that all covered tachyactions and fees follow the protocol rules. Each released stamp proof is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries), though Ragu does not yet provide zero knowledge for either stamp proof form.
 
 It contains:
 
