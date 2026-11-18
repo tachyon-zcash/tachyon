@@ -450,7 +450,7 @@ impl Step<Pasta> for SpendAction {
 /// Transaction assembly and aggregation.
 ///
 /// Opens both inputs' action and tachygram sets and both products at one
-/// challenge that absorbs all six commitments.
+/// challenge.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -546,7 +546,7 @@ impl Step<Pasta> for StampMerge {
 /// Merges action content.
 ///
 /// Opens both inputs' action and tachygram sets and both products at one
-/// challenge that absorbs all six commitments.
+/// challenge.
 #[derive(Debug)]
 pub struct ActionMerge;
 

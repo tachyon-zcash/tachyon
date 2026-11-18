@@ -549,9 +549,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 /// # Soundness
 ///
 /// Consensus forbids republishing a tachygram within two epochs, so the sets
-/// are disjoint and the product is the union's root polynomial. The product
-/// check opens all three contents polynomials at a challenge that absorbs
-/// their commitments.
+/// are disjoint and the product is the union's root polynomial.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 

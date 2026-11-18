@@ -475,11 +475,6 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
 /// their product.
-///
-/// # Soundness
-///
-/// The product check opens both elapsed sequences and their product at a
-/// challenge that absorbs all three commitments.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -727,10 +722,8 @@ impl Step<Pasta> for UnspentLift {
 ///
 /// # Soundness
 ///
-/// The identity is checked on openings at a challenge that absorbs all three
-/// sequence commitments. `elapsed` is then a subsequence of the derivation, so
-/// every one of its members is a genuine derived pair and coverage is a
-/// conclusion of the identity.
+/// `elapsed` is a subsequence of the derivation, so every one of its members
+/// is a genuine derived pair and coverage is a conclusion of the identity.
 ///
 /// Completeness rides `elapsed`'s provenance invariants, so every epoch of
 /// `[epoch_start, epoch_next)` was tested with its own genuine nullifier.
