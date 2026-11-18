@@ -23,10 +23,13 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use udon::{field::Field as _, polynomial::divide_monic_in_place};
+use udon::{
+    field::Field as _,
+    polynomial::{InterpolationError, InterpolationPlan, divide_monic_in_place},
+};
 
 use crate::{arithmetic, pasta::Fp};
 
@@ -105,7 +108,7 @@ pub(crate) fn split(
 #[must_use]
 #[expect(
     clippy::expect_used,
-    reason = "the vanishing polynomial of the abscissas is monic"
+    reason = "the interpolation buffers are sized to the point count and the divisor is monic"
 )]
 pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
@@ -115,12 +118,31 @@ pub(crate) fn decomposition(
     Polynomial<Fp, ProductionRank>,
     Polynomial<Fp, ProductionRank>,
 )> {
-    let mut interpolant_coeffs = if points.is_empty() {
-        [Fp::ONE].to_vec()
+    let (abscissas, values): (Vec<_>, Vec<_>) = points.iter().copied().unzip();
+    let len = points.len();
+    let mut interpolant_coeffs = if len == 0 {
+        vec![Fp::ONE]
     } else {
-        arithmetic::interpolate(points)?
+        let mut weights = vec![Fp::ZERO; len];
+        let mut scratch = vec![Fp::ZERO; len];
+        let mut coeffs = vec![Fp::ZERO; len];
+        let plan = match InterpolationPlan::prepare(
+            Fp::as_slice(&abscissas),
+            Fp::as_slice_mut(&mut weights),
+            Fp::as_slice_mut(&mut scratch),
+        ) {
+            Ok(plan) => plan,
+            Err(InterpolationError::DuplicatePoints { .. }) => return None,
+            Err(err) => unreachable!("interpolation buffers match the point count: {err}"),
+        };
+        plan.interpolate(
+            Fp::as_slice(&values),
+            Fp::as_slice_mut(&mut coeffs),
+            Fp::as_slice_mut(&mut scratch),
+        )
+        .expect("interpolation values and buffers match the point count");
+        coeffs
     };
-    let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
     let vanishing = arithmetic::poly_with_roots(&abscissas);
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
         interpolant_coeffs.clone_from(&vanishing);

@@ -6,7 +6,7 @@ use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
     field::Field as _,
-    polynomial::{evaluate_iter, vanishing_polynomial},
+    polynomial::vanishing_polynomial,
 };
 
 use crate::pasta::Fp;
@@ -15,6 +15,8 @@ use crate::pasta::Fp;
 const ROOT_CHUNK: usize = 128;
 
 /// The product of `left` and `right`, empty when either factor is empty.
+/// Udon computes the product over a domain large enough to avoid wraparound;
+/// the inverse transform recovers the ascending coefficients.
 #[expect(
     clippy::expect_used,
     reason = "the product fits the FFT domain, which expands onto itself"
@@ -68,6 +70,8 @@ pub(crate) fn poly_mul(left: &[Fp], right: &[Fp]) -> Vec<Fp> {
 }
 
 /// The monic polynomial whose roots are `roots`, with multiplicity.
+/// Use udon's quadratic routine on bounded leaves and combine them with FFT
+/// products so large sets do not require quadratic work.
 #[expect(
     clippy::expect_used,
     reason = "each leaf spans its roots and leading one; the nonempty product tree has a root"
@@ -100,52 +104,4 @@ pub(crate) fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
     }
 
     polys.into_iter().next().expect("nonempty product tree")
-}
-
-/// The polynomial of least degree through `points`, or `None` when two points
-/// share an abscissa.
-pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
-    fn reduced(range: &[(Fp, Fp)]) -> (Vec<Fp>, Vec<Fp>) {
-        if let &[(at, weighted_value)] = range {
-            return ([weighted_value].to_vec(), [-at, Fp::ONE].to_vec());
-        }
-        let (left, right) = range.split_at(range.len().div_ceil(2));
-        let (left_interp, left_vanishing) = reduced(left);
-        let (right_interp, right_vanishing) = reduced(right);
-
-        let mut combined = poly_mul(&left_interp, &right_vanishing);
-        let cross = poly_mul(&right_interp, &left_vanishing);
-        for (coeff, cross_coeff) in combined.iter_mut().zip(cross.iter()) {
-            *coeff += cross_coeff;
-        }
-        (combined, poly_mul(&left_vanishing, &right_vanishing))
-    }
-
-    let abscissas: Vec<Fp> = points.iter().map(|&(at, _)| at).collect();
-    let vanishing = poly_with_roots(&abscissas);
-
-    // The normalizer for each point is $v'(x_i) = \prod_{j \neq i}(x_i -
-    // x_j)$; a non-invertible normalizer marks a repeated abscissa.
-    #[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
-    let derivative: Vec<Fp> = vanishing
-        .iter()
-        .enumerate()
-        .skip(1)
-        .map(|(degree, coeff)| Fp::from(degree as u64) * coeff)
-        .collect();
-
-    let weighted: Vec<(Fp, Fp)> = points
-        .iter()
-        .map(|&(at, value)| {
-            let weight = evaluate_iter(&derivative, at).invert()?;
-            Some((at, weight * value))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    if weighted.is_empty() {
-        return Some([Fp::ZERO].to_vec());
-    }
-
-    let (mut coeffs, _) = reduced(&weighted);
-    coeffs.resize(points.len(), Fp::ZERO);
-    Some(coeffs)
 }
