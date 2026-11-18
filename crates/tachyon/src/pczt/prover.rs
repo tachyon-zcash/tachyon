@@ -15,7 +15,7 @@ use crate::{
     primitives::Anchor,
     stamp::{
         ActionsPlan, ProofStamp, ProveError,
-        proof::{delegation, pool, spendable},
+        proof::{App, delegation, pool, spendable},
     },
     value,
 };
@@ -79,13 +79,14 @@ impl Bundle {
     pub fn prove_partial<RNG: CryptoRng>(
         &mut self,
         rng: &mut RNG,
+        app: &App<'_>,
         anchor: Anchor,
         pak: Option<&ProofAuthorizingKey>,
         spends: Vec<(
             usize,
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
+            ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+            Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
         )>,
         outputs: BTreeSet<usize>,
     ) -> Result<(), ProverError> {
@@ -119,7 +120,7 @@ impl Bundle {
         }
 
         let proof = ActionsPlan::new(planned_spends, planned_outputs, anchor)
-            .prove(rng, pak, spend_pcds)?;
+            .prove(rng, app, pak, spend_pcds)?;
         self.partials.push(Partial {
             spends: spend_indices,
             outputs,
@@ -135,7 +136,11 @@ impl Bundle {
     /// Returns [`ProverError::Overlap`] if two partials cover a common
     /// action, [`ProverError::Incomplete`] if there are no partials, or
     /// [`ProverError::Prove`] if a proof step fails.
-    pub fn merge_partials<RNG: CryptoRng>(&mut self, rng: &mut RNG) -> Result<(), ProverError> {
+    pub fn merge_partials<RNG: CryptoRng>(
+        &mut self,
+        rng: &mut RNG,
+        app: &App<'_>,
+    ) -> Result<(), ProverError> {
         let mut partials = mem::take(&mut self.partials).into_iter();
         let Some(mut merged) = partials.next() else {
             return Err(ProverError::Incomplete);
@@ -147,7 +152,7 @@ impl Bundle {
             merged = Partial {
                 spends: merged.spends.union(&partial.spends).copied().collect(),
                 outputs: merged.outputs.union(&partial.outputs).copied().collect(),
-                proof: merged.proof.merge(rng, partial.proof)?,
+                proof: merged.proof.merge(rng, app, partial.proof)?,
             };
         }
         self.partials.push(merged);
@@ -164,13 +169,14 @@ impl Bundle {
     pub fn stamp<RNG: CryptoRng>(
         &mut self,
         rng: &mut RNG,
+        app: &App<'_>,
         fee: value::Positive,
     ) -> Result<(), ProverError> {
         let (Some(partial), 1) = (self.partials.first(), self.partials.len()) else {
             return Err(ProverError::Incomplete);
         };
-        if partial.spends.len() != self.spends.len()
-            || partial.outputs.len() != self.outputs.len()
+        if !partial.spends.iter().copied().eq(0..self.spends.len())
+            || !partial.outputs.iter().copied().eq(0..self.outputs.len())
             || self.spends.is_empty() && self.outputs.is_empty()
         {
             return Err(ProverError::Incomplete);
@@ -183,7 +189,7 @@ impl Bundle {
             return Err(ProverError::FeeAboveMax);
         }
 
-        self.stamp = Some(partial.proof.clone().fee(rng, max_fee_note, fee)?);
+        self.stamp = Some(partial.proof.clone().fee(rng, app, max_fee_note, fee)?);
         Ok(())
     }
 
@@ -196,6 +202,7 @@ impl Bundle {
     pub fn seed_stamp<RNG: CryptoRng>(
         &mut self,
         rng: &mut RNG,
+        app: &App<'_>,
         anchor: Anchor,
     ) -> Result<(), ProverError> {
         if !self.spends.is_empty() || !self.outputs.is_empty() {
@@ -209,7 +216,7 @@ impl Bundle {
             return Err(ProverError::FeeAboveMax);
         }
 
-        self.stamp = Some(ProofStamp::seed(rng, max_fee_note, anchor)?);
+        self.stamp = Some(ProofStamp::seed(rng, app, max_fee_note, anchor)?);
         Ok(())
     }
 }

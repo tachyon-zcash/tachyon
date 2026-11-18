@@ -23,11 +23,9 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | Purpose | Value |
 | ------- | ----- |
 | Action descriptors | `Tachyon-Actions` |
-| A stamp's fee descriptors | `Tachyon-Fees` |
-| A stamp's coverage | `Tachyon-Coverage` |
 | Memo payload | `Tachyon-Memo` |
-| Stamp proof | `Tachyon-Proof` |
-| Stamp data | `Tachyon-Stamp` |
+| `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set commitment | `Tachyon-Proof` |
+| `hStampTachyon`, the stamp | `Tachyon-Stamp` |
 
 ## BLAKE2b-512
 
@@ -74,8 +72,9 @@ The two alpha domains and the fee digest domain are zero-padded to sixteen bytes
 
 ## Hash-to-curve
 
-Value commitments presently use the same generator as Orchard.
+Value commitments and action authorization presently use the same generators as Orchard.
 
 | Purpose | Value |
 | ------- | ----- |
-| Value commitment | `z.cash:Orchard-cv` |
+| Value commitment generators $\mathcal{V}$, $\mathcal{R}$ | `z.cash:Orchard-cv`, messages `v` and `r` |
+| Action authorization basepoint $\mathcal{G}$, for spend and output actions | `z.cash:Orchard`, message `G`, as used by `reddsa` |

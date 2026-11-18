@@ -9,7 +9,7 @@ mod seq;
 mod sets;
 mod tachygram;
 
-pub use action_digest::{ActionDigest, ActionDigestError};
+pub use action_digest::ActionDigest;
 pub use anchor::{Anchor, AnchorError};
 pub use block_height::BlockHeight;
 pub use effect::Effect;

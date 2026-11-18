@@ -6,21 +6,21 @@ use core::{array, assert_matches};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Projective as _;
 use zcash_tachyon::{
-    Anchor, EpochIndex, Tachygram, TachygramSetPoly,
-    pasta::Eq,
-    stamp::proof::{PROOF_SYSTEM, summary},
-    witness,
+    Anchor, EpochIndex, Tachygram, TachygramSetPoly, pasta::Eq, stamp::proof::summary, witness,
 };
+
+use super::fixtures::application;
 
 #[test]
 fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
     let stamp_a: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
     let stamp_b: [Tachygram; 2] = array::from_fn(|_| Tachygram::random(rng));
 
-    let (seeded, ()) = PROOF_SYSTEM
+    let (seeded, ()) = app
         .seed(
             rng,
             summary::SummarySeed,
@@ -42,7 +42,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator over foreign tachygrams",
         ),
         (
             {
@@ -51,30 +51,31 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
                 witness.0 = stamp_a.iter().copied().collect();
                 witness
             },
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator that omits the stamp",
         ),
     ] {
-        assert_matches!(
-            PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    summary::SummaryAdvance,
-                    advance_witness,
-                    seeded.clone(),
-                    PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                summary::SummaryAdvance,
+                advance_witness,
+                seeded.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 
-    let (advanced, ()) = PROOF_SYSTEM
+    let (advanced, ()) = app
         .fuse(
             rng,
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
             seeded,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
@@ -96,21 +97,23 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap();
     assert_eq!(*advanced.data(), (epoch, start, expected_end));
     assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());
+    assert!(app.verify_uncompressed(&advanced, rng).unwrap());
 }
 
 #[test]
 fn summary_seed_rejects_empty_stamp() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let start = Anchor::random(rng);
 
     assert_matches!(
-        PROOF_SYSTEM
+        app
             .seed(
                 rng,
                 summary::SummarySeed,
                 witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "invalid anchor step"
+        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
     );
 }

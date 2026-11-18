@@ -5,6 +5,7 @@
     clippy::integer_division_remainder_used,
     clippy::integer_division,
     clippy::missing_assert_message,
+    clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::panic,
     clippy::too_many_arguments,

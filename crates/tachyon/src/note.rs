@@ -91,7 +91,7 @@ impl Note {
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {
         let blind =
             poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+        value::ValueTrapdoor(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// Derive the fee change note of this max fee note at `fee`: the same

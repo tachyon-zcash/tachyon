@@ -41,7 +41,7 @@ use crate::{
     note::{self, Note},
     nullifier,
     primitives::{Effect, effect},
-    stamp::{ActionsProof, ProofStamp, Uncompressed},
+    stamp::{ActionsProof, ProvedStamp},
     value,
 };
 
@@ -215,8 +215,8 @@ pub struct Bundle {
     /// Proven actions with no fee applied.
     pub partials: Vec<Partial>,
 
-    /// The stamp, with the bundle's fee applied.
-    pub stamp: Option<ProofStamp<Uncompressed>>,
+    /// The stamp, descriptor-keyed tachygram pairs, fee change and fee.
+    pub stamp: Option<ProvedStamp>,
 }
 
 #[expect(clippy::multiple_inherent_impl, reason = "one impl block per role")]

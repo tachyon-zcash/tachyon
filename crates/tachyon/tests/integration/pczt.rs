@@ -2,22 +2,26 @@ extern crate alloc;
 
 use alloc::{collections::BTreeSet, vec, vec::Vec};
 
-use ragu::Pcd;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
+use ragu_pcd::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, Note,
     pasta::Fp,
     pczt::{self, CombineError, ExtractError, NoteOpening, Slot},
-    stamp::proof::{delegation, spendable},
+    stamp::proof::{App, delegation, spendable},
     value,
 };
 
-use crate::fixtures::{PoolSim, WalletSim, mock_sighash, random_block_with, shared_sk};
+use crate::fixtures::{
+    application, mock_sighash,
+    pool::PoolSim,
+    wallet::{WalletSim, shared_sk},
+};
 
 fn spendables(
-    rng: &mut StdRng,
+    app: &App<'_>,
     notes: &[(&WalletSim, Note)],
 ) -> (
     Vec<(
@@ -28,14 +32,14 @@ fn spendables(
 ) {
     let mut pool = PoolSim::genesis_with(vec![]);
     let cms = notes.iter().map(|&(_, note)| note.commitment()).collect();
-    pool.mine(random_block_with(rng, &[cms], 50));
+    pool.mine(vec![cms]);
     let height = pool.height();
     let inputs: Vec<_> = notes
         .iter()
         .map(|&(wallet, note)| {
             (
-                wallet.secret_pcd(rng, note),
-                wallet.spendable_init(rng, &note, &pool, height),
+                wallet.note_secret(app, note),
+                wallet.spendable_init(app, &pool, &note, height),
             )
         })
         .collect();
@@ -67,10 +71,11 @@ fn spend_bundle(rng: &mut StdRng, wallet: &WalletSim, spend_note: Note) -> pczt:
 
 #[test]
 fn custody_authorizes_and_planner_binds() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C27);
     let wallet = WalletSim::new(shared_sk());
     let spend_note = wallet.random_note(100);
-    let (inputs, anchor) = spendables(&mut rng, &[(&wallet, spend_note)]);
+    let (inputs, anchor) = spendables(&app, &[(&wallet, spend_note)]);
 
     let mut bundle = spend_bundle(&mut rng, &wallet, spend_note);
     let sighash = bundle
@@ -86,30 +91,42 @@ fn custody_authorizes_and_planner_binds() {
     bundle
         .prove_partial(
             &mut rng,
+            &app,
             anchor,
             Some(&wallet.pak),
             vec![(0, inputs[0].0.clone(), inputs[0].1.clone(), vec![])],
             BTreeSet::from([0, 1]),
         )
         .unwrap();
-    bundle.stamp(&mut rng, 4.try_into().unwrap()).unwrap();
+    bundle.stamp(&mut rng, &app, 4.try_into().unwrap()).unwrap();
 
-    let extracted = bundle.clone().extract(&mut rng, &sighash).unwrap();
-    assert_eq!(extracted.stamp.fee, 4.try_into().unwrap());
+    let extracted = bundle.clone().extract(&mut rng, &app, &sighash).unwrap();
+    assert_eq!(extracted.fee.v_fee, 4.try_into().unwrap());
+    assert_eq!(mock_sighash(extracted.commitment()), sighash);
 
-    bundle.stamp(&mut rng, 9.try_into().unwrap()).unwrap();
-    let refeed = bundle.extract(&mut rng, &sighash).unwrap();
-    assert_eq!(refeed.stamp.fee, 9.try_into().unwrap());
+    let mut missing_pair = bundle.clone();
+    missing_pair.stamp.as_mut().unwrap().1.pop_first().unwrap();
+    assert!(matches!(
+        missing_pair.extract(&mut rng, &app, &sighash),
+        Err(ExtractError::ActionMismatch)
+    ));
+
+    bundle.stamp(&mut rng, &app, 9.try_into().unwrap()).unwrap();
+    let refeed = bundle.extract(&mut rng, &app, &sighash).unwrap();
+    assert_eq!(refeed.fee.v_fee, 9.try_into().unwrap());
     assert_eq!(refeed.actions, extracted.actions);
+    assert_eq!(refeed.action_auth, extracted.action_auth);
+    assert_ne!(refeed.fee_auth, extracted.fee_auth);
     assert_eq!(refeed.binding_sig, extracted.binding_sig);
 }
 
 #[test]
 fn planner_fixes_effects_before_custody() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C28);
     let wallet = WalletSim::new(shared_sk());
     let spend_note = wallet.random_note(100);
-    let (inputs, anchor) = spendables(&mut rng, &[(&wallet, spend_note)]);
+    let (inputs, anchor) = spendables(&app, &[(&wallet, spend_note)]);
 
     let mut bundle = spend_bundle(&mut rng, &wallet, spend_note);
     let commitment = bundle.finalize_effects(&mut rng, &wallet.pak).unwrap();
@@ -129,14 +146,15 @@ fn planner_fixes_effects_before_custody() {
     bundle
         .prove_partial(
             &mut rng,
+            &app,
             anchor,
             Some(&wallet.pak),
             vec![(0, inputs[0].0.clone(), inputs[0].1.clone(), vec![])],
             BTreeSet::from([0, 1]),
         )
         .unwrap();
-    bundle.stamp(&mut rng, value::Positive::ZERO).unwrap();
-    bundle.extract(&mut rng, &sighash).unwrap();
+    bundle.stamp(&mut rng, &app, value::Positive::ZERO).unwrap();
+    bundle.extract(&mut rng, &app, &sighash).unwrap();
 }
 
 #[test]
@@ -156,6 +174,7 @@ fn custody_derives_from_preimages_not_stored_effects() {
 
 #[test]
 fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C2A);
     let alice = WalletSim::new(shared_sk());
     let bob = WalletSim::random(&mut rng);
@@ -163,7 +182,7 @@ fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
     let bob_ak = bob.sk.derive_auth_private().derive_auth_public();
     let alice_note = alice.random_note(70);
     let bob_note = bob.random_note(50);
-    let (inputs, anchor) = spendables(&mut rng, &[(&alice, alice_note), (&bob, bob_note)]);
+    let (inputs, anchor) = spendables(&app, &[(&alice, alice_note), (&bob, bob_note)]);
 
     let mut bundle = pczt::Bundle::new(
         NoteOpening {
@@ -194,6 +213,7 @@ fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
     bundle
         .prove_partial(
             &mut rng,
+            &app,
             anchor,
             Some(&alice.pak),
             vec![(0, inputs[0].0.clone(), inputs[0].1.clone(), vec![])],
@@ -201,11 +221,12 @@ fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
         )
         .unwrap();
     bundle
-        .prove_partial(&mut rng, anchor, None, vec![], BTreeSet::from([0]))
+        .prove_partial(&mut rng, &app, anchor, None, vec![], BTreeSet::from([0]))
         .unwrap();
     bob_copy
         .prove_partial(
             &mut rng,
+            &app,
             anchor,
             Some(&bob.pak),
             vec![(1, inputs[1].0.clone(), inputs[1].1.clone(), vec![])],
@@ -215,9 +236,11 @@ fn custodies_sign_their_own_spends_and_provers_their_own_actions() {
 
     let mut combined = bundle.combine(bob_copy).unwrap();
     assert_eq!(combined.partials.len(), 3);
-    combined.merge_partials(&mut rng).unwrap();
-    combined.stamp(&mut rng, 10.try_into().unwrap()).unwrap();
-    combined.extract(&mut rng, &sighash).unwrap();
+    combined.merge_partials(&mut rng, &app).unwrap();
+    combined
+        .stamp(&mut rng, &app, 10.try_into().unwrap())
+        .unwrap();
+    combined.extract(&mut rng, &app, &sighash).unwrap();
 }
 
 #[test]
@@ -242,10 +265,11 @@ fn parallel_custodies_conflict() {
 
 #[test]
 fn redacted_copy_combines_and_extracts() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C2C);
     let wallet = WalletSim::new(shared_sk());
     let spend_note = wallet.random_note(100);
-    let (inputs, anchor) = spendables(&mut rng, &[(&wallet, spend_note)]);
+    let (inputs, anchor) = spendables(&app, &[(&wallet, spend_note)]);
 
     let mut bundle = spend_bundle(&mut rng, &wallet, spend_note);
     let sighash = bundle
@@ -255,13 +279,14 @@ fn redacted_copy_combines_and_extracts() {
     bundle
         .prove_partial(
             &mut rng,
+            &app,
             anchor,
             Some(&wallet.pak),
             vec![(0, inputs[0].0.clone(), inputs[0].1.clone(), vec![])],
             BTreeSet::from([0, 1]),
         )
         .unwrap();
-    bundle.stamp(&mut rng, 1.try_into().unwrap()).unwrap();
+    bundle.stamp(&mut rng, &app, 1.try_into().unwrap()).unwrap();
 
     let mut redacted = bundle.clone();
     redacted.redact();
@@ -271,11 +296,12 @@ fn redacted_copy_combines_and_extracts() {
 
     let combined = redacted.clone().combine(bundle).unwrap();
     assert!(combined.spends[0].theta.is_some());
-    redacted.extract(&mut rng, &sighash).unwrap();
+    redacted.extract(&mut rng, &app, &sighash).unwrap();
 }
 
 #[test]
 fn zero_action_bundle_stamps_with_fee_seed() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C2D);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = pczt::Bundle::new(
@@ -293,16 +319,17 @@ fn zero_action_bundle_stamps_with_fee_seed() {
     bundle.sign_binding(&mut rng, &sighash).unwrap();
 
     assert!(matches!(
-        bundle.stamp(&mut rng, value::Positive::ZERO),
+        bundle.stamp(&mut rng, &app, value::Positive::ZERO),
         Err(pczt::ProverError::Incomplete)
     ));
     let anchor = PoolSim::genesis_with(vec![]).anchor();
-    bundle.seed_stamp(&mut rng, anchor).unwrap();
-    bundle.extract(&mut rng, &sighash).unwrap();
+    bundle.seed_stamp(&mut rng, &app, anchor).unwrap();
+    bundle.extract(&mut rng, &app, &sighash).unwrap();
 }
 
 #[test]
 fn extraction_requires_every_signature() {
+    let app = application();
     let mut rng = StdRng::seed_from_u64(0x9C2E);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = spend_bundle(&mut rng, &wallet, wallet.random_note(100));
@@ -311,13 +338,13 @@ fn extraction_requires_every_signature() {
         .unwrap();
 
     assert!(matches!(
-        bundle.clone().extract(&mut rng, &sighash),
+        bundle.clone().extract(&mut rng, &app, &sighash),
         Err(ExtractError::MissingBindingSignature)
     ));
 
     bundle.spends[0].sig = None;
     assert!(matches!(
-        bundle.extract(&mut rng, &sighash),
+        bundle.extract(&mut rng, &app, &sighash),
         Err(ExtractError::MissingSignature(Slot::Spend(0)))
     ));
 }

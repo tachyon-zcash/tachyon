@@ -100,7 +100,12 @@ impl Bundle {
             stamp: merge(
                 self.stamp,
                 other.stamp,
-                |ours, theirs| ours.stamp_digest() == theirs.stamp_digest(),
+                |ours, theirs| {
+                    ours.0.stamp_digest() == theirs.0.stamp_digest()
+                        && ours.1 == theirs.1
+                        && ours.2 == theirs.2
+                        && ours.3 == theirs.3
+                },
                 CombineError::BundleConflict("stamp"),
             )?,
         })
@@ -198,7 +203,7 @@ fn combine_partials(
 }
 
 fn same_proof(left: &Partial, right: &Partial) -> bool {
-    left.proof.descriptors == right.proof.descriptors
+    left.proof.pairs == right.proof.pairs
         && left.proof.digests == right.proof.digests
         && left.proof.tachygrams == right.proof.tachygrams
         && left.proof.anchor == right.proof.anchor
