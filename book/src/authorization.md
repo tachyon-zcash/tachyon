@@ -444,7 +444,7 @@ end
 
 critical stamp
     note over User: Unproven::stamp(stamp, pairs, fee, cm_change), using the stamp plan's fee
-    note over User: reject unequal descriptor key sets with StampError::ActionMismatch
+    note over User: panic if the descriptor key sets differ
     note over User: join maps in descriptor order into actions[] and action_auth[] (signature, pair) tuples
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end

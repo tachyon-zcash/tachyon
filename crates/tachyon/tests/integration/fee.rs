@@ -88,7 +88,6 @@ fn fee_less_output_bundle(
             value::Positive::ZERO,
             max_fee_note.commitment().into(),
         )
-        .unwrap()
     })
 }
 

@@ -393,7 +393,7 @@ impl WalletSim {
                 .stamp_plan(anchor, fee)
                 .prove(rng, app, &self.pak, spend_pcds)
                 .unwrap();
-            (plan, signed.stamp(stamp, pairs, fee, cm_change).unwrap())
+            (plan, signed.stamp(stamp, pairs, fee, cm_change))
         })
     }
 

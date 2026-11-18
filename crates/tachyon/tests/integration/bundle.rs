@@ -14,7 +14,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
-    bundle::{Plan, PlanError, Signature, StampError},
+    bundle::{Plan, PlanError, Signature},
     constants::MAX_MONEY,
     digest::blake2b,
     effect,
@@ -134,7 +134,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
 }
 
 #[test]
-fn stamp_joins_by_descriptor_and_rejects_missing_or_extra_keys() {
+fn stamp_joins_by_descriptor() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (plan, original) = spend(app);
@@ -152,15 +152,12 @@ fn stamp_joins_by_descriptor_and_rejects_missing_or_extra_keys() {
         .copied()
         .zip(original.action_auth.iter().map(|&(_, pair)| pair))
         .collect();
-    let joined = signed
-        .clone()
-        .stamp(
-            original.stamp.clone(),
-            pairs.clone(),
-            original.fee.v_fee,
-            original.fee_auth,
-        )
-        .unwrap();
+    let joined = signed.stamp(
+        original.stamp,
+        pairs.clone(),
+        original.fee.v_fee,
+        original.fee_auth,
+    );
     assert_eq!(joined.actions, pairs.keys().copied().collect::<Vec<_>>());
     assert_eq!(
         joined
@@ -173,27 +170,28 @@ fn stamp_joins_by_descriptor_and_rejects_missing_or_extra_keys() {
     joined
         .verify(rng, app, &mock_sighash(joined.commitment()), &[])
         .unwrap();
+}
 
-    let mut missing = pairs.clone();
-    missing.pop_first().unwrap();
-    let mut extra = pairs;
-    let descriptor = output_plan(rng, wallet.random_note(123)).2.descriptor();
-    assert!(
-        extra
-            .insert(descriptor, (Tachygram::random(rng), Tachygram::random(rng)))
-            .is_none()
+#[test]
+#[should_panic(expected = "action descriptors do not match")]
+fn stamp_panics_on_mismatched_descriptors() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (plan, original) = spend(app);
+    let wallet = WalletSim::new(shared_sk());
+    let signed = plan
+        .sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let _bundle = signed.stamp(
+        original.stamp,
+        BTreeMap::new(),
+        original.fee.v_fee,
+        original.fee_auth,
     );
-    for mismatched_pairs in [missing, extra] {
-        assert_matches!(
-            signed.clone().stamp(
-                original.stamp.clone(),
-                mismatched_pairs,
-                original.fee.v_fee,
-                original.fee_auth
-            ),
-            Err(StampError::ActionMismatch)
-        );
-    }
 }
 
 #[test]
@@ -1316,9 +1314,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
         .zip(stamped.action_auth.iter().map(|&(_, pair)| pair))
         .collect();
     pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
-    let bundle = signed
-        .stamp(stamped.stamp, pairs, stamped.fee.v_fee, stamped.fee_auth)
-        .unwrap();
+    let bundle = signed.stamp(stamped.stamp, pairs, stamped.fee.v_fee, stamped.fee_auth);
     assert_matches!(
         bundle.verify_covered(&[]),
         Err(VerifyCoverageError::WrongTachygramSet)

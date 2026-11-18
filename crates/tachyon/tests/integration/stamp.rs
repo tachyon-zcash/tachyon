@@ -337,9 +337,7 @@ fn overlapping_stamps_cannot_aggregate() {
             vec![(wallet.note_secret(app, note), spendable, vec![])],
         )
         .unwrap();
-    let spend_b = signed
-        .stamp(second_spend_stamp, pairs, value::Positive::ZERO, cm_change)
-        .unwrap();
+    let spend_b = signed.stamp(second_spend_stamp, pairs, value::Positive::ZERO, cm_change);
     let fixture_pairs = spend_a
         .actions
         .iter()

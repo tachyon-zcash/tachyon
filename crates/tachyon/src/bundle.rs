@@ -227,15 +227,6 @@ pub struct Unproven {
     pub memo: Vec<u8>,
 }
 
-/// Errors while joining signed and proved bundle data.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
-#[non_exhaustive]
-pub enum StampError {
-    /// The signed and proved action descriptor keys differ.
-    #[display("action descriptors do not match")]
-    ActionMismatch,
-}
-
 impl<S: StampState + 'static> PartialEq for Bundle<S> {
     fn eq(&self, other: &Self) -> bool {
         self.commitment() == other.commitment() && self.auth_digest() == other.auth_digest()
@@ -618,26 +609,28 @@ impl Unproven {
 
     /// Join signed data with independently proved authorization data.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`StampError::ActionMismatch`] if the descriptor keys differ.
+    /// Panics if the signature and tachygram pair maps have different keys.
+    #[must_use]
     pub fn stamp(
         self,
         stamp: ProofStamp<stamp::Uncompressed>,
         pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee: value::Positive,
         cm_change: Tachygram,
-    ) -> Result<Bundle<ProofStamp<stamp::Uncompressed>>, StampError> {
-        if !self.action_sigs.keys().eq(pairs.keys()) {
-            return Err(StampError::ActionMismatch);
-        }
+    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
+        assert!(
+            self.action_sigs.keys().eq(pairs.keys()),
+            "action descriptors do not match"
+        );
         let (actions, action_auth) = self
             .action_sigs
             .into_iter()
             .zip(pairs)
             .map(|((desc, sig), (_, pair))| (desc, (sig, pair)))
             .unzip();
-        Ok(Bundle {
+        Bundle {
             actions,
             action_auth,
             value_balance: self.value_balance,
@@ -649,7 +642,7 @@ impl Unproven {
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp,
-        })
+        }
     }
 }
 

@@ -167,7 +167,7 @@ end
 
 Signing a `bundle::Plan` produces an `Unproven` containing the value balance, a descriptor-keyed signature map, `cv_feemax`, the binding signature, and the memo. Signing takes neither a stamp nor pairs, fee, or change. Independently, `stamp::Plan::prove` returns three outputs: a `ProofStamp<Uncompressed>`, a descriptor-keyed map of tachygram pairs, and `cm_change`. The caller chooses the fee when creating the stamp plan and supplies that same fee to the join; proving does not return it.
 
-`Unproven::stamp(stamp, pairs, fee, cm_change)` checks that the pair map and signature map have exactly the same descriptor keys, returning `StampError::ActionMismatch` otherwise. On success it joins both maps in descriptor order into `actions` and `action_auth` and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity; those remain verification's responsibility. Signing and proving may run in either order or concurrently.
+`Unproven::stamp(stamp, pairs, fee, cm_change)` requires the pair map and signature map to have exactly the same descriptor keys and panics if they differ. It joins both maps in descriptor order into `actions` and `action_auth` and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity; those remain verification's responsibility. Signing and proving may run in either order or concurrently.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 

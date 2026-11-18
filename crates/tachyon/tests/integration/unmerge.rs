@@ -372,8 +372,7 @@ fn unmerge_splitting_a_bundle() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap()
-        .stamp(stamp, pairs, value::Positive::ZERO, cm_change)
-        .unwrap();
+        .stamp(stamp, pairs, value::Positive::ZERO, cm_change);
     let kept_index = whole
         .actions
         .iter()
@@ -443,7 +442,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, vec![])
             .unwrap();
-        signed.stamp(stamp, pairs, fee, cm_change).unwrap()
+        signed.stamp(stamp, pairs, fee, cm_change)
     });
     let (_, other) = wallet.bundle(
         app,
