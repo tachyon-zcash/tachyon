@@ -22,6 +22,9 @@
 
 extern crate alloc;
 
+#[cfg(test)]
+mod tests;
+
 use alloc::vec::Vec;
 
 use ragu_core::{

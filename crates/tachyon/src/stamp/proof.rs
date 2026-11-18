@@ -21,7 +21,9 @@
 //! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
 //! polynomials it relates only through their commitments, so each step grounds
 //! its operands in an input or output header, and each root it checks is fixed
-//! before $\zeta$.
+//! before $\zeta$. A commitment that is only witnessed, or threaded onward
+//! unchanged, binds nothing until a public input, a header or a consensus check
+//! fixes it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
