@@ -55,7 +55,6 @@ use crate::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
     },
-    relations::enforce::enforce_poly_product,
 };
 
 /// The polynomial whose roots are the tachygrams an intake routes or a bucket
@@ -579,7 +578,9 @@ impl QrEmptyIntakeSeed {
 /// # Soundness
 ///
 /// Consensus forbids republishing a tachygram within two epochs, so the sets
-/// are disjoint and the product is the union's root polynomial.
+/// are disjoint and the product is the union's root polynomial. The product
+/// check opens all three contents polynomials at a challenge that absorbs
+/// their commitments.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -633,7 +634,8 @@ impl Step<Pasta> for QrIntakeMerge {
         let left_contents = oracles.left(QrContents).open(dr, &z)?;
         let right_contents = oracles.right(QrContents).open(dr, &z)?;
         let merged_contents = oracles.output(QrContents).open(dr, &z)?;
-        enforce_poly_product(dr, &left_contents, &right_contents, &merged_contents)?;
+        let expected_contents = left_contents.mul(dr, &right_contents)?;
+        merged_contents.enforce_equal(dr, &expected_contents)?;
         for (left_element, right_element) in [
             (&*left_intake.epoch, &*right_intake.epoch),
             (&left_intake.discriminant, &right_intake.discriminant),

@@ -13,6 +13,15 @@
 //! emits the pair. Three steps whose output is a part of what they read are
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
+//!
+//! Steps relate polynomials through their openings at the challenge
+//! $\zeta$, which the framework derives after committing every polynomial a
+//! step opens. A product or root identity that holds at $\zeta$ therefore holds
+//! as a polynomial identity, except with probability about
+//! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
+//! polynomials it relates only through their commitments, so each step grounds
+//! its operands in an input or output header, and each root it checks is fixed
+//! before $\zeta$.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

@@ -33,7 +33,6 @@ use crate::{
     nullifier::{self, NF_DERIVATION_WIDTH},
     pasta::{EpAffine, Fp},
     primitives::{EpochIndex, NfSeqPoly},
-    relations::enforce::enforce_poly_product,
     value,
 };
 
@@ -490,7 +489,8 @@ impl Step<Pasta> for NullifierFuse {
         let left_seq = oracles.left(NfSeq).open(dr, &z)?;
         let right_seq = oracles.right(NfSeq).open(dr, &z)?;
         let merged_seq = oracles.output(NfSeq).open(dr, &z)?;
-        enforce_poly_product(dr, &left_seq, &right_seq, &merged_seq)?;
+        let expected_seq = left_seq.mul(dr, &right_seq)?;
+        merged_seq.enforce_equal(dr, &expected_seq)?;
         let data = D::just(|| {
             let (left_cm, left_epoch_start, _) = left.take();
             let (_, _, right_epoch_end) = right.take();

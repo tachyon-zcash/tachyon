@@ -22,7 +22,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::array;
 
 use ragu_core::{
     drivers::{Driver, DriverValue},
@@ -50,7 +49,6 @@ use crate::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
         TachygramSetPoly,
     },
-    relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
 
 /// The polynomial whose roots are the anchors an [`AnchorSpan`] folds to.
@@ -356,8 +354,13 @@ impl Step<Pasta> for AnchorSpanSeed {
             &epoch_element,
             oracles.bridge_hash(),
         )?;
+        // The span's one member is the fold just computed, so a member chosen
+        // after the challenge takes a preimage of the fold.
         let members = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_roots(dr, &z, &members, array::from_ref(&anchor))?;
+        let member_one = Element::constant(dr, Fp::ONE);
+        let member_factor = z.sub(dr, &anchor);
+        let expected_members = member_one.mul(dr, &member_factor)?;
+        members.enforce_equal(dr, &expected_members)?;
         let data = D::just(|| {
             let (anchor_start, ..) = witness.take();
             (anchor_start, Anchor::from(*anchor.value().take()))
@@ -446,7 +449,8 @@ impl Step<Pasta> for AnchorSpanFuse {
         let left_members = oracles.left(AnchorSet).open(dr, &z)?;
         let right_members = oracles.right(AnchorSet).open(dr, &z)?;
         let combined = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_product(dr, &left_members, &right_members, &combined)?;
+        let expected_members = left_members.mul(dr, &right_members)?;
+        combined.enforce_equal(dr, &expected_members)?;
         let fields = AnchorSpanOutput {
             anchor_start: left_span.anchor_start.clone(),
             anchor_end: right_span.anchor_end.clone(),
@@ -465,6 +469,11 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// and `left.epoch_next == right.epoch_start`. The left half holds members
 /// below that epoch and the right half from it, so the combined sequence is
 /// their product.
+///
+/// # Soundness
+///
+/// The product check opens both elapsed sequences and their product at a
+/// challenge that absorbs all three commitments.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -531,7 +540,8 @@ impl Step<Pasta> for UnspentFuse {
         let left_elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let right_elapsed = oracles.right(NfSeq).open(dr, &z)?;
         let combined = oracles.output(NfSeq).open(dr, &z)?;
-        enforce_poly_product(dr, &left_elapsed, &right_elapsed, &combined)?;
+        let expected_elapsed = left_elapsed.mul(dr, &right_elapsed)?;
+        combined.enforce_equal(dr, &expected_elapsed)?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_unspent.anchor_start.clone(),
             epoch_start: left_unspent.epoch_start.clone(),
@@ -711,8 +721,10 @@ impl Step<Pasta> for UnspentLift {
 ///
 /// # Soundness
 ///
-/// `elapsed` is a subsequence of the derivation, so every one of its members
-/// is a genuine derived pair and coverage is a conclusion of the identity.
+/// The identity is checked on openings at a challenge that absorbs all three
+/// sequence commitments. `elapsed` is then a subsequence of the derivation, so
+/// every one of its members is a genuine derived pair and coverage is a
+/// conclusion of the identity.
 ///
 /// Completeness rides `elapsed`'s provenance invariants, so every epoch of
 /// `[epoch_start, epoch_next)` was tested with its own genuine nullifier.
@@ -776,7 +788,8 @@ impl Step<Pasta> for UnspentBind {
         let elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let complement = oracles.output(NfSeq).open(dr, &z)?;
         let derivation = oracles.right(NfSeq).open(dr, &z)?;
-        enforce_poly_product(dr, &elapsed, &complement, &derivation)?;
+        let expected_derivation = elapsed.mul(dr, &complement)?;
+        derivation.enforce_equal(dr, &expected_derivation)?;
         // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
         // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
         // of a range-checked epoch, and `UnspentFuse` joins halves at an equal
