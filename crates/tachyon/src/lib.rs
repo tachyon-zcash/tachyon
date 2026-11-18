@@ -26,11 +26,9 @@ pub mod stamp;
 pub mod value;
 pub mod witness;
 
-mod bridge_hash;
 mod collections;
 mod gadgets;
 mod primitives;
-mod relations;
 mod serialization;
 
 pub use action::Plan as ActionPlan;

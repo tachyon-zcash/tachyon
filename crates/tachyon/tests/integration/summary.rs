@@ -42,7 +42,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator over foreign tachygrams",
         ),
         (
             {
@@ -51,7 +51,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
                 witness.0 = stamp_a.iter().copied().collect();
                 witness
             },
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator that omits the stamp",
         ),
     ] {
         let (forged, ()) = app

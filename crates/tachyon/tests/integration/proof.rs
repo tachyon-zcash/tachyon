@@ -213,11 +213,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         (anchor_start, start_bundle, None),
         (members[0], inner_bundle, None),
         (anchor_end, end_bundle, None),
-        (
-            fork,
-            fork_bundle,
-            Some("StampLift: stamp anchor is neither the span's start nor a member"),
-        ),
+        (fork, fork_bundle, Some("a stamp anchor outside the span")),
     ] {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
@@ -273,7 +269,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         (
             witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set missing the right half",
         ),
         (
             witness::anchor_span_fuse(
@@ -286,12 +282,12 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                     .collect::<Vec<_>>(),
             ),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set with an extra member",
         ),
         (
             witness::anchor_span_fuse((*right.data(), *left.data()), &right_members, &left_members),
             (right, left),
-            "AnchorSpanFuse: spans do not share a vertex",
+            "spans fused in the wrong order",
         ),
     ]
     .into_boxed_slice()
@@ -410,7 +406,11 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spend_epoch = height.epoch();
-    let plan = action::Plan::spend(rng, note, |alpha| user.pak.ak.derive_action_public(&alpha));
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        user.pak.ak.derive_action_public(&alpha)
+    });
 
     let spendable = user.spendable_init(app, &pool, &note, height);
     let secret = user.note_secret(app, note);
@@ -418,12 +418,12 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             spend::SpendBind,
-            witness::spend_bind((*spendable.data(), *secret.data()), plan.rcv),
+            witness::spend_bind((*spendable.data(), *secret.data()), rcv),
             spendable,
             secret,
         )
         .unwrap();
-    let valid = witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak);
+    let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
     let (.., foreign_action_set, _) =
         witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
 
@@ -434,7 +434,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "SpendAction: tachygram set does not commit to the nullifier pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -442,7 +442,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "SpendAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
         let (forged, ()) = app
@@ -464,7 +464,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak),
+            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -619,7 +619,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 &user.covering_window(&other, &range),
                 &elapsed,
             ),
-            "UnspentBind: sequence does not match the derivation",
+            "a derivation of another note",
         ),
         (
             range,
@@ -631,7 +631,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence outside the range",
         ),
         (
             wide,
@@ -643,7 +643,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence with a foreign nullifier",
         ),
         (
             later,
@@ -652,7 +652,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 witness.0 = NfSeqPoly::new(EpochIndex::new(64), &[]);
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an empty elapsed sequence",
         ),
     ]
     .into_boxed_slice()
@@ -723,7 +723,7 @@ fn spendable_lift_rejects_mismatched_segments() {
                     pool.unspent(app, (epoch1, epoch2), |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &phantom)
             },
-            "SpendableLift: unspent cm does not match spendable",
+            "an unspent of another note",
         ),
         (
             {
@@ -731,11 +731,11 @@ fn spendable_lift_rejects_mismatched_segments() {
                     detached_segment(rng, app, epoch1, |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &note)
             },
-            "SpendableLift: unspent not adjacent to spendable",
+            "a detached unspent segment",
         ),
         (
             user.note_unspent(app, pool, &note, (epoch2, epoch3)),
-            "SpendableLift: segment does not start at the lineage epoch",
+            "a segment starting after the lineage epoch",
         ),
     ] {
         let (forged, ()) = app
@@ -795,7 +795,7 @@ fn nullifier_derive_rejects_invalid_windows() {
                 ((cm, note, user.pak.nk.derive_note_private(other.psi)), ()),
                 EpochIndex::new(16),
             ),
-            "NullifierDerive: sequence does not match the derived window",
+            "a window derived from another note",
         ),
         (
             {
@@ -804,7 +804,7 @@ fn nullifier_derive_rejects_invalid_windows() {
                 witness.0 = EpochIndex::new(14);
                 witness
             },
-            "NullifierDerive: epoch_start is not group-aligned",
+            "a start that is not group-aligned",
         ),
     ] {
         let (forged, ()) = app
@@ -836,13 +836,13 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             note,
             EpochIndex::new(32),
             EpochIndex::new(47),
-            "NullifierFuse: ranges not contiguous",
+            "ranges with a gap",
         ),
         (
             other,
             EpochIndex::new(16),
             EpochIndex::new(31),
-            "NullifierFuse: note commitments differ",
+            "ranges of different notes",
         ),
     ] {
         let left = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(15));
@@ -900,7 +900,9 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
-    let plan = action::Plan::output(rng, note);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::output(note, theta, rcv);
     let anchor = Anchor::random(rng);
     let pad = Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
@@ -913,7 +915,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .seed(
             rng,
             output::OutputBind,
-            witness::output_bind(((), ()), note, plan.rcv),
+            witness::output_bind(((), ()), note, rcv),
         )
         .unwrap();
     assert_eq!(
@@ -921,10 +923,10 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         (
             Tachygram::from(note.commitment()),
             pad,
-            plan.rcv.commit(-note.value),
+            rcv.commit(-note.value),
         )
     );
-    let valid = witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor);
+    let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
     let (.., foreign_action_set, _) =
         witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
@@ -935,7 +937,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "OutputAction: tachygram set does not commit to the bound pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -943,7 +945,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "OutputAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
         let (forged, ()) = app
@@ -965,7 +967,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -986,7 +988,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let foreign_note = WalletSim::random(rng).random_note(200);
     let foreign = action::Plan {
         note: foreign_note,
-        rk: private::ActionSigningKey::new(&plan.theta.randomizer(foreign_note.commitment()))
+        rk: private::ActionSigningKey::new(&theta.randomizer(foreign_note.commitment()))
             .derive_action_public(),
         ..plan
     };

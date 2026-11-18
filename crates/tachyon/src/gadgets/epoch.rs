@@ -89,19 +89,16 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
     pub(crate) fn group(&self, dr: &mut D) -> Result<(Element<'dr, D>, [Boolean<'dr, D>; 2])> {
         let bits =
             Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &self.element)?;
-        let [low, high] = low_pair(bits.bits().iter().cloned());
+        let mut low_bits = bits.bits().iter().cloned();
+        #[expect(
+            clippy::expect_used,
+            reason = "the fixed epoch width includes two low bits"
+        )]
+        let [low, high] = [(); 2].map(|()| low_bits.next().expect("an epoch has two low bits"));
         let twice_high = high.element().double(dr);
         let group_start = self.element.sub(dr, &low.element()).sub(dr, &twice_high);
         Ok((group_start, [low, high]))
     }
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "the fixed epoch width includes two low bits"
-)]
-fn low_pair<T>(mut bits: impl Iterator<Item = T>) -> [T; 2] {
-    [(); 2].map(|()| bits.next().expect("an epoch has two low bits"))
 }
 
 #[cfg(test)]

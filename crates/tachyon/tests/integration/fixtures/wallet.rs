@@ -32,7 +32,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
-    let (_, _, plan) = output_plan(rng, note);
+    let plan = output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
         vec![],
         vec![plan],
@@ -43,12 +43,10 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
     action_sigs.into_iter().next().unwrap()
 }
 
-pub fn output_plan<RNG: CryptoRng>(
-    rng: &mut RNG,
-    note: Note,
-) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
-    let plan = action::Plan::output(rng, note);
-    (plan.rcv, plan.theta, plan)
+pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    action::Plan::output(note, theta, rcv)
 }
 
 pub(crate) fn shared_sk() -> private::SpendingKey {
@@ -166,7 +164,7 @@ pub(crate) fn lifted(
 }
 
 pub(crate) fn spend_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_max_fee_note("spend fee", 0)
+    WalletSim::new(shared_sk()).labelled_note("spend fee", 0)
 }
 
 pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
@@ -183,7 +181,7 @@ pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Un
 }
 
 pub(crate) fn spend_with_fee_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_max_fee_note("spend with fee maximum", 300)
+    WalletSim::new(shared_sk()).labelled_note("spend with fee maximum", 300)
 }
 
 pub(crate) fn spend_with_fee(
@@ -202,7 +200,7 @@ pub(crate) fn spend_with_fee(
 }
 
 pub(crate) fn alice_max_fee_note() -> Note {
-    WalletSim::new(shared_sk()).labelled_max_fee_note("alice fee", 0)
+    WalletSim::new(shared_sk()).labelled_note("alice fee", 0)
 }
 
 pub(crate) fn alice_output_note() -> Note {
@@ -365,7 +363,9 @@ impl WalletSim {
                     },
                     |height| self.spendable_init(app, pool, &note, height),
                 );
-                spend_plans.push(action::Plan::spend(rng, note, |alpha| {
+                let rcv = value::Trapdoor::random(rng);
+                let theta = ActionEntropy::random(rng);
+                spend_plans.push(action::Plan::spend(note, theta, rcv, |alpha| {
                     self.pak.ak.derive_action_public(&alpha)
                 }));
                 spend_pcds.push((self.note_secret(app, note), spendable, vec![]));
@@ -373,7 +373,11 @@ impl WalletSim {
             let output_plans = outputs
                 .iter()
                 .copied()
-                .map(|note| action::Plan::output(rng, note))
+                .map(|note| {
+                    let rcv = value::Trapdoor::random(rng);
+                    let theta = ActionEntropy::random(rng);
+                    action::Plan::output(note, theta, rcv)
+                })
                 .collect();
             let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
             let sighash = mock_sighash(plan.commitment().unwrap());
@@ -430,21 +434,6 @@ impl WalletSim {
             psi: nullifier::Trapdoor::random(&mut rng),
             rcm: note::CommitmentTrapdoor::random(&mut rng),
         }
-    }
-
-    /// A [`labelled_note`](Self::labelled_note) built as a max fee note.
-    pub fn labelled_max_fee_note(&self, label: &str, value: u64) -> Note {
-        let mut key = u32::try_from(label.len()).unwrap().to_le_bytes().to_vec();
-        key.extend_from_slice(label.as_bytes());
-        key.extend_from_slice(&value.to_le_bytes());
-        let mut rng = keyed_rng("labelled note", &key);
-        let psi = nullifier::Trapdoor::random(&mut rng);
-        Note::max_fee(
-            &mut rng,
-            self.sk.derive_payment_key(),
-            value::Positive::try_from(value).unwrap(),
-            psi,
-        )
     }
 
     pub fn random_note(&self, value_amount: u64) -> Note {

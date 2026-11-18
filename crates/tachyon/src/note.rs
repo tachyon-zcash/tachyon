@@ -80,30 +80,6 @@ pub struct Note {
 }
 
 impl Note {
-    /// A max fee note with a fresh $rcm$, selecting again while its feemax
-    /// blind exceeds the [`Fp::CAPACITY`] bits the fee steps read it from.
-    ///
-    /// A max fee note built another way whose blind lands there yields a proof
-    /// that doesn't verify.
-    pub fn max_fee(
-        rng: &mut impl CryptoRng,
-        pk: PaymentKey,
-        value: value::Positive,
-        psi: nullifier::Trapdoor,
-    ) -> Self {
-        loop {
-            let note = Self {
-                pk,
-                value,
-                psi,
-                rcm: CommitmentTrapdoor::random(rng),
-            };
-            if note.derive_feemax_blind().fits_base_field_capacity() {
-                return note;
-            }
-        }
-    }
-
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
     #[must_use]
@@ -115,7 +91,7 @@ impl Note {
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {
         let blind =
             poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+        value::ValueTrapdoor(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// The max fee commitment, `cv_feemax`.

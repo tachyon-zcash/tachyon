@@ -270,7 +270,18 @@ impl<const W: usize> FixedBase<W> {
             let [prefix_x, prefix_y] = prefix.each_ref();
             let rise = y.sub(dr, prefix_y);
             let run = x.sub(dr, prefix_x);
-            let slope_value = D::just(|| interior_slope(*rise.value().take(), *run.value().take()));
+            #[expect(
+                clippy::expect_used,
+                reason = "the interior window offset keeps x coordinates distinct"
+            )]
+            let slope_value = D::just(|| {
+                *rise.value().take()
+                    * run
+                        .value()
+                        .take()
+                        .invert()
+                        .expect("interior run is nonzero")
+            });
             let (slope, run_wire, rise_wire) = dr.mul(|| {
                 Ok((
                     Coeff::Arbitrary(*slope_value.snag()),
@@ -334,14 +345,6 @@ fn coordinates<'dr, D: Driver<'dr, F = Fp>>(
         .expect("a vector accepts every write");
     let mut coordinates = written.into_iter();
     [(); 2].map(|()| coordinates.next().expect("a point writes two coordinates"))
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "the interior window offset keeps x coordinates distinct"
-)]
-fn interior_slope(rise: Fp, run: Fp) -> Fp {
-    rise * run.invert().expect("interior run is nonzero")
 }
 
 /// Adds the selected `top` entry to `sum`, allocating the result as a

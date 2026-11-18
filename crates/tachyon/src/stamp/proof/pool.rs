@@ -22,18 +22,19 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::array;
 
 use ragu::{
+    AcceleratedProver, Cycle as _, ProductionRank,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, OnlinePoly, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
+    pcd::bridge_hash,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 
 use super::{
     delegation::{NfSeq, NoteNullifiers},
@@ -43,12 +44,11 @@ use super::{
 use crate::{
     digest::poseidon,
     gadgets, note,
-    pasta::Fp,
+    pasta::{self, Fp},
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
         TachygramSetPoly,
     },
-    relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
 
 /// The polynomial whose roots are the anchors an [`AnchorSpan`] folds to.
@@ -270,10 +270,8 @@ impl Header<Fp> for AnchorSpan {
 /// the block that contains the stamp. A span built with a different epoch
 /// holds anchors that are not on the published chain.
 ///
-/// # Caller contract
-///
-/// The caller confirms that the stamp holds a tachygram, or it risks
-/// producing a proof that is false.
+/// The circuit requires the stamp polynomial not to open to one, so an empty
+/// stamp has no proof.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -294,7 +292,15 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         // The witness phase rejects the empty stamp at its polynomial opening.
-        let anchor_end = witness.0.fold_stamp(witness.1, &witness.2.commit());
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            witness.2.commit().as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
+        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+            witness.0.into(),
+            witness.1.into(),
+            bridge,
+        ));
         Ok(Prepared::new()
             .poly(
                 AnchorSet,
@@ -352,10 +358,16 @@ impl Step<Pasta> for AnchorSpanSeed {
             dr,
             &previous,
             &epoch_element,
-            oracles.bridge_hash(),
+            &[
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         )?;
+        // The span's one member is the fold just computed, so a member chosen
+        // after the challenge takes a preimage of the fold.
         let members = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_roots(dr, &z, &members, array::from_ref(&anchor))?;
+        let member_factor = z.sub(dr, &anchor);
+        members.enforce_equal(dr, &member_factor)?;
         let data = D::just(|| {
             let (anchor_start, ..) = witness.take();
             (anchor_start, Anchor::from(*anchor.value().take()))
@@ -444,7 +456,8 @@ impl Step<Pasta> for AnchorSpanFuse {
         let left_members = oracles.left(AnchorSet).open(dr, &z)?;
         let right_members = oracles.right(AnchorSet).open(dr, &z)?;
         let combined = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_product(dr, &left_members, &right_members, &combined)?;
+        let expected_members = left_members.mul(dr, &right_members)?;
+        combined.enforce_equal(dr, &expected_members)?;
         let fields = AnchorSpanOutput {
             anchor_start: left_span.anchor_start.clone(),
             anchor_end: right_span.anchor_end.clone(),
@@ -529,7 +542,8 @@ impl Step<Pasta> for UnspentFuse {
         let left_elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let right_elapsed = oracles.right(NfSeq).open(dr, &z)?;
         let combined = oracles.output(NfSeq).open(dr, &z)?;
-        enforce_poly_product(dr, &left_elapsed, &right_elapsed, &combined)?;
+        let expected_elapsed = left_elapsed.mul(dr, &right_elapsed)?;
+        combined.enforce_equal(dr, &expected_elapsed)?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_unspent.anchor_start.clone(),
             epoch_start: left_unspent.epoch_start.clone(),
@@ -774,7 +788,8 @@ impl Step<Pasta> for UnspentBind {
         let elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let complement = oracles.output(NfSeq).open(dr, &z)?;
         let derivation = oracles.right(NfSeq).open(dr, &z)?;
-        enforce_poly_product(dr, &elapsed, &complement, &derivation)?;
+        let expected_derivation = elapsed.mul(dr, &complement)?;
+        derivation.enforce_equal(dr, &expected_derivation)?;
         // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
         // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
         // of a range-checked epoch, and `UnspentFuse` joins halves at an equal

@@ -30,7 +30,11 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::{ProductionRank, Rank as _, pasta::Pasta, pcd::wire};
+use ragu::{
+    AcceleratedProver, Cycle as _, ProductionRank, Rank as _,
+    pasta::Pasta,
+    pcd::{bridge_hash, wire},
+};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -39,14 +43,13 @@ use udon::{
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
-    bridge_hash::bridge_hash,
     bundle::StateByte,
     digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{self, EpAffine, Eq, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -175,7 +178,10 @@ impl Proof for Uncompressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let bridge = bridge_hash(header.1.as_ref().to_affine());
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            header.1.as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
         let pcd = self.clone().carry::<Stamp>((bridge.into(), header.2));
         let [action_slot, tachygram_slot] = pcd.commitments();
         if action_slot != Eq::from(header.0).to_affine()
@@ -217,7 +223,10 @@ impl Proof for Compressed {
         {
             return Ok(false);
         }
-        let bridge = bridge_hash(header.1.as_ref().to_affine());
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            header.1.as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
         app.verify_compressed(&self.clone().carry::<Stamp>((bridge.into(), header.2)))
     }
 }
@@ -883,8 +892,15 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let left_bridge = bridge_hash(left_tg_poly.commit().as_ref().to_affine());
-        let right_bridge = bridge_hash(right_tg_poly.commit().as_ref().to_affine());
+        let generators = Pasta::nested_generators(pasta::baked());
+        let left_bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            left_tg_poly.commit().as_ref().to_affine(),
+            generators,
+        )?;
+        let right_bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            right_tg_poly.commit().as_ref().to_affine(),
+            generators,
+        )?;
         let left_pcd = left_proof.carry::<Stamp>((left_bridge.into(), left_anchor));
         let right_pcd = right_proof.carry::<Stamp>((right_bridge.into(), right_anchor));
 
@@ -928,7 +944,10 @@ impl ProofStamp<Uncompressed> {
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            self.tachygram_set.as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
         let mut stamp_pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
         for span in spans {
             stamp_pcd = app
@@ -1072,14 +1091,12 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            tachygram_set.as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
         let proof = app
-            .rerandomize(
-                merged_proof.carry::<Stamp>((
-                    bridge_hash(tachygram_set.as_ref().to_affine()).into(),
-                    anchor,
-                )),
-                rng,
-            )?
+            .rerandomize(merged_proof.carry::<Stamp>((bridge.into(), anchor)), rng)?
             .proof()
             .clone();
 
@@ -1178,8 +1195,15 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().as_ref().to_affine());
-        let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().as_ref().to_affine());
+        let generators = Pasta::nested_generators(pasta::baked());
+        let dividend_bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            dividend_tachygram_set.commit().as_ref().to_affine(),
+            generators,
+        )?;
+        let divisor_bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            divisor_tachygram_set.commit().as_ref().to_affine(),
+            generators,
+        )?;
         let dividend_pcd = self
             .proof
             .carry::<Stamp>((dividend_bridge.into(), self.anchor));
@@ -1225,7 +1249,10 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
     ) -> Result<ProofStamp<Compressed>, ragu::Error> {
-        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
+        let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+            self.tachygram_set.as_ref().to_affine(),
+            Pasta::nested_generators(pasta::baked()),
+        )?;
         let pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
         let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
         Ok(ProofStamp {

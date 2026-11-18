@@ -14,7 +14,7 @@ use crate::{
         MAX_MONEY,
         orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
     },
-    pasta::{Ep, EpAffine, Fp, Fq},
+    pasta::{Ep, EpAffine, Fq},
 };
 
 /// Alias for [`ValueTrapdoor`].
@@ -42,7 +42,7 @@ pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
 /// ($\mathbb{F}_q$, Pallas scalar field).
 #[derive(Clone, Copy, Debug, Default, Into)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueTrapdoor(#[debug(skip)] Fq);
+pub struct ValueTrapdoor(#[debug(skip)] pub(crate) Fq);
 
 impl Trapdoor {
     /// The zero trapdoor.
@@ -51,26 +51,6 @@ impl Trapdoor {
     /// Generate a random trapdoor for an action.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
-    }
-
-    /// Whether the trapdoor's integer value fits the [`Fp::CAPACITY`] bits the
-    /// stamp steps read it from.
-    #[must_use]
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn fits_base_field_capacity(self) -> bool {
-        !self
-            .0
-            .to_le_bits()
-            .as_ref()
-            .iter()
-            .skip(Fp::CAPACITY as usize)
-            .any(|&bit| bit)
-    }
-
-    /// A trapdoor derived from other secret data, such as a max fee note's
-    /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
-        Self(scalar)
     }
 
     /// Commit to a given value with this trapdoor.

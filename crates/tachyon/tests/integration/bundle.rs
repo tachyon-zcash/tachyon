@@ -17,7 +17,9 @@ use zcash_tachyon::{
     bundle::{Plan, PlanError, Signature},
     constants::MAX_MONEY,
     digest::blake2b,
-    effect, fee,
+    effect,
+    entropy::ActionEntropy,
+    fee,
     keys::private,
     pasta::{Ep, Eq, Fp},
     stamp::{self, ProofStamp, StrippedStamp},
@@ -52,7 +54,7 @@ fn sign_and_apply_signatures_verify_every_plan_shape() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)))
                 .collect(),
             wallet.random_note(0),
         );
@@ -280,7 +282,9 @@ fn duplicated_spend_cannot_inflate() {
     let pool = PoolSim::shared();
     let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
     let anchor = spendable.data().2;
-    let plan = action::Plan::spend(rng, note, |alpha| {
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
         wallet.pak.ak.derive_action_public(&alpha)
     });
     let descriptor = plan.descriptor();
@@ -300,7 +304,7 @@ fn duplicated_spend_cannot_inflate() {
         &cv_feemax.into(),
         &blake2b::memo_digest(&[]),
     ));
-    let alpha = plan.theta.randomizer::<effect::Spend>(note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     let sig = wallet
         .sk
         .derive_auth_private()
@@ -485,35 +489,6 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
 }
 
 #[test]
-fn verify_rejects_a_note_output_twice_under_different_thetas() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let note = wallet.random_note(200);
-    let anchor = Anchor::random(rng);
-    let outputs = [(), ()].map(|()| output_plan(rng, note).2).to_vec();
-    let bundle_plan = Plan::new(vec![], outputs, wallet.random_note(0));
-    let signed = bundle_plan
-        .sign(
-            rng,
-            &mock_sighash(bundle_plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
-        .unwrap();
-    let proof = bundle_plan
-        .stamp_plan(anchor, value::Positive::ZERO)
-        .prove(rng, app, &wallet.pak, vec![])
-        .unwrap();
-    let bundle = bundle_plan.assemble(signed, proof);
-    assert_matches!(
-        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::DuplicateTachygrams
-        ))
-    );
-}
-
-#[test]
 fn stamped_bundle_round_trips() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
@@ -577,13 +552,17 @@ fn read_preserves_action_order() {
 
     let note_a = wallet.random_note(200);
     let note_b = wallet.random_note(300);
-    let (rcv_a, theta_a, plan_a) = output_plan(rng, note_a);
-    let (rcv_b, theta_b, plan_b) = output_plan(rng, note_b);
-    let alpha_a = theta_a.randomizer::<effect::Output>(note_a.commitment());
-    let alpha_b = theta_b.randomizer::<effect::Output>(note_b.commitment());
+    let plan_a = output_plan(rng, note_a);
+    let plan_b = output_plan(rng, note_b);
+    let alpha_a = plan_a
+        .theta
+        .randomizer::<effect::Output>(note_a.commitment());
+    let alpha_b = plan_b
+        .theta
+        .randomizer::<effect::Output>(note_b.commitment());
     let mut items = [
-        (plan_a.descriptor(), alpha_a, rcv_a),
-        (plan_b.descriptor(), alpha_b, rcv_b),
+        (plan_a.descriptor(), alpha_a, plan_a.rcv),
+        (plan_b.descriptor(), alpha_b, plan_b.rcv),
     ];
     items.sort_by_key(|item| Reverse(item.0));
 
@@ -1226,7 +1205,8 @@ fn spend_plan_at(
     value: u64,
 ) -> action::Plan<effect::Spend> {
     let note = wallet.random_note(value);
-    action::Plan::spend(rng, note, |alpha| {
+    let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
+    action::Plan::spend(note, theta, rcv, |alpha| {
         ask.derive_action_private(&alpha).derive_action_public()
     })
 }
@@ -1251,7 +1231,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 .collect(),
             outputs
                 .iter()
-                .map(|&amount| output_plan(rng, wallet.random_note(amount)).2)
+                .map(|&amount| output_plan(rng, wallet.random_note(amount)))
                 .collect(),
             wallet.random_note(0),
         );

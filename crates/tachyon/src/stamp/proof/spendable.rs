@@ -172,7 +172,10 @@ impl Step<Pasta> for SpendableInit {
             dr,
             &previous,
             &epoch_element,
-            oracles.bridge_hash(),
+            &[
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;

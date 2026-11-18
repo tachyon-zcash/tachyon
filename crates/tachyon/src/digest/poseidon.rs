@@ -289,7 +289,6 @@ pub(crate) mod circuit {
             poseidon::{Sponge, SpongeState},
             vec::FixedVec,
         },
-        step::BridgeHash,
     };
     use udon::field::Field as _;
 
@@ -444,13 +443,13 @@ pub(crate) mod circuit {
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
         epoch: &Element<'dr, D>,
-        bridge_hash: &BridgeHash<'dr, D>,
+        bridge_hash: &[Element<'dr, D>; 2],
     ) -> Result<Element<'dr, D>> {
         let sponge = init(dr, ANCHOR_STAMP_DOMAIN);
         absorb(
             dr,
             sponge,
-            [anchor_prev, epoch, bridge_hash.x(), bridge_hash.y()],
+            [anchor_prev, epoch, &bridge_hash[0], &bridge_hash[1]],
         )?
         .squeeze(dr)
     }

@@ -3,14 +3,14 @@ use core::cmp::Ordering;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
+use ragu::{AcceleratedProver, Cycle as _, ProductionRank, pasta::Pasta, pcd::bridge_hash};
 use rand_core::CryptoRng;
 use udon::{curve::Projective as _, field::Field as _};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{
-    bridge_hash::bridge_hash,
     digest::poseidon,
-    pasta::{Eq, Fp},
+    pasta::{self, Eq, Fp},
     serialization,
 };
 
@@ -73,22 +73,17 @@ impl Anchor {
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
         } else {
-            Ok(self.fold_stamp(epoch, &stamp_commit))
+            let bridge = bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
+                stamp_commit.as_ref().to_affine(),
+                Pasta::nested_generators(pasta::baked()),
+            )
+            .map_err(|_| AnchorError::NextStampZero)?;
+            Ok(Self(poseidon::anchor_next_stamp(
+                self.0,
+                epoch.into(),
+                bridge,
+            )))
         }
-    }
-
-    /// The advance [`next_stamp`](Self::next_stamp) makes, without its checks:
-    /// the empty stamp folds like any other.
-    ///
-    /// # Panics
-    ///
-    /// If the commitment is the identity.
-    pub(crate) fn fold_stamp(self, epoch: EpochIndex, stamp_commit: &TachygramSetCommit) -> Self {
-        Self(poseidon::anchor_next_stamp(
-            self.0,
-            epoch.into(),
-            bridge_hash(stamp_commit.as_ref().to_affine()),
-        ))
     }
 
     /// Advance the anchor into `epoch` with a boundary digest.

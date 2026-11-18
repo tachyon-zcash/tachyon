@@ -53,7 +53,6 @@ use crate::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
     },
-    relations::enforce::enforce_poly_product,
 };
 
 /// The polynomial whose roots are the tachygrams an intake routes or a bucket
@@ -421,7 +420,10 @@ impl Step<Pasta> for QrStampIntakeSeed {
             dr,
             &previous,
             &epoch_element,
-            oracles.bridge_hash(),
+            &[
+                oracles.bridge_hash().x().clone(),
+                oracles.bridge_hash().y().clone(),
+            ],
         )?;
         let data = D::just(|| {
             let (anchor_prev, epoch, discriminant, _) = witness.take();
@@ -495,42 +497,9 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     where
         Self: 'dr,
     {
-        let (encoded, data) = Self::synthesize(dr, oracles, witness, left, right)?;
-        Ok((encoded, data, D::unit()))
-    }
-}
-
-impl QrEmptyIntakeSeed {
-    /// The circuit of [`QrEmptyIntakeSeed`], for any step `S` with its headers.
-    ///
-    /// A step that prepares other polynomials proves against this circuit.
-    ///
-    /// # Errors
-    ///
-    /// Returns errors from allocation, opening, or constraint synthesis.
-    #[expect(
-        clippy::type_complexity,
-        reason = "the return type is `Step::witness`'s without its auxiliary value"
-    )]
-    fn synthesize<'dr, D: Driver<'dr, F = Fp>, S, const HEADER_SIZE: usize>(
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, S>,
-        witness: DriverValue<D, (Anchor, EpochIndex, QrDiscriminant)>,
-        left: DriverValue<D, ()>,
-        right: DriverValue<D, ()>,
-    ) -> ragu::Result<(
-        (
-            Encoded<'dr, D, (), HEADER_SIZE>,
-            Encoded<'dr, D, (), HEADER_SIZE>,
-            Encoded<'dr, D, QrIntake, HEADER_SIZE>,
-        ),
-        DriverValue<D, <QrIntake as Header<Fp>>::Data>,
-    )>
-    where
-        S: Step<Pasta, Left = (), Right = (), Output = QrIntake>,
-    {
-        let left_encoded = Encoded::<D, (), HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded = Encoded::<D, (), HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let zeta = oracles.zeta().clone();
         let contents = oracles.output(QrContents).open(dr, &zeta)?;
         let one = Element::constant(dr, Fp::ONE);
@@ -568,6 +537,7 @@ impl QrEmptyIntakeSeed {
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
+            D::unit(),
         ))
     }
 }
@@ -631,7 +601,8 @@ impl Step<Pasta> for QrIntakeMerge {
         let left_contents = oracles.left(QrContents).open(dr, &z)?;
         let right_contents = oracles.right(QrContents).open(dr, &z)?;
         let merged_contents = oracles.output(QrContents).open(dr, &z)?;
-        enforce_poly_product(dr, &left_contents, &right_contents, &merged_contents)?;
+        let expected_contents = left_contents.mul(dr, &right_contents)?;
+        merged_contents.enforce_equal(dr, &expected_contents)?;
         for (left_element, right_element) in [
             (&*left_intake.epoch, &*right_intake.epoch),
             (&left_intake.discriminant, &right_intake.discriminant),
@@ -1189,44 +1160,9 @@ impl Step<Pasta> for QrBucketSeal {
     where
         Self: 'dr,
     {
-        let (encoded, data) = Self::synthesize(dr, oracles, &witness, left, right)?;
-        Ok((encoded, data, D::unit()))
-    }
-}
-
-impl QrBucketSeal {
-    /// The circuit of [`QrBucketSeal`], for any step `S` with its headers.
-    ///
-    /// A step that prepares other polynomials proves against this circuit.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from Ragu operations. Construction does not check
-    /// satisfaction of the boundary constraint.
-    #[expect(
-        clippy::type_complexity,
-        reason = "the return type is `Step::witness`'s without its auxiliary value"
-    )]
-    fn synthesize<'dr, D: Driver<'dr, F = Fp>, S, const HEADER_SIZE: usize>(
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, S>,
-        witness: &DriverValue<D, (Anchor,)>,
-        left: DriverValue<D, <QrIntake as Header<Fp>>::Data>,
-        right: DriverValue<D, ()>,
-    ) -> ragu::Result<(
-        (
-            Encoded<'dr, D, QrIntake, HEADER_SIZE>,
-            Encoded<'dr, D, (), HEADER_SIZE>,
-            Encoded<'dr, D, QrBucket, HEADER_SIZE>,
-        ),
-        DriverValue<D, <QrBucket as Header<Fp>>::Data>,
-    )>
-    where
-        S: Step<Pasta, Left = QrIntake, Right = (), Output = QrBucket>,
-    {
-        let left_encoded = Encoded::<D, QrIntake, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
-        let right_encoded = Encoded::<D, (), HEADER_SIZE>::new(dr, &mut (), right)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let next = intake.epoch.next(dr)?;
         let previous = Element::alloc(
             dr,
@@ -1274,6 +1210,7 @@ impl QrBucketSeal {
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
+            D::unit(),
         ))
     }
 }
