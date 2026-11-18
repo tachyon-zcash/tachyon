@@ -75,21 +75,5 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
     #[into(skip)] pub(crate) PhantomData<S>,
 );
 
-impl<S: sealed::RandomizerState> ActionRandomizer<S> {
-    /// Whether the randomizer's integer value fits the [`Fp::CAPACITY`] bits
-    /// the stamp steps read it from.
-    #[must_use]
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn fits_base_field_capacity(self) -> bool {
-        !self
-            .0
-            .to_le_bits()
-            .as_ref()
-            .iter()
-            .skip(Fp::CAPACITY as usize)
-            .any(|&bit| bit)
-    }
-}
-
 #[cfg(test)]
 mod tests;

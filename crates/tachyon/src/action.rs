@@ -6,13 +6,13 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use rand_core::CryptoRng;
-use udon::curve::Affine as _;
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
-    pasta::EpAffine,
+    pasta::{EpAffine, Fp, Fq},
     primitives::{ActionDigest, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
@@ -142,28 +142,7 @@ impl Plan<effect::Spend> {
         note: Note,
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
-        let cm = note.commitment();
-        let (theta, alpha) = loop {
-            let theta = ActionEntropy::random(rng);
-            let alpha = theta.randomizer::<effect::Spend>(cm);
-            if alpha.fits_base_field_capacity() {
-                break (theta, alpha);
-            }
-        };
-        let rcv = loop {
-            let rcv = value::Trapdoor::random(rng);
-            if rcv.fits_base_field_capacity() {
-                break rcv;
-            }
-        };
-
-        Self {
-            rk: derive_rk(alpha),
-            note,
-            theta,
-            rcv,
-            _effect: PhantomData,
-        }
+        Self::sample(rng, note, derive_rk)
     }
 }
 
@@ -176,33 +155,51 @@ impl Plan<effect::Output> {
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
     #[must_use]
     pub fn output(rng: &mut impl CryptoRng, note: Note) -> Self {
+        Self::sample(rng, note, |alpha| {
+            private::ActionSigningKey::new(&alpha).derive_action_public()
+        })
+    }
+}
+
+#[expect(clippy::as_conversions, reason = "constant value")]
+fn fits_base_field_capacity(scalar: Fq) -> bool {
+    !scalar
+        .to_le_bits()
+        .as_ref()
+        .iter()
+        .skip(Fp::CAPACITY as usize)
+        .any(|&bit| bit)
+}
+
+impl<E: Effect> Plan<E> {
+    fn sample(
+        rng: &mut impl CryptoRng,
+        note: Note,
+        derive_rk: impl FnOnce(ActionRandomizer<E>) -> public::ActionVerificationKey,
+    ) -> Self {
         let cm = note.commitment();
         let (theta, alpha) = loop {
             let theta = ActionEntropy::random(rng);
-            let alpha = theta.randomizer::<effect::Output>(cm);
-            if alpha.fits_base_field_capacity() {
+            let alpha = theta.randomizer::<E>(cm);
+            if fits_base_field_capacity(Fq::from(alpha)) {
                 break (theta, alpha);
             }
         };
         let rcv = loop {
             let rcv = value::Trapdoor::random(rng);
-            if rcv.fits_base_field_capacity() {
+            if fits_base_field_capacity(Fq::from(rcv)) {
                 break rcv;
             }
         };
-        let rsk = private::ActionSigningKey::new(&alpha);
-
         Self {
-            rk: rsk.derive_action_public(),
+            rk: derive_rk(alpha),
             note,
             theta,
             rcv,
             _effect: PhantomData,
         }
     }
-}
 
-impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
     /// $$
