@@ -35,7 +35,7 @@ use ragu_pcd::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::{curve::Projective as _, field::Field as _};
+use udon::field::Field as _;
 
 use super::{
     delegation::{NfSeq, NoteNullifiers},
@@ -43,7 +43,6 @@ use super::{
     stamp::FoldedStamp,
 };
 use crate::{
-    bridge_hash::bridge_hash,
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
@@ -272,6 +271,12 @@ impl Header<Fp> for AnchorSpan {
 /// `epoch` is a free witness. Consensus computes each fold with the epoch of
 /// the block that contains the stamp. A span built with a different epoch
 /// holds anchors that are not on the published chain.
+///
+/// # Caller contract
+///
+/// The stamp must hold a tachygram. An empty stamp fails witness generation
+/// with Ragu's `InvalidWitness("division by zero")`. A stamp built from
+/// tachygrams never commits to the identity; a polynomial that does panics.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -292,11 +297,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
         // The witness phase rejects the empty stamp at its polynomial opening.
-        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-            witness.0.into(),
-            witness.1.into(),
-            bridge_hash(witness.2.commit().as_ref().to_affine()),
-        ));
+        let anchor_end = witness.0.fold_stamp(witness.1, &witness.2.commit());
         Ok(Prepared::new()
             .poly(
                 AnchorSet,
@@ -811,3 +812,6 @@ impl Step<Pasta> for UnspentBind {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests;
