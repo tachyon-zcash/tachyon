@@ -1,7 +1,7 @@
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{array, assert_matches, iter};
+use alloc::{vec, vec::Vec};
+use core::{array, iter};
 
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
@@ -822,25 +822,6 @@ fn nullifier_derive_rejects_invalid_windows() {
             "{expected}",
         );
     }
-
-    let past_the_end = EpochIndex::new(EPOCH_MAX - 3);
-    let mut past_the_end_witness =
-        witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(0));
-    past_the_end_witness.0 = past_the_end;
-    past_the_end_witness.1 = NfSeqPoly::new(past_the_end, &[]);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                delegation::NullifierDerive,
-                past_the_end_witness,
-                secret,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "NullifierDerive: window exceeds the epoch range"
-    );
 }
 
 #[test]

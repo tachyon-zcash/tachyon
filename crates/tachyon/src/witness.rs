@@ -67,6 +67,11 @@ pub const fn note_seed(
 /// Reads `mk` off the seed header and lays the whole window out as the
 /// sequence. `epoch_start` must be group-aligned. A longer span fuses
 /// windows via [`NullifierFuse`].
+///
+/// # Panics
+///
+/// If `epoch_start` is not group-aligned, or the window would run past
+/// `EPOCH_MAX`.
 #[must_use]
 pub fn nullifier_derive(
     (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),

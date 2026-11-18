@@ -26,6 +26,7 @@ use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
+    constants::EPOCH_MAX,
     digest::poseidon,
     gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
@@ -293,6 +294,11 @@ impl Step<Pasta> for NoteSeed {
 /// challenge checks the whole window, whose bounds are published on the output
 /// header.
 ///
+/// # Caller contract
+///
+/// The window must end by `EPOCH_MAX`: `epoch_start` at most
+/// `EPOCH_MAX - 15`. A proof of a window past it doesn't verify.
+///
 /// Opens the derived sequence once.
 #[derive(Debug)]
 pub struct NullifierDerive;
@@ -347,18 +353,21 @@ impl Step<Pasta> for NullifierDerive {
         let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let secret = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (epoch_start, _) = witness.take();
-            let epoch_end = (1..NF_DERIVATION_WIDTH)
-                .try_fold(epoch_start, |epoch, _| epoch.next())
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "NullifierDerive: window exceeds the epoch range".into(),
-                    )
-                })?;
+            // The low epoch-width bits of `epoch_start + 15`, which the
+            // circuit's `epoch_end` holds: the window's end when it fits.
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                reason = "the window width is a small constant"
+            )]
+            let epoch_end = EpochIndex::new(
+                (u32::from(epoch_start) + const { (NF_DERIVATION_WIDTH - 1) as u32 }) & EPOCH_MAX,
+            );
             let (cm, ..) = left.take();
-            Ok((cm, epoch_start, epoch_end))
-        })?;
+            (cm, epoch_start, epoch_end)
+        });
         let epoch_start = gadgets::uint::Uint::alloc(
             dr,
             output
@@ -502,3 +511,6 @@ impl Step<Pasta> for NullifierFuse {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests;
