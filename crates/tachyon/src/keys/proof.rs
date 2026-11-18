@@ -1,7 +1,6 @@
 //! Proof-related keys: ProofAuthorizingKey.
 
 use derive_more::Debug;
-use ff::PrimeField as _;
 use udon::field::Field as _;
 
 use super::note::{NullifierKey, PaymentKey};
@@ -86,8 +85,11 @@ impl SpendValidatingKey {
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> public::ActionVerificationKey {
+        use ff::PrimeField as _;
+        use pasta_curves::Fq;
+
         #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
-        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+        let scalar = Fq::from_repr(alpha.alpha.to_bytes())
             .into_option()
             .expect("canonical randomizer encoding is a scalar");
         public::ActionVerificationKey(self.0.randomize(&scalar))

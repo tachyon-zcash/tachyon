@@ -4,7 +4,7 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::any::type_name;
+use core::any;
 use core::marker::PhantomData;
 
 use derive_more::{Debug, Into};
@@ -50,7 +50,10 @@ impl ActionEntropy {
     /// are independent.
     #[must_use]
     pub fn randomizer<E: Effect>(&self, cm: note::Commitment) -> ActionRandomizer<E> {
-        ActionRandomizer(E::derive_alpha(*self, cm), PhantomData)
+        ActionRandomizer {
+            alpha: E::derive_alpha(*self, cm),
+            state: PhantomData,
+        }
     }
 }
 
@@ -67,11 +70,12 @@ mod sealed {
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug, Into)]
-#[debug("ActionRandomizer<{}>", type_name::<S>())]
-pub struct ActionRandomizer<S: sealed::RandomizerState>(
-    pub(crate) Fq,
-    #[into(skip)] pub(crate) PhantomData<S>,
-);
+#[debug("ActionRandomizer<{}>", any::type_name::<S>())]
+pub struct ActionRandomizer<S: sealed::RandomizerState> {
+    pub(crate) alpha: Fq,
+    #[into(skip)]
+    pub(crate) state: PhantomData<S>,
+}
 
 #[cfg(test)]
 mod tests;

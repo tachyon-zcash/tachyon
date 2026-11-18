@@ -3,7 +3,6 @@
 use core::marker::PhantomData;
 
 use derive_more::{Debug, From};
-use ff::PrimeField as _;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
@@ -188,11 +187,17 @@ impl SpendAuthorizingKey {
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> ActionSigningKey<effect::Spend> {
+        use ff::PrimeField as _;
+        use pasta_curves::Fq;
+
         #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
-        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+        let scalar = Fq::from_repr(alpha.alpha.to_bytes())
             .into_option()
             .expect("canonical randomizer encoding is a scalar");
-        ActionSigningKey(self.0.randomize(&scalar), PhantomData)
+        ActionSigningKey {
+            signing_key: self.0.randomize(&scalar),
+            effect: PhantomData,
+        }
     }
 }
 
@@ -206,15 +211,16 @@ impl SpendAuthorizingKey {
 /// Both variants sign via [`sign`](Self::sign) and derive `rk` via
 /// [`derive_action_public`](Self::derive_action_public).
 #[derive(Clone, Copy, Debug)]
-pub struct ActionSigningKey<E: Effect>(
-    #[debug(skip)] reddsa::SigningKey<reddsa::ActionAuth>,
-    PhantomData<E>,
-);
+pub struct ActionSigningKey<E: Effect> {
+    #[debug(skip)]
+    signing_key: reddsa::SigningKey<reddsa::ActionAuth>,
+    effect: PhantomData<E>,
+}
 
 impl<E: Effect> ActionSigningKey<E> {
     /// Sign a transaction sighash with this action key.
     pub fn sign<RNG: CryptoRng>(&self, rng: &mut RNG, sighash: &[u8; 32]) -> action::Signature {
-        action::Signature(self.0.sign(rng, sighash))
+        action::Signature(self.signing_key.sign(rng, sighash))
     }
 
     /// Derive the per-action verification (public) key: `rk = [rsk]G`.
@@ -222,7 +228,7 @@ impl<E: Effect> ActionSigningKey<E> {
     pub fn derive_action_public(&self) -> public::ActionVerificationKey {
         // reddsa::VerificationKey::from(&signing_key) performs [sk]G
         // (scalar-times-basepoint), not a trivial type conversion.
-        let vk = reddsa::VerificationKey::from(&self.0);
+        let vk = reddsa::VerificationKey::from(&self.signing_key);
         public::ActionVerificationKey(vk)
     }
 }
@@ -237,12 +243,12 @@ impl ActionSigningKey<effect::Output> {
     /// unreachable.
     #[must_use]
     pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        Self(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_bytes())
+        #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
+        Self {
+            signing_key: reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.alpha.to_bytes())
                 .expect("output randomizer should be a valid RedPallas signing key"),
-            PhantomData,
-        )
+            effect: PhantomData,
+        }
     }
 }
 
