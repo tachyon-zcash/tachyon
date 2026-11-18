@@ -4,19 +4,20 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::*;
 
 #[test]
-fn scalar_multiplication_is_the_scalar_times_the_base() {
+fn scalar_multiplication_accepts_254_bit_scalars_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let mut scalars = Vec::from([
+    let mut accepted = Vec::from([
         Fq::ONE,
-        -Fq::ONE,
-        Fq::from(2).pow_u64(254),
+        Fq::from(2).pow_u64(254) - Fq::ONE,
         Fq::random(|bytes| rng.fill_bytes(bytes)),
     ]);
-    // Each digit in every window.
-    scalars.extend(
-        (1..8).map(|digit| (0..85).fold(Fq::ZERO, |acc, _| acc * Fq::from(8) + Fq::from(digit))),
-    );
-    for scalar in scalars {
+    // Each digit in every interior window, and each top digit below 2^254.
+    accepted.extend((1..8).map(|digit| {
+        (0..84).fold(Fq::from(digit & 3), |acc, _| {
+            acc * Fq::from(8) + Fq::from(digit)
+        })
+    }));
+    for scalar in accepted {
         Simulator::<Fp>::simulate(scalar, |dr, witness| {
             let point = R_BASE.mul_scalar(dr, &witness)?;
             assert_eq!(
@@ -26,6 +27,14 @@ fn scalar_multiplication_is_the_scalar_times_the_base() {
             Ok(())
         })
         .unwrap();
+    }
+    for scalar in [Fq::from(2).pow_u64(254), -Fq::ONE] {
+        Simulator::<Fp>::simulate(scalar, |dr, witness| {
+            R_BASE.mul_scalar(dr, &witness)?;
+            Ok(())
+        })
+        .map(|_| ())
+        .unwrap_err();
     }
 }
 

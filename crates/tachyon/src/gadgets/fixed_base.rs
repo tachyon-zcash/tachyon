@@ -373,9 +373,10 @@ impl FixedBase<85> {
         self.multiply(dr, &FixedVec::<_, ConstLen<255>>::try_from(bits)?, onto)
     }
 
-    /// $\[k\]B$ for a scalar $r$ read as 255 free bits that nothing
-    /// recomposes, so $k$ is $r$ or $r + q$. Sound only for a blind nothing
-    /// else binds.
+    /// $\[r\]B$ for a scalar $r$ below $2^{254}$, read as 254 free bits with
+    /// the 255th the table reads pinned to zero, so a scalar at or above
+    /// $2^{254}$ has no proof. Nothing recomposes the bits: sound only for a
+    /// blind nothing else binds.
     #[expect(clippy::indexing_slicing, reason = "native fixed field representation")]
     pub(crate) fn mul_scalar<'dr, D: Driver<'dr, F = Fp>>(
         &self,
@@ -391,6 +392,7 @@ impl FixedBase<85> {
                     .map(|candidate| candidate.to_le_bits().as_ref()[index]),
             )
         })?;
+        bits[254].element().enforce_zero(dr)?;
         self.multiply(dr, &bits, None)
     }
 }
