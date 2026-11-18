@@ -271,10 +271,8 @@ impl Header<Fp> for AnchorSpan {
 /// the block that contains the stamp. A span built with a different epoch
 /// holds anchors that are not on the published chain.
 ///
-/// # Caller contract
-///
-/// The caller confirms that the stamp holds a tachygram, or it risks
-/// producing a proof that is false.
+/// The circuit requires the stamp polynomial not to open to one, so an empty
+/// stamp has no proof.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
