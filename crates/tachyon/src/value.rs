@@ -14,8 +14,7 @@ use crate::{
         MAX_MONEY,
         orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
     },
-    gadgets::fixed_base::FixedBase,
-    pasta::{Ep, EpAffine, Fq},
+    pasta::{Ep, EpAffine, Fp, Fq},
 };
 
 /// Alias for [`ValueTrapdoor`].
@@ -49,15 +48,29 @@ impl Trapdoor {
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
-    /// Generate a nonzero random trapdoor for an action, selecting again while
-    /// it is zero or at least $2^{254}$, which no value commitment step proves.
+    /// Generate a random trapdoor for an action, selecting again while it
+    /// exceeds the [`Fp::CAPACITY`] bits the stamp steps read it from.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         loop {
-            let scalar = Fq::random(|bytes| rng.fill_bytes(bytes));
-            if scalar != Fq::ZERO && FixedBase::<85>::accepts(scalar) {
-                return Self(scalar);
+            let trapdoor = Self(Fq::random(|bytes| rng.fill_bytes(bytes)));
+            if trapdoor.fits_base_field_capacity() {
+                return trapdoor;
             }
         }
+    }
+
+    /// Whether the trapdoor's integer value fits the [`Fp::CAPACITY`] bits the
+    /// stamp steps read it from.
+    #[must_use]
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    pub(crate) fn fits_base_field_capacity(self) -> bool {
+        !self
+            .0
+            .to_le_bits()
+            .as_ref()
+            .iter()
+            .skip(Fp::CAPACITY as usize)
+            .any(|&bit| bit)
     }
 
     /// A trapdoor derived from other secret data, such as a max fee note's

@@ -39,7 +39,6 @@ use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
-    gadgets::fixed_base::FixedBase,
     keys::PaymentKey,
     nullifier,
     pasta::{Fp, Fq},
@@ -82,7 +81,7 @@ pub struct Note {
 
 impl Note {
     /// A max fee note with a fresh $rcm$, selecting again while its feemax
-    /// blind is at least $2^{254}$, which no fee step proves.
+    /// blind exceeds the [`Fp::CAPACITY`] bits the fee steps read it from.
     ///
     /// A max fee note built another way whose blind lands there yields a proof
     /// that doesn't verify.
@@ -99,7 +98,7 @@ impl Note {
                 psi,
                 rcm: CommitmentTrapdoor::random(rng),
             };
-            if FixedBase::<85>::accepts(note.derive_feemax_blind().into()) {
+            if note.derive_feemax_blind().fits_base_field_capacity() {
                 return note;
             }
         }

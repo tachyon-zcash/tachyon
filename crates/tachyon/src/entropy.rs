@@ -11,7 +11,6 @@ use rand_core::CryptoRng;
 use udon::field::Field as _;
 
 use crate::{
-    gadgets::fixed_base::FixedBase,
     note,
     pasta::{Fp, Fq},
     primitives::Effect,
@@ -43,15 +42,22 @@ impl ActionEntropy {
     }
 
     /// Sample fresh entropy for an action of effect `E` on the note committing
-    /// to `cm`, selecting again while its randomizer is at least $2^{254}$,
-    /// which no stamp step proves.
+    /// to `cm`, selecting again while its randomizer exceeds the
+    /// [`Fp::CAPACITY`] bits the stamp steps read it from.
     ///
     /// Entropy obtained another way, such as [`from_bytes`](Self::from_bytes),
     /// whose randomizer lands there yields a proof that doesn't verify.
+    #[expect(clippy::as_conversions, reason = "constant value")]
     pub fn random<E: Effect>(rng: &mut impl CryptoRng, cm: note::Commitment) -> Self {
         loop {
             let theta = Self(Fp::random(|bytes| rng.fill_bytes(bytes)));
-            if FixedBase::<85>::accepts(E::derive_alpha(theta, cm)) {
+            let alpha_fits_base_field_capacity = !E::derive_alpha(theta, cm)
+                .to_le_bits()
+                .as_ref()
+                .iter()
+                .skip(Fp::CAPACITY as usize)
+                .any(|&bit| bit);
+            if alpha_fits_base_field_capacity {
                 return theta;
             }
         }

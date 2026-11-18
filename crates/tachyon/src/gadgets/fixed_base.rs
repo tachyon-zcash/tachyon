@@ -394,19 +394,5 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
     Ok([result_x, result_y])
 }
 
-impl FixedBase<85> {
-    /// Whether the 254 bits every step supplies to this table represent
-    /// `scalar`: its integer value is below $2^{254}$.
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn accepts(scalar: Fq) -> bool {
-        !scalar
-            .to_le_bits()
-            .as_ref()
-            .iter()
-            .skip(Fp::CAPACITY as usize)
-            .any(|&bit| bit)
-    }
-}
-
 #[cfg(test)]
 mod tests;
