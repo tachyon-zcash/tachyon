@@ -19,7 +19,7 @@ use crate::pasta::{self, EpAffine, EqAffine};
 pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     #[expect(
         clippy::expect_used,
-        reason = "no set polynomial commits to the identity, and the bridge stage fits ProductionRank"
+        reason = "identity commitments deliberately panic per the Panics contract; the fixed bridge stage fits ProductionRank"
     )]
     bridge_hash::digest::<AcceleratedProver, _, _, ProductionRank, _>(
         commitment,

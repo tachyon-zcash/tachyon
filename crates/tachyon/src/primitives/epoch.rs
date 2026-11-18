@@ -89,7 +89,10 @@ impl Sub<Self> for EpochIndex {
     ///
     /// Panics in all builds if `self < rhs`. Equal epochs produce zero.
     fn sub(self, rhs: Self) -> Self::Output {
-        #[expect(clippy::expect_used, reason = "don't do it wrong")]
+        #[expect(
+            clippy::expect_used,
+            reason = "reversed epochs deliberately panic instead of wrapping; see the Panics contract"
+        )]
         EpochDiff(
             self.0
                 .checked_sub(rhs.0)

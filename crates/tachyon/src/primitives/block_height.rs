@@ -25,10 +25,11 @@ impl From<usize> for BlockHeight {
     /// Panics if `height` exceeds `u32::MAX` on platforms where that value is
     /// representable by `usize`.
     fn from(height: usize) -> Self {
-        Self(
-            #[expect(clippy::expect_used, reason = "don't index higher than u32::MAX")]
-            u32::try_from(height).expect("fits u32"),
-        )
+        #[expect(
+            clippy::expect_used,
+            reason = "an oversized usize deliberately panics instead of truncating; see the Panics contract"
+        )]
+        Self(u32::try_from(height).expect("fits u32"))
     }
 }
 

@@ -114,7 +114,7 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 pub fn payment_key(ak: EpAffine, nk: Fp) -> Fp {
     #[expect(
         clippy::expect_used,
-        reason = "ak = [ask]G for a PRF-derived ask is not the identity"
+        reason = "an identity key input has no affine coordinates and deliberately panics; see the Panics contract"
     )]
     let (x, y) = ak.coordinates().expect("ak must not be the identity");
 
@@ -204,7 +204,10 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 ///
 /// Panics if `stamp_hash` is the identity.
 #[must_use]
-#[expect(clippy::expect_used, reason = "a bridge hash is never the identity")]
+#[expect(
+    clippy::expect_used,
+    reason = "an identity stamp_hash input has no affine coordinates and deliberately panics; see the Panics contract"
+)]
 pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, stamp_hash: EpAffine) -> Fp {
     let (x, y) = stamp_hash
         .coordinates()
@@ -224,7 +227,10 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 ///
 /// Panics if `contents` is the identity.
 #[must_use]
-#[expect(clippy::expect_used, reason = "a bridge hash is never the identity")]
+#[expect(
+    clippy::expect_used,
+    reason = "an identity contents input has no affine coordinates and deliberately panics; see the Panics contract"
+)]
 pub fn evidence_tree_leaf(
     epoch: Fp,
     anchor_start: Fp,

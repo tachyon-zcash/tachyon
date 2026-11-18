@@ -336,7 +336,10 @@ pub fn qr_side_select(
         discriminant.at(profile.depth),
     );
     let sibling = if side { &non_residue } else { &residue };
-    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
+    #[expect(
+        clippy::expect_used,
+        reason = "duplicate sibling members can prevent decomposition and deliberately panic; see the Panics contract"
+    )]
     let (interpolant, quotient) = collections::qr::decomposition(
         sibling,
         collections::qr::class_multiplier(!side),
@@ -598,7 +601,10 @@ pub fn fee_fuse(
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, FeeFuse> {
-    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    #[expect(
+        clippy::expect_used,
+        reason = "an excessive fee deliberately panics because it would produce negative change; see the Panics contract"
+    )]
     let fee_change_note = Note {
         value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
             .expect("fee should not exceed max fee"),

@@ -144,7 +144,10 @@ impl From<EpAffine> for BindingVerificationKey {
     fn from(point: EpAffine) -> Self {
         let bvk_bytes: [u8; 32] = point.to_bytes();
 
-        #[expect(clippy::expect_used, reason = "specified behavior")]
+        #[expect(
+            clippy::expect_used,
+            reason = "the encoded commitment is a canonical verification key point"
+        )]
         Self(
             reddsa::VerificationKey::<reddsa::BindingAuth>::try_from(bvk_bytes)
                 .expect("EpAffine point should be a valid RedPallas verification key"),

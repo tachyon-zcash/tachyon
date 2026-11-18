@@ -79,10 +79,13 @@ pub struct Note {
 impl Note {
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "every canonical Pallas base-field value fits in its larger scalar field"
+    )]
     #[must_use]
     #[expect(
         clippy::expect_used,
-        clippy::missing_panics_doc,
         reason = "p < q, so every Fp repr is canonical in Fq"
     )]
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {

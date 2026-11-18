@@ -2,7 +2,6 @@
     clippy::as_conversions,
     clippy::indexing_slicing,
     clippy::integer_division,
-    clippy::panic,
     clippy::too_many_arguments,
     clippy::type_complexity,
     missing_docs,

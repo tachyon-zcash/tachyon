@@ -384,7 +384,10 @@ impl Plan {
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
-        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+        #[expect(
+            clippy::expect_used,
+            reason = "an excessive fee deliberately panics because it would produce negative change; see the Panics contract"
+        )]
         let fee_change_note = Note {
             value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
                 .expect("fee should not exceed max fee"),
