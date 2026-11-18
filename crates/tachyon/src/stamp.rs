@@ -212,7 +212,7 @@ impl Proof for Compressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu_core::Error> {
-        let [action_slot, tachygram_slot] = self.oracle_commitments();
+        let [action_slot, tachygram_slot] = self.online_commitments();
         if action_slot != Eq::from(header.0).to_affine()
             || tachygram_slot != Eq::from(header.1).to_affine()
         {
