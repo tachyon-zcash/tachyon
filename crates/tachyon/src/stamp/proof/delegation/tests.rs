@@ -1,6 +1,4 @@
 use alloc::vec::Vec;
-use core::panic::AssertUnwindSafe;
-use std::panic::catch_unwind;
 
 use ragu::ProductionRank;
 use rand::SeedableRng as _;
@@ -13,6 +11,9 @@ use crate::nullifier::Nullifier;
 use crate::stamp::proof::{App, new_application};
 use crate::witness;
 
+/// # Panics
+///
+/// Panics if seeding the fixed note fails.
 fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, ProductionRank, NoteSecret> {
     let pak = private::SpendingKey::from([0xab; 32]).derive_proof_private();
     let note = Note {
@@ -26,45 +27,58 @@ fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, ProductionRa
         .0
 }
 
-/// The last group-aligned window start that fits, and the next. The sequence
-/// holds the nullifiers the circuit derives. The window ending at `EPOCH_MAX`
-/// verifies; the next one panics proving its end.
-#[test]
-fn nullifier_derive_proves_only_windows_inside_the_epoch_range() {
-    let app = new_application().unwrap();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let secret = note_secret(&app, rng);
+/// # Panics
+///
+/// Panics if the starting epoch is out of range or proving the window fails.
+fn derive_window(
+    app: &App<'_>,
+    rng: &mut StdRng,
+    start: u32,
+) -> ragu::Pcd<Pasta, ProductionRank, NoteNullifiers> {
+    let secret = note_secret(app, rng);
     let (_, _, mk) = *secret.data();
-    for start in [EPOCH_MAX - 15, EPOCH_MAX - 11] {
-        let epoch_start = EpochIndex::new(start);
-        let nullifiers: Vec<Nullifier> = (0..4u64)
-            .flat_map(|group| {
-                poseidon::nullifier_group(mk.0, Fp::from(u64::from(start) + 4 * group))
-            })
-            .map(Nullifier::from)
-            .collect();
-        let fused = catch_unwind(AssertUnwindSafe(|| {
-            app.fuse(
-                &mut *rng,
-                NullifierDerive,
-                (epoch_start, NfSeqPoly::new(epoch_start, &nullifiers)),
-                secret.clone(),
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-        }));
-        if start == EPOCH_MAX - 15 {
-            let (pcd, ()) = fused.unwrap().unwrap();
-            assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
-        } else {
-            let payload = fused.err().unwrap();
-            assert_eq!(
-                payload.downcast_ref::<&str>(),
-                Some(&"epoch index above EPOCH_MAX")
-            );
-        }
-    }
+    let epoch_start = EpochIndex::new(start);
+    let nullifiers: Vec<Nullifier> = (0..4u64)
+        .flat_map(|group| poseidon::nullifier_group(mk.0, Fp::from(u64::from(start) + 4 * group)))
+        .map(Nullifier::from)
+        .collect();
+    app.fuse(
+        rng,
+        NullifierDerive,
+        (epoch_start, NfSeqPoly::new(epoch_start, &nullifiers)),
+        secret,
+        app.bootstrap_proof().clone().carry::<()>(()),
+    )
+    .unwrap()
+    .0
 }
 
+/// # Panics
+///
+/// Panics if the application cannot be built or the final valid window cannot
+/// be proved and verified.
+#[test]
+fn nullifier_derive_proves_a_window_ending_at_the_final_epoch() {
+    let app = new_application().unwrap();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let pcd = derive_window(&app, rng, EPOCH_MAX - 15);
+    assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
+}
+
+/// # Panics
+///
+/// Panics if the end of the window exceeds `EPOCH_MAX`.
+#[test]
+#[should_panic(expected = "epoch index above EPOCH_MAX")]
+fn nullifier_derive_refuses_to_prove_a_window_past_the_final_epoch() {
+    let app = new_application().unwrap();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let _pcd = derive_window(&app, rng, EPOCH_MAX - 11);
+}
+
+/// # Panics
+///
+/// Panics if the requested witness would extend past `EPOCH_MAX`.
 #[test]
 #[should_panic(expected = "epoch index above EPOCH_MAX")]
 fn nullifier_derive_witness_refuses_a_window_past_the_final_epoch() {
