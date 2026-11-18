@@ -7,12 +7,9 @@ _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
 
-# keep in step with .github/workflows/coverage.yml, which fails when either
-# lcov report differs from the committed one. `--remap-path-prefix` makes its paths
-# workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
-# outside the default cargo-llvm-cov excludes. The lcov reports take
-# `--skip-functions`: their function records are keyed by mangled symbols, whose
-# crate hashes change with the toolchain and target.
+# keep in step with .github/workflows/coverage.yml. `--remap-path-prefix` makes
+# paths workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
+# outside the default cargo-llvm-cov excludes.
 _cov := "--remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
 
 fmt:
@@ -36,12 +33,10 @@ coverage *ARGS:
 # unit-test coverage in debug mode, including overflow and debug assertions
 coverage-lib *ARGS:
     cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size --lib {{ARGS}}
-    cargo llvm-cov report {{_cov}} --lcov --skip-functions --output-path lcov-lib.info
 
 # integration-test coverage in release mode
 coverage-integration *ARGS:
     cargo llvm-cov {{_cov}} --release --workspace --locked --features test-epoch-size --test integration {{ARGS}}
-    cargo llvm-cov report {{_cov}} --release --lcov --skip-functions --output-path lcov-integration.info
 
 # line coverage of the test suite, as an HTML report
 # keep HTML outside target/llvm-cov, which the next coverage pass clears
