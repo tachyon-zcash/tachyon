@@ -83,6 +83,11 @@ impl From<EpochIndex> for Fp {
 impl Sub<Self> for EpochIndex {
     type Output = EpochDiff;
 
+    /// Return the non-negative distance from `rhs` to `self`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in all builds if `self < rhs`. Equal epochs produce zero.
     fn sub(self, rhs: Self) -> Self::Output {
         #[expect(clippy::expect_used, reason = "don't do it wrong")]
         EpochDiff(

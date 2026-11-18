@@ -55,8 +55,7 @@ const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 /// $$
 ///
 /// Mirrors Zcash §5.4.2.
-///
-/// TODO: return normalized Fq?
+// TODO: return normalized Fq?
 #[must_use]
 pub fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
     hasher_512(PRF_EXPAND_PERSONALIZATION, |state| {
@@ -72,8 +71,7 @@ pub fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 ///     sk \Vert \texttt{0x22}
 ///   )
 /// $$
-///
-/// TODO: return normalized Fq?
+// TODO: return normalized Fq?
 #[must_use]
 pub fn prf_expand_nk(sk: &[u8; 32]) -> [u8; 64] {
     hasher_512(PRF_EXPAND_PERSONALIZATION, |state| {
@@ -93,7 +91,7 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Actions}(
 ///     \mathsf{cv}_i \Vert \mathsf{rk}_i
 ///   )
-/// $$
+/// $$.
 ///
 /// Over a bundle's actions this is `hActionsTachyon`.
 #[must_use]
@@ -188,7 +186,7 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
 ///     \mathsf{vAdjunctsTachyon} \Vert
 ///     \mathsf{hStampProofTachyon}
 ///   )
-/// $$
+/// $$.
 ///
 /// Adjunct txids are hashed in the order given, without a count. The list is
 /// empty for an autonome. A stripped stamp instead uses [`STAMP_DIGEST_EMPTY`].
@@ -203,7 +201,7 @@ pub fn stamp_digest(adjuncts: &[[u8; 32]], stamp_proof_digest: &[u8; 32]) -> [u8
     })
 }
 
-/// A bundle's contribution to the transaction auth_digest.
+/// A bundle's contribution to the transaction `auth_digest`.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
@@ -212,7 +210,7 @@ pub fn stamp_digest(adjuncts: &[[u8; 32]], stamp_proof_digest: &[u8; 32]) -> [u8
 ///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{cmChangeTachyon} \Vert
 ///     \mathsf{bindingSigTachyon} \Vert \mathsf{hStampTachyon}
 ///   )
-/// $$
+/// $$.
 ///
 /// Each 128-byte record projects one action's signature and tachygram pair,
 /// preserving the pair's wire order. Records are hashed in the order given,
@@ -280,6 +278,9 @@ mod tests {
     use super::{STAMP_DIGEST_EMPTY, bundle_auth_digest, stamp_digest, stamp_proof_digest};
 
     // Expected bytes were computed independently using Python's hashlib.blake2b.
+    /// # Panics
+    ///
+    /// Panics if either stamp digest differs from its expected vector.
     #[test]
     fn stamp_digest_vectors() {
         let proof = stamp_proof_digest([0x11; 32], [0x22; 32], &[0x33, 0x44, 0x55]);
@@ -317,6 +318,10 @@ mod tests {
         );
     }
 
+    /// # Panics
+    ///
+    /// Panics if the bundle authorization digest differs from its expected
+    /// vector.
     #[test]
     fn bundle_auth_digest_vectors() {
         let proof = stamp_proof_digest([0x11; 32], [0x22; 32], &[0x33, 0x44, 0x55]);

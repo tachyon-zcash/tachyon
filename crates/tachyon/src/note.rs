@@ -19,7 +19,7 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! $mk = \text{KDF}(\psi, nk)$, then $nf_e$ is one squeeze of a Poseidon
+//! $mk = \text{KDF}(\psi, nk)$, then $`nf_e`$ is one squeeze of a Poseidon
 //! sponge keyed on $mk$ and the epoch's group start.
 //!
 //! Evaluated natively by wallets; the sync service handles only opaque
@@ -66,7 +66,7 @@ pub struct Note {
     /// The recipient's payment key.
     pub pk: PaymentKey,
 
-    /// The note value in zatoshis, less than 2.1e15
+    /// The note value in zatoshis, less than `2.1e15`.
     pub value: value::Positive,
 
     /// The nullifier trapdoor ($\psi$).
@@ -99,7 +99,7 @@ impl Note {
 
     /// Computes the note commitment `cm`.
     ///
-    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    /// Commits to $(pk, v, \psi)$ with randomness $rcm$.
     ///
     /// # Panics
     ///

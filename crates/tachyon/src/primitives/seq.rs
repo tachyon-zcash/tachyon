@@ -32,6 +32,11 @@ impl NfSeqPoly {
 
     /// Build the sequence polynomial for one contiguous run: the members of
     /// the consecutive epochs starting at `epoch_start`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nfs` contains more than 2730 nullifiers or if constructing
+    /// the product exceeds the supported FFT domain.
     #[must_use]
     pub fn new(epoch_start: EpochIndex, nfs: &[Nullifier]) -> Self {
         Self(indexed_multiset::encode(

@@ -150,6 +150,11 @@ impl From<StateByte> for u8 {
 }
 
 impl StateByte {
+    /// Read a bundle-state byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the byte is not a defined state.
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
@@ -164,6 +169,11 @@ impl StateByte {
         }
     }
 
+    /// Write a bundle-state byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         #[expect(clippy::as_conversions, reason = "repr u8")]
         writer.write_all(&(self as u8).to_le_bytes())
@@ -568,6 +578,9 @@ impl Plan {
         Ok(())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the signature map's keys do not match the plan's descriptors.
     fn assert_signing_descriptors(
         &self,
         action_sigs: &BTreeMap<action::Descriptor, action::Signature>,
@@ -578,6 +591,9 @@ impl Plan {
         );
     }
 
+    /// # Panics
+    ///
+    /// Panics if the planned balance is outside the representable range.
     #[expect(clippy::expect_used, reason = "signing checks the planned balance")]
     fn signed_balance(&self) -> value::Balance {
         self.value_balance().expect("planned balance is in range")
@@ -695,6 +711,10 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         Self::read_proof_body(reader)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the body cannot be read or decoded, or if its
+    /// actions and adjuncts exceed the combined coverage bound.
     fn read_proof_body<R: Read>(reader: R) -> io::Result<Self> {
         let bundle = Self::read_body(reader)?;
         let root_count = bundle
@@ -837,6 +857,11 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// Returns [`ragu::Error`] if the proof system fails. A disproved
     /// proof is reported as `Ok(false)`, not an error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `action_digests` contains more than 8191 digests, counting
+    /// duplicates, or if their set encoding exceeds the supported FFT domain.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -908,6 +933,11 @@ impl<S: StampState> Bundle<S> {
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, max fee commitment, memo, signatures, tachygram
     /// pairs, fee, change, and the stamp trailer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the data violates the bundle's
+    /// encoding, action-count, or value-balance rules.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
@@ -1254,7 +1284,7 @@ impl TachyonBundle {
     }
 }
 
-/// A binding signature (RedPallas over the Binding group).
+/// A binding signature (`RedPallas` over the Binding group).
 ///
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
 /// commitment $\mathsf{bvk}$ to value 0. By the **binding property**

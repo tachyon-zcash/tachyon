@@ -1,4 +1,4 @@
-//! Proof-related keys: ProofAuthorizingKey.
+//! Proof-related keys: `ProofAuthorizingKey`.
 
 use derive_more::Debug;
 use udon::field::Field as _;
@@ -39,6 +39,11 @@ impl ProofAuthorizingKey {
     /// Derive the payment key $\mathsf{pk}$ from `ak` and `nk`.
     ///
     /// Allows the pak holder to compute `pk` without access to `sk`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.ak` is the identity, which has no affine coordinates
+    /// for payment-key derivation.
     #[must_use]
     pub fn derive_payment_key(&self) -> PaymentKey {
         PaymentKey::derive(&self.ak, &self.nk)
@@ -78,7 +83,7 @@ impl SpendValidatingKey {
     ///
     /// # Panics
     ///
-    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
+    /// Panics if a canonical Udon scalar fails to decode in the `RedPallas`
     /// field.
     #[must_use]
     pub fn derive_action_public(

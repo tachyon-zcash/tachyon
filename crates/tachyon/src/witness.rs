@@ -98,6 +98,11 @@ pub fn nullifier_fuse(
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch.
+///
+/// # Panics
+///
+/// Panics if either input or their combined sequence contains more than 2730
+/// nullifiers, or if any sequence encoding exceeds the supported FFT domain.
 #[must_use]
 pub fn unspent_fuse(
     (left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
@@ -116,6 +121,12 @@ pub fn unspent_fuse(
 /// is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the complement is the window's runs on both
 /// sides of the unspent's span, multiplied.
+///
+/// # Panics
+///
+/// Panics if the unspent's start or elapsed span lies outside `window`, or if
+/// constructing or multiplying the sequence polynomials exceeds the
+/// polynomial coefficient cap.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -138,6 +149,11 @@ pub fn unspent_bind(
 
 /// Prepare the witness for [`SpendableInit`]:
 /// `(anchor_prev, creation_set, creation_epoch)`.
+///
+/// # Panics
+///
+/// Panics if `creation_tgs` contains more than 8191 members or its set
+/// encoding exceeds the supported FFT domain.
 #[must_use]
 pub fn spendable_init(
     (_left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
@@ -172,6 +188,11 @@ pub fn anchor_span_seed(
 ///
 /// `left_members` and `right_members` are the members polynomials of the two
 /// halves.
+///
+/// # Panics
+///
+/// Panics if either input or their combined set contains more than 8191
+/// members, or if any set encoding exceeds the supported FFT domain.
 #[must_use]
 pub fn anchor_span_fuse(
     (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
@@ -293,10 +314,16 @@ pub fn qr_intake_split(
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
+/// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
+/// is the residue side when set. The hints describe the sibling's class.
+///
 /// # Panics
 ///
 /// Panics if the sibling's decomposition does not exist due to repeated
 /// members.
+///
+/// Panics if the non-residue set or decomposition exceeds the polynomial
+/// coefficient capacity or supported FFT domain.
 #[must_use]
 pub fn qr_side_select(
     (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
@@ -346,7 +373,9 @@ pub const fn qr_bucket_seal(
 /// # Panics
 ///
 /// Panics when the bucket's profile depth exceeds
-/// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH).
+/// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH), or if
+/// `bucket_members` contains more than 8191 members or its set encoding
+/// exceeds the supported FFT domain.
 #[must_use]
 pub fn qr_unspent_init(
     (left, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
@@ -392,6 +421,18 @@ pub const fn evidence_tree_open(
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
+///
+/// # Panics
+///
+/// Panics if the bucket's profile depth exceeds [`QrProfile::MAX_DEPTH`].
+///
+/// Panics if `elapsed` contains more than 2729 preexisting nullifiers, since
+/// appending `value` would exceed the 2730-member indexed-sequence capacity,
+/// or if any sequence construction or multiplication exceeds the supported
+/// FFT domain.
+///
+/// Panics if `bucket_members` contains more than 8191 members or its set
+/// encoding exceeds the supported FFT domain.
 #[must_use]
 pub fn unspent_lift(
     (left, right): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
@@ -436,8 +477,8 @@ pub const fn spend_bind(
 ///
 /// # Panics
 ///
-/// Panics when `cv` or `alpha` yields an identity point, leaving the action
-/// undigestible.
+/// Panics if `cv` is the identity or if `rk`, derived from the scalar `alpha`,
+/// is the identity, leaving the action undigestible.
 #[must_use]
 pub fn output_action(
     (left, _right): (StepLeft<OutputAction>, StepRight<OutputAction>),
@@ -542,7 +583,13 @@ pub const fn stamp_unmerge(
 ///
 /// # Panics
 ///
-/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
+/// Panics if the max fee note's `rcm` is zero, the fee exceeds its value, or
+/// the max-fee value commitment is the identity.
+///
+/// Panics if an input or output action/tachygram set contains more than 8191
+/// members, including when inserting a distinct fee digest or change
+/// commitment crosses that cap, or if any set encoding exceeds the supported
+/// FFT domain.
 #[must_use]
 pub fn fee_fuse(
     (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
@@ -584,7 +631,8 @@ pub fn fee_fuse(
 ///
 /// # Panics
 ///
-/// Panics if the max fee note's value is nonzero or its `rcm` is zero.
+/// Panics if the max fee note's value is nonzero, its `rcm` is zero, or the
+/// max-fee value commitment is the identity.
 #[must_use]
 pub fn fee_seed(
     (_left, _right): (StepLeft<FeeSeed>, StepRight<FeeSeed>),

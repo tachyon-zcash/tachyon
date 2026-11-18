@@ -19,7 +19,7 @@ use crate::{serialization, value};
 /// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
-    /// Value commitment (EpAffine).
+    /// Value commitment (`EpAffine`).
     ///
     /// $$
     ///   \mathsf{cv} =
@@ -28,7 +28,7 @@ pub struct Descriptor {
     /// $$
     pub cv: value::Commitment,
 
-    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    /// Randomized action verification key $\mathsf{rk}$ (`EpAffine`).
     pub rk: public::ActionVerificationKey,
 }
 
@@ -141,7 +141,7 @@ impl<E: Effect> PartialOrd for Plan<E> {
 impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
+    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
     ///
     /// # Caller contract
     ///
@@ -224,7 +224,7 @@ impl<E: Effect> Plan<E> {
     }
 }
 
-/// A spend authorization signature (RedPallas over reddsa::ActionAuth).
+/// A spend authorization signature (`RedPallas` over `reddsa::ActionAuth`).
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
 #[display("Signature({:?})", self.0)]
 pub struct Signature(pub(crate) reddsa::Signature<ActionAuth>);

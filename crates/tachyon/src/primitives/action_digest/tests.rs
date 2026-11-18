@@ -9,6 +9,9 @@ use crate::pasta::Fp;
 use crate::primitives::{Tachygram, effect};
 use crate::{note, value};
 
+/// # Panics
+///
+/// Panics if the action value commitment is the identity.
 #[test]
 #[should_panic(expected = "cv must not be the identity")]
 fn digest_panics_on_identity_commitment() {
@@ -23,6 +26,9 @@ fn digest_panics_on_identity_commitment() {
     let _digest = ActionDigest::new(value::Commitment::default(), rk, pair);
 }
 
+/// # Panics
+///
+/// Panics if the verification key is the identity.
 #[test]
 #[should_panic(expected = "rk must not be the identity")]
 fn digest_panics_on_identity_verification_key() {

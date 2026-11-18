@@ -18,6 +18,12 @@ use udon::curve::Affine as _;
 use crate::constants::EVIDENCE_TREE_ARITY;
 use crate::pasta::{EpAffine, Fp};
 
+/// Evaluates the tagged sponge with a native emulator.
+///
+/// # Panics
+///
+/// Panics if absorption or squeezing fails. The wireless emulator used here
+/// is infallible for these operations.
 fn emulated<const L: usize, const N: usize>(domain: &[u8; 16], preimage: [Fp; L]) -> [Fp; N] {
     type Emu = Emulator<Wireless<Always<()>, Fp>>;
     let mut emu = Emu::execute();
@@ -308,6 +314,11 @@ pub(crate) mod circuit {
         )
     }
 
+    /// Absorbs inputs into the tagged circuit sponge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot absorb an input element.
     pub(super) fn absorb<'element, 'dr: 'element, D: Driver<'dr, F = Fp> + 'element>(
         dr: &mut D,
         mut sponge: Sponge<'dr, D, PoseidonFp>,
@@ -319,6 +330,12 @@ pub(crate) mod circuit {
         Ok(sponge)
     }
 
+    /// Hashes the maximum-fee note fields to obtain its blind.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the maximum-fee blind
+    /// hash.
     pub(crate) fn feemax_blind<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         pk: &Element<'dr, D>,
@@ -329,6 +346,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [pk, psi, rcm])?.squeeze(dr)
     }
 
+    /// Digests the maximum-fee commitment, fee and change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot absorb the commitment coordinates
+    /// or evaluate the fee digest.
     pub(crate) fn fee_digest<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         cv: &Point<'dr, D, EpAffine>,
@@ -340,6 +363,13 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [fee, fee_change])?.squeeze(dr)
     }
 
+    /// Digests the value commitment, randomized key and unordered tachygram
+    /// pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot multiply the tachygrams or
+    /// evaluate the digest.
     pub(crate) fn action_digest<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         cv: &Point<'dr, D, EpAffine>,
@@ -354,6 +384,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [&sum, &product])?.squeeze(dr)
     }
 
+    /// Derives the payment key from the validating key and nullifier key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot encode the validating key or
+    /// evaluate the payment key hash.
     pub(crate) fn payment_key<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         ak: &Point<'dr, D, EpAffine>,
@@ -365,6 +401,11 @@ pub(crate) mod circuit {
         absorb(dr, sponge, ak_coordinates.iter().chain([nk]))?.squeeze(dr)
     }
 
+    /// Hashes the circuit note fields to produce the commitment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the note commitment hash.
     pub(crate) fn note_commitment<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         rcm: &Element<'dr, D>,
@@ -376,6 +417,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [rcm, pk, value, psi])?.squeeze(dr)
     }
 
+    /// Hashes the circuit note fields under the padding domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the padding tachygram
+    /// hash.
     pub(crate) fn pad_tachygram<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         rcm: &Element<'dr, D>,
@@ -387,6 +434,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [rcm, pk, value, psi])?.squeeze(dr)
     }
 
+    /// Derives the nullifier master key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the nullifier master key
+    /// hash.
     pub(crate) fn nf_master<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         psi: &Element<'dr, D>,
@@ -396,6 +449,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [psi, nk])?.squeeze(dr)
     }
 
+    /// Derives the spend randomizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the spend randomizer
+    /// hash.
     pub(crate) fn alpha_spend<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         theta: &Element<'dr, D>,
@@ -405,6 +464,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [theta, cm])?.squeeze(dr)
     }
 
+    /// Derives the output randomizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the output randomizer
+    /// hash.
     pub(crate) fn alpha_output<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         theta: &Element<'dr, D>,
@@ -414,6 +479,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [theta, cm])?.squeeze(dr)
     }
 
+    /// Derives the four nullifiers of an epoch group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot absorb the group inputs or squeeze
+    /// the four nullifiers.
     pub(crate) fn nullifier_group<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         master: &Element<'dr, D>,
@@ -429,6 +500,12 @@ pub(crate) mod circuit {
         ])
     }
 
+    /// Hashes the next stamp anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the anchor hash for the
+    /// next stamp.
     pub(crate) fn anchor_next_stamp<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
@@ -444,6 +521,12 @@ pub(crate) mod circuit {
         .squeeze(dr)
     }
 
+    /// Hashes the next epoch anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot evaluate the anchor hash for the
+    /// next epoch.
     pub(crate) fn anchor_next_epoch<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         anchor_prev: &Element<'dr, D>,
@@ -453,6 +536,12 @@ pub(crate) mod circuit {
         absorb(dr, sponge, [anchor_prev, epoch])?.squeeze(dr)
     }
 
+    /// Hashes a sealed bucket as an evidence-tree leaf.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot hash the bucket fields and bridge
+    /// hash.
     pub(crate) fn evidence_tree_leaf<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         epoch: &Element<'dr, D>,
@@ -480,6 +569,11 @@ pub(crate) mod circuit {
         .squeeze(dr)
     }
 
+    /// Hashes the children of an evidence-tree node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the driver cannot hash the child roots.
     pub(crate) fn evidence_tree_node<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         children: &[Element<'dr, D>; EVIDENCE_TREE_ARITY],

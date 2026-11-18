@@ -52,7 +52,7 @@ const VALID_FOUR_BYTES: RangeInclusive<u64> = (u16::MAX as u64) + 1..=(u32::MAX 
 #[expect(clippy::as_conversions, reason = "widening")]
 const VALID_EIGHT_BYTES: RangeInclusive<u64> = (u32::MAX as u64) + 1..=u64::MAX;
 
-/// A canonical CompactSize value, tagged by its encoding form.
+/// A canonical `CompactSize` value, tagged by its encoding form.
 ///
 /// Compact encoding of integers (Bitcoin-style varint), faithful to the
 /// full `0..=u64::MAX` range. Used by Zcash for transaction-level vector
@@ -78,7 +78,7 @@ pub enum CompactSize {
     FourBytes(u32),
     /// Flag-`FLAG_EIGHT_BYTES` form, `(u32::MAX + 1)..=u64::MAX`.
     ///
-    /// Every value within [`MAX_COMPACT_SIZE`] fits in `u32`, so this variant
+    /// Every value within `MAX_COMPACT_SIZE` fits in `u32`, so this variant
     /// should be unreachable in any consensus-validating Zcash context.
     EightBytes(u64),
 }
@@ -175,7 +175,12 @@ impl CompactSize {
         }
     }
 
-    /// Reject values above the consensus bound [`MAX_COMPACT_SIZE`].
+    /// Reject values above the consensus bound `MAX_COMPACT_SIZE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::ExceedsMaximum`] if the value exceeds
+    /// `MAX_COMPACT_SIZE`.
     pub(crate) fn enforce_max(self) -> Result<Self, CompactSizeError> {
         if u64::from(self) > u64::from(MAX_COMPACT_SIZE) {
             Err(CompactSizeError::ExceedsMaximum(self))
@@ -190,14 +195,14 @@ impl CompactSize {
     ///
     /// Returns [`CompactSizeError::NonCanonical`] if the form is not the
     /// shortest that holds the value, or [`CompactSizeError::ExceedsMaximum`]
-    /// if it is above [`MAX_COMPACT_SIZE`].
+    /// if it is above `MAX_COMPACT_SIZE`.
     pub fn enforce_valid(self) -> Result<Self, CompactSizeError> {
         self.enforce_canon()?.enforce_max()
     }
 
     /// Parse a [`CompactSize`] from `reader`. Performs no canonical-form or
     /// consensus-bound checks; callers are responsible for invoking
-    /// [`Self::enforce_canon`], [`Self::enforce_max`], or
+    /// [`Self::enforce_canon`], `Self::enforce_max`, or
     /// [`Self::enforce_valid`] as appropriate.
     ///
     /// # Errors

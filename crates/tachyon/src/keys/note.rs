@@ -1,4 +1,4 @@
-//! Note-related keys: NullifierKey, PaymentKey.
+//! Note-related keys: `NullifierKey`, `PaymentKey`.
 
 use derive_more::{AsRef, Debug, From, Into};
 #[cfg(test)]

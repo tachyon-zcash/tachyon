@@ -18,6 +18,12 @@ impl TryFrom<BlockHeight> for usize {
 }
 
 impl From<usize> for BlockHeight {
+    /// Convert a block height, narrowing it to `u32`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `height` exceeds `u32::MAX` on platforms where that value is
+    /// representable by `usize`.
     fn from(height: usize) -> Self {
         Self(
             #[expect(clippy::expect_used, reason = "don't index higher than u32::MAX")]

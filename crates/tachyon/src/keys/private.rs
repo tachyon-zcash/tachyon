@@ -41,7 +41,7 @@ impl SpendingKey {
         Self(rand_bytes)
     }
 
-    /// Derive $\mathsf{ask}$ from $\mathsf{sk}$ with RedPallas sign
+    /// Derive $\mathsf{ask}$ from $\mathsf{sk}$ with `RedPallas` sign
     /// normalization.
     ///
     /// # Key derivation (Orchard §4.2.3)
@@ -57,14 +57,14 @@ impl SpendingKey {
     ///
     /// # Sign normalization (§5.4.7.1)
     ///
-    /// RedPallas requires $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$ to
+    /// `RedPallas` requires $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$ to
     /// have $\tilde{y} = 0$.  Pallas point compression (§5.4.9.7) encodes
     /// $\tilde{y}$ in bit 255 (byte 31, bit 7) of the 32-byte
     /// representation.  If $\tilde{y}(\mathsf{ak}) = 1$, we negate
     /// $\mathsf{ask}$: $[-\mathsf{ask}]\mathcal{G} =
     /// -[\mathsf{ask}]\mathcal{G}$ flips the y-coordinate sign.
     ///
-    /// The reddsa::ActionAuth basepoint $\mathcal{G}$ is hash-derived
+    /// The `reddsa::ActionAuth` basepoint $\mathcal{G}$ is hash-derived
     /// (`hash_to_curve("z.cash:Orchard")(b"G")`) and sealed inside
     /// reddsa's `private::Sealed` trait, so we must construct a
     /// `SigningKey` (which internally computes $[\mathsf{ask}]\mathcal{G}$)
@@ -73,7 +73,7 @@ impl SpendingKey {
     /// # Panics
     ///
     /// Panics if the PRF-derived or sign-normalized scalar is not a valid
-    /// RedPallas signing key. Every $\mathbb{F}_q$ element is a valid signing
+    /// `RedPallas` signing key. Every $\mathbb{F}_q$ element is a valid signing
     /// key, so this is unreachable.
     #[must_use]
     #[expect(
@@ -123,6 +123,11 @@ impl SpendingKey {
     /// This binds `pk` to both spending authority and nullifier derivation,
     /// so `cm` (which contains `pk`) transitively pins the full proof
     /// authorizing key to the accumulator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the derived spend validating key `ak` is the identity, which
+    /// has no affine coordinates for payment-key derivation.
     #[must_use]
     pub fn derive_payment_key(&self) -> PaymentKey {
         let ak = self.derive_auth_private().derive_auth_public();
@@ -180,7 +185,7 @@ impl SpendAuthorizingKey {
     ///
     /// # Panics
     ///
-    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
+    /// Panics if a canonical Udon scalar fails to decode in the `RedPallas`
     /// field.
     #[must_use]
     pub fn derive_action_private(
@@ -238,7 +243,7 @@ impl ActionSigningKey<effect::Output> {
     ///
     /// # Panics
     ///
-    /// Panics if the randomizer scalar is not a valid RedPallas signing key.
+    /// Panics if the randomizer scalar is not a valid `RedPallas` signing key.
     /// Every $\mathbb{F}_q$ element is a valid signing key, so this is
     /// unreachable.
     #[must_use]
@@ -252,7 +257,7 @@ impl ActionSigningKey<effect::Output> {
     }
 }
 
-/// A [`reddsa::BindingAuth`] signing key $\mathsf{bsk}$, the scalar sum of each
+/// A `reddsa::BindingAuth` signing key $\mathsf{bsk}$, the scalar sum of each
 /// action's [`value::Trapdoor`] $\mathsf{rcv}_i$ used in the bundle.
 ///
 /// $$
@@ -276,7 +281,7 @@ impl BindingSigningKey {
 }
 
 impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
-    /// BindingAuth signing key is the scalar sum of all value commitment
+    /// `BindingAuth` signing key is the scalar sum of all value commitment
     /// trapdoors.
     ///
     /// Every Pallas scalar field element, including zero, is a valid binding

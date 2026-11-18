@@ -115,7 +115,8 @@ impl QrProfile {
     ///
     /// # Panics
     ///
-    /// Panics at depth [`MAX_DEPTH`](Self::MAX_DEPTH).
+    /// Panics if `depth` is greater than or equal to `u32::BITS`, leaving no
+    /// bit for another side.
     #[must_use]
     pub fn descend(self, bit: bool) -> Self {
         assert!(

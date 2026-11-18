@@ -49,8 +49,8 @@ impl NoteMasterKey {
     ///
     /// # Panics
     ///
-    /// If `epoch_start` is not group-aligned, or the window would run past
-    /// [`EPOCH_MAX`](crate::constants::EPOCH_MAX).
+    /// Panics if `epoch_start` is not group-aligned, or the window would run
+    /// past [`EPOCH_MAX`](crate::constants::EPOCH_MAX).
     #[must_use]
     #[expect(
         clippy::as_conversions,

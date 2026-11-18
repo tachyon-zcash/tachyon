@@ -43,13 +43,13 @@
 //! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
 //! - `bvk`: Binding verification key (derived from value commitments)
 //!
-//! ### Note keys ([`note`])
+//! ### Note keys (`note`)
 //!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
 //! - `pk = Poseidon_domain(ak_x, ak_y, nk)`: Derived from `pak`, binds spending
 //!   authority and nullifier key to the note commitment
 //!
-//! ### Proof keys ([`proof`])
+//! ### Proof keys (`proof`)
 //!
 //! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
 //!   without spend authority
@@ -64,13 +64,13 @@
 //!   \mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(
 //!     \psi,\ \mathsf{nk}
 //!   )
-//! $$
+//! $$.
 //!
 //! $$
 //!   \mathsf{nf}_e = \mathsf{squeeze} _{e - w}\big(
 //!     \mathsf{absorb}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ w)
 //!   \big)
-//! $$
+//! $$.
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
 //! nullifier key, and $e$ is the epoch index. Each group re-absorbs $w$, so

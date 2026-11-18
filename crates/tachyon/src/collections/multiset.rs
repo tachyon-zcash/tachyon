@@ -10,6 +10,11 @@ use udon::polynomial::vanishing_polynomial;
 use crate::pasta::Fp;
 
 /// Encode the provided members as roots.
+///
+/// # Panics
+///
+/// Panics if more than 8191 roots are supplied, counting duplicates, or if
+/// construction exceeds the supported FFT domain.
 #[expect(
     clippy::expect_used,
     reason = "the buffer fits the roots and leading one"

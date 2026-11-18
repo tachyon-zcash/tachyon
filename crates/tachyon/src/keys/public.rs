@@ -93,7 +93,7 @@ impl From<ActionVerificationKey> for EpAffine {
 /// ## Type representation
 ///
 /// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
-/// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
+/// stores a Pallas curve point (`EpAffine`, encoded as 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Display)]
 #[display("BindingVerificationKey({:?})", reddsa::VerificationKeyBytes::from(self.0))]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);

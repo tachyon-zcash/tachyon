@@ -1,25 +1,23 @@
 //! # Quadratic-residue classification
 //!
-//! A value $x$ takes the residue side at a discriminant $R$ iff $x + R$ is a
+//! A value `x` takes the residue side at discriminant `R` iff `x + R` is a
 //! square or zero, and the non-residue side otherwise. A root $y$ attests
-//! either side: $y^2 = x + R$ on the residue side, $y^2 = n \cdot (x + R)$ for
+//! either side: `y^2 = x + R` on the residue side, or `y^2 = n * (x + R)` for
 //! a fixed non-residue $n$ on the other.
 //!
 //! ## Class decomposition
 //!
-//! With $q$ one side's values as roots and $u$ interpolating their roots
-//! $y_i$, at that side's class multiplier $c$,
+//! With `q` one side's values as roots and `u` interpolating their roots `y_i`
+//! at that side's class multiplier `c`:
 //!
-//! $$
-//!   u(X)^2 - c \cdot (X + R) = q(X) \cdot h(X),
-//! $$
+//! `u(X)^2 - c * (X + R) = q(X) * h(X)`.
 //!
-//! so every root of $q$ takes that side. The exceptional value $-R$ has root
-//! $0$ under either class; $q_\mathsf{non}(-R) \neq 0$ files it residue-side.
+//! So every root of `q` takes that side. The exceptional value `-R` has root
+//! `0` under either class; `q_non(-R) != 0` files it residue-side.
 //!
-//! The identity also reads over one value against many discriminants: with
-//! the $R_j$ as the roots of $q$ and $x$ as the shift, $u(R_j)^2 = c(x +
-//! R_j)$ at each.
+//! The identity also reads over one value against many discriminants: with the
+//! `R_j` as the roots of `q` and `x` as the shift, `u(R_j)^2 = c * (x + R_j)`
+//! at each.
 
 extern crate alloc;
 
@@ -48,7 +46,7 @@ pub(crate) const fn class_multiplier(side: bool) -> Fp {
 
 /// Classify $v$ at the discriminant $R$: the residue-side bit, set iff $v +
 /// R$ is a square or zero, and a root with $\mathsf{root}^2 = c \cdot (v + R)$
-/// at that side's [`class_multiplier`].
+/// at that side's `class_multiplier`.
 ///
 /// # Panics
 ///
@@ -99,13 +97,18 @@ pub(crate) fn split(
 ///
 /// $$
 ///   u(X)^2 - c \cdot (X + s) = q(X) \cdot h(X),
-/// $$
+/// $$.
 ///
 /// with $q$ the abscissas as roots and $u$ interpolating the points. An empty
 /// side takes $u = 1$ and an all-zero side takes $u = q$, so neither
 /// polynomial is zero.
 ///
 /// Returns `None` when two abscissas coincide or a point lies off the side.
+///
+/// # Panics
+///
+/// Panics if interpolation or multiplication for oversized `points` exceeds
+/// the polynomial coefficient capacity or supported FFT domain.
 #[must_use]
 #[expect(
     clippy::expect_used,

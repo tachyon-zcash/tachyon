@@ -137,6 +137,11 @@ impl AnchorSetPoly {
 }
 
 impl FromIterator<Anchor> for AnchorSetPoly {
+    /// # Panics
+    ///
+    /// Panics if the iterator yields more than 8191 items, counting
+    /// duplicates, or if constructing the product exceeds the supported FFT
+    /// domain.
     fn from_iter<I: IntoIterator<Item = Anchor>>(iter: I) -> Self {
         Self(multiset::encode(iter.into_iter().map(Fp::from)))
     }
@@ -185,12 +190,22 @@ impl ActionSetPoly {
 }
 
 impl FromIterator<ActionDigest> for ActionSetPoly {
+    /// # Panics
+    ///
+    /// Panics if the iterator yields more than 8191 items, counting
+    /// duplicates, or if constructing the product exceeds the supported FFT
+    /// domain.
     fn from_iter<I: IntoIterator<Item = ActionDigest>>(iter: I) -> Self {
         Self(multiset::encode(iter.into_iter().map(Fp::from)))
     }
 }
 
 impl FromIterator<Tachygram> for TachygramSetPoly {
+    /// # Panics
+    ///
+    /// Panics if the iterator yields more than 8191 items, counting
+    /// duplicates, or if constructing the product exceeds the supported FFT
+    /// domain.
     fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
         Self(multiset::encode(iter.into_iter().map(Fp::from)))
     }
