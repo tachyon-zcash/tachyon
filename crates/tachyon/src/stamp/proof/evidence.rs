@@ -50,6 +50,10 @@ use crate::primitives::{
 pub struct EvidenceTree;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
@@ -118,6 +122,10 @@ impl Header<Fp> for EvidenceTree {
 pub struct EvidenceTreePair;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,

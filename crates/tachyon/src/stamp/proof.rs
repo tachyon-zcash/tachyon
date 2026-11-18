@@ -25,7 +25,7 @@
 //! unchanged, binds nothing until a public input, a header or a consensus check
 //! fixes it.
 
-#![allow(missing_debug_implementations, missing_docs, reason = "todo")]
+#![allow(missing_docs, reason = "todo")]
 
 pub mod delegation;
 pub mod evidence;

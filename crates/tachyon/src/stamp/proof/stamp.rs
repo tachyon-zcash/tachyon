@@ -46,6 +46,10 @@ use crate::{ActionSetPoly, TachygramSetPoly, value};
 pub struct Actions;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct ActionsOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
 }
@@ -87,6 +91,10 @@ impl Header<Fp> for Actions {
 pub struct Stamp;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct StampOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
     pub tachygram_set_bridge: [Element<'dr, D>; 2],

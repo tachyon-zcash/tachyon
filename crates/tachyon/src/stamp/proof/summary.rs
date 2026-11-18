@@ -48,6 +48,10 @@ impl Summary {
 }
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct SummaryOutput<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,

@@ -34,6 +34,10 @@ use crate::{gadgets, note};
 pub struct NoteSpendable;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     #[ragu(gadget)]

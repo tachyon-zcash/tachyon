@@ -39,6 +39,10 @@ pub struct NoteSecret;
 
 /// Circuit representation of the wallet-only [`NoteSecret`] header.
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     /// Commitment to the note.
     pub cm: Element<'dr, D>,
@@ -104,6 +108,10 @@ impl Header<Fp> for NoteSecret {
 pub struct NoteNullifiers;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     #[ragu(gadget)]

@@ -72,6 +72,10 @@ use crate::{gadgets, note};
 pub struct ArbitraryUnspent;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     #[ragu(gadget)]
@@ -129,6 +133,10 @@ impl Header<Fp> for ArbitraryUnspent {
 pub struct NoteUnspent;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     pub cm: Element<'dr, D>,
     pub anchor_start: Element<'dr, D>,
@@ -209,6 +217,10 @@ impl Header<Fp> for NoteUnspent {
 pub struct AnchorSpan;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_start: Element<'dr, D>,
     pub anchor_end: Element<'dr, D>,

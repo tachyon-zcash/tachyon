@@ -53,6 +53,10 @@ use crate::primitives::{
 pub struct QrIntake;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
@@ -137,6 +141,10 @@ impl QrIntakeSides {
 }
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
     /// The intake being split.
     #[ragu(gadget)]
@@ -953,6 +961,10 @@ impl Step<Pasta> for QrSideDescend {
 pub struct QrBucket;
 
 #[derive(Gadget, Write)]
+#[expect(
+    missing_debug_implementations,
+    reason = "a gadget holds driver wires, like the header gadgets it sits in"
+)]
 pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,

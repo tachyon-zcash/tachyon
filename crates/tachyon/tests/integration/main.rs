@@ -5,7 +5,6 @@
     clippy::panic,
     clippy::too_many_arguments,
     clippy::type_complexity,
-    missing_debug_implementations,
     missing_docs,
     unreachable_pub,
     reason = "test code"
