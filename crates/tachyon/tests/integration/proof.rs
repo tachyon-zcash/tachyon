@@ -411,7 +411,11 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let height = mine_cm_block(rng, &mut pool, note.commitment());
     let spend_epoch = height.epoch();
-    let plan = action::Plan::spend(rng, note, |alpha| user.pak.ak.derive_action_public(&alpha));
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        user.pak.ak.derive_action_public(&alpha)
+    });
 
     let spendable = user.spendable_init(app, &pool, &note, height);
     let secret = user.note_secret(app, note);
@@ -419,12 +423,12 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             spend::SpendBind,
-            witness::spend_bind((*spendable.data(), *secret.data()), plan.rcv),
+            witness::spend_bind((*spendable.data(), *secret.data()), rcv),
             spendable,
             secret,
         )
         .unwrap();
-    let valid = witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak);
+    let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
     let (.., foreign_action_set, _) =
         witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
 
@@ -465,7 +469,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         .fuse(
             rng,
             stamp::SpendAction,
-            witness::spend_action((*bind_pcd.data(), ()), plan.theta, user.pak),
+            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -901,7 +905,9 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
-    let plan = action::Plan::output(rng, note);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::output(note, theta, rcv);
     let anchor = Anchor::random(rng);
     let pad = Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
@@ -914,7 +920,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .seed(
             rng,
             output::OutputBind,
-            witness::output_bind(((), ()), note, plan.rcv),
+            witness::output_bind(((), ()), note, rcv),
         )
         .unwrap();
     assert_eq!(
@@ -922,10 +928,10 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         (
             Tachygram::from(note.commitment()),
             pad,
-            plan.rcv.commit(-note.value),
+            rcv.commit(-note.value),
         )
     );
-    let valid = witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor);
+    let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
     let (.., foreign_action_set, _) =
         witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
@@ -966,7 +972,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         .fuse(
             rng,
             stamp::OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -987,7 +993,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let foreign_note = WalletSim::random(rng).random_note(200);
     let foreign = action::Plan {
         note: foreign_note,
-        rk: private::ActionSigningKey::new(&plan.theta.randomizer(foreign_note.commitment()))
+        rk: private::ActionSigningKey::new(&theta.randomizer(foreign_note.commitment()))
             .derive_action_public(),
         ..plan
     };

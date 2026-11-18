@@ -23,6 +23,16 @@ fn debug_value_trapdoor_redacts_scalar() {
 }
 
 #[test]
+fn trapdoor_refuses_a_scalar_past_fp_capacity() {
+    let bound = Fq::from(2u64).pow_u64(u64::from(Fp::CAPACITY));
+    assert_eq!(
+        Fq::from(Trapdoor::try_from(bound - Fq::ONE).unwrap()),
+        bound - Fq::ONE
+    );
+    assert_eq!(Trapdoor::try_from(bound).err(), Some(OutOfRange));
+}
+
+#[test]
 fn positive_spans_zero_to_max_money() {
     for (input, accepted) in [
         (Positive::try_from(0u64), true),

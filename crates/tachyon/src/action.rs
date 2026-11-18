@@ -5,14 +5,13 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
-use rand_core::CryptoRng;
-use udon::{curve::Affine as _, field::Field as _};
+use udon::curve::Affine as _;
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
-    pasta::{EpAffine, Fp, Fq},
+    pasta::EpAffine,
     primitives::{ActionDigest, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
@@ -130,67 +129,24 @@ impl<E: Effect> PartialOrd for Plan<E> {
 }
 
 impl Plan<effect::Spend> {
-    /// Plan a spend of `note` with fresh $\theta$ and $\mathsf{rcv}$, selecting
-    /// each again while it, or $\alpha$ for $\theta$, exceeds the
-    /// `Fp::CAPACITY` bits the stamp steps read
-    /// it from.
+    /// Assemble a spend action plan.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
+    ///
+    /// # Caller contract
+    ///
+    /// The caller confirms that the randomizer $\alpha$ its `theta` gives fits
+    /// `Fp::CAPACITY` bits, or it risks producing a proof that is false.
     #[must_use]
     pub fn spend(
-        rng: &mut impl CryptoRng,
         note: Note,
+        theta: ActionEntropy,
+        rcv: value::Trapdoor,
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
-        Self::sample(rng, note, derive_rk)
-    }
-}
-
-impl Plan<effect::Output> {
-    /// Plan an output of `note` with fresh $\theta$ and $\mathsf{rcv}$,
-    /// selecting each again while it, or $\alpha$ for $\theta$, exceeds the
-    /// `Fp::CAPACITY` bits the stamp steps read
-    /// it from.
-    ///
-    /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
-    #[must_use]
-    pub fn output(rng: &mut impl CryptoRng, note: Note) -> Self {
-        Self::sample(rng, note, |alpha| {
-            private::ActionSigningKey::new(&alpha).derive_action_public()
-        })
-    }
-}
-
-#[expect(clippy::as_conversions, reason = "constant value")]
-fn fits_base_field_capacity(scalar: Fq) -> bool {
-    !scalar
-        .to_le_bits()
-        .as_ref()
-        .iter()
-        .skip(Fp::CAPACITY as usize)
-        .any(|&bit| bit)
-}
-
-impl<E: Effect> Plan<E> {
-    fn sample(
-        rng: &mut impl CryptoRng,
-        note: Note,
-        derive_rk: impl FnOnce(ActionRandomizer<E>) -> public::ActionVerificationKey,
-    ) -> Self {
         let cm = note.commitment();
-        let (theta, alpha) = loop {
-            let theta = ActionEntropy::random(rng);
-            let alpha = theta.randomizer::<E>(cm);
-            if fits_base_field_capacity(Fq::from(alpha)) {
-                break (theta, alpha);
-            }
-        };
-        let rcv = loop {
-            let rcv = value::Trapdoor::random(rng);
-            if fits_base_field_capacity(Fq::from(rcv)) {
-                break rcv;
-            }
-        };
+        let alpha = theta.randomizer::<effect::Spend>(cm);
+
         Self {
             rk: derive_rk(alpha),
             note,
@@ -199,7 +155,34 @@ impl<E: Effect> Plan<E> {
             _effect: PhantomData,
         }
     }
+}
 
+impl Plan<effect::Output> {
+    /// Assemble an output action plan.
+    ///
+    /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
+    ///
+    /// # Caller contract
+    ///
+    /// The caller confirms that the randomizer $\alpha$ its `theta` gives fits
+    /// `Fp::CAPACITY` bits, or it risks producing a proof that is false.
+    #[must_use]
+    pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
+        let cm = note.commitment();
+        let alpha = theta.randomizer::<effect::Output>(cm);
+        let rsk = private::ActionSigningKey::new(&alpha);
+
+        Self {
+            rk: rsk.derive_action_public(),
+            note,
+            theta,
+            rcv,
+            _effect: PhantomData,
+        }
+    }
+}
+
+impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
     /// $$

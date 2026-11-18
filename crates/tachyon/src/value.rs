@@ -14,7 +14,7 @@ use crate::{
         MAX_MONEY,
         orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
     },
-    pasta::{Ep, EpAffine, Fq},
+    pasta::{Ep, EpAffine, Fp, Fq},
 };
 
 /// Alias for [`ValueTrapdoor`].
@@ -48,15 +48,14 @@ impl Trapdoor {
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
-    /// Generate a random trapdoor for an action.
+    /// Generate a random trapdoor for an action, sampling again while the
+    /// scalar does not fit.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
-    }
-
-    /// A trapdoor derived from other secret data, such as a max fee note's
-    /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
-        Self(scalar)
+        loop {
+            if let Ok(trapdoor) = Self::try_from(Fq::random(|bytes| rng.fill_bytes(bytes))) {
+                return trapdoor;
+            }
+        }
     }
 
     /// Commit to a given value with this trapdoor.
@@ -72,6 +71,27 @@ impl Trapdoor {
         let commit_value = *VALUE_COMMIT_V * Fq::from(value);
         let commit_trapdoor = *VALUE_COMMIT_R * self.0;
         ValueCommitment(commit_value + commit_trapdoor)
+    }
+}
+
+/// A trapdoor holds only a scalar whose integer value fits the
+/// [`Fp::CAPACITY`] bits the stamp steps read it from.
+impl TryFrom<Fq> for Trapdoor {
+    type Error = OutOfRange;
+
+    #[expect(clippy::as_conversions, reason = "constant value")]
+    fn try_from(scalar: Fq) -> Result<Self, Self::Error> {
+        if scalar
+            .to_le_bits()
+            .as_ref()
+            .iter()
+            .skip(Fp::CAPACITY as usize)
+            .any(|&bit| bit)
+        {
+            Err(OutOfRange)
+        } else {
+            Ok(Self(scalar))
+        }
     }
 }
 

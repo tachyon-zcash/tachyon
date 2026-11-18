@@ -15,6 +15,7 @@ use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, action,
     bundle::{self, Bundle},
     effect,
+    entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
@@ -44,7 +45,9 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
 }
 
 pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
-    action::Plan::output(rng, note)
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    action::Plan::output(note, theta, rcv)
 }
 
 pub(crate) fn shared_sk() -> private::SpendingKey {
@@ -361,7 +364,9 @@ impl WalletSim {
                     },
                     |height| self.spendable_init(app, pool, &note, height),
                 );
-                spend_plans.push(action::Plan::spend(rng, note, |alpha| {
+                let rcv = value::Trapdoor::random(rng);
+                let theta = ActionEntropy::random(rng);
+                spend_plans.push(action::Plan::spend(note, theta, rcv, |alpha| {
                     self.pak.ak.derive_action_public(&alpha)
                 }));
                 spend_pcds.push((self.note_secret(app, note), spendable, vec![]));
@@ -369,7 +374,11 @@ impl WalletSim {
             let output_plans = outputs
                 .iter()
                 .copied()
-                .map(|note| action::Plan::output(rng, note))
+                .map(|note| {
+                    let rcv = value::Trapdoor::random(rng);
+                    let theta = ActionEntropy::random(rng);
+                    action::Plan::output(note, theta, rcv)
+                })
                 .collect();
             let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
             let sighash = mock_sighash(plan.commitment().unwrap());

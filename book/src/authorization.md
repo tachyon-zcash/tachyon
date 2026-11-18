@@ -42,7 +42,7 @@ $$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \maths
 `theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
 The stamp steps multiply by the output's 254 bits, so an output at or above $2^{254}$ has no proof.
 A uniform output reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
-The planner selects `theta` again whenever the action's `alpha` reaches it. This is planner behaviour, not a consensus or circuit rule; a `theta` chosen otherwise only risks a proof that doesn't verify.
+The caller planning the action confirms that its `alpha` is below $2^{254}$, or it risks producing a proof that is false; nothing reselects `theta`.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,
@@ -125,9 +125,9 @@ Tachyon uses Pedersen commitments on the Pallas curve for value hiding:
 $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 
 where $v$ is the signed integer value (positive for spends, negative for outputs) and `rcv` is a random[^rcv-note] trapdoor in $\mathbb{F}_q$.
-The stamp steps multiply by the 254 bits of `rcv`, so the planner selects `rcv` again whenever it is at or above $2^{254}$, as it does for `theta`.
+The stamp steps multiply by the 254 bits of `rcv`, so a value trapdoor holds only a scalar below $2^{254}$: sampling selects again until it is, and conversion from any other scalar refuses one that is not.
 
-[^rcv-note]: `rcv` is currently sampled as a uniformly random scalar (`Fq::random`). This derivation may be revised in the future to incorporate a hash of the note commitment or other action-specific data.
+[^rcv-note]: `rcv` is currently sampled as a uniformly random scalar below $2^{254}$. This derivation may be revised in the future to incorporate a hash of the note commitment or other action-specific data.
 
 The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived from the domain `z.cash:Orchard-cv`.[^generator-todo]
 

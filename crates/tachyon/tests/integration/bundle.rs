@@ -17,7 +17,9 @@ use zcash_tachyon::{
     bundle::{Plan, PlanError, Signature},
     constants::MAX_MONEY,
     digest::blake2b,
-    effect, fee,
+    effect,
+    entropy::ActionEntropy,
+    fee,
     keys::private,
     pasta::{Ep, Eq, Fp},
     stamp::{self, ProofStamp, StrippedStamp},
@@ -280,7 +282,9 @@ fn duplicated_spend_cannot_inflate() {
     let pool = PoolSim::shared();
     let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
     let anchor = spendable.data().2;
-    let plan = action::Plan::spend(rng, note, |alpha| {
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
         wallet.pak.ak.derive_action_public(&alpha)
     });
     let descriptor = plan.descriptor();
@@ -300,7 +304,7 @@ fn duplicated_spend_cannot_inflate() {
         &cv_feemax.into(),
         &blake2b::memo_digest(&[]),
     ));
-    let alpha = plan.theta.randomizer::<effect::Spend>(note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     let sig = wallet
         .sk
         .derive_auth_private()
@@ -1230,7 +1234,8 @@ fn spend_plan_at(
     value: u64,
 ) -> action::Plan<effect::Spend> {
     let note = wallet.random_note(value);
-    action::Plan::spend(rng, note, |alpha| {
+    let (rcv, theta) = (value::Trapdoor::random(rng), ActionEntropy::random(rng));
+    action::Plan::spend(note, theta, rcv, |alpha| {
         ask.derive_action_private(&alpha).derive_action_public()
     })
 }
