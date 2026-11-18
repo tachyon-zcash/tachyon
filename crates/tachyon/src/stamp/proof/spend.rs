@@ -157,9 +157,7 @@ impl Step<Pasta> for SpendBind {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let secret = right_encoded.as_gadget();
-        spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
-        })?;
+        spendable.cm.enforce_equal(dr, &secret.cm)?;
         let epoch_next = spendable.epoch_current.next(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;

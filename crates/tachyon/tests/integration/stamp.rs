@@ -524,6 +524,11 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     assert_eq!(decoded.adjuncts, stamp.adjuncts);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
+    assert!(
+        decoded
+            .verify_proof(rng, app, digests.iter().copied())
+            .unwrap()
+    );
 
     let forged = ProofStamp {
         tachygram_set: TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),

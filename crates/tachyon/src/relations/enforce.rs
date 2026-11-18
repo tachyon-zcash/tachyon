@@ -32,7 +32,7 @@
 //! at `z`. A caller that recomputed or separately witnessed a value could let
 //! the checked value diverge from the opened one and break soundness.
 
-use ragu_core::{Error, Result, drivers::Driver};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, GadgetExt as _};
 use udon::field::Field as _;
 
@@ -59,12 +59,9 @@ pub(crate) fn enforce_poly_product<'dr, D: Driver<'dr, F = Fp>>(
     multiplicand: &Element<'dr, D>,
     multiplier: &Element<'dr, D>,
     product: &Element<'dr, D>,
-    err: &'static str,
 ) -> Result<()> {
     let expected = multiplicand.mul(dr, multiplier)?;
-    product
-        .enforce_equal(dr, &expected)
-        .map_err(|_err| Error::InvalidWitness(err.into()))
+    product.enforce_equal(dr, &expected)
 }
 
 /// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
@@ -91,14 +88,11 @@ pub(crate) fn enforce_poly_roots<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
     z: &Element<'dr, D>,
     accumulator: &Element<'dr, D>,
     roots: &[Element<'dr, D>; N],
-    err: &'static str,
 ) -> Result<()> {
     let mut expected = Element::constant(dr, Fp::ONE);
     for root in roots {
         let factor = z.sub(dr, root);
         expected = expected.mul(dr, &factor)?;
     }
-    accumulator
-        .enforce_equal(dr, &expected)
-        .map_err(|_err| Error::InvalidWitness(err.into()))
+    accumulator.enforce_equal(dr, &expected)
 }

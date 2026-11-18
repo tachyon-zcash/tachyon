@@ -267,25 +267,13 @@ impl Step<Pasta> for OutputAction {
         // step derives. `cv` carries the note's value; `rk` derives from
         // `alpha`, and so from `cm`.
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &action_set,
-            &action_roots,
-            "OutputAction: action set does not commit to the action",
-        )?;
+        enforce_poly_roots(dr, &z, &action_set, &action_roots)?;
         let tachygram_roots = [cm_root, output_header.pad.clone()];
         // The stamp accumulator commits to exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
         let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &tachygram_set,
-            &tachygram_roots,
-            "OutputAction: tachygram set does not commit to the bound pair",
-        )?;
+        enforce_poly_roots(dr, &z, &tachygram_set, &tachygram_roots)?;
         let output = witness.map(|(_, anchor, ..)| anchor);
         let fields = ActionsOutput {
             anchor: anchor_element,
@@ -390,13 +378,15 @@ impl Step<Pasta> for SpendAction {
             ..
         } = left_encoded.as_gadget().clone();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let ak_assignment = D::try_just(|| {
+        #[expect(
+            clippy::expect_used,
+            reason = "ak is a typed RedPallas verification key"
+        )]
+        let ak_assignment = D::just(|| {
             let &(_, pak, ..) = witness.as_ref().take();
             let bytes: [u8; 32] = pak.ak.0.into();
-            EpAffine::from_bytes(bytes).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("SpendAction: invalid ak encoding".into())
-            })
-        })?;
+            EpAffine::from_bytes(bytes).expect("a verification key encodes a curve point")
+        });
         let ak = Point::alloc(dr, ak_assignment)?;
         let nk = Element::alloc(
             dr,
@@ -404,9 +394,7 @@ impl Step<Pasta> for SpendAction {
             witness.as_ref().map(|&(_, pak, ..)| Fp::from(pak.nk)),
         )?;
         let derived_pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
-        pk.enforce_equal(dr, &derived_pk).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendAction: pak not related to note".into())
-        })?;
+        pk.enforce_equal(dr, &derived_pk)?;
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
         let rk = fixed_base::G_BASE.mul_digest(dr, &alpha, Some(&ak))?;
@@ -418,24 +406,12 @@ impl Step<Pasta> for SpendAction {
         // The action-set commitment commits to exactly the one action this
         // step derives; the root is in-circuit from the certified note.
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &action_set,
-            &[action_root],
-            "SpendAction: action set does not commit to the action",
-        )?;
+        enforce_poly_roots(dr, &z, &action_set, &[action_root])?;
         // The stamp accumulator commits to exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
         let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &tachygram_set,
-            &[nf_current, nf_next],
-            "SpendAction: tachygram set does not commit to the nullifier pair",
-        )?;
+        enforce_poly_roots(dr, &z, &tachygram_set, &[nf_current, nf_next])?;
         let output = left.map(|(_, _, _, anchor, ..)| anchor);
         let fields = ActionsOutput {
             anchor: left_encoded.as_gadget().anchor.clone(),
@@ -509,46 +485,31 @@ impl Step<Pasta> for StampMerge {
         let left_actions = oracles.left(ActionSet).open(dr, &z)?;
         let right_actions = oracles.right(ActionSet).open(dr, &z)?;
         let merged_actions = oracles.output(ActionSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_actions,
-            &right_actions,
-            &merged_actions,
-            "StampMerge: merged action set must be the product of left and right action sets",
-        )?;
+        enforce_poly_product(dr, &left_actions, &right_actions, &merged_actions)?;
         let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
         let right_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
         let merged_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_tachygrams,
-            &right_tachygrams,
-            &merged_tachygrams,
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
-        )?;
+        enforce_poly_product(dr, &left_tachygrams, &right_tachygrams, &merged_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        left_anchor_element
-            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("StampMerge: anchors must match".into())
-            })?;
+        left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
         let tachygram_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
         let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
         let anchor_value = left_anchor_element.value();
-        let data = D::try_just(|| {
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "StampMerge: bridge hash is not on the curve".into(),
-                )
-            })?;
-            Ok((
+        let data = D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
+            (
                 TachygramSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
-            ))
-        })?;
+            )
+        });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: left_anchor_element,
             tachygram_set_bridge,
@@ -618,29 +579,13 @@ impl Step<Pasta> for ActionMerge {
         let left_actions = oracles.left(ActionSet).open(dr, &z)?;
         let right_actions = oracles.right(ActionSet).open(dr, &z)?;
         let merged_actions = oracles.output(ActionSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_actions,
-            &right_actions,
-            &merged_actions,
-            "ActionMerge: merged action set must be the product of left and right action sets",
-        )?;
+        enforce_poly_product(dr, &left_actions, &right_actions, &merged_actions)?;
         let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
         let right_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
         let merged_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_tachygrams,
-            &right_tachygrams,
-            &merged_tachygrams,
-            "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
-        )?;
+        enforce_poly_product(dr, &left_tachygrams, &right_tachygrams, &merged_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        left_anchor_element
-            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("ActionMerge: anchors must match".into())
-            })?;
+        left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
         let fields = ActionsOutput {
             anchor: left_anchor_element,
         };
@@ -738,11 +683,7 @@ impl Step<Pasta> for StampLift {
         let anchor_evaluation = oracles.right(AnchorSet).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
-        membership.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "StampLift: stamp anchor is neither the span's start nor a member".into(),
-            )
-        })?;
+        membership.enforce_zero(dr)?;
         // The output tachygram set copies the left one, so the output's bridge
         // hash is the left stamp's.
         let data = D::just(|| {
@@ -829,11 +770,7 @@ impl Step<Pasta> for ActionLift {
         let anchor_evaluation = oracles.right(AnchorSet).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
-        membership.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "ActionLift: actions anchor is neither the span's start nor a member".into(),
-            )
-        })?;
+        membership.enforce_zero(dr)?;
         let fields = ActionsOutput { anchor: anchor_end };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
@@ -982,25 +919,13 @@ impl Step<Pasta> for FeeFuse {
         let output_actions = oracles.output(ActionSet).open(dr, &z)?;
         let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
         let output_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
-        for (left_value, output_value, root, err) in [
-            (
-                left_actions,
-                output_actions,
-                fee_digest,
-                "FeeFuse: output action set must be the product of left and fee action sets",
-            ),
-            (
-                left_tachygrams,
-                output_tachygrams,
-                fee_change,
-                "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
-            ),
+        for (left_value, output_value, root) in [
+            (left_actions, output_actions, fee_digest),
+            (left_tachygrams, output_tachygrams, fee_change),
         ] {
             let factor = z.sub(dr, &root);
             let expected = left_value.mul(dr, &factor)?;
-            output_value
-                .enforce_equal(dr, &expected)
-                .map_err(|_err| ragu_core::Error::InvalidWitness(err.into()))?;
+            output_value.enforce_equal(dr, &expected)?;
         }
         let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
         let tachygram_set_bridge = [
@@ -1008,15 +933,18 @@ impl Step<Pasta> for FeeFuse {
             oracles.bridge_hash().y().clone(),
         ];
         let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
-        let data = D::try_just(|| {
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeFuse: bridge hash is not on the curve".into())
-            })?;
-            Ok((
+        let data = D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
+            (
                 TachygramSetBridge::from(bridge_hash),
                 Anchor::from(*anchor.value().take()),
-            ))
-        })?;
+            )
+        });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor,
             tachygram_set_bridge,
@@ -1140,36 +1068,27 @@ impl Step<Pasta> for FeeSeed {
         })?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &action_set,
-            &[fee_digest],
-            "FeeSeed: fee action set does not commit to the fee digest",
-        )?;
+        enforce_poly_roots(dr, &z, &action_set, &[fee_digest])?;
         let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &tachygram_set,
-            &[fee_change],
-            "FeeSeed: fee tachygram set does not commit to the fee change note",
-        )?;
+        enforce_poly_roots(dr, &z, &tachygram_set, &[fee_change])?;
         let tachygram_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
         let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
         let anchor_value = anchor_element.value();
-        let data = D::try_just(|| {
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeSeed: bridge hash is not on the curve".into())
-            })?;
-            Ok((
+        let data = D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
+            (
                 TachygramSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
-            ))
-        })?;
+            )
+        });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: anchor_element,
             tachygram_set_bridge,
@@ -1268,13 +1187,7 @@ impl Step<Pasta> for StampUnmerge {
         let divisor_actions = oracles.right(ActionSet).open(dr, &z)?;
         let quotient_actions = oracles.output(ActionSet).open(dr, &z)?;
         let dividend_actions = oracles.left(ActionSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &divisor_actions,
-            &quotient_actions,
-            &dividend_actions,
-            "StampUnmerge: dividend action set must be the product of divisor and quotient action sets",
-        )?;
+        enforce_poly_product(dr, &divisor_actions, &quotient_actions, &dividend_actions)?;
         let divisor_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
         let quotient_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
         let dividend_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
@@ -1283,31 +1196,27 @@ impl Step<Pasta> for StampUnmerge {
             &divisor_tachygrams,
             &quotient_tachygrams,
             &dividend_tachygrams,
-            "StampUnmerge: dividend tachygram set must be the product of divisor and quotient tachygram sets",
         )?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
-        left_anchor_element
-            .enforce_equal(dr, &right_encoded.as_gadget().anchor)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("StampUnmerge: anchors must match".into())
-            })?;
+        left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
         let tachygram_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
         let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
         let anchor_value = left_anchor_element.value();
-        let data = D::try_just(|| {
-            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "StampUnmerge: bridge hash is not on the curve".into(),
-                )
-            })?;
-            Ok((
+        let data = D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
+            (
                 TachygramSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
-            ))
-        })?;
+            )
+        });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: left_anchor_element,
             tachygram_set_bridge,

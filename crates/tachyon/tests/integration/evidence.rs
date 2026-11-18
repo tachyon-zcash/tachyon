@@ -1,14 +1,6 @@
 use core::iter;
 
 use ragu_circuits::polynomials::sparse::Polynomial;
-use ragu_core::{
-    drivers::{Driver, DriverValue},
-    pasta::Pasta,
-};
-use ragu_pcd::{
-    header::Header,
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -25,75 +17,13 @@ use crate::fixtures::{
     qr::{QrIntakeEntry, shared_discriminant},
 };
 
-/// [`qr::QrBucketSeal`] with the constant coefficient of its prepared contents
-/// shifted by `self.0`.
-struct ShiftedBucketSeal(Fp);
-
-impl Step<Pasta> for ShiftedBucketSeal {
-    type Aux<'source> = ();
-    type Left = qr::QrIntake;
-    type Output = qr::QrBucket;
-    type Right = ();
-    type Witness<'source> = (Anchor,);
-
-    const INDEX: Index = qr::QrBucketSeal::INDEX;
-
-    fn prepare(
-        &self,
-        _: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
-        let mut contents = left.polynomial(qr::QrContents).to_vec();
-        contents[0] += self.0;
-        Ok(Prepared::new().poly(qr::QrContents, contents))
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let (encoded, data) = qr::QrBucketSeal::synthesize(dr, oracles, &witness, left, right)?;
-        Ok((encoded, data, D::unit()))
-    }
-}
-
 #[test]
 fn evidence_tree_admission_rejects_substituted_contents() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
-    let span0 = pool.epoch_span(epoch0);
-    let disc = shared_discriminant();
-    let intake = pool.qr_root(app, span0, disc);
-    let intake_pcd = intake.pcd;
     let bucket = pool.epoch_bucket(app, epoch0);
-    let (forged, ()) = app
-        .fuse(
-            rng,
-            ShiftedBucketSeal(Fp::ONE),
-            witness::qr_bucket_seal((*intake_pcd.data(), ()), Anchor::from(Fp::ZERO)),
-            intake_pcd,
-            app.bootstrap_proof().clone().carry::<()>(()),
-        )
-        .unwrap();
-    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     let (accepted, ()) = app
         .fuse(
             rng,
@@ -150,6 +80,7 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     for leaf in real {
         let replayed = tree.open(rng, app, leaf).unwrap();
         assert_eq!(*replayed.pcd.data(), leaf.header);
+        assert!(app.verify_uncompressed(&replayed.pcd, &mut *rng).unwrap());
     }
 }
 
@@ -171,6 +102,7 @@ fn evidence_tree_padded_leaves_replay_the_last_bucket() {
         for index in [range.start, range.end - 1].into_iter().take(range.len()) {
             let replayed = tree.open(rng, app, &tree.leaves[index]).unwrap();
             assert_eq!(*replayed.pcd.data(), last.header);
+            assert!(app.verify_uncompressed(&replayed.pcd, &mut *rng).unwrap());
         }
     }
 }

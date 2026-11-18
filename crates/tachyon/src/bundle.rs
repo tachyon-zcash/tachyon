@@ -635,6 +635,8 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
     /// `anchor_start` or one of its members.
+    /// Successful construction does not guarantee that the lifted stamp
+    /// verifies.
     ///
     /// # Errors
     ///

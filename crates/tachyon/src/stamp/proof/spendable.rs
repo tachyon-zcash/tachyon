@@ -178,9 +178,7 @@ impl Step<Pasta> for SpendableInit {
         )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;
-        evaluation.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendableInit: commitment not in set".into())
-        })?;
+        evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (cm, ..) = left.take();
             let (_, _, creation_epoch) = witness.take();
@@ -255,48 +253,21 @@ impl Step<Pasta> for QrSpendableInit {
         let unspent = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let bucket = right_encoded.as_gadget();
-        bucket
-            .epoch
-            .enforce_equal(dr, &unspent.epoch_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSpendableInit: segment does not start in the bucket's epoch".into(),
-                )
-            })?;
+        bucket.epoch.enforce_equal(dr, &unspent.epoch_start)?;
         bucket
             .anchor_start
-            .enforce_equal(dr, &unspent.anchor_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSpendableInit: segment does not open where the bucket does".into(),
-                )
-            })?;
-        bucket
-            .anchor_next
-            .enforce_equal(dr, &unspent.anchor_next)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSpendableInit: segment does not close where the bucket does".into(),
-                )
-            })?;
+            .enforce_equal(dr, &unspent.anchor_start)?;
+        bucket.anchor_next.enforce_equal(dr, &unspent.anchor_next)?;
         let epoch_next = bucket.epoch.next(dr).map_err(|_err| {
             ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
         })?;
         // The anchor equality rejects a wrong epoch label only through the
         // crossing digest's collision resistance; this ties `epoch_next` to the
         // bucket directly.
-        epoch_next
-            .enforce_equal(dr, &unspent.epoch_next)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSpendableInit: segment does not end in the epoch after the bucket's".into(),
-                )
-            })?;
+        epoch_next.enforce_equal(dr, &unspent.epoch_next)?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let evaluation = oracles.right(QrContents).open(dr, &unspent.cm)?;
-        evaluation.enforce_zero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrSpendableInit: commitment not in bucket".into())
-        })?;
+        evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();
             (unspent_cm, unspent_epoch_next, unspent_anchor_next)
@@ -371,30 +342,11 @@ impl Step<Pasta> for SpendableLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let unspent = right_encoded.as_gadget();
-        spendable
-            .cm
-            .enforce_equal(dr, &unspent.cm)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "SpendableLift: unspent cm does not match spendable".into(),
-                )
-            })?;
+        spendable.cm.enforce_equal(dr, &unspent.cm)?;
         spendable
             .epoch_current
-            .enforce_equal(dr, &unspent.epoch_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "SpendableLift: segment does not start at the lineage epoch".into(),
-                )
-            })?;
-        spendable
-            .anchor
-            .enforce_equal(dr, &unspent.anchor_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "SpendableLift: unspent not adjacent to spendable".into(),
-                )
-            })?;
+            .enforce_equal(dr, &unspent.epoch_start)?;
+        spendable.anchor.enforce_equal(dr, &unspent.anchor_start)?;
         let output = D::just(|| {
             let (output_cm, ..) = left.take();
             let (_, _, _, unspent_epoch_next, unspent_anchor_next) = right.take();

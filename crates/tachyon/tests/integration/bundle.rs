@@ -1460,6 +1460,7 @@ fn bundle_lift_preserves_coverage() {
     assert_eq!(lifted.stamp.anchor, pool.block(BlockHeight(2)).anchor());
     assert!(lifted.is_autonome());
     assert_eq!(lifted.verify_covered(&[]).unwrap(), covered);
+    assert!(lifted.verify_proof(rng, app, &covered.0).unwrap());
 }
 
 #[test]

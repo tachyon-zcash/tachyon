@@ -357,13 +357,7 @@ impl Step<Pasta> for AnchorSpanSeed {
             oracles.bridge_hash(),
         )?;
         let members = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_roots(
-            dr,
-            &z,
-            &members,
-            array::from_ref(&anchor),
-            "AnchorSpanSeed: members must contain the resulting anchor",
-        )?;
+        enforce_poly_roots(dr, &z, &members, array::from_ref(&anchor))?;
         let data = D::just(|| {
             let (anchor_start, ..) = witness.take();
             (anchor_start, Anchor::from(*anchor.value().take()))
@@ -442,12 +436,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         let right_span = right_encoded.as_gadget();
         left_span
             .anchor_end
-            .enforce_equal(dr, &right_span.anchor_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "AnchorSpanFuse: spans do not share a vertex".into(),
-                )
-            })?;
+            .enforce_equal(dr, &right_span.anchor_start)?;
         let data = D::just(|| {
             let (left_anchor_start, ..) = left.take();
             let (_, right_anchor_end) = right.take();
@@ -457,13 +446,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         let left_members = oracles.left(AnchorSet).open(dr, &z)?;
         let right_members = oracles.right(AnchorSet).open(dr, &z)?;
         let combined = oracles.output(AnchorSet).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_members,
-            &right_members,
-            &combined,
-            "AnchorSpanFuse: combined is not the union of the halves",
-        )?;
+        enforce_poly_product(dr, &left_members, &right_members, &combined)?;
         let fields = AnchorSpanOutput {
             anchor_start: left_span.anchor_start.clone(),
             anchor_end: right_span.anchor_end.clone(),
@@ -530,20 +513,10 @@ impl Step<Pasta> for UnspentFuse {
         let right_unspent = right_encoded.as_gadget();
         left_unspent
             .anchor_next
-            .enforce_equal(dr, &right_unspent.anchor_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentFuse: left.anchor_next must equal right.anchor_start".into(),
-                )
-            })?;
+            .enforce_equal(dr, &right_unspent.anchor_start)?;
         left_unspent
             .epoch_next
-            .enforce_equal(dr, &right_unspent.epoch_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentFuse: halves do not meet at one epoch".into(),
-                )
-            })?;
+            .enforce_equal(dr, &right_unspent.epoch_start)?;
         let data = D::just(|| {
             let (left_anchor_start, left_epoch_start, ..) = left.take();
             let (_, _, right_epoch_next, right_anchor_next) = right.take();
@@ -558,13 +531,7 @@ impl Step<Pasta> for UnspentFuse {
         let left_elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let right_elapsed = oracles.right(NfSeq).open(dr, &z)?;
         let combined = oracles.output(NfSeq).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_elapsed,
-            &right_elapsed,
-            &combined,
-            "UnspentFuse: combined is not the concatenation of the halves",
-        )?;
+        enforce_poly_product(dr, &left_elapsed, &right_elapsed, &combined)?;
         let fields = ArbitraryUnspentOutput {
             anchor_start: left_unspent.anchor_start.clone(),
             epoch_start: left_unspent.epoch_start.clone(),
@@ -660,20 +627,8 @@ impl Step<Pasta> for UnspentLift {
         })?;
         unspent
             .anchor_next
-            .enforce_equal(dr, &bucket.anchor_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentLift: the bucket does not start where the segment ends".into(),
-                )
-            })?;
-        unspent
-            .epoch_next
-            .enforce_equal(dr, &bucket.epoch)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentLift: the bucket is not the segment's next epoch".into(),
-                )
-            })?;
+            .enforce_equal(dr, &bucket.anchor_start)?;
+        unspent.epoch_next.enforce_equal(dr, &bucket.epoch)?;
         let value_element = Element::alloc(
             dr,
             &mut (),
@@ -703,13 +658,7 @@ impl Step<Pasta> for UnspentLift {
         }
         .eval(dr, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
-        extended_at_z
-            .enforce_equal(dr, &expected_extended)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "UnspentLift: extended is not elapsed with the tested pair".into(),
-                )
-            })?;
+        extended_at_z.enforce_equal(dr, &expected_extended)?;
         let contents_at_value = oracles.right(QrContents).open(dr, &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
@@ -719,19 +668,23 @@ impl Step<Pasta> for UnspentLift {
             ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
         })?;
 
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();
             let (bucket_epoch, _, bucket_anchor_next, ..) = right.take();
-            let epoch_next = bucket_epoch.next().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
-            })?;
-            Ok((
+            #[expect(
+                clippy::expect_used,
+                reason = "the epoch gadget checked this successor"
+            )]
+            let epoch_next = bucket_epoch
+                .next()
+                .expect("the checked bucket epoch has a successor");
+            (
                 unspent_anchor_start,
                 unspent_epoch_start,
                 epoch_next,
                 bucket_anchor_next,
-            ))
-        })?;
+            )
+        });
         let fields = ArbitraryUnspentOutput {
             anchor_start: unspent.anchor_start.clone(),
             epoch_start: unspent.epoch_start.clone(),
@@ -830,13 +783,7 @@ impl Step<Pasta> for UnspentBind {
         let elapsed = oracles.left(NfSeq).open(dr, &z)?;
         let complement = oracles.output(NfSeq).open(dr, &z)?;
         let derivation = oracles.right(NfSeq).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &elapsed,
-            &complement,
-            &derivation,
-            "UnspentBind: sequence does not match the derivation",
-        )?;
+        enforce_poly_product(dr, &elapsed, &complement, &derivation)?;
         // Every `ArbitraryUnspent` covers at least one epoch: `QrUnspentInit`
         // and `UnspentLift` emit `epoch_next` as the range-checked `successor`
         // of a range-checked epoch, and `UnspentFuse` joins halves at an equal

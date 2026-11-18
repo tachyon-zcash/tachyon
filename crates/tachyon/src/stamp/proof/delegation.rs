@@ -233,13 +233,15 @@ impl Step<Pasta> for NoteSeed {
             &mut (),
             witness.as_ref().map(|&(.., pak)| Fp::from(pak.nk)),
         )?;
-        let ak_assignment = D::try_just(|| {
+        #[expect(
+            clippy::expect_used,
+            reason = "ak is a typed RedPallas verification key"
+        )]
+        let ak_assignment = D::just(|| {
             let &(.., pak) = witness.as_ref().take();
             let bytes: [u8; 32] = pak.ak.0.into();
-            EpAffine::from_bytes(bytes).ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("NoteSeed: invalid ak encoding".into())
-            })
-        })?;
+            EpAffine::from_bytes(bytes).expect("a verification key encodes a curve point")
+        });
         let ak = Point::alloc(dr, ak_assignment)?;
         let pk = poseidon::circuit::payment_key(dr, &ak, &nk)?;
         let mk = poseidon::circuit::nf_master(dr, &psi, &nk)?;
@@ -397,11 +399,7 @@ impl Step<Pasta> for NullifierDerive {
                 index = index.add(dr, &one);
             }
         }
-        window_at_z.enforce_equal(dr, &seq_at_z).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "NullifierDerive: sequence does not match the derived window".into(),
-            )
-        })?;
+        window_at_z.enforce_equal(dr, &seq_at_z)?;
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),
             epoch_start,
@@ -488,31 +486,17 @@ impl Step<Pasta> for NullifierFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let right_nullifiers = right_encoded.as_gadget();
-        left_nullifiers
-            .cm
-            .enforce_equal(dr, &right_nullifiers.cm)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("NullifierFuse: note commitments differ".into())
-            })?;
+        left_nullifiers.cm.enforce_equal(dr, &right_nullifiers.cm)?;
         let one = Element::constant(dr, Fp::ONE);
         left_nullifiers
             .epoch_end
             .add(dr, &one)
-            .enforce_equal(dr, &right_nullifiers.epoch_start)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("NullifierFuse: ranges not contiguous".into())
-            })?;
+            .enforce_equal(dr, &right_nullifiers.epoch_start)?;
         let z = oracles.zeta().clone();
         let left_seq = oracles.left(NfSeq).open(dr, &z)?;
         let right_seq = oracles.right(NfSeq).open(dr, &z)?;
         let merged_seq = oracles.output(NfSeq).open(dr, &z)?;
-        enforce_poly_product(
-            dr,
-            &left_seq,
-            &right_seq,
-            &merged_seq,
-            "NullifierFuse: merged is not the concat of the halves",
-        )?;
+        enforce_poly_product(dr, &left_seq, &right_seq, &merged_seq)?;
         let data = D::just(|| {
             let (left_cm, left_epoch_start, _) = left.take();
             let (_, _, right_epoch_end) = right.take();

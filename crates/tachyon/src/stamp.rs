@@ -420,6 +420,7 @@ impl Plan {
     ///
     /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
     /// the fee change, and the fee. Each pair has the smaller tachygram first.
+    /// Successful construction does not guarantee that the stamp verifies.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -441,7 +442,7 @@ impl Plan {
     ///
     /// - [`ProveError::MissingPcd`] if the spend PCDs do not match the planned
     ///   spends, or a spend does not reach the plan's anchor.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::ProofFailed`] if Ragu cannot construct the proof.
     ///
     /// # Panics
     ///
@@ -652,7 +653,7 @@ pub enum ProveError {
     /// Missing PCD inputs for the operation.
     #[display("missing pcd inputs: {_0}")]
     MissingPcd(Box<dyn error::Error + Send + Sync + 'static>),
-    /// Proof creation failed; carries the underlying step-level error.
+    /// Proof construction failed; carries the underlying Ragu error.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu_core::Error),
 }
@@ -954,6 +955,8 @@ impl ProofStamp<Uncompressed> {
 
     /// Advances the stamp's anchor along `spans`, computing the action digests
     /// from the covered action and fee descriptors.
+    /// Successful construction does not guarantee that the lifted stamp
+    /// verifies.
     ///
     /// # Errors
     ///
@@ -987,6 +990,8 @@ impl ProofStamp<Uncompressed> {
     }
 
     /// Merges two stamps into one covering stamp.
+    /// Successful construction does not guarantee that the merged stamp
+    /// verifies.
     ///
     /// Each side supplies borrowed action and fee maps, from which the action
     /// digests and tachygrams for the merge proof are derived.
@@ -1096,7 +1101,8 @@ impl ProofStamp<Uncompressed> {
     ///
     /// Each side supplies borrowed action and fee maps. The quotient's action
     /// digests and tachygrams are the dividend's less the divisor's. A divisor
-    /// that does not divide this stamp fails in the proof system.
+    /// that does not divide this stamp can produce a proof that fails
+    /// verification, even when construction succeeds.
     ///
     /// The quotient lists this stamp's adjuncts less the divisor's adjuncts and
     /// `divisor_txid`, the txid of the one transaction the divisor covers

@@ -246,31 +246,13 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let right_bucket = right_encoded.as_gadget();
-        for (left_element, right_element, error) in [
-            (
-                &*left_bucket.epoch,
-                &*right_bucket.epoch,
-                "EvidenceTreeLeafPair: inputs cover different epochs",
-            ),
-            (
-                &left_bucket.anchor_start,
-                &right_bucket.anchor_start,
-                "EvidenceTreeLeafPair: inputs open at different anchors",
-            ),
-            (
-                &left_bucket.anchor_next,
-                &right_bucket.anchor_next,
-                "EvidenceTreeLeafPair: inputs close at different anchors",
-            ),
-            (
-                &left_bucket.discriminant,
-                &right_bucket.discriminant,
-                "EvidenceTreeLeafPair: inputs derive from different discriminants",
-            ),
+        for (left_element, right_element) in [
+            (&*left_bucket.epoch, &*right_bucket.epoch),
+            (&left_bucket.anchor_start, &right_bucket.anchor_start),
+            (&left_bucket.anchor_next, &right_bucket.anchor_next),
+            (&left_bucket.discriminant, &right_bucket.discriminant),
         ] {
-            left_element
-                .enforce_equal(dr, right_element)
-                .map_err(|_err| ragu_core::Error::InvalidWitness(error.into()))?;
+            left_element.enforce_equal(dr, right_element)?;
         }
         let first = poseidon::circuit::evidence_tree_leaf(
             dr,
@@ -367,31 +349,13 @@ impl Step<Pasta> for EvidenceTreePairFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let right_tree = right_encoded.as_gadget();
-        for (left_element, right_element, error) in [
-            (
-                &*left_tree.epoch,
-                &*right_tree.epoch,
-                "EvidenceTreePairFuse: inputs cover different epochs",
-            ),
-            (
-                &left_tree.anchor_start,
-                &right_tree.anchor_start,
-                "EvidenceTreePairFuse: inputs open at different anchors",
-            ),
-            (
-                &left_tree.anchor_next,
-                &right_tree.anchor_next,
-                "EvidenceTreePairFuse: inputs close at different anchors",
-            ),
-            (
-                &left_tree.discriminant,
-                &right_tree.discriminant,
-                "EvidenceTreePairFuse: inputs derive from different discriminants",
-            ),
+        for (left_element, right_element) in [
+            (&*left_tree.epoch, &*right_tree.epoch),
+            (&left_tree.anchor_start, &right_tree.anchor_start),
+            (&left_tree.anchor_next, &right_tree.anchor_next),
+            (&left_tree.discriminant, &right_tree.discriminant),
         ] {
-            left_element
-                .enforce_equal(dr, right_element)
-                .map_err(|_err| ragu_core::Error::InvalidWitness(error.into()))?;
+            left_element.enforce_equal(dr, right_element)?;
         }
         let output = D::just(|| {
             let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
@@ -469,31 +433,13 @@ impl Step<Pasta> for EvidenceTreeFuse {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let right_pair = right_encoded.as_gadget();
-        for (left_element, right_element, error) in [
-            (
-                &*left_pair.epoch,
-                &*right_pair.epoch,
-                "EvidenceTreeFuse: inputs cover different epochs",
-            ),
-            (
-                &left_pair.anchor_start,
-                &right_pair.anchor_start,
-                "EvidenceTreeFuse: inputs open at different anchors",
-            ),
-            (
-                &left_pair.anchor_next,
-                &right_pair.anchor_next,
-                "EvidenceTreeFuse: inputs close at different anchors",
-            ),
-            (
-                &left_pair.discriminant,
-                &right_pair.discriminant,
-                "EvidenceTreeFuse: inputs derive from different discriminants",
-            ),
+        for (left_element, right_element) in [
+            (&*left_pair.epoch, &*right_pair.epoch),
+            (&left_pair.anchor_start, &right_pair.anchor_start),
+            (&left_pair.anchor_next, &right_pair.anchor_next),
+            (&left_pair.discriminant, &right_pair.discriminant),
         ] {
-            left_element
-                .enforce_equal(dr, right_element)
-                .map_err(|_err| ragu_core::Error::InvalidWitness(error.into()))?;
+            left_element.enforce_equal(dr, right_element)?;
         }
         let root = poseidon::circuit::evidence_tree_node(
             dr,
@@ -709,11 +655,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
                 [first?, second?, third?, fourth?]
             };
             let hash = poseidon::circuit::evidence_tree_node(dr, &children)?;
-            node.enforce_equal(dr, &hash).map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "EvidenceTreeDescend: children do not hash to the node".into(),
-                )
-            })?;
+            node.enforce_equal(dr, &hash)?;
             let [first, second, third, fourth] = children;
             let lower = inner.conditional_select(dr, &first, &second)?;
             let upper = inner.conditional_select(dr, &third, &fourth)?;
@@ -840,31 +782,26 @@ impl Step<Pasta> for EvidenceTreeOpen {
             (&fields.profile.depth, &fields.profile.bits),
             &fields.contents_hash,
         )?;
-        tree.root.enforce_equal(dr, &leaf).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "EvidenceTreeOpen: witnessed bucket is not the tree's leaf".into(),
-            )
-        })?;
+        tree.root.enforce_equal(dr, &leaf)?;
         let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
-        let output = D::try_just(|| {
+        let output = D::just(|| {
             let (profile, _) = witness.take();
             let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
             let contents_hash = EpAffine::from_xy(*hash_x.take(), *hash_y.take())
-                .map(TachygramSetBridge::from)
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "EvidenceTreeOpen: bridge hash is not on the curve".into(),
-                    )
-                })?;
-            Ok((
+                .expect("the bridge hash commitment is a curve point");
+            (
                 epoch,
                 anchor_start,
                 anchor_next,
                 discriminant,
                 profile,
-                contents_hash,
-            ))
-        })?;
+                TachygramSetBridge::from(contents_hash),
+            )
+        });
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             output,

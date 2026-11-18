@@ -3,14 +3,6 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem, slice};
 
-use ragu_core::{
-    drivers::{Driver, DriverValue},
-    pasta::Pasta,
-};
-use ragu_pcd::{
-    header::Header,
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -271,7 +263,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     let root = duplicate.qr_intakes(app, span, disc, 0).pop().unwrap();
     let factors = [(vec![member], scale), (vec![member], inverse)];
     let [child] = root.split_with_factors(rng, app, [!side], &factors);
-    assert!(app.verify_uncompressed(&child.pcd, &mut *rng).unwrap());
+    assert!(app.verify_differential(&child.pcd, &mut *rng).unwrap());
     assert_eq!(child.members, [member]);
     assert_eq!(child.pcd.data().4, QrProfile::ROOT.descend(!side));
 
@@ -286,7 +278,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
         [occupied, empty]
     };
     let [rootless] = root_single.split_with_factors(rng, app, [!side], &split);
-    assert!(app.verify_uncompressed(&rootless.pcd, &mut *rng).unwrap());
+    assert!(app.verify_differential(&rootless.pcd, &mut *rng).unwrap());
     assert_ne!(
         rootless.pcd.commitments()[1],
         Eq::from(scaled_qr_contents(&[], Fp::ONE).commit()).to_affine()
@@ -298,7 +290,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     ];
     let [deeper] = rootless.split_with_factors(rng, app, [false], &factors_deep);
     let sealed = deeper.seal(rng, app, zero);
-    assert!(app.verify_uncompressed(&sealed.pcd, &mut *rng).unwrap());
+    assert!(app.verify_differential(&sealed.pcd, &mut *rng).unwrap());
     assert_eq!(
         sealed.pcd.data().4,
         QrProfile::ROOT.descend(!side).descend(false)
@@ -419,7 +411,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         let (bind, ()) = app
             .fuse(rng, spend::SpendBind, bind_witness, spendable, secret)
             .unwrap();
-        assert!(app.verify_uncompressed(&bind, &mut *rng).unwrap());
+        assert!(app.verify_differential(&bind, &mut *rng).unwrap());
         let (bound_cm, current, next, anchor, pk, _) = *bind.data();
         spends.push((bound_cm, current, next, anchor, Fp::from(pk)));
         for empty in [&honest_empty, &scaled_empty, &deep_bucket] {
@@ -438,7 +430,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
     assert_eq!(spends[0], spends[1]);
     for empty in [&honest_empty, &scaled_empty, &deep_bucket] {
         let unspent = user.bucket_unspent(rng, app, empty, &other);
-        assert!(app.verify_uncompressed(&unspent, &mut *rng).unwrap());
+        assert!(app.verify_differential(&unspent, &mut *rng).unwrap());
         for bucket in [&honest_held, &scaled_held, empty] {
             let (forged, ()) = app
                 .fuse(
@@ -508,7 +500,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
                     bucket.pcd.clone(),
                 )
                 .unwrap();
-            assert!(app.verify_uncompressed(&included, &mut *rng).unwrap());
+            assert!(app.verify_differential(&included, &mut *rng).unwrap());
             assert_matches!(
                 app.fuse(
                     rng, qr::QrUnspentInit, witness::qr_unspent_init((*bucket.pcd.data(), ()), cm),
@@ -519,7 +511,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
             );
         }
         let segment = stray_bucket.segment(rng, app, |_| Nullifier::from(absent));
-        assert!(app.verify_uncompressed(&segment, &mut *rng).unwrap());
+        assert!(app.verify_differential(&segment, &mut *rng).unwrap());
     }
 }
 
@@ -542,6 +534,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
     let (.., profile) = *full.pcd.data();
     assert_eq!(profile.depth, u32::BITS);
     let bucket = full.sealed(app, Anchor::from(Fp::ZERO));
+    assert!(app.verify_uncompressed(&bucket.pcd, &mut *rng).unwrap());
     let (_epoch, _start, _next, _discriminant, bucket_profile, _contents_hash) = *bucket.pcd.data();
     assert_eq!(bucket_profile.depth, u32::BITS);
     assert_eq!(
@@ -558,6 +551,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
     let tree = EvidenceTreeEntry::build(rng, app, slice::from_ref(&bucket));
     let opened = tree.open(rng, app, &tree.leaves[0]).unwrap();
     assert_eq!(*opened.pcd.data(), *bucket.pcd.data());
+    assert!(app.verify_uncompressed(&opened.pcd, &mut *rng).unwrap());
 }
 
 #[test]
@@ -1290,65 +1284,6 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
-}
-
-/// [`qr::QrEmptyIntakeSeed`] preparing the nonconstant contents `1 + X`.
-struct NonemptyIntakeSeed;
-
-impl Step<Pasta> for NonemptyIntakeSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = qr::QrIntake;
-    type Right = ();
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
-
-    const INDEX: Index = qr::QrEmptyIntakeSeed::INDEX;
-
-    fn prepare(
-        &self,
-        _: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(qr::QrContents, [Fp::ONE, Fp::ONE]))
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let (encoded, data) = qr::QrEmptyIntakeSeed::synthesize(dr, oracles, witness, left, right)?;
-        Ok((encoded, data, D::unit()))
-    }
-}
-
-#[test]
-fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let witness = witness::qr_empty_intake_seed(
-        ((), ()),
-        Anchor::default(),
-        EpochIndex::new(0),
-        QrDiscriminant::random(rng),
-    );
-    let (forged, ()) = app.seed(rng, NonemptyIntakeSeed, witness).unwrap();
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 

@@ -258,11 +258,7 @@ impl Step<Pasta> for SummaryAdvance {
         let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
         let extended_at_z = oracles.output(TachygramAccumulator).open(dr, &z)?;
         let folded = accumulator_at_z.mul(dr, &stamp_at_z)?;
-        extended_at_z.enforce_equal(dr, &folded).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "SummaryAdvance: extended accumulator must fold the stamp".into(),
-            )
-        })?;
+        extended_at_z.enforce_equal(dr, &folded)?;
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
