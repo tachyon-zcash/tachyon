@@ -100,12 +100,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].0),
+                classes.as_ref().map(|values| values[position].side),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].1),
+                classes.as_ref().map(|values| values[position].root),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;

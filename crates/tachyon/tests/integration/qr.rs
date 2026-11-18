@@ -1555,7 +1555,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.1[0].1 += Fp::ONE;
+                forged.1[0].root += Fp::ONE;
                 forged
             },
             "a root shifted by one",
@@ -1564,7 +1564,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.1[5].0 = !forged.1[5].0;
+                forged.1[5].side = !forged.1[5].side;
                 forged
             },
             "a root with a flipped side",
@@ -1678,7 +1678,10 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let (_, honest_roots, ..) = witness;
     assert_eq!(
         honest_roots[usize::try_from(position).unwrap()],
-        QrClassRoot(true, Fp::ZERO)
+        QrClassRoot {
+            side: true,
+            root: Fp::ZERO,
+        }
     );
     let (accepted, ()) = app
         .fuse(
@@ -1692,7 +1695,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let QrClassRoot { ref mut side, .. } = roots[usize::try_from(position).unwrap()];
     *side = false;
     assert_matches!(
         app

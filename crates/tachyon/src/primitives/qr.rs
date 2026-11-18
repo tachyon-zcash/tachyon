@@ -143,11 +143,15 @@ impl QrProfile {
     }
 }
 
-/// A value's side and square root at one discriminant: `(true, r)` with
-/// $r^2 = s$, or `(false, r)` with $r^2 = c \cdot s$, for $s$ the shifted
-/// value.
+/// A value's side and square root at one discriminant.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrClassRoot(pub bool, pub Fp);
+pub struct QrClassRoot {
+    /// Whether the shifted value is a quadratic residue (including zero).
+    pub side: bool,
+    /// A root with $r^2 = s$ on the residue side, or $r^2 = c \cdot s$
+    /// otherwise, for $s$ the shifted value and $c$ the non-residue multiplier.
+    pub root: Fp,
+}
 
 impl QrClassRoot {
     /// Classify `value` at `discriminant`.
