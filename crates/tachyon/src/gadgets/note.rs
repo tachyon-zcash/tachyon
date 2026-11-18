@@ -7,7 +7,7 @@ use ragu_core::{
     maybe::Maybe as _,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, Point,
+    Element, GadgetExt as _, Point,
     allocator::Allocator,
     decompose,
     io::Write,
@@ -72,16 +72,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         })
     }
 
-    /// The bits of the native maximum-fee blind's Fp digest, from ragu's
-    /// `decompose`. They recompose to the digest, so they are its canonical
-    /// bits and their value is the scalar the native derivation embeds in Fq;
-    /// a digest at or above $2^{254}$ has no proof.
-    pub(crate) fn derive_feemax_blind(
-        &self,
-        dr: &mut D,
-    ) -> Result<FixedVec<Boolean<'dr, D>, ConstLen<254>>> {
-        let blind = poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)?;
-        FixedVec::try_from(decompose(dr, &mut (), &blind)?)
+    /// The Fp digest representing the native maximum-fee blind, which the
+    /// native derivation embeds in Fq as the scalar $r$.
+    pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }
 
     /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
@@ -94,7 +88,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         let total = slack.pack(dr)?.add(dr, &self.value);
         Element::constant(dr, Fp::from(MAX_MONEY)).enforce_equal(dr, &total)?;
         let blind = self.derive_feemax_blind(dr)?;
-        let blind_point = fixed_base::R_BASE.mul(dr, &blind)?;
+        // The blind's 254 bits recompose to it, so they are its canonical
+        // bits; a blind at or above 2^254 has no proof.
+        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        let blind_point = fixed_base::R_BASE.mul(dr, &blind_bits)?;
         fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
 
@@ -103,7 +100,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;
-        fixed_base::R_BASE.mul(dr, &blind)
+        // The blind's 254 bits recompose to it, so they are its canonical
+        // bits; a blind at or above 2^254 has no proof.
+        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        fixed_base::R_BASE.mul(dr, &blind_bits)
     }
 
     /// Derives the note commitment from the supplied fields.
