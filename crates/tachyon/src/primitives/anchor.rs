@@ -77,7 +77,7 @@ impl Anchor {
                 stamp_commit.as_ref().to_affine(),
                 Pasta::nested_generators(pasta::baked()),
             )
-            .map_err(|_| AnchorError::NextStampZero)?;
+            .map_err(|_error| AnchorError::NextStampZero)?;
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
                 epoch.into(),
