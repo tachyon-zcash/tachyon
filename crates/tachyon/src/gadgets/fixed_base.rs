@@ -90,13 +90,19 @@ impl Window {
         values
     }
 
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed eight-entry cube and six-term basis"
-    )]
+    /// Builds the two-gate selector for eight coordinate pairs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a required basis coefficient is zero or the resulting
+    /// selector fails to reproduce any entry.
     #[expect(
         clippy::expect_used,
         reason = "fixed tables must admit two-gate selection"
+    )]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed eight-entry cube and six-term basis"
     )]
     fn new(entries: &[(Fp, Fp); 8]) -> Self {
         let x = Self::monomials(entries.map(|entry| entry.0));
@@ -249,10 +255,6 @@ impl<const W: usize> FixedBase<W> {
     ///
     /// Panics if an interior addition has zero x difference. The window
     /// offsets rule this out for the supported bases and Boolean bits.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "const assertions fix the bit count; new() constructs exactly W - 1 interior windows"
-    )]
     fn prefix_and_top<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
@@ -272,8 +274,15 @@ impl<const W: usize> FixedBase<W> {
                     .map_or_else(|| zero.clone(), Boolean::element)
             })
         };
-        let mut prefix = self.interior[0].select(dr, window(0))?;
-        for (index, interior) in self.interior.iter().enumerate().skip(1) {
+        let [first, rest @ ..] = self.interior.as_slice() else {
+            unreachable!("the fixed table has at least one interior window");
+        };
+        let mut prefix = first.select(dr, window(0))?;
+        for (index, interior) in rest
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (index + 1, entry))
+        {
             let [x, y] = interior.select(dr, window(index))?;
             // The offset bound leaves the entry's x distinct from the
             // prefix's on every Boolean assignment, so the slope gate alone

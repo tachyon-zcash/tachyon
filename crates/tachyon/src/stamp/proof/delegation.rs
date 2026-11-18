@@ -321,11 +321,6 @@ impl Step<Pasta> for NullifierDerive {
             .stage([Fp::from(witness.0)]))
     }
 
-    #[expect(
-        clippy::integer_division,
-        clippy::indexing_slicing,
-        reason = "the fixed sponge rate divides the window width; indices are fixed"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -367,6 +362,10 @@ impl Step<Pasta> for NullifierDerive {
                 .map(|&(_, epoch_start, _)| Fp::from(epoch_start)),
         )
         .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "Ragu enforces NUM_STAGED = 1 before execution"
+        )]
         oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
@@ -382,6 +381,10 @@ impl Step<Pasta> for NullifierDerive {
         let one = Element::constant(dr, Fp::ONE);
         // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge, each
         // sponge keyed on its group's first epoch.
+        #[expect(
+            clippy::integer_division,
+            reason = "the sponge rate divides the fixed derivation window width"
+        )]
         for _ in 0..(NF_DERIVATION_WIDTH / PoseidonFp::RATE) {
             for nullifier in poseidon::circuit::nullifier_group(dr, &secret.mk.element, &index)? {
                 let factor = gadgets::indexed_multiset::Member {

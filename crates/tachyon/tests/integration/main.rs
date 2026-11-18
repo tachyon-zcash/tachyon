@@ -1,6 +1,5 @@
 #![allow(
     clippy::as_conversions,
-    clippy::indexing_slicing,
     clippy::integer_division,
     clippy::too_many_arguments,
     clippy::type_complexity,

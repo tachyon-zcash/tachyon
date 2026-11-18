@@ -1001,11 +1001,11 @@ impl<S: StampState> Bundle<S> {
 
         let mut memo: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 64];
-        #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
         while memo.len() < n_memo {
             let take = (n_memo - memo.len()).min(chunk.len());
-            reader.read_exact(&mut chunk[..take])?;
-            memo.extend_from_slice(&chunk[..take]);
+            let (prefix, _) = chunk.split_at_mut(take);
+            reader.read_exact(prefix)?;
+            memo.extend_from_slice(prefix);
         }
 
         let mut signatures: Vec<action::Signature> = Vec::new();
