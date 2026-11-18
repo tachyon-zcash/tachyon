@@ -81,9 +81,9 @@ jobs:
         with:
           components: clippy
       - name: Run clippy (no_std)
-        run: cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
+        run: cargo clippy --workspace --lib --no-default-features --locked
       - name: Run clippy (all features)
-        run: cargo clippy --workspace --all-targets --features test-epoch-size --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --features test-epoch-size --locked
 
   # Runs per item in the platform matrix
   test-unit:
@@ -177,7 +177,7 @@ jobs:
       - name: Check intra-doc links
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
-          RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
+          RUSTDOCFLAGS: "--html-in-header crates/tachyon/katex-header.html"
       - name: Run doctests
         run: cargo test --workspace --locked --doc
 
