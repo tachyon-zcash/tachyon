@@ -14,6 +14,7 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 
 /// Canonicity errors for [`CompactSize`].
 #[derive(Debug, Display, Error)]
+#[non_exhaustive]
 pub enum CompactSizeError {
     /// The value should be in a different encoding form.
     #[display("value is not canonical: {}", _0)]
@@ -64,6 +65,10 @@ const VALID_EIGHT_BYTES: RangeInclusive<u64> = (u32::MAX as u64) + 1..=u64::MAX;
 /// type compactSize, ... MUST be encoded with the minimum number of bytes
 /// ..., and other encodings MUST be rejected."
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "fixed set of canonical wire encodings"
+)]
 pub enum CompactSize {
     /// Single-byte form (no flag prefix), `0..=MAX_ONE_BYTE`.
     OneByte(u8),

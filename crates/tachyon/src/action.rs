@@ -103,6 +103,7 @@ impl Ord for Descriptor {
 
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Plan<E: Effect> {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,

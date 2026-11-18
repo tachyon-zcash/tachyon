@@ -13,7 +13,6 @@ use udon::field::Field as _;
 use zcash_tachyon::constants::EPOCH_MAX;
 use zcash_tachyon::digest::poseidon;
 use zcash_tachyon::entropy::ActionEntropy;
-use zcash_tachyon::keys::private;
 use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
 use zcash_tachyon::pasta::{Eq, Fp};
 use zcash_tachyon::stamp::proof::{App, delegation, output, pool, spend, spendable, stamp};
@@ -986,12 +985,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         ]
     );
     let foreign_note = WalletSim::random(rng).random_note(200);
-    let foreign = action::Plan {
-        note: foreign_note,
-        rk: private::ActionSigningKey::new(&theta.randomizer(foreign_note.commitment()))
-            .derive_action_public(),
-        ..plan
-    };
+    let foreign = action::Plan::output(foreign_note, plan.theta, plan.rcv);
     assert_ne!(foreign.digest(pair), plan.digest(pair));
 }
 

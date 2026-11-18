@@ -19,6 +19,7 @@ lazy_static! {
 
 /// Errors that can occur when advancing an anchor.
 #[derive(Debug, Display, Error, PartialEq, TotalEq)]
+#[non_exhaustive]
 pub enum AnchorError {
     /// The provided tachygram set is the identity point.
     #[display("next stamp cannot be the identity point")]

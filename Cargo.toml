@@ -53,7 +53,7 @@ let_underscore_must_use = "deny"
 suspicious = { level = "deny", priority = -1 }
 undocumented_unsafe_blocks = "forbid"
 disallowed_methods = "forbid"
-exhaustive_enums = "allow"
+exhaustive_enums = "warn"
 unwrap_used = "forbid"
 missing_panics_doc = "deny"
 

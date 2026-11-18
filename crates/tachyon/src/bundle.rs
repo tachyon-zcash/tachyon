@@ -132,6 +132,7 @@ use crate::{
 /// documentation for its role.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 #[repr(u8)]
+#[expect(clippy::exhaustive_enums, reason = "fixed set of consensus wire tags")]
 pub enum StateByte {
     /// No bundle.
     NoBundle = 0b0000_0000u8,
@@ -1107,6 +1108,10 @@ impl Bundle<StrippedStamp> {
 
 /// A Tachyon bundle in one of its valid wire states.
 #[derive(Clone, Debug, From, IsVariant, TryInto)]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "fixed set of consensus bundle states"
+)]
 pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
