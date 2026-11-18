@@ -43,13 +43,25 @@ const FLAG_FOUR_BYTES: u8 = FLAG_TWO_BYTES + 1;
 /// Flag byte preceding an 8-byte little-endian `u64` payload.
 const FLAG_EIGHT_BYTES: u8 = FLAG_FOUR_BYTES + 1;
 
-#[expect(clippy::as_conversions, reason = "widening")]
+#[expect(
+    clippy::as_conversions,
+    reason = "the fixed wire bounds widen to u64 in a const range"
+)]
 const VALID_ONE_BYTE: RangeInclusive<u64> = 0..=(MAX_ONE_BYTE as u64);
-#[expect(clippy::as_conversions, reason = "widening")]
+#[expect(
+    clippy::as_conversions,
+    reason = "the fixed wire bounds widen to u64 in a const range"
+)]
 const VALID_TWO_BYTES: RangeInclusive<u64> = (MAX_ONE_BYTE as u64) + 1..=(u16::MAX as u64);
-#[expect(clippy::as_conversions, reason = "widening")]
+#[expect(
+    clippy::as_conversions,
+    reason = "the fixed wire bounds widen to u64 in a const range"
+)]
 const VALID_FOUR_BYTES: RangeInclusive<u64> = (u16::MAX as u64) + 1..=(u32::MAX as u64);
-#[expect(clippy::as_conversions, reason = "widening")]
+#[expect(
+    clippy::as_conversions,
+    reason = "the fixed wire bounds widen to u64 in a const range"
+)]
 const VALID_EIGHT_BYTES: RangeInclusive<u64> = (u32::MAX as u64) + 1..=u64::MAX;
 
 /// A canonical `CompactSize` value, tagged by its encoding form.

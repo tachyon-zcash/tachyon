@@ -128,10 +128,6 @@ pub fn unspent_fuse(
 /// constructing or multiplying the sequence polynomials exceeds the
 /// polynomial coefficient cap.
 #[must_use]
-#[expect(
-    clippy::as_conversions,
-    reason = "the derivation header's range covers the window"
-)]
 pub fn unspent_bind(
     (left, right): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     window: &[Nullifier],
@@ -139,7 +135,12 @@ pub fn unspent_bind(
 ) -> StepWitness<'static, UnspentBind> {
     let (_, epoch_start, epoch_next, _) = left;
     let (_, nullifiers_epoch_start, ..) = right;
-    let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
+    #[expect(
+        clippy::expect_used,
+        reason = "supported targets can index a window by its u32 epoch offset"
+    )]
+    let lo = usize::try_from(u32::from(epoch_start - nullifiers_epoch_start))
+        .expect("the window offset fits usize");
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
     let complement_seq =

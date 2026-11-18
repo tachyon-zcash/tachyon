@@ -1,5 +1,8 @@
 #![allow(
     clippy::as_conversions,
+    reason = "fixed derivation widths and rates in integration fixtures fit u32"
+)]
+#![allow(
     clippy::integer_division,
     clippy::too_many_arguments,
     clippy::type_complexity,

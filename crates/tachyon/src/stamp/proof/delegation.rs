@@ -273,6 +273,12 @@ impl Step<Pasta> for NoteSeed {
     }
 }
 
+#[expect(
+    clippy::as_conversions,
+    reason = "the fixed derivation window width fits u32"
+)]
+const LAST_WINDOW_OFFSET: u32 = (NF_DERIVATION_WIDTH - 1) as u32;
+
 /// Derive one window of nullifiers and export it as a
 /// [`NoteNullifiers`].
 ///
@@ -345,13 +351,7 @@ impl Step<Pasta> for NullifierDerive {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let output = D::just(|| {
             let (epoch_start, _) = witness.take();
-            #[expect(
-                clippy::as_conversions,
-                reason = "the window width is a small constant"
-            )]
-            let epoch_end = EpochIndex::new(
-                u32::from(epoch_start) + const { (NF_DERIVATION_WIDTH - 1) as u32 },
-            );
+            let epoch_end = EpochIndex::new(u32::from(epoch_start) + LAST_WINDOW_OFFSET);
             let (cm, ..) = left.take();
             (cm, epoch_start, epoch_end)
         });
@@ -369,8 +369,7 @@ impl Step<Pasta> for NullifierDerive {
         oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
-        #[expect(clippy::as_conversions, reason = "constant value")]
-        let width = Element::constant(dr, Fp::from(const { (NF_DERIVATION_WIDTH - 1) as u64 }));
+        let width = Element::constant(dr, Fp::from(u64::from(LAST_WINDOW_OFFSET)));
         let epoch_end = epoch_start.add(dr, &width);
         let z = oracles.zeta().clone();
         let seq_at_z = oracles.output(NfSeqPoly::SLOT).open(dr, &z)?;

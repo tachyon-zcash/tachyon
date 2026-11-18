@@ -106,7 +106,10 @@ pub struct QrProfile {
 impl QrProfile {
     /// The greatest depth a profile reaches, and the number of discriminants a
     /// value is classified at.
-    #[expect(clippy::as_conversions, reason = "constant value")]
+    #[expect(
+        clippy::as_conversions,
+        reason = "a 32-bit width fits usize on all targets"
+    )]
     pub const MAX_DEPTH: usize = u32::BITS as usize;
     /// The depth-zero profile.
     pub const ROOT: Self = Self { depth: 0, bits: 0 };

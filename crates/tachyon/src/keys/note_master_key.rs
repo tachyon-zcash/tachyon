@@ -27,14 +27,23 @@ impl NoteMasterKey {
     /// Derive the nullifier for a single epoch.
     #[must_use]
     #[expect(
-        clippy::as_conversions,
         clippy::indexing_slicing,
         reason = "the remainder indexes an array of PoseidonFp::RATE"
     )]
+    #[expect(
+        clippy::expect_used,
+        reason = "the fixed Poseidon rate and derivation window bound the conversions"
+    )]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the fixed Poseidon rate bounds the converted lane index on supported targets"
+    )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
         let index = u32::from(epoch);
-        let inner_index = index as usize % PoseidonFp::RATE;
-        let epoch_start = EpochIndex::new(index - (inner_index as u32));
+        let rate = u32::try_from(PoseidonFp::RATE).expect("the fixed Poseidon rate fits u32");
+        let inner_offset = index % rate;
+        let inner_index = usize::try_from(inner_offset).expect("a Poseidon lane index fits usize");
+        let epoch_start = EpochIndex::new(index - inner_offset);
         Nullifier::from(poseidon::nullifier_group(self.0, epoch_start.into())[inner_index])
     }
 
@@ -53,20 +62,29 @@ impl NoteMasterKey {
     /// past [`EPOCH_MAX`](crate::constants::EPOCH_MAX).
     #[must_use]
     #[expect(
-        clippy::as_conversions,
         clippy::indexing_slicing,
-        clippy::integer_division,
         reason = "both widths are small powers of two and divide exactly"
+    )]
+    #[expect(
+        clippy::expect_used,
+        reason = "the fixed Poseidon rate and derivation window bound the conversions"
+    )]
+    #[expect(
+        clippy::integer_division,
+        reason = "the sponge rate divides the window width, and each slot belongs to its floored group index"
     )]
     pub fn derive_window(&self, epoch_start: EpochIndex) -> [Nullifier; NF_DERIVATION_WIDTH] {
         assert_eq!(
-            u32::from(epoch_start) % (PoseidonFp::RATE as u32),
+            u32::from(epoch_start)
+                % u32::try_from(PoseidonFp::RATE).expect("the fixed Poseidon rate fits u32"),
             0,
             "epoch_start must be group-aligned"
         );
         let groups: [[Fp; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
             array::from_fn(|offset| {
-                let group_start = u32::from(epoch_start) + (offset * PoseidonFp::RATE) as u32;
+                let group_offset = u32::try_from(offset * PoseidonFp::RATE)
+                    .expect("a group offset fits within the fixed derivation window");
+                let group_start = u32::from(epoch_start) + group_offset;
                 poseidon::nullifier_group(self.0, Fp::from(EpochIndex::new(group_start)))
             });
         array::from_fn(|slot| {

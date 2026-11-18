@@ -143,9 +143,12 @@ pub enum StateByte {
 }
 
 impl From<StateByte> for u8 {
-    #[expect(clippy::as_conversions, reason = "repr u8")]
     fn from(val: StateByte) -> Self {
-        val as Self
+        match val {
+            StateByte::NoBundle => 0b0000_0000,
+            StateByte::ProofStamp => 0b0000_0001,
+            StateByte::StrippedStamp => 0b0000_0010,
+        }
     }
 }
 
@@ -175,8 +178,7 @@ impl StateByte {
     ///
     /// Returns an error if writing fails.
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
-        #[expect(clippy::as_conversions, reason = "repr u8")]
-        writer.write_all(&(self as u8).to_le_bytes())
+        writer.write_all(&u8::from(self).to_le_bytes())
     }
 }
 
