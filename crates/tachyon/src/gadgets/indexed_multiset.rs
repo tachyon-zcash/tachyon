@@ -6,8 +6,7 @@
 //! oracle slots. A circuit computes one member's factor at one point, to
 //! compare against a slot's opening there.
 
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
-use ragu_primitives::Element;
+use ragu::{Result, drivers::Driver, gadgets::Gadget, primitives::Element};
 use udon::field::Field as _;
 
 use crate::{collections::indexed_multiset::NON_RESIDUE, pasta::Fp};

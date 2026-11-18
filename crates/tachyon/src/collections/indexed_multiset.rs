@@ -72,29 +72,22 @@
 
 extern crate alloc;
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use udon::field::Field as _;
+use alloc::vec;
 
-use crate::{arithmetic, pasta::Fp};
+use ragu::{Polynomial, ProductionRank};
+use udon::{field::Field as _, polynomial::fold_weighted};
+
+use crate::pasta::Fp;
 
 pub(crate) const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000002"
 ));
 
-#[must_use]
-fn encode_single(idx: u64, m: Fp) -> [Fp; 4] {
-    let i = Fp::from(idx) + Fp::ONE;
-    // writing out expanded coefficients for $F(X) = (iX + m)^3 - c$ is
-    // cheaper than constructing a linear $f(X) = iX + m$ and then cubing it.
-    [
-        m.pow_u64(3) - NON_RESIDUE,
-        Fp::from(3) * i * m.square(),
-        Fp::from(3) * i.square() * m,
-        i.pow_u64(3),
-    ]
-}
-
 /// Encode the provided indexed members.
+#[expect(
+    clippy::expect_used,
+    reason = "the padding supplies all four shifts, each with a weight and room in the output"
+)]
 pub(crate) fn encode(
     members: impl IntoIterator<Item = (u64, Fp)>,
 ) -> Polynomial<Fp, ProductionRank> {
@@ -102,7 +95,27 @@ pub(crate) fn encode(
         members
             .into_iter()
             .fold([Fp::ONE].to_vec(), |product, (idx, m)| {
-                arithmetic::poly_mul(&product, &encode_single(idx, m))
+                let i = Fp::from(idx) + Fp::ONE;
+                let cubic = [
+                    m.pow_u64(3) - NON_RESIDUE,
+                    Fp::from(3) * i * m.square(),
+                    Fp::from(3) * i.square() * m,
+                    i.pow_u64(3),
+                ];
+                // Multiply by the cubic by weighting P, XP, X^2 P, and X^3 P.
+                let mut padded = vec![Fp::ZERO; 3];
+                padded.extend(product);
+                let shifted = [3, 2, 1, 0].map(|offset| {
+                    Fp::as_slice(padded.get(offset..).expect("padding covers the shift"))
+                });
+                let mut coeffs = vec![Fp::ZERO; padded.len()];
+                fold_weighted(
+                    &shifted,
+                    Fp::as_slice(&cubic),
+                    Fp::as_slice_mut(&mut coeffs),
+                )
+                .expect("the output fits every shift, with one weight per shift");
+                coeffs
             }),
     )
 }

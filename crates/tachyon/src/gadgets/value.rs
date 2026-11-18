@@ -2,13 +2,13 @@
 
 use core::ops::Deref;
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
+    primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
 };
-use ragu_primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write};
 
 use super::uint::Uint;
 use crate::{constants::MAX_MONEY, pasta::Fp, value};

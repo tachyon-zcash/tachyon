@@ -3,16 +3,14 @@
 extern crate alloc;
 
 use ragu::{
-    header::{Header, Suffix},
-    step::{Encoded, Index, Oracles, Step},
-};
-use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
+    primitives::{Element, Point, allocator::Allocator, io::Write},
+    step::{Encoded, Index, Oracles, Step},
 };
-use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use crate::{
@@ -43,6 +41,7 @@ pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = 
 impl Header<Fp> for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -51,7 +50,7 @@ impl Header<Fp> for OutputHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(OutputHeaderOutput {
             cm: Element::alloc(
                 dr,
@@ -89,11 +88,11 @@ impl Step<Pasta> for OutputBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -135,15 +134,16 @@ impl Step<Pasta> for OutputBind {
         let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the set polynomial factor `(X - tg)` trivial.
-        cm.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("OutputBind: note commitment is zero".into())
-        })?;
-        pad.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
-        })?;
-        let blind_point = fixed_base::R_BASE
-            .mul_blinding(dr, &witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)))?;
-        let cv = fixed_base::NEG_V_BASE.mul_amount(dr, &amount, &blind_point)?;
+        cm.clone().enforce_nonzero(dr)?;
+        pad.clone().enforce_nonzero(dr)?;
+        // The blind's 254 bits are free: nothing else binds rcv, and their
+        // binary value below 2^254 is the scalar.
+        let blind_bits = gadgets::uint::Uint::<_, 254>::alloc(
+            dr,
+            witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)),
+        )?;
+        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
+        let cv = fixed_base::NEG_V_BASE.mul_and_add(dr, amount.bits(), &blind_point)?;
         let output = D::just(|| {
             (
                 Tachygram::from(*cm.value().take()),

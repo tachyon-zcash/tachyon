@@ -7,8 +7,8 @@ use udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
-    pasta::EpAffine,
-    primitives::{ActionDigest, ActionDigestError},
+    pasta::{EpAffine, Fp},
+    primitives::{ActionDigest, Tachygram},
     value,
 };
 
@@ -25,18 +25,17 @@ pub struct Descriptor {
 impl Descriptor {
     /// The fee digest [`poseidon::fee_digest`], a member of the action set.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ActionDigestError`] if the commitment is the identity.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        let cv_feemax = EpAffine::from(self.cv_feemax);
-        if cv_feemax.is_identity() {
-            return Err(ActionDigestError::IdentityCv);
-        }
-        Ok(ActionDigest::from(poseidon::fee_digest(
-            cv_feemax,
+    /// Panics if `cv_feemax` is the identity. Bundle reading rejects that
+    /// commitment, so only hand-built values can trigger this panic.
+    #[must_use]
+    pub fn digest(&self, fee_change: Tachygram) -> ActionDigest {
+        ActionDigest::from(poseidon::fee_digest(
+            EpAffine::from(self.cv_feemax),
             u64::from(self.v_fee),
-        )))
+            Fp::from(fee_change),
+        ))
     }
 }
 

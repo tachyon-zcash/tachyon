@@ -4,8 +4,7 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{array, iter, ops::RangeInclusive};
 use std::sync::LazyLock;
 
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
+use ragu::{ProductionRank, pasta::Pasta};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 use zcash_tachyon::{
@@ -374,7 +373,10 @@ impl PoolSim {
                     penultimate = Some(intake.clone());
                 }
             }
-            [root, first, penultimate.unwrap(), intake]
+            vec![root, first, penultimate.unwrap(), intake]
+                .try_into()
+                .ok()
+                .unwrap()
         })
     }
 

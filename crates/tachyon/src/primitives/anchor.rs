@@ -8,10 +8,10 @@ use udon::{curve::Projective as _, field::Field as _};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{
+    bridge_hash::bridge_hash,
     digest::poseidon,
     pasta::{Eq, Fp},
     serialization,
-    stamp::proof::bridge_hash,
 };
 
 lazy_static! {

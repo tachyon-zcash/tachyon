@@ -42,7 +42,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     for (advance_witness, expected) in [
         (
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator over foreign tachygrams",
         ),
         (
             {
@@ -51,20 +51,21 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
                 witness.0 = stamp_a.iter().copied().collect();
                 witness
             },
-            "SummaryAdvance: extended accumulator must fold the stamp",
+            "an accumulator that omits the stamp",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    summary::SummaryAdvance,
-                    advance_witness,
-                    seeded.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                summary::SummaryAdvance,
+                advance_witness,
+                seeded.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 
@@ -96,6 +97,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .unwrap();
     assert_eq!(*advanced.data(), (epoch, start, expected_end));
     assert_eq!(advanced.commitments()[0], Eq::from(union).to_affine());
+    assert!(app.verify_uncompressed(&advanced, rng).unwrap());
 }
 
 #[test]
@@ -112,6 +114,6 @@ fn summary_seed_rejects_empty_stamp() {
                 witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "invalid anchor step"
+        Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
     );
 }

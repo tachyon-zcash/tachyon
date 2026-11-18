@@ -13,6 +13,17 @@
 //! emits the pair. Three steps whose output is a part of what they read are
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
+//!
+//! Steps relate polynomials through their openings at the challenge
+//! $\zeta$, which the framework derives after committing every polynomial a
+//! step opens. A product or root identity that holds at $\zeta$ therefore holds
+//! as a polynomial identity, except with probability about
+//! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
+//! polynomials it relates only through their commitments, so each step grounds
+//! its operands in an input or output header, and each root it checks is fixed
+//! before $\zeta$. A commitment that is only witnessed, or threaded onward
+//! unchanged, binds nothing until a public input, a header or a consensus check
+//! fixes it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
@@ -26,59 +37,21 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-use ragu::{Application, ApplicationBuilder, RegistryTags};
-use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
-use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
-use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS};
-use udon::curve::{Affine as _, Projective as _};
+use alloc::boxed::Box;
 
-use crate::{
-    pasta,
-    pasta::{EpAffine, EqAffine},
-};
+use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank, pasta::Pasta};
+
+use crate::pasta;
 
 /// Eight payload elements for QR split/selection and bucket headers and one
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
-/// Computes the value `Application::bridge_hash` returns, without an
-/// application. The test in `proof/tests.rs` pins it to the application's
-/// result.
-///
-/// # Panics
-///
-/// Panics if `commitment` is the identity.
-pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
-    #[expect(
-        clippy::expect_used,
-        reason = "no set polynomial commits to the identity"
-    )]
-    let (x, y) = commitment
-        .coordinates()
-        .expect("tachygram set commitment is not the identity");
-    // The bridge stage starts after the endoscalar values, rounded up to whole
-    // gates.
-    let x_wire = (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).next_multiple_of(2);
-    let y_wire = x_wire + 1;
-    let generators = Pasta::nested_generators(pasta::baked()).g();
-    #[expect(
-        clippy::expect_used,
-        reason = "the baked setup holds a nested generator for every ProductionRank degree"
-    )]
-    let generator = |wire| {
-        generators
-            .get(wire_degree::<ProductionRank>(wire))
-            .expect("the baked setup has the bridge generators")
-    };
-    let g_x = generator(x_wire);
-    let g_y = generator(y_wire);
-    (g_x.to_projective() * x + g_y.to_projective() * y).to_affine()
-}
+/// The Tachyon Ragu application, with accelerated proving and reference
+/// verification kernels.
+pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>;
 
-/// The Tachyon Ragu application.
-pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
-
-/// Builds the Tachyon application with the baked setup and fixed registry tags.
+/// Builds the Tachyon application with the baked setup.
 ///
 /// Building runs the full setup, so a caller builds one application per
 /// worker, keeps it on that worker and lends `&app` to each proof
@@ -87,14 +60,9 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-pub fn new_application() -> Result<App<'static>, ragu_core::Error> {
-    // Registry tags use the fixed Tachyon beacon and configuration digest.
-    let manifest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .hash(b"Tachyon PCD: Pasta, R13, H9, steps 0..38, ragu a73db816");
-    let tags = RegistryTags::<Pasta>::from_beacon(b"Tachyon registry beacon", manifest.as_bytes());
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .with_registry_tags(tags, manifest.as_bytes())?
+#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
+pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?
@@ -135,7 +103,5 @@ pub fn new_application() -> Result<App<'static>, ragu_core::Error> {
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
+        .map(Box::new)
 }
-
-#[cfg(test)]
-mod tests;

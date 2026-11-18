@@ -1,12 +1,12 @@
 //! QR profiles inside a circuit.
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
+    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
 };
-use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
 use super::uint::Uint;
@@ -113,20 +113,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;
             let multiplier = side.conditional_select(dr, &non_residue, &one)?;
             let expected_square = multiplier.mul(dr, &shifted)?;
-            root.square(dr)?
-                .enforce_equal(dr, &expected_square)
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "QR profile: root does not square to the claimed class".into(),
-                    )
-                })?;
+            root.square(dr)?.enforce_equal(dr, &expected_square)?;
             side.conditional_select(dr, &shifted, &one)?
-                .enforce_nonzero(dr)
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "QR profile: exceptional discriminant claimed the non-residue class".into(),
-                    )
-                })?;
+                .enforce_nonzero(dr)?;
             depth_acc = depth_acc.add(dr, &selected.element());
             let index_term = selected.element().mul(dr, &position_element)?;
             index_acc = index_acc.add(dr, &index_term);
@@ -136,24 +125,13 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             shifted = shifted.add(dr, &one);
             position_element = position_element.add(dr, &one);
         }
-        depth_acc.enforce_equal(dr, &self.depth).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QR profile: depth mask does not match the bucket's depth".into(),
-            )
-        })?;
+        depth_acc.enforce_equal(dr, &self.depth)?;
         let depth_minus_one = depth_acc.sub(dr, &one);
         let expected_index_sum = depth_acc.mul(dr, &depth_minus_one)?;
         index_acc
             .double(dr)
-            .enforce_equal(dr, &expected_index_sum)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QR profile: depth mask is not a prefix".into())
-            })?;
-        bits_acc.enforce_equal(dr, &self.bits).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QR profile: value does not take the bucket's profile".into(),
-            )
-        })?;
+            .enforce_equal(dr, &expected_index_sum)?;
+        bits_acc.enforce_equal(dr, &self.bits)?;
         Ok(())
     }
 }

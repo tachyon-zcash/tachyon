@@ -20,26 +20,29 @@
 //! the top entry, a doubling. A value multiplication joins onto the blind
 //! point $P$ before its top entry, so $v = 0$ yields $P$ rather than an
 //! identity intermediate.
+//!
+//! The multiplication takes the bits as given; each step states what
+//! constrains them. With $3W - 1$ bits the top window's high bit is a constant
+//! zero, so the scalar is below $2^{3W - 1}$.
 
 use alloc::vec::Vec;
 use core::array;
 
 use lazy_static::lazy_static;
-use ragu_core::{
-    Error, Result,
-    drivers::{Coeff, Driver, DriverValue},
+use ragu::{
+    Result,
+    drivers::{Coeff, Driver},
     maybe::Maybe as _,
-};
-use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, Point, multiadd, multipack,
-    vec::{ConstLen, FixedVec},
+    primitives::{
+        Boolean, Element, GadgetExt as _, Point, multiadd,
+        vec::{ConstLen, FixedVec},
+    },
 };
 use udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
 };
 
-use super::uint::Uint;
 use crate::{
     constants::{
         MAX_MONEY,
@@ -173,13 +176,13 @@ impl Window {
         window
     }
 
-    /// Selects the entry's coordinates in two gates.
+    /// Selects the entry's coordinates in two gates, from bits that are each
+    /// Boolean or constant zero.
     fn select<'dr, D: Driver<'dr, F = Fp>>(
         &self,
         dr: &mut D,
-        bits: [&Boolean<'dr, D>; 3],
+        [low, middle, high]: [Element<'dr, D>; 3],
     ) -> Result<[Element<'dr, D>; 2]> {
-        let [low, middle, high] = bits.map(Boolean::element);
         let left = multiadd(dr, &[low.clone(), middle.clone(), high.clone()], &self.left);
         let right = multiadd(
             dr,
@@ -246,9 +249,18 @@ impl<const W: usize> FixedBase<W> {
     ) -> Result<[[Element<'dr, D>; 2]; 2]> {
         const {
             assert!(W > 1 && W <= 85, "the offset bound covers W=2..85");
-            assert!(N == 3 * W, "the bit width must match the fixed-base table");
+            assert!(
+                N == 3 * W || N + 1 == 3 * W,
+                "the bits fill every window, the top window's high bit optionally"
+            );
         }
-        let window = |index: usize| [&bits[3 * index], &bits[3 * index + 1], &bits[3 * index + 2]];
+        let zero = Element::zero(dr);
+        let window = |index: usize| {
+            [0, 1, 2].map(|offset| {
+                bits.get(3 * index + offset)
+                    .map_or_else(|| zero.clone(), Boolean::element)
+            })
+        };
         let mut prefix = self.interior[0].select(dr, window(0))?;
         for (index, interior) in self.interior.iter().enumerate().skip(1) {
             let [x, y] = interior.select(dr, window(index))?;
@@ -258,12 +270,18 @@ impl<const W: usize> FixedBase<W> {
             let [prefix_x, prefix_y] = prefix.each_ref();
             let rise = y.sub(dr, prefix_y);
             let run = x.sub(dr, prefix_x);
-            let slope_value = D::try_just(|| {
-                Ok(*rise.value().take()
-                    * run.value().take().invert().ok_or_else(|| {
-                        Error::InvalidWitness("interior window entry shares the prefix's x".into())
-                    })?)
-            })?;
+            #[expect(
+                clippy::expect_used,
+                reason = "the interior window offset keeps x coordinates distinct"
+            )]
+            let slope_value = D::just(|| {
+                *rise.value().take()
+                    * run
+                        .value()
+                        .take()
+                        .invert()
+                        .expect("interior run is nonzero")
+            });
             let (slope, run_wire, rise_wire) = dr.mul(|| {
                 Ok((
                     Coeff::Arbitrary(*slope_value.snag()),
@@ -284,49 +302,75 @@ impl<const W: usize> FixedBase<W> {
         Ok([prefix, top])
     }
 
-    /// $\[k\]B + C + P$ for the binary value $k$ of `bits`, joining `onto`
-    /// ($P$, when present) between the prefix and the top entry. The result
-    /// is allocated as a [`Point`] constrained equal to the computed
-    /// coordinates.
-    fn multiply<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+    /// $\[k\]B + C$ for the binary value $k$ of `bits`: $3W$ bits, or $3W - 1$
+    /// with the top window's high bit a constant zero.
+    pub(crate) fn mul<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
         bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
-        onto: Option<&Point<'dr, D, EpAffine>>,
     ) -> Result<Point<'dr, D, EpAffine>> {
-        let [mut sum, top] = self.prefix_and_top(dr, bits)?;
-        if let Some(point) = onto {
-            let mut coordinates = Vec::new();
-            point.write(dr, &mut coordinates)?;
-            let Ok([x, y]) = <[Element<'dr, D>; 2]>::try_from(coordinates) else {
-                return Err(Error::InvalidWitness(
-                    "a point writes two coordinates".into(),
-                ));
-            };
-            sum = add_checked(dr, sum.each_ref(), [&x, &y])?;
-        }
-        let result = add_checked(dr, sum.each_ref(), top.each_ref())?;
-        let [x, y] = result.each_ref().map(Element::value);
-        let point = Point::alloc(
-            dr,
-            D::try_just(|| {
-                EpAffine::from_xy(*x.take(), *y.take()).ok_or_else(|| {
-                    Error::InvalidWitness("fixed-base result is not on the curve".into())
-                })
-            })?,
-        )?;
-        let mut written = Vec::new();
-        point.write(dr, &mut written)?;
-        let Ok([written_x, written_y]) = <[Element<'dr, D>; 2]>::try_from(written) else {
-            return Err(Error::InvalidWitness(
-                "a point writes two coordinates".into(),
-            ));
-        };
-        let [computed_x, computed_y] = result.each_ref();
-        written_x.enforce_equal(dr, computed_x)?;
-        written_y.enforce_equal(dr, computed_y)?;
-        Ok(point)
+        let [prefix, top] = self.prefix_and_top(dr, bits)?;
+        add_top(dr, &prefix, &top)
     }
+
+    /// $\[k\]B + C + P$ for the binary value $k$ of `bits`, as for
+    /// [`mul`](Self::mul), joining `point` ($P$) between the prefix and the top
+    /// entry so that $k = 0$ yields $C + P$ rather than an identity
+    /// intermediate.
+    pub(crate) fn mul_and_add<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
+        point: &Point<'dr, D, EpAffine>,
+    ) -> Result<Point<'dr, D, EpAffine>> {
+        let [prefix, top] = self.prefix_and_top(dr, bits)?;
+        let [x, y] = coordinates(dr, point);
+        let sum = add_checked(dr, prefix.each_ref(), [&x, &y])?;
+        add_top(dr, &sum, &top)
+    }
+}
+
+/// The two coordinates `point` writes.
+#[expect(
+    clippy::expect_used,
+    reason = "a point writes its two coordinates, and a vector accepts every write"
+)]
+fn coordinates<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    point: &Point<'dr, D, EpAffine>,
+) -> [Element<'dr, D>; 2] {
+    let mut written = Vec::new();
+    point
+        .write(dr, &mut written)
+        .expect("a vector accepts every write");
+    let mut coordinates = written.into_iter();
+    [(); 2].map(|()| coordinates.next().expect("a point writes two coordinates"))
+}
+
+/// Adds the selected `top` entry to `sum`, allocating the result as a
+/// [`Point`] constrained equal to the computed coordinates.
+fn add_top<'dr, D: Driver<'dr, F = Fp>>(
+    dr: &mut D,
+    sum: &[Element<'dr, D>; 2],
+    top: &[Element<'dr, D>; 2],
+) -> Result<Point<'dr, D, EpAffine>> {
+    let result = add_checked(dr, sum.each_ref(), top.each_ref())?;
+    let [x, y] = result.each_ref().map(Element::value);
+    let point = Point::alloc(
+        dr,
+        D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "an addition of curve points with distinct x is a curve point"
+            )]
+            EpAffine::from_xy(*x.take(), *y.take()).expect("the fixed-base result is on the curve")
+        }),
+    )?;
+    let [written_x, written_y] = coordinates(dr, &point);
+    let [computed_x, computed_y] = result.each_ref();
+    written_x.enforce_equal(dr, computed_x)?;
+    written_y.enforce_equal(dr, computed_y)?;
+    Ok(point)
 }
 
 /// Adds `point` to `sum` in four gates, constraining their x coordinates
@@ -354,101 +398,6 @@ fn add_with_slope<'dr, D: Driver<'dr, F = Fp>>(
     let difference = sum_x.sub(dr, &result_x);
     let result_y = slope.mul(dr, &difference)?.sub(dr, sum_y);
     Ok([result_x, result_y])
-}
-
-impl FixedBase<85> {
-    /// $\[h\]B + P$ for the canonical value of a digest $h$. The 255 bits are
-    /// compared against $p - 1$, so $h$ and $h + p$ cannot both decode.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "multipack splits 255 bits into a 254-bit and a 1-bit chunk"
-    )]
-    pub(crate) fn mul_digest<'dr, D: Driver<'dr, F = Fp>>(
-        &self,
-        dr: &mut D,
-        digest: &Element<'dr, D>,
-        onto: Option<&Point<'dr, D, EpAffine>>,
-    ) -> Result<Point<'dr, D, EpAffine>> {
-        let bits = FixedVec::<_, ConstLen<255>>::try_from_fn(|index| {
-            Boolean::alloc(
-                dr,
-                &mut (),
-                digest
-                    .value()
-                    .map(|candidate| candidate.to_le_bits().as_ref()[index]),
-            )
-        })?;
-        let packed = multipack(dr, &bits)?;
-        let high = packed[1].scale(dr, Coeff::Arbitrary(Fp::from(2).pow_u64(254)));
-        packed[0].add(dr, &high).enforce_equal(dr, digest)?;
-        Self::enforce_canonical(dr, &bits)?;
-        self.multiply(dr, &bits, onto)
-    }
-
-    /// $\[k\]B$ for some $k$ whose 255 free bits nothing recomposes: $r$ or
-    /// $r + q$, for a blind nothing else binds.
-    #[expect(clippy::indexing_slicing, reason = "native fixed field representation")]
-    pub(crate) fn mul_blinding<'dr, D: Driver<'dr, F = Fp>>(
-        &self,
-        dr: &mut D,
-        scalar: &DriverValue<D, Fq>,
-    ) -> Result<Point<'dr, D, EpAffine>> {
-        let bits = FixedVec::<_, ConstLen<255>>::try_from_fn(|index| {
-            Boolean::alloc(
-                dr,
-                &mut (),
-                scalar
-                    .as_ref()
-                    .map(|candidate| candidate.to_le_bits().as_ref()[index]),
-            )
-        })?;
-        self.multiply(dr, &bits, None)
-    }
-
-    /// Compares the canonical field bits with $p - 1$, sharing a product across
-    /// each maximal zero run. Its sum has at most 254 Boolean terms and cannot
-    /// wrap.
-    #[expect(clippy::indexing_slicing, reason = "fixed 255-bit canonical encoding")]
-    fn enforce_canonical<'dr, D: Driver<'dr, F = Fp>>(
-        dr: &mut D,
-        bits: &FixedVec<Boolean<'dr, D>, ConstLen<255>>,
-    ) -> Result<()> {
-        let maximum = (-Fp::ONE).to_le_bits();
-        let mut equal = bits[254].element();
-        let mut run = Element::zero(dr);
-        let mut pending = false;
-        for index in (0..254).rev() {
-            if maximum.as_ref()[index] {
-                if pending {
-                    equal.mul(dr, &run)?.enforce_zero(dr)?;
-                    run = Element::zero(dr);
-                    pending = false;
-                }
-                equal = equal.mul(dr, &bits[index].element())?;
-            } else {
-                run = run.add(dr, &bits[index].element());
-                pending = true;
-            }
-        }
-        if pending {
-            equal.mul(dr, &run)?.enforce_zero(dr)?;
-        }
-        Ok(())
-    }
-}
-
-impl FixedBase<17> {
-    /// $\[v\]B + C + P$ for the 51 bits of $v$. As in Orchard's short path, $v$
-    /// is a magnitude and a sign; Tachyon's sign is constant per step and
-    /// lives in the base.
-    pub(crate) fn mul_amount<'dr, D: Driver<'dr, F = Fp>>(
-        &self,
-        dr: &mut D,
-        value: &Uint<'dr, D, 51>,
-        onto: &Point<'dr, D, EpAffine>,
-    ) -> Result<Point<'dr, D, EpAffine>> {
-        self.multiply(dr, value.bits(), Some(onto))
-    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,9 @@
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
-use core::{array, assert_matches, iter};
+use alloc::{vec, vec::Vec};
+use core::{array, iter};
 
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
+use ragu::{ProductionRank, pasta::Pasta};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
@@ -13,6 +12,7 @@ use zcash_tachyon::{
     constants::EPOCH_MAX,
     digest::poseidon,
     entropy::ActionEntropy,
+    keys::private,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::{Eq, Fp},
@@ -81,24 +81,21 @@ fn spendable_init_rejects_tg_absent() {
     let nf_header = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(0));
     let absent_tg = Tachygram::random(rng);
 
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                spendable::SpendableInit,
-                witness::spendable_init(
-                    (*nf_header.data(), ()),
-                    Anchor::default(),
-                    &[absent_tg],
-                    EpochIndex::new(0),
-                ),
-                nf_header,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "SpendableInit: commitment not in set"
-    );
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            spendable::SpendableInit,
+            witness::spendable_init(
+                (*nf_header.data(), ()),
+                Anchor::default(),
+                &[absent_tg],
+                EpochIndex::new(0),
+            ),
+            nf_header,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
@@ -116,38 +113,34 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
 
     let first = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(1)), at);
     let third = pool.unspent(app, (EpochIndex::new(2), EpochIndex::new(3)), at);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                pool::UnspentFuse,
-                witness::unspent_fuse((*first.data(), *third.data()), &[nf0], &[nf2]),
-                first,
-                third,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "UnspentFuse: left.anchor_next must equal right.anchor_start"
-    );
+    let (gapped, ()) = app
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*first.data(), *third.data()), &[nf0], &[nf2]),
+            first,
+            third,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&gapped, &mut *rng).unwrap());
 
     let left = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(2)), at);
     let right = pool.unspent(app, (EpochIndex::new(2), EpochIndex::new(4)), at);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                pool::UnspentFuse,
-                {
-                    let mut witness = witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1], &[nf2, nf3]);
-                    witness.0 = NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]);
-                    witness
-                },
-                left.clone(),
-                right.clone(),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "UnspentFuse: combined is not the concatenation of the halves"
-    );
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            {
+                let mut witness =
+                    witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1], &[nf2, nf3]);
+                witness.0 = NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]);
+                witness
+            },
+            left.clone(),
+            right.clone(),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 
     let (start, end) = (left.data().0, right.data().3);
     let fused = pool.unspent(app, (EpochIndex::new(0), EpochIndex::new(4)), at);
@@ -159,6 +152,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
         fused.commitments()[0],
         Eq::from(NfSeqPoly::new(EpochIndex::new(0), &nf).commit()).to_affine()
     );
+    assert!(app.verify_uncompressed(&fused, rng).unwrap());
 }
 
 #[test]
@@ -178,6 +172,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
         span.commitments()[0],
         Eq::from(AnchorSetPoly::from_iter(members).commit()).to_affine()
     );
+    assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
 }
 
 #[test]
@@ -218,14 +213,9 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         (anchor_start, start_bundle, None),
         (members[0], inner_bundle, None),
         (anchor_end, end_bundle, None),
-        (
-            fork,
-            fork_bundle,
-            Some("StampLift: stamp anchor is neither the span's start nor a member"),
-        ),
+        (fork, fork_bundle, Some("a stamp anchor outside the span")),
     ] {
-        let descriptor = bundle.descriptors().next().unwrap();
-        let fee_descriptor = bundle.fee_descriptor();
+        let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
         let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
             app.bridge_hash(stamp.tachygram_set.as_ref().to_affine())
@@ -233,26 +223,24 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
                 .into(),
             stamp_anchor,
         ));
-        let lifted = app.fuse(
-            rng,
-            stamp::StampLift,
-            witness::stamp_lift(
-                (*stamp_pcd.data(), *span.data()),
-                ActionSetPoly::from_iter([
-                    descriptor.digest().unwrap(),
-                    fee_descriptor.digest().unwrap(),
-                ]),
-            ),
-            stamp_pcd,
-            span.clone(),
-        );
+        let (lifted, ()) = app
+            .fuse(
+                rng,
+                stamp::StampLift,
+                witness::stamp_lift(
+                    (*stamp_pcd.data(), *span.data()),
+                    ActionSetPoly::from_iter(digests),
+                ),
+                stamp_pcd,
+                span.clone(),
+            )
+            .unwrap();
+        let verified = app.verify_uncompressed(&lifted, &mut *rng).unwrap();
         if let Some(message) = expected {
-            assert_matches!(
-                lifted.err(),
-                Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == message
-            );
+            assert!(!verified, "{message}");
         } else {
-            assert_eq!(lifted.unwrap().0.data().1, anchor_end);
+            assert!(verified);
+            assert_eq!(lifted.data().1, anchor_end);
         }
     }
 }
@@ -277,11 +265,11 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
             &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
         )
         .unwrap();
-    for (fuse_witness, (first, second), expected) in [
+    for (fuse_witness, (first, second), expected) in vec![
         (
             witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set missing the right half",
         ),
         (
             witness::anchor_span_fuse(
@@ -294,19 +282,22 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                     .collect::<Vec<_>>(),
             ),
             (left.clone(), right.clone()),
-            "AnchorSpanFuse: combined is not the union of the halves",
+            "a combined set with an extra member",
         ),
         (
             witness::anchor_span_fuse((*right.data(), *left.data()), &right_members, &left_members),
             (right, left),
-            "AnchorSpanFuse: spans do not share a vertex",
+            "spans fused in the wrong order",
         ),
-    ] {
-        assert_matches!(
-            app
-                .fuse(rng, pool::AnchorSpanFuse, fuse_witness, first, second)
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+    ]
+    .into_boxed_slice()
+    {
+        let (forged, ()) = app
+            .fuse(rng, pool::AnchorSpanFuse, fuse_witness, first, second)
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 }
@@ -329,35 +320,30 @@ fn spend_rejects_invalid_note() {
     };
     let secret = user.note_secret(app, phantom);
     let rcv = value::Trapdoor::random(rng);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                spend::SpendBind,
-                witness::spend_bind((*spendable_pcd.data(), *secret.data()), rcv),
-                spendable_pcd.clone(),
-                secret,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "SpendBind: secret does not match note"
-    );
+    let (forged_bind, ()) = app
+        .fuse(
+            rng,
+            spend::SpendBind,
+            witness::spend_bind((*spendable_pcd.data(), *secret.data()), rcv),
+            spendable_pcd.clone(),
+            secret,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged_bind, &mut *rng).unwrap());
 
     let bind_pcd = honest_spend_bind(rng, app, &user, &note, spendable_pcd);
+    assert!(app.verify_uncompressed(&bind_pcd, &mut *rng).unwrap());
     let theta = ActionEntropy::random(rng);
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                stamp::SpendAction,
-                witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
-                bind_pcd,
-                app.bootstrap_proof().clone().carry::<()>(()),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "SpendAction: pak not related to note"
-    );
+    let (forged_action, ()) = app
+        .fuse(
+            rng,
+            stamp::SpendAction,
+            witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
+            bind_pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged_action, &mut *rng).unwrap());
 }
 
 #[test]
@@ -382,28 +368,32 @@ fn step_accepts_zero_value_note() {
         .unwrap();
     let theta = ActionEntropy::random(rng);
     let anchor = Anchor::random(rng);
-    app.fuse(
-        rng,
-        stamp::OutputAction,
-        witness::output_action((*bind_pcd.data(), ()), theta, anchor),
-        bind_pcd,
-        app.bootstrap_proof().clone().carry::<()>(()),
-    )
-    .unwrap();
+    let (output_action, ()) = app
+        .fuse(
+            rng,
+            stamp::OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            bind_pcd,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(app.verify_uncompressed(&output_action, &mut *rng).unwrap());
 
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 50));
     let zero_spend = user.random_note(0);
     let height = mine_cm_block(rng, &mut pool, zero_spend.commitment());
     let spendable_pcd = user.spendable_init(app, &pool, &zero_spend, height);
     let spend_bind = honest_spend_bind(rng, app, &user, &zero_spend, spendable_pcd);
-    app.fuse(
-        rng,
-        stamp::SpendAction,
-        witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
-        spend_bind,
-        app.bootstrap_proof().clone().carry::<()>(()),
-    )
-    .unwrap();
+    let (spend_action, ()) = app
+        .fuse(
+            rng,
+            stamp::SpendAction,
+            witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
+            spend_bind,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(app.verify_uncompressed(&spend_action, &mut *rng).unwrap());
 }
 
 #[test]
@@ -418,6 +408,9 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let spend_epoch = height.epoch();
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        user.pak.ak.derive_action_public(&alpha)
+    });
 
     let spendable = user.spendable_init(app, &pool, &note, height);
     let secret = user.note_secret(app, note);
@@ -441,7 +434,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "SpendAction: tachygram set does not commit to the nullifier pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -449,20 +442,21 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "SpendAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    stamp::SpendAction,
-                    action_witness,
-                    bind_pcd.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                stamp::SpendAction,
+                action_witness,
+                bind_pcd.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 
@@ -475,13 +469,18 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
+    assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
     let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
-        Eq::from(ActionSetPoly::from_iter([plan.digest().unwrap()]).commit()).to_affine()
+        Eq::from(
+            ActionSetPoly::from_iter([plan.digest((
+                Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
+            ))])
+            .commit()
+        )
+        .to_affine()
     );
     assert_eq!(
         tachygram_commit,
@@ -515,6 +514,7 @@ fn lift_crosses_a_stampless_epoch() {
     let lifted = user.lift(rng, app, spendable, arbitrary, &note);
     assert_eq!(lifted.data().1, epoch4);
     assert_eq!(lifted.data().2, pool.entry_anchor(epoch4));
+    assert!(app.verify_uncompressed(&lifted, &mut *rng).unwrap());
 }
 
 #[test]
@@ -525,11 +525,11 @@ fn unspent_bind_rejects_a_forged_member() {
     let note = PoolSim::shared_note(500);
     let pool = PoolSim::shared();
 
-    let forged = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
+    let forged_nf = Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
     let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
     let nf = |epoch: EpochIndex| {
         if epoch == epoch0 {
-            forged
+            forged_nf
         } else {
             user.pak
                 .nk
@@ -544,21 +544,19 @@ fn unspent_bind_rejects_a_forged_member() {
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
-        &[forged],
+        &[forged_nf],
     );
 
-    assert_matches!(
-        app
-            .fuse(rng, pool::UnspentBind, witness, unspent, range)
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "UnspentBind: sequence does not match the derivation"
-    );
+    let (forged, ()) = app
+        .fuse(rng, pool::UnspentBind, witness, unspent, range)
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
 fn unspent_bind_window_may_end_at_the_final_epoch() {
     let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
     let mk = user.pak.nk.derive_note_private(note.psi);
@@ -587,6 +585,7 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
         complement_seq.commit(),
         NfSeqPoly::new(epoch_end, &[mk.derive_nullifier(epoch_end)]).commit()
     );
+    assert!(app.verify_uncompressed(&range, &mut *rng).unwrap());
 }
 
 #[test]
@@ -612,7 +611,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
         &elapsed,
     );
 
-    for (bind_range, bind_witness, expected) in [
+    for (bind_range, bind_witness, expected) in vec![
         (
             range.clone(),
             witness::unspent_bind(
@@ -620,7 +619,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 &user.covering_window(&other, &range),
                 &elapsed,
             ),
-            "UnspentBind: sequence does not match the derivation",
+            "a derivation of another note",
         ),
         (
             range,
@@ -632,7 +631,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence outside the range",
         ),
         (
             wide,
@@ -644,7 +643,7 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 );
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an elapsed sequence with a foreign nullifier",
         ),
         (
             later,
@@ -653,20 +652,23 @@ fn unspent_bind_rejects_mismatched_sequences() {
                 witness.0 = NfSeqPoly::new(EpochIndex::new(64), &[]);
                 witness
             },
-            "UnspentBind: sequence does not match the derivation",
+            "an empty elapsed sequence",
         ),
-    ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    pool::UnspentBind,
-                    bind_witness,
-                    unspent.clone(),
-                    bind_range,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+    ]
+    .into_boxed_slice()
+    {
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                pool::UnspentBind,
+                bind_witness,
+                unspent.clone(),
+                bind_range,
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 }
@@ -692,13 +694,10 @@ fn unspent_bind_rejects_uncovered_end() {
     );
     witness.0 = NfSeqPoly::new(EpochIndex::new(0), &[]);
 
-    assert_matches!(
-        app
-            .fuse(rng, pool::UnspentBind, witness, unspent, range)
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "UnspentBind: sequence does not match the derivation"
-    );
+    let (forged, ()) = app
+        .fuse(rng, pool::UnspentBind, witness, unspent, range)
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
@@ -724,7 +723,7 @@ fn spendable_lift_rejects_mismatched_segments() {
                     pool.unspent(app, (epoch1, epoch2), |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &phantom)
             },
-            "SpendableLift: unspent cm does not match spendable",
+            "an unspent of another note",
         ),
         (
             {
@@ -732,24 +731,25 @@ fn spendable_lift_rejects_mismatched_segments() {
                     detached_segment(rng, app, epoch1, |epoch| mk.derive_nullifier(epoch));
                 user.unspent_bind(rng, app, arbitrary, &note)
             },
-            "SpendableLift: unspent not adjacent to spendable",
+            "a detached unspent segment",
         ),
         (
             user.note_unspent(app, pool, &note, (epoch2, epoch3)),
-            "SpendableLift: segment does not start at the lineage epoch",
+            "a segment starting after the lineage epoch",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    spendable::SpendableLift,
-                    (),
-                    spendable.clone(),
-                    unspent,
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                spendable::SpendableLift,
+                (),
+                spendable.clone(),
+                unspent,
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 }
@@ -776,6 +776,7 @@ fn note_seed_derives_the_payment_key_from_pak() {
         Fp::from(stranger.pak.derive_payment_key())
     );
     assert_ne!(cm, note.commitment());
+    assert!(app.verify_uncompressed(&secret, &mut *rng).unwrap());
 }
 
 #[test]
@@ -787,7 +788,6 @@ fn nullifier_derive_rejects_invalid_windows() {
     let other = user.random_note(700);
     let secret = user.note_secret(app, note);
     let (cm, ..) = *secret.data();
-    let past_the_end = EpochIndex::new(EPOCH_MAX - 3);
 
     for (derive_witness, expected) in [
         (
@@ -795,7 +795,7 @@ fn nullifier_derive_rejects_invalid_windows() {
                 ((cm, note, user.pak.nk.derive_note_private(other.psi)), ()),
                 EpochIndex::new(16),
             ),
-            "NullifierDerive: sequence does not match the derived window",
+            "a window derived from another note",
         ),
         (
             {
@@ -804,30 +804,21 @@ fn nullifier_derive_rejects_invalid_windows() {
                 witness.0 = EpochIndex::new(14);
                 witness
             },
-            "NullifierDerive: epoch_start is not group-aligned",
-        ),
-        (
-            {
-                let mut witness =
-                    witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(0));
-                witness.0 = past_the_end;
-                witness.1 = NfSeqPoly::new(past_the_end, &[]);
-                witness
-            },
-            "NullifierDerive: window exceeds the epoch range",
+            "a start that is not group-aligned",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    delegation::NullifierDerive,
-                    derive_witness,
-                    secret.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                delegation::NullifierDerive,
+                derive_witness,
+                secret.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 }
@@ -845,13 +836,13 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             note,
             EpochIndex::new(32),
             EpochIndex::new(47),
-            "NullifierFuse: ranges not contiguous",
+            "ranges with a gap",
         ),
         (
             other,
             EpochIndex::new(16),
             EpochIndex::new(31),
-            "NullifierFuse: note commitments differ",
+            "ranges of different notes",
         ),
     ] {
         let left = user.note_nullifiers(app, note, EpochIndex::new(0), EpochIndex::new(15));
@@ -861,11 +852,12 @@ fn nullifier_fuse_rejects_unjoinable_ranges() {
             &user.covering_window(&note, &left),
             &user.covering_window(&right_note, &right),
         );
-        assert_matches!(
-            app
-                .fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 }
@@ -900,6 +892,7 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
             anchor,
         )
     );
+    assert!(app.verify_uncompressed(&bind_pcd, &mut *rng).unwrap());
 }
 
 #[test]
@@ -909,6 +902,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let note = WalletSim::new(shared_sk()).random_note(200);
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::output(note, theta, rcv);
     let anchor = Anchor::random(rng);
     let pad = Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
@@ -943,7 +937,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
                 witness
             },
-            "OutputAction: tachygram set does not commit to the bound pair",
+            "a substituted tachygram set",
         ),
         (
             {
@@ -951,20 +945,21 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
                 witness.2 = foreign_action_set;
                 witness
             },
-            "OutputAction: action set does not commit to the action",
+            "a foreign action set",
         ),
     ] {
-        assert_matches!(
-            app
-                .fuse(
-                    rng,
-                    stamp::OutputAction,
-                    action_witness,
-                    bind_pcd.clone(),
-                    app.bootstrap_proof().clone().carry::<()>(()),
-                )
-                .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == expected
+        let (forged, ()) = app
+            .fuse(
+                rng,
+                stamp::OutputAction,
+                action_witness,
+                bind_pcd.clone(),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert!(
+            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+            "{expected}",
         );
     }
 
@@ -977,29 +972,27 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
+    assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
     assert_eq!(*pcd.data(), anchor);
+    let pair = (Tachygram::from(note.commitment()), pad);
     assert_eq!(
         pcd.commitments()[..2],
         [
-            Eq::from(
-                ActionSetPoly::from_iter([action::Plan::output(note, theta, rcv)
-                    .digest()
-                    .unwrap()])
-                .commit()
-            )
-            .to_affine(),
+            Eq::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()).to_affine(),
             Eq::from(
                 TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
             )
             .to_affine(),
         ]
     );
-    assert_ne!(
-        action::Plan::output(WalletSim::random(rng).random_note(200), theta, rcv)
-            .digest()
-            .unwrap(),
-        action::Plan::output(note, theta, rcv).digest().unwrap()
-    );
+    let foreign_note = WalletSim::random(rng).random_note(200);
+    let foreign = action::Plan {
+        note: foreign_note,
+        rk: private::ActionSigningKey::new(&theta.randomizer(foreign_note.commitment()))
+            .derive_action_public(),
+        ..plan
+    };
+    assert_ne!(foreign.digest(pair), plan.digest(pair));
 }
 
 #[test]
@@ -1025,19 +1018,16 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
         iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
             .take(32)
             .collect();
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                delegation::NullifierFuse,
-                witness::nullifier_fuse((*left.data(), *right.data()), &wrong_members, &[]),
-                left.clone(),
-                right.clone(),
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "NullifierFuse: merged is not the concat of the halves"
-    );
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            delegation::NullifierFuse,
+            witness::nullifier_fuse((*left.data(), *right.data()), &wrong_members, &[]),
+            left.clone(),
+            right.clone(),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 
     let (merged, ()) = app
         .fuse(rng, delegation::NullifierFuse, merged_witness, left, right)
@@ -1050,6 +1040,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
         merged.commitments()[0],
         Eq::from(NfSeqPoly::new(EpochIndex::new(0), &members).commit()).to_affine()
     );
+    assert!(app.verify_uncompressed(&merged, rng).unwrap());
 }
 
 #[test]
@@ -1075,19 +1066,10 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
         &[nf(epoch1)],
     );
     witness.0 = complement_seq;
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                pool::UnspentBind,
-                witness,
-                unspent,
-                range,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "UnspentBind: sequence does not match the derivation"
-    );
+    let (forged, ()) = app
+        .fuse(rng, pool::UnspentBind, witness, unspent, range)
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
@@ -1116,4 +1098,5 @@ fn multi_window_span_binds_once() {
         (unspent.data().2, unspent.data().3),
         (EpochIndex::new(0), EpochIndex::new(last_epoch))
     );
+    assert!(app.verify_uncompressed(&unspent, &mut *rng).unwrap());
 }

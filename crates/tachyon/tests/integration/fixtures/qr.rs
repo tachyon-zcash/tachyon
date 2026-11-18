@@ -3,8 +3,7 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::iter;
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::pasta::Pasta;
+use ragu::{Polynomial, ProductionRank, pasta::Pasta};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -128,7 +127,7 @@ impl QrIntakeEntry {
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
         key.extend_from_slice(&profile.bits.to_le_bytes());
-        key.extend_from_slice(&Eq::from(self.pcd.commitments()[0]).to_affine().to_bytes());
+        key.extend_from_slice(&Eq::from(self.pcd.commitments()[1]).to_affine().to_bytes());
         key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
         SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
     }
@@ -482,12 +481,16 @@ impl EvidenceTreeEntry {
         rng: &mut RNG,
         app: &App<'_>,
         leaf: &EvidenceLeaf,
-    ) -> ragu_core::Result<QrBucketEntry> {
+    ) -> ragu::Result<QrBucketEntry> {
         let mut node = self.pcd.clone();
-        for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
-            let path = <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).map_err(
-                |_error| ragu_core::Error::InvalidWitness("incomplete evidence path".into()),
-            )?;
+        let paths = leaf
+            .path
+            .chunks(evidence::EvidenceTreeDescend::LEVELS)
+            .map(|chunk| {
+                <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk)
+                    .expect("the fixture pads paths to complete descent chunks")
+            });
+        for path in paths {
             let witness = witness::evidence_tree_descend((*node.data(), ()), path);
             let (pcd, ()) = app.fuse(
                 rng,

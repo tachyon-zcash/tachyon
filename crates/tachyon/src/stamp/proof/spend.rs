@@ -3,21 +3,19 @@
 extern crate alloc;
 
 use ragu::{
-    header::{Header, Suffix},
-    step::{Encoded, Index, Oracles, Step},
-};
-use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
+    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
+    step::{Encoded, Index, Oracles, Step},
 };
-use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    gadgets::fixed_base,
+    gadgets::{fixed_base, uint::Uint},
     keys::PaymentKey,
     note,
     nullifier::Nullifier,
@@ -58,6 +56,7 @@ impl Header<Fp> for SpendHeader {
         PaymentKey,
         value::Commitment,
     );
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; SpendHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -66,7 +65,7 @@ impl Header<Fp> for SpendHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(SpendHeaderOutput {
             cm: Element::alloc(
                 dr,
@@ -135,11 +134,11 @@ impl Step<Pasta> for SpendBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -156,29 +155,23 @@ impl Step<Pasta> for SpendBind {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let secret = right_encoded.as_gadget();
-        spendable.cm.enforce_equal(dr, &secret.cm).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: secret does not match note".into())
-        })?;
-        let epoch_next = spendable.epoch_current.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
-        })?;
+        spendable.cm.enforce_equal(dr, &secret.cm)?;
+        let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.
-        nf_current.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: current-epoch nullifier is zero".into())
-        })?;
-        nf_next.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: next-epoch nullifier is zero".into())
-        })?;
+        nf_current.clone().enforce_nonzero(dr)?;
+        nf_next.clone().enforce_nonzero(dr)?;
 
-        let blind_point =
-            fixed_base::R_BASE.mul_blinding(dr, &witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+        // The blind's 254 bits are free: nothing else binds rcv, and their
+        // binary value below 2^254 is the scalar.
+        let blind_bits = Uint::<_, 254>::alloc(dr, witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
         let cv = secret
             .note
             .value
             .to_bits(dr)
-            .and_then(|bits| fixed_base::V_BASE.mul_amount(dr, &bits, &blind_point))?;
+            .and_then(|bits| fixed_base::V_BASE.mul_and_add(dr, bits.bits(), &blind_point))?;
         let output = D::just(|| {
             let (spendable_cm, _, anchor) = left.take();
             let (_, note, _) = right.take();

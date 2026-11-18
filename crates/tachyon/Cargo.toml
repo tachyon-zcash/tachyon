@@ -40,11 +40,6 @@ std = [
     "ff/std",
     "ragu/multicore",
     "ragu/std",
-    "ragu_circuits/multicore",
-    "ragu_circuits/std",
-    "ragu_core/std",
-    "ragu_pcd/std",
-    "ragu_primitives/std",
     "reddsa/std",
 ]
 test-epoch-size = [
@@ -66,27 +61,16 @@ derive_more = { version = "~2.1", default-features = false, features = [
 ff = { version = "0.14", default-features = false }
 group = { version = "0.14", default-features = false }
 # `spin_no_std` swaps `std::sync::Once` for a spin lock, which is what lets
-# this crate and `ragu_pcd`'s baked parameters reach a bare-metal target.
+# this crate and `ragu`'s baked parameters reach a bare-metal target.
 lazy_static = { version = "1.5.0", default-features = false, features = [
     "spin_no_std",
 ] }
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", default-features = false, features = [
-    "mock",
-] }
-ragu_circuits = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", package = "ragu_circuits", default-features = false, features = [
-    "alloc",
-] }
-ragu_core = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", package = "ragu_core", default-features = false, features = [
-    "alloc",
-] }
-ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", package = "ragu_pcd", default-features = false, features = [
+# Pinned to ragu#985 (remove-mock).
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "70fb72e8c71721a7cfc85384a15a6c4fc99024d2", default-features = false, features = [
     "baked",
-] }
-ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", package = "ragu_primitives", default-features = false, features = [
-    "alloc",
 ] }
 rand_core = { version = "0.10", default-features = false }
 reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
@@ -99,8 +83,7 @@ udon = { package = "zakura-udon", version = "0.1.0", default-features = false, f
 rand = { version = "0.10", default-features = false, features = [
     "std_rng",
 ] }
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a1395401ae978a95a1423614e299dd48d550cdf5", default-features = false, features = [
-    "mock",
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "70fb72e8c71721a7cfc85384a15a6c4fc99024d2", default-features = false, features = [
     "test-utils",
 ] }
 zcash_tachyon = { path = ".", features = [
