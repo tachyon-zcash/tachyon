@@ -14,6 +14,9 @@ use crate::collections::qr::QUADRATIC_NON_RESIDUE;
 use crate::pasta::Fp;
 use crate::primitives::{self, QrClassRoot};
 
+#[expect(clippy::as_conversions, reason = "the fixed QR depth is at most 32")]
+const QR_DEPTH_BITS: usize = primitives::QrProfile::MAX_DEPTH.ilog2() as usize;
+
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.
 #[derive(Gadget, Write)]
@@ -60,12 +63,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// The child profile on side `bit`. The parent's depth is checked below
     /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
     /// the new side.
-    #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
-        Uint::<_, { primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>::from_element(
-            dr,
-            &self.depth,
-        )?;
+        Uint::<_, QR_DEPTH_BITS>::from_element(dr, &self.depth)?;
         let one = Element::constant(dr, Fp::ONE);
         Ok(Self {
             depth: self.depth.add(dr, &one),

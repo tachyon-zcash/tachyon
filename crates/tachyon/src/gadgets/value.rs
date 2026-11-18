@@ -16,6 +16,12 @@ use crate::constants::MAX_MONEY;
 use crate::pasta::Fp;
 use crate::value;
 
+#[expect(
+    clippy::as_conversions,
+    reason = "a monetary amount has at most 64 bits"
+)]
+const MONEY_BITS: usize = MAX_MONEY.bit_width() as usize;
+
 /// A [`value::Positive`] inside a circuit: an amount in `0..=MAX_MONEY`.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
@@ -36,24 +42,18 @@ impl<'dr, D: Driver<'dr>> Deref for Positive<'dr, D> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     /// Allocates `value` and bounds it to `0..=MAX_MONEY`.
-    #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         value: DriverValue<D, value::Positive>,
     ) -> Result<Self> {
         let element = Element::alloc(dr, allocator, value.map(u64::from).map(Fp::from))?;
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &element)?
-            .enforce_max(dr, MAX_MONEY)?;
+        Uint::<_, MONEY_BITS>::from_element(dr, &element)?.enforce_max(dr, MAX_MONEY)?;
         Ok(Self { element })
     }
 
     /// The amount `bits` encodes, bounded by `MAX_MONEY`.
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn from_bits(
-        dr: &mut D,
-        bits: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
-    ) -> Result<Self> {
+    pub(crate) fn from_bits(dr: &mut D, bits: &Uint<'dr, D, MONEY_BITS>) -> Result<Self> {
         bits.enforce_max(dr, MAX_MONEY)?;
         Ok(Self {
             element: bits.pack(dr)?,
@@ -61,11 +61,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     }
 
     /// The amount `MAX_MONEY - slack`, with `slack` bounded by `MAX_MONEY`.
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn from_slack(
-        dr: &mut D,
-        slack: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
-    ) -> Result<Self> {
+    pub(crate) fn from_slack(dr: &mut D, slack: &Uint<'dr, D, MONEY_BITS>) -> Result<Self> {
         Ok(Self {
             element: slack.enforce_max(dr, MAX_MONEY)?.pack(dr)?,
         })
@@ -79,20 +75,15 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
 
     /// `(part, self - part)`. Both fit the width of `MAX_MONEY` and sum to
     /// `self`, so neither wraps and both are amounts.
-    #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
-        let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;
+        let packed = Uint::<_, MONEY_BITS>::alloc(dr, part)?.pack(dr)?;
         let rest = self.element.sub(dr, &packed);
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &rest)?;
+        Uint::<_, MONEY_BITS>::from_element(dr, &rest)?;
         Ok((Self { element: packed }, Self { element: rest }))
     }
 
     /// The amount's bits.
-    #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn to_bits(
-        &self,
-        dr: &mut D,
-    ) -> Result<Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>> {
+    pub(crate) fn to_bits(&self, dr: &mut D) -> Result<Uint<'dr, D, MONEY_BITS>> {
         Uint::from_element(dr, &self.element)
     }
 }
