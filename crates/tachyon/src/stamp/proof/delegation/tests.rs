@@ -1,4 +1,6 @@
 use alloc::vec::Vec;
+use core::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 
 use ragu_circuits::polynomials::ProductionRank;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -29,20 +31,15 @@ fn note_secret(
 }
 
 /// Every group-aligned window start from the last that fits to the last
-/// group: only the window ending at `EPOCH_MAX` verifies. The sequence holds
-/// the nullifiers the circuit derives, so the epoch range is what fails.
+/// group. The sequence holds the nullifiers the circuit derives. The window
+/// ending at `EPOCH_MAX` verifies; every later one panics proving its end.
 #[test]
-fn nullifier_derive_verifies_only_windows_inside_the_epoch_range() {
+fn nullifier_derive_proves_only_windows_inside_the_epoch_range() {
     let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
     let secret = note_secret(&app, rng);
     let (_, _, mk) = *secret.data();
-    for (start, verifies) in [
-        (EPOCH_MAX - 15, true),
-        (EPOCH_MAX - 11, false),
-        (EPOCH_MAX - 7, false),
-        (EPOCH_MAX - 3, false),
-    ] {
+    for start in [EPOCH_MAX - 15, EPOCH_MAX - 11, EPOCH_MAX - 7, EPOCH_MAX - 3] {
         let epoch_start = EpochIndex::new(start);
         let nullifiers: Vec<Nullifier> = (0..4u64)
             .flat_map(|group| {
@@ -50,16 +47,25 @@ fn nullifier_derive_verifies_only_windows_inside_the_epoch_range() {
             })
             .map(Nullifier::from)
             .collect();
-        let (pcd, ()) = app
-            .fuse(
-                rng,
+        let fused = catch_unwind(AssertUnwindSafe(|| {
+            app.fuse(
+                &mut *rng,
                 NullifierDerive,
                 (epoch_start, NfSeqPoly::new(epoch_start, &nullifiers)),
                 secret.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
-            .unwrap();
-        assert_eq!(app.verify_uncompressed(&pcd, &mut *rng).unwrap(), verifies);
+        }));
+        if start == EPOCH_MAX - 15 {
+            let (pcd, ()) = fused.unwrap().unwrap();
+            assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
+        } else {
+            let payload = fused.err().unwrap();
+            assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"epoch index above EPOCH_MAX")
+            );
+        }
     }
 }
 

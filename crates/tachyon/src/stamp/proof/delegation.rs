@@ -26,7 +26,6 @@ use ragu_primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::
 use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    constants::EPOCH_MAX,
     digest::poseidon,
     gadgets,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
@@ -294,10 +293,10 @@ impl Step<Pasta> for NoteSeed {
 /// challenge checks the whole window, whose bounds are published on the output
 /// header.
 ///
-/// # Caller contract
+/// # Panics
 ///
-/// The caller confirms that the window ends by `EPOCH_MAX` (`epoch_start` at
-/// most `EPOCH_MAX - 15`), or it risks producing a proof that is false.
+/// Proving panics if the window runs past `EPOCH_MAX` (`epoch_start` above
+/// `EPOCH_MAX - 15`).
 ///
 /// Opens the derived sequence once.
 #[derive(Debug)]
@@ -355,15 +354,13 @@ impl Step<Pasta> for NullifierDerive {
         let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
         let output = D::just(|| {
             let (epoch_start, _) = witness.take();
-            // The low epoch-width bits of `epoch_start + 15`, which the
-            // circuit's `epoch_end` holds: the window's end when it fits.
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_possible_truncation,
                 reason = "the window width is a small constant"
             )]
             let epoch_end = EpochIndex::new(
-                (u32::from(epoch_start) + const { (NF_DERIVATION_WIDTH - 1) as u32 }) & EPOCH_MAX,
+                u32::from(epoch_start) + const { (NF_DERIVATION_WIDTH - 1) as u32 },
             );
             let (cm, ..) = left.take();
             (cm, epoch_start, epoch_end)
