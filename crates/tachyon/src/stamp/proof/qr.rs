@@ -39,7 +39,6 @@ use ragu::{
 use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
-    delegation::NfSeq,
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
     summary::{Summary, TachygramAccumulator},
 };
@@ -50,8 +49,9 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeq, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolant,
+        QrInterpolantPoly, QrProfile, QrQuotient, QrQuotientPoly, Tachygram, TachygramSetBridge,
+        TachygramSetPoly,
     },
 };
 
@@ -73,18 +73,6 @@ impl OnlinePoly for QrResidues {}
 pub struct QrNonResidues;
 
 impl OnlinePoly for QrNonResidues {}
-
-/// A descent's interpolant hint.
-#[derive(Clone, Copy, Debug)]
-pub struct QrInterpolant;
-
-impl OnlinePoly for QrInterpolant {}
-
-/// A descent's quotient hint.
-#[derive(Clone, Copy, Debug)]
-pub struct QrQuotient;
-
-impl OnlinePoly for QrQuotient {}
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
 ///

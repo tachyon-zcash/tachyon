@@ -15,7 +15,7 @@ use ragu::{
     PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, OnlinePoly, Padding, Suffix},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::{Pasta, PoseidonFp},
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
@@ -30,16 +30,9 @@ use crate::{
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
     pasta::{EpAffine, Fp},
-    primitives::{EpochIndex, NfSeqPoly},
+    primitives::{EpochIndex, NfSeq, NfSeqPoly},
     value,
 };
-
-/// The polynomial whose roots are a sequence of nullifiers, each indexed by
-/// its epoch.
-#[derive(Clone, Copy, Debug)]
-pub struct NfSeq;
-
-impl OnlinePoly for NfSeq {}
 
 /// A note's certified record: its commitment, its opening, and its master key
 /// (wallet-only).

@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, OnlinePoly, Padding, Suffix},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
@@ -35,9 +35,8 @@ use ragu::{
 use udon::{curve::Projective as _, field::Field as _};
 
 use super::{
-    delegation::{NfSeq, NoteNullifiers},
+    delegation::NoteNullifiers,
     qr::{QrBucket, QrContents},
-    stamp::TachygramSet,
 };
 use crate::{
     bridge_hash::bridge_hash,
@@ -45,16 +44,10 @@ use crate::{
     gadgets, note,
     pasta::Fp,
     primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetPoly,
+        Anchor, AnchorSet, AnchorSetPoly, EpochIndex, NfSeq, NfSeqPoly, QrClassRoot, QrProfile,
+        Tachygram, TachygramSet, TachygramSetPoly,
     },
 };
-
-/// The polynomial whose roots are the anchors an [`AnchorSpan`] folds to.
-#[derive(Clone, Copy, Debug)]
-pub struct AnchorSet;
-
-impl OnlinePoly for AnchorSet {}
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///

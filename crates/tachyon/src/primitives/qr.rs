@@ -1,7 +1,7 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
+use ragu::{Cycle as _, Polynomial, ProductionRank, header::OnlinePoly, pasta::Pasta};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
@@ -44,6 +44,12 @@ impl QrDiscriminant {
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
+/// A descent's interpolant hint.
+#[derive(Clone, Copy, Debug)]
+pub struct QrInterpolant;
+
+impl OnlinePoly for QrInterpolant {}
+
 impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
@@ -66,6 +72,12 @@ pub struct QrInterpolantCommit(Eq);
 /// c \cdot (X + s) = q \cdot h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
+
+/// A descent's quotient hint.
+#[derive(Clone, Copy, Debug)]
+pub struct QrQuotient;
+
+impl OnlinePoly for QrQuotient {}
 
 impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.

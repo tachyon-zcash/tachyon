@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, OnlinePoly, Suffix},
+    header::{Header, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
     primitives::{
@@ -23,7 +23,7 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
     output::OutputHeader,
-    pool::{AnchorSet, AnchorSpan, AnchorSpanOutput},
+    pool::{AnchorSpan, AnchorSpanOutput},
     spend::{SpendHeader, SpendHeaderOutput},
 };
 use crate::{
@@ -35,22 +35,12 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp},
-    primitives::{ActionDigest, Anchor, Tachygram, TachygramSetBridge, effect},
+    primitives::{
+        ActionDigest, ActionSet, Anchor, AnchorSet, Tachygram, TachygramSet, TachygramSetBridge,
+        effect,
+    },
     value,
 };
-
-/// The polynomial whose roots are a set of action and fee digests.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionSet;
-
-impl OnlinePoly for ActionSet {}
-
-/// The polynomial whose roots are a stamp's tachygrams. A header that carries
-/// it keeps it last, where the bridge hash digests it.
-#[derive(Clone, Copy, Debug)]
-pub struct TachygramSet;
-
-impl OnlinePoly for TachygramSet {}
 
 /// Non-empty proven action content with no fee in its lineage.
 ///

@@ -22,12 +22,11 @@ use ragu::{
 };
 use udon::field::Field as _;
 
-use super::stamp::TachygramSet;
 use crate::{
     digest::poseidon,
     gadgets,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSet, TachygramSetPoly},
 };
 
 /// The polynomial whose roots are every tachygram a summary has folded.

@@ -26,13 +26,12 @@ use super::{
     delegation::NoteNullifiers,
     pool::NoteUnspent,
     qr::{QrBucket, QrContents},
-    stamp::TachygramSet,
 };
 use crate::{
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, TachygramSet, TachygramSetPoly},
 };
 
 /// Wallet's spendable position, certified up to this point in every

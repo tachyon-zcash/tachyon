@@ -2,7 +2,10 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, header::OnlinePoly,
+    pasta::Pasta,
+};
 use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, Tachygram};
@@ -111,15 +114,35 @@ impl AnchorSetCommit {
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
+/// The polynomial whose roots are a stamp's tachygrams. A header that carries
+/// it keeps it last, where the bridge hash digests it.
+#[derive(Clone, Copy, Debug)]
+pub struct TachygramSet;
+
+impl OnlinePoly for TachygramSet {}
+
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
+/// The polynomial whose roots are a set of action and fee digests.
+#[derive(Clone, Copy, Debug)]
+pub struct ActionSet;
+
+impl OnlinePoly for ActionSet {}
+
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
+
+/// The polynomial whose roots are the anchors an
+/// [`AnchorSpan`](crate::stamp::proof::pool::AnchorSpan) folds to.
+#[derive(Clone, Copy, Debug)]
+pub struct AnchorSet;
+
+impl OnlinePoly for AnchorSet {}
 
 impl AnchorSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
