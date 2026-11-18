@@ -2,8 +2,8 @@
 //!
 //! Registers all PCD step types.
 //!
-//! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
-//! steps in that order; `ApplicationBuilder` rejects any other sequence.
+//! `Step::INDEX` runs from zero without gaps, and [`new_application`] registers
+//! the steps in that order; `ApplicationBuilder` rejects any other sequence.
 //! `Header::SUFFIX` runs from zero without gaps too.
 //!
 //! A step is named "noun + verb", where the noun is the header it **emits**,
@@ -13,6 +13,17 @@
 //! emits the pair. Three steps whose output is a part of what they read are
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
+//!
+//! Steps relate polynomials through their openings at the challenge
+//! $\zeta$, which the framework derives after committing every polynomial a
+//! step opens. A product or root identity that holds at $\zeta$ therefore holds
+//! as a polynomial identity, except with probability about
+//! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
+//! polynomials it relates only through their commitments, so each step grounds
+//! its operands in an input or output header, and each root it checks is fixed
+//! before $\zeta$. A commitment that is only witnessed, or threaded onward
+//! unchanged, binds nothing until a public input, a header or a consensus check
+//! fixes it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
@@ -26,10 +37,12 @@ pub mod spendable;
 pub mod stamp;
 pub mod summary;
 
-use lazy_static::lazy_static;
-use ragu::{Application, ApplicationBuilder, RegistryTags};
+use alloc::boxed::Box;
+
+use ragu_acceleration::AcceleratedProver;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
+use ragu_pcd::{Application, ApplicationBuilder};
 
 use crate::pasta;
 
@@ -37,15 +50,22 @@ use crate::pasta;
 /// suffix element.
 pub const HEADER_SIZE: usize = 9;
 
-fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>, ragu_core::Error>
-{
-    // Registry tags use the fixed Tachyon beacon and configuration digest.
-    let manifest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .hash(b"Tachyon PCD: Pasta, R13, H9, steps 0..38, ragu a73db816");
-    let tags = RegistryTags::<Pasta>::from_beacon(b"Tachyon registry beacon", manifest.as_bytes());
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .with_registry_tags(tags, manifest.as_bytes())?
+/// The Tachyon Ragu application, with accelerated proving and reference
+/// verification kernels.
+pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>;
+
+/// Builds the Tachyon application with the baked setup.
+///
+/// Building runs the full setup, so a caller builds one application per
+/// worker, keeps it on that worker and lends `&app` to each proof
+/// operation.
+///
+/// # Errors
+///
+/// Returns an error if step registration or application finalization fails.
+#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
+pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?
@@ -86,15 +106,5 @@ fn make_app() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>
         .register(stamp::StampUnmerge)?
         .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
-}
-
-lazy_static! {
-    /// A static ref to the ragu application.
-    pub static ref PROOF_SYSTEM: Application<'static, Pasta, ProductionRank, HEADER_SIZE> = {
-        #[expect(
-            clippy::expect_used,
-            reason = "hardcoded step ordering must register cleanly"
-        )]
-        make_app().expect("registration of fixed step list must succeed")
-    };
+        .map(Box::new)
 }

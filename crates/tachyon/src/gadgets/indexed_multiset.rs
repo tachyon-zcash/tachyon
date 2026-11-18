@@ -29,7 +29,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Member<'dr, D> {
     /// the bound in the native module's Injectivity section; an epoch does.
     /// Comparing the result with an opening at the step's challenge is sound
     /// only if `index` and `value` were fixed before that challenge (see
-    /// [`Oracles::zeta`](ragu::step::Oracles::zeta)).
+    /// [`Oracles::zeta`](ragu_pcd::step::Oracles::zeta)).
     pub(crate) fn eval(&self, dr: &mut D, x: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let one = Element::constant(dr, Fp::ONE);
         let indexed = self.index.add(dr, &one).mul(dr, x)?;

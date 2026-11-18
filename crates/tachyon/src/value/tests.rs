@@ -1,6 +1,3 @@
-use alloc::string::ToString as _;
-use core::assert_matches;
-
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -12,7 +9,7 @@ use crate::{
     pasta::Fp,
     primitives::{ActionSetPoly, Anchor, TachygramSetPoly},
     stamp::proof::{
-        PROOF_SYSTEM,
+        new_application,
         output::OutputBind,
         stamp::{FeeFuse, OutputAction},
     },
@@ -39,6 +36,7 @@ fn positive_spans_zero_to_max_money() {
 
 #[test]
 fn fee_fuse_rejects_maximum_above_max_money() {
+    let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
     let note = Note {
         pk: PaymentKey::from(Fp::from(11)),
@@ -46,10 +44,10 @@ fn fee_fuse_rejects_maximum_above_max_money() {
         psi: nullifier::Trapdoor::from(Fp::from(13)),
         rcm: note::CommitmentTrapdoor::from(Fp::from(17)),
     };
-    let (output, ()) = PROOF_SYSTEM
+    let (output, ()) = app
         .seed(rng, OutputBind, (note, ValueTrapdoor(Fq::ONE)))
         .unwrap();
-    let (actions, ()) = PROOF_SYSTEM
+    let (actions, ()) = app
         .fuse(
             rng,
             OutputAction,
@@ -59,12 +57,11 @@ fn fee_fuse_rejects_maximum_above_max_money() {
                 Anchor::default(),
             ),
             output,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
+            app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
     // This module can hand-build the raw Value, bypassing Positive's cap.
-    // The output sets are unused: the maximum-bound constraint must fail first.
     let bad_witness = (
         Note {
             value: Value(i64::try_from(MAX_MONEY + 1).unwrap()),
@@ -76,15 +73,14 @@ fn fee_fuse_rejects_maximum_above_max_money() {
             TachygramSetPoly::from_iter([]),
         ),
     );
-    assert_matches!(
-        PROOF_SYSTEM.fuse(
+    let (forged, ()) = app
+        .fuse(
             rng,
             FeeFuse,
             bad_witness,
             actions,
-            PROOF_SYSTEM.bootstrap_proof().clone().carry::<()>(()),
-        ).err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "FeeFuse: maximum fee exceeds MAX_MONEY"
-    );
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
