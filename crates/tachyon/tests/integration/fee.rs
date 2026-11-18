@@ -1,37 +1,30 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec,
-};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec;
 use core::assert_matches;
 
-use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use udon::curve::Projective as _;
+use udon::field::Field as _;
+use zcash_tachyon::constants::MAX_MONEY;
+use zcash_tachyon::pasta::Fp;
+use zcash_tachyon::stamp::proof::stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp};
+use zcash_tachyon::stamp::proof::{App, output};
+use zcash_tachyon::stamp::{self, Proof as _, ProofStamp};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, bundle,
-    constants::MAX_MONEY,
-    pasta::Fp,
-    stamp::{
-        self, Proof as _, ProofStamp,
-        proof::{
-            App, output,
-            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
-        },
-    },
-    value, witness,
+    VerificationError, VerifyCoverageError, bundle, value, witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    Proved, mock_sighash, mock_txid,
-    pool::PoolSim,
-    wallet::{
-        WalletSim, alice, bob, output_plan, outputs_with_fees, shared_sk, spend_with_fee,
-        spend_with_fee_max_fee_note, zero_action,
-    },
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet::{
+    WalletSim, alice, bob, output_plan, outputs_with_fees, shared_sk, spend_with_fee,
+    spend_with_fee_max_fee_note, zero_action,
 };
+use crate::fixtures::{Proved, mock_sighash, mock_txid};
 
 fn fee_less_output_bundle(
     app: &App<'_>,

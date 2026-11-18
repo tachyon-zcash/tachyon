@@ -23,14 +23,13 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use ragu::{Polynomial, ProductionRank, fft, ifft};
-use udon::{
-    field::Field as _,
-    polynomial::{
-        InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
-    },
+use udon::field::Field as _;
+use udon::polynomial::{
+    InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
 };
 
 use crate::pasta::Fp;

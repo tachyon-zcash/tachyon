@@ -1,32 +1,31 @@
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::{array, assert_matches, iter, mem, slice};
 
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
+use udon::curve::Projective as _;
+use udon::field::Field as _;
+use zcash_tachyon::constants::EPOCH_MAX;
+use zcash_tachyon::nullifier::Nullifier;
+use zcash_tachyon::pasta::{Eq, Fp};
+use zcash_tachyon::stamp::proof::pool::{UnspentFuse, UnspentLift};
+use zcash_tachyon::stamp::proof::{qr, spend, spendable};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetBridge, TachygramSetPoly,
-    constants::EPOCH_MAX,
-    nullifier::Nullifier,
-    pasta::{Eq, Fp},
-    stamp::proof::{
-        pool::{UnspentFuse, UnspentLift},
-        qr, spend, spendable,
-    },
-    value, witness,
+    TachygramSetBridge, TachygramSetPoly, value, witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    pool::PoolSim,
-    qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
-        scaled_qr_contents, shared_discriminant,
-    },
-    wallet::{WalletSim, shared_sk},
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::qr::{
+    EvidenceTreeEntry, QR_DEPTHS, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
+    scaled_qr_contents, shared_discriminant,
 };
+use crate::fixtures::wallet::{WalletSim, shared_sk};
 
 #[test]
 fn qr_summary_intake_starts_a_root_from_a_summary() {

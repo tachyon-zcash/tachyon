@@ -1,21 +1,21 @@
 use core::iter;
 
 use ragu::Polynomial;
-use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use udon::curve::Projective as _;
+use udon::field::Field as _;
+use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
+use zcash_tachyon::pasta::Fp;
+use zcash_tachyon::stamp::proof::{evidence, qr};
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
-    constants::EVIDENCE_TREE_ARITY,
-    pasta::Fp,
-    stamp::proof::{evidence, qr},
     witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    pool::PoolSim,
-    qr::{QrIntakeEntry, shared_discriminant},
-};
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::qr::{QrIntakeEntry, shared_discriminant};
 
 #[test]
 fn evidence_tree_admission_rejects_substituted_contents() {

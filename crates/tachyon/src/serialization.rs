@@ -5,13 +5,15 @@
 //! (`Fq`), and Pallas affine curve points (`EpAffine`).
 
 use corez::io::{self, Read, Write};
-use udon::{curve::Affine as _, field::Field as _};
+use udon::curve::Affine as _;
+use udon::field::Field as _;
 
 use crate::pasta::{EpAffine, EqAffine, Fp};
 
 pub(crate) mod compactsize;
 
-use crate::{reddsa, serialization::compactsize::CompactSize};
+use crate::reddsa;
+use crate::serialization::compactsize::CompactSize;
 
 pub(crate) fn read_compactsize<R: Read>(mut reader: R) -> io::Result<u64> {
     let compact_size =

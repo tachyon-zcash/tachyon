@@ -2,13 +2,11 @@ use core::cmp::Ordering;
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 
-use crate::{
-    digest::poseidon,
-    keys::public,
-    pasta::{EpAffine, Fp},
-    primitives::Tachygram,
-    value,
-};
+use crate::digest::poseidon;
+use crate::keys::public;
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::Tachygram;
+use crate::value;
 
 /// Poseidon digest of an action's `cv`, `rk` and unordered tachygram pair.
 ///

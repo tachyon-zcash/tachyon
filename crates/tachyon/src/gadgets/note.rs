@@ -1,26 +1,21 @@
 //! Circuit mirror of [`Note`](crate::note::Note) derivations.
 
-use ragu::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    primitives::{
-        Element, GadgetExt as _, Point,
-        allocator::Allocator,
-        decompose,
-        io::Write,
-        vec::{ConstLen, FixedVec},
-    },
-};
+use ragu::Result;
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::Gadget;
+use ragu::maybe::Maybe as _;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::vec::{ConstLen, FixedVec};
+use ragu::primitives::{Element, GadgetExt as _, Point, decompose};
 
-use crate::{
-    constants::MAX_MONEY,
-    digest::poseidon,
-    gadgets::{fixed_base, uint::Uint, value::Positive},
-    note,
-    pasta::{EpAffine, Fp},
-};
+use crate::constants::MAX_MONEY;
+use crate::digest::poseidon;
+use crate::gadgets::fixed_base;
+use crate::gadgets::uint::Uint;
+use crate::gadgets::value::Positive;
+use crate::note;
+use crate::pasta::{EpAffine, Fp};
 
 /// The fields of a native [`Note`](crate::note::Note) inside a circuit, in
 /// note commitment order.

@@ -2,27 +2,26 @@
 
 extern crate alloc;
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
-    step::{Encoded, Index, Oracles, Step},
-};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Element, GadgetExt as _, Point};
+use ragu::step::{Encoded, Index, Oracles, Step};
 use udon::curve::EndomorphismAffine;
 
-use super::{delegation::NoteSecret, spendable::NoteSpendable};
-use crate::{
-    gadgets::{fixed_base, uint::Uint},
-    keys::PaymentKey,
-    note,
-    nullifier::Nullifier,
-    pasta::{EpAffine, Fp, Fq},
-    primitives::Anchor,
-    value,
-};
+use super::delegation::NoteSecret;
+use super::spendable::NoteSpendable;
+use crate::gadgets::fixed_base;
+use crate::gadgets::uint::Uint;
+use crate::keys::PaymentKey;
+use crate::nullifier::Nullifier;
+use crate::pasta::{EpAffine, Fp, Fq};
+use crate::primitives::Anchor;
+use crate::{note, value};
 
 /// Header binding a spend to its lineage note, epoch nullifier pair and value
 /// commitment.

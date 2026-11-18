@@ -1,41 +1,32 @@
 //! Stamp header and stamp-producing/transforming steps.
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{
-        Element, GadgetExt as _, Point,
-        allocator::Allocator,
-        decompose,
-        io::Write,
-        vec::{ConstLen, FixedVec},
-    },
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::vec::{ConstLen, FixedVec};
+use ragu::primitives::{Element, GadgetExt as _, Point, decompose};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
+use udon::curve::Affine as _;
+use udon::field::Field as _;
 
-use super::{
-    output::OutputHeader,
-    pool::{AnchorSpan, AnchorSpanOutput},
-    spend::{SpendHeader, SpendHeaderOutput},
+use super::output::OutputHeader;
+use super::pool::{AnchorSpan, AnchorSpanOutput};
+use super::spend::{SpendHeader, SpendHeaderOutput};
+use crate::constants::MAX_MONEY;
+use crate::digest::poseidon;
+use crate::entropy::ActionEntropy;
+use crate::gadgets::{self, fixed_base};
+use crate::keys::{ProofAuthorizingKey, private};
+use crate::note::{self, Note};
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::{
+    ActionDigest, Anchor, AnchorSetPoly, PolySlot, Tachygram, TachygramSetBridge, effect,
 };
-use crate::{
-    ActionSetPoly, TachygramSetPoly,
-    constants::MAX_MONEY,
-    digest::poseidon,
-    entropy::ActionEntropy,
-    gadgets::{self, fixed_base},
-    keys::{ProofAuthorizingKey, private},
-    note::{self, Note},
-    pasta::{EpAffine, Fp},
-    primitives::{
-        ActionDigest, Anchor, AnchorSetPoly, PolySlot, Tachygram, TachygramSetBridge, effect,
-    },
-    value,
-};
+use crate::{ActionSetPoly, TachygramSetPoly, value};
 
 /// Non-empty proven action content with no fee in its lineage.
 ///

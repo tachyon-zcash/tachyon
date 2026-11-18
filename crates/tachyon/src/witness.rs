@@ -8,40 +8,37 @@
 
 use alloc::collections::BTreeSet;
 
-use ragu::{header::Header, pasta::Pasta, step::Step};
+use ragu::header::Header;
+use ragu::pasta::Pasta;
+use ragu::step::Step;
 
-use crate::{
-    collections,
-    constants::EVIDENCE_TREE_ARITY,
-    entropy::ActionEntropy,
-    fee,
-    keys::{ProofAuthorizingKey, private},
-    note::{self, Note},
-    nullifier::Nullifier,
-    pasta::Fp,
-    primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
-    },
-    stamp::proof::{
-        delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
-        output::OutputBind,
-        pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
-        qr::{
-            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
-            QrSideSelect, QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
-        },
-        spend::SpendBind,
-        spendable::SpendableInit,
-        stamp::{
-            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift, StampMerge,
-            StampUnmerge,
-        },
-        summary::{SummaryAdvance, SummarySeed},
-    },
-    value,
+use crate::constants::EVIDENCE_TREE_ARITY;
+use crate::entropy::ActionEntropy;
+use crate::keys::{ProofAuthorizingKey, private};
+use crate::note::{self, Note};
+use crate::nullifier::Nullifier;
+use crate::pasta::Fp;
+use crate::primitives::{
+    ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
 };
+use crate::stamp::proof::delegation::{NoteSeed, NullifierDerive, NullifierFuse};
+use crate::stamp::proof::evidence::{EvidenceTreeDescend, EvidenceTreeOpen};
+use crate::stamp::proof::output::OutputBind;
+use crate::stamp::proof::pool::{
+    AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift,
+};
+use crate::stamp::proof::qr::{
+    QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrSideSelect,
+    QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
+};
+use crate::stamp::proof::spend::SpendBind;
+use crate::stamp::proof::spendable::SpendableInit;
+use crate::stamp::proof::stamp::{
+    ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift, StampMerge, StampUnmerge,
+};
+use crate::stamp::proof::summary::{SummaryAdvance, SummarySeed};
+use crate::{collections, fee, value};
 
 type StepLeft<S> = <<S as Step<Pasta>>::Left as Header<Fp>>::Data;
 

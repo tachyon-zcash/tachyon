@@ -1,4 +1,5 @@
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
 use crate::value;

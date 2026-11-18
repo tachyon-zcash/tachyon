@@ -1,17 +1,17 @@
 use core::array;
 
-use ragu::{PoseidonPermutation as _, pasta::PoseidonFp};
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use ragu::PoseidonPermutation as _;
+use ragu::pasta::PoseidonFp;
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 use udon::field::Field as _;
 
-use crate::{
-    constants::EPOCH_MAX,
-    keys::{NoteMasterKey, NullifierKey, PaymentKey, SpendValidatingKey, private},
-    nullifier::NF_DERIVATION_WIDTH,
-    pasta::Fp,
-    primitives::EpochIndex,
-    reddsa,
-};
+use crate::constants::EPOCH_MAX;
+use crate::keys::{NoteMasterKey, NullifierKey, PaymentKey, SpendValidatingKey, private};
+use crate::nullifier::NF_DERIVATION_WIDTH;
+use crate::pasta::Fp;
+use crate::primitives::EpochIndex;
+use crate::reddsa;
 
 #[test]
 fn payment_key_binds_nk() {
@@ -28,13 +28,13 @@ fn payment_key_binds_nk() {
 
 #[test]
 fn debug_spending_key_redacts_bytes() {
-    let sk = private::SpendingKey::from([0xAB; 32]);
+    let sk = private::SpendingKey::from([0xab; 32]);
     assert_eq!(alloc::format!("{sk:?}"), "SpendingKey(..)");
 }
 
 #[test]
 fn debug_nullifier_key_redacts_value() {
-    let nk = NullifierKey(Fp::from(0xDEADu64));
+    let nk = NullifierKey(Fp::from(0xdeadu64));
     assert_eq!(alloc::format!("{nk:?}"), "NullifierKey(..)");
 }
 

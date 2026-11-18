@@ -1,8 +1,10 @@
 use ragu::primitives::{Simulator, decompose};
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 
 use super::*;
-use crate::gadgets::{uint::Uint, value::Positive};
+use crate::gadgets::uint::Uint;
+use crate::gadgets::value::Positive;
 
 #[test]
 fn blind_multiplication_reads_the_low_254_bits() {

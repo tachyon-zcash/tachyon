@@ -8,19 +8,15 @@
 
 use core::array;
 
-use ragu::{
-    PoseidonPermutation as _,
-    drivers::emulator::{Emulator, Wireless},
-    maybe::{Always, Maybe as _},
-    pasta::PoseidonFp,
-    primitives::Element,
-};
+use ragu::PoseidonPermutation as _;
+use ragu::drivers::emulator::{Emulator, Wireless};
+use ragu::maybe::{Always, Maybe as _};
+use ragu::pasta::PoseidonFp;
+use ragu::primitives::Element;
 use udon::curve::Affine as _;
 
-use crate::{
-    constants::EVIDENCE_TREE_ARITY,
-    pasta::{EpAffine, Fp},
-};
+use crate::constants::EVIDENCE_TREE_ARITY;
+use crate::pasta::{EpAffine, Fp};
 
 fn emulated<const L: usize, const N: usize>(domain: &[u8; 16], preimage: [Fp; L]) -> [Fp; N] {
     type Emu = Emulator<Wireless<Always<()>, Fp>>;
@@ -280,16 +276,12 @@ pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
 pub(crate) mod circuit {
     use alloc::vec::Vec;
 
-    use ragu::{
-        Cycle as _, PoseidonPermutation as _, Result,
-        drivers::Driver,
-        pasta::{Pasta, PoseidonFp},
-        primitives::{
-            Element, GadgetExt as _, Point,
-            poseidon::{Sponge, SpongeState},
-            vec::FixedVec,
-        },
-    };
+    use ragu::drivers::Driver;
+    use ragu::pasta::{Pasta, PoseidonFp};
+    use ragu::primitives::poseidon::{Sponge, SpongeState};
+    use ragu::primitives::vec::FixedVec;
+    use ragu::primitives::{Element, GadgetExt as _, Point};
+    use ragu::{Cycle as _, PoseidonPermutation as _, Result};
     use udon::field::Field as _;
 
     use super::{
@@ -298,11 +290,9 @@ pub(crate) mod circuit {
         NULLIFIER_MASTER_DOMAIN, OUTPUT_ALPHA_DOMAIN, PAD_COMMITMENT_DOMAIN, PAYMENT_KEY_DOMAIN,
         QR_BUCKET_DOMAIN, SPEND_ALPHA_DOMAIN,
     };
-    use crate::{
-        constants::EVIDENCE_TREE_ARITY,
-        pasta,
-        pasta::{EpAffine, Fp},
-    };
+    use crate::constants::EVIDENCE_TREE_ARITY;
+    use crate::pasta;
+    use crate::pasta::{EpAffine, Fp};
 
     pub(super) fn init<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,

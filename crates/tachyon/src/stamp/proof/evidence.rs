@@ -14,27 +14,25 @@
 
 use core::array;
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Boolean, Element, GadgetExt as _};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 use udon::curve::Affine as _;
 
 use super::qr::{QrBucket, QrBucketOutput};
-use crate::{
-    constants::EVIDENCE_TREE_ARITY,
-    digest::poseidon,
-    gadgets,
-    pasta::{EpAffine, Fp},
-    primitives::{
-        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
-        TachygramSetPoly,
-    },
+use crate::constants::EVIDENCE_TREE_ARITY;
+use crate::digest::poseidon;
+use crate::gadgets;
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::{
+    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
+    TachygramSetPoly,
 };
 
 /// A Poseidon Merkle root over one network's sealed buckets.

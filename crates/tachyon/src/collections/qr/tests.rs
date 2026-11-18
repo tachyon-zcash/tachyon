@@ -1,6 +1,7 @@
 use core::iter;
 
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 
 use super::*;
 use crate::collections::multiset;

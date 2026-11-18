@@ -1,14 +1,18 @@
 extern crate alloc;
 
-use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::ops::Deref;
-use std::{sync::Mutex, thread};
+use std::sync::Mutex;
+use std::thread;
 
-use rand::{SeedableRng as _, rngs::StdRng};
-use zcash_tachyon::{
-    bundle::Bundle,
-    stamp::{self, StampState, proof::App},
-};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::bundle::Bundle;
+use zcash_tachyon::stamp::proof::App;
+use zcash_tachyon::stamp::{self, StampState};
 
 pub mod pool;
 pub mod qr;

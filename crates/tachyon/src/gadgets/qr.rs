@@ -1,20 +1,18 @@
 //! QR profiles inside a circuit.
 
-use ragu::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
-};
+use ragu::Result;
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::Gadget;
+use ragu::maybe::Maybe as _;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Boolean, Element, GadgetExt as _};
 use udon::field::Field as _;
 
 use super::uint::Uint;
-use crate::{
-    collections::qr::QUADRATIC_NON_RESIDUE,
-    pasta::Fp,
-    primitives::{self, QrClassRoot},
-};
+use crate::collections::qr::QUADRATIC_NON_RESIDUE;
+use crate::pasta::Fp;
+use crate::primitives::{self, QrClassRoot};
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.

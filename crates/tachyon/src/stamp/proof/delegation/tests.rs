@@ -3,19 +3,18 @@ use core::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
 
 use ragu::ProductionRank;
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
-use crate::{
-    constants::EPOCH_MAX,
-    keys::private,
-    nullifier::Nullifier,
-    stamp::proof::{App, new_application},
-    witness,
-};
+use crate::constants::EPOCH_MAX;
+use crate::keys::private;
+use crate::nullifier::Nullifier;
+use crate::stamp::proof::{App, new_application};
+use crate::witness;
 
 fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, ProductionRank, NoteSecret> {
-    let pak = private::SpendingKey::from([0xAB; 32]).derive_proof_private();
+    let pak = private::SpendingKey::from([0xab; 32]).derive_proof_private();
     let note = Note {
         pk: pak.derive_payment_key(),
         value: value::Positive::try_from(500u64).unwrap(),

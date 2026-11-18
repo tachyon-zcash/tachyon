@@ -37,14 +37,11 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use crate::{
-    digest::poseidon,
-    keys::PaymentKey,
-    nullifier,
-    pasta::{Fp, Fq},
-    primitives::Tachygram,
-    value,
-};
+use crate::digest::poseidon;
+use crate::keys::PaymentKey;
+use crate::pasta::{Fp, Fq};
+use crate::primitives::Tachygram;
+use crate::{nullifier, value};
 
 /// Note commitment trapdoor ($rcm$): randomness that blinds the note
 /// commitment.

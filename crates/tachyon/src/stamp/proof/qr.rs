@@ -25,31 +25,28 @@ mod tests;
 
 use core::convert::Infallible;
 
-use ragu::{
-    drivers::{Coeff, Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu::drivers::{Coeff, Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Boolean, Element, GadgetExt as _};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
+use udon::curve::Affine as _;
+use udon::field::Field as _;
 
-use super::{
-    pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
-    summary::Summary,
-};
+use super::pool::{ArbitraryUnspent, ArbitraryUnspentOutput};
+use super::summary::Summary;
+use crate::collections::qr::QUADRATIC_NON_RESIDUE;
 pub use crate::collections::qr::classify;
-use crate::{
-    collections::qr::QUADRATIC_NON_RESIDUE,
-    digest::poseidon,
-    gadgets,
-    pasta::{EpAffine, Fp},
-    primitives::{
-        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
-        QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
-    },
+use crate::digest::poseidon;
+use crate::gadgets;
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::{
+    Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
+    QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
 };
 
 /// Tachygrams under routing, complete for `profile` over the covered span.

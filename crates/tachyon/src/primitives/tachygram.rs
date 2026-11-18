@@ -5,7 +5,8 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use crate::{pasta::Fp, serialization};
+use crate::pasta::Fp;
+use crate::serialization;
 
 /// A field element ($\mathbb{F}_p$) in the Tachyon polynomial accumulator.
 ///

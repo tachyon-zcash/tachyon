@@ -1,7 +1,9 @@
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
-use crate::{stamp::proof::new_application, witness};
+use crate::stamp::proof::new_application;
+use crate::witness;
 
 #[test]
 fn anchor_span_seed_proves_a_stamp() {

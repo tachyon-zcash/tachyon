@@ -5,7 +5,8 @@ use core::cmp::Eq as CoreTotalEq;
 use derive_more::{Debug, Display};
 use udon::curve::Affine as _;
 
-use crate::{action, bundle, pasta::EpAffine, reddsa, value};
+use crate::pasta::EpAffine;
+use crate::{action, bundle, reddsa, value};
 
 /// The randomized action verification key `rk`: per-action, public.
 ///

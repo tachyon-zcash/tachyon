@@ -1,20 +1,20 @@
 //! Tachyon Action descriptions.
 
 use alloc::vec::Vec;
-use core::{cmp, cmp::Ord, marker::PhantomData};
+use core::cmp;
+use core::cmp::Ord;
+use core::marker::PhantomData;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use udon::curve::Affine as _;
 
-use crate::{
-    entropy::{ActionEntropy, ActionRandomizer},
-    keys::{private, public},
-    note::Note,
-    pasta::EpAffine,
-    primitives::{ActionDigest, Effect, Tachygram, effect},
-    reddsa, serialization, value,
-};
+use crate::entropy::{ActionEntropy, ActionRandomizer};
+use crate::keys::{private, public};
+use crate::note::Note;
+use crate::pasta::EpAffine;
+use crate::primitives::{ActionDigest, Effect, Tachygram, effect};
+use crate::{reddsa, serialization, value};
 
 /// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]

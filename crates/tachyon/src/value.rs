@@ -1,21 +1,16 @@
 //! Value commitments and bounded value types.
 
-use core::{cmp, ops, ops::Neg as _};
+use core::ops::Neg as _;
+use core::{cmp, ops};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::curve::{Affine as _, Projective as _};
+use udon::field::Field as _;
 
-use crate::{
-    constants::{
-        MAX_MONEY,
-        orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
-    },
-    pasta::{Ep, EpAffine, Fq},
-};
+use crate::constants::MAX_MONEY;
+use crate::constants::orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V};
+use crate::pasta::{Ep, EpAffine, Fq};
 
 /// Alias for [`ValueTrapdoor`].
 pub type Trapdoor = ValueTrapdoor;

@@ -2,16 +2,12 @@
 
 use alloc::vec::Vec;
 
-use ragu::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    primitives::{
-        Boolean, Element, GadgetExt as _, multipack,
-        vec::{ConstLen, FixedVec},
-    },
-};
+use ragu::Result;
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::Gadget;
+use ragu::maybe::Maybe as _;
+use ragu::primitives::vec::{ConstLen, FixedVec};
+use ragu::primitives::{Boolean, Element, GadgetExt as _, multipack};
 use udon::field::Field;
 
 use crate::pasta::Fp;

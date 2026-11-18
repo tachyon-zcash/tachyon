@@ -3,11 +3,12 @@ extern crate alloc;
 use alloc::string::ToString as _;
 use core::{array, assert_matches};
 
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use udon::curve::Projective as _;
-use zcash_tachyon::{
-    Anchor, EpochIndex, Tachygram, TachygramSetPoly, pasta::Eq, stamp::proof::summary, witness,
-};
+use zcash_tachyon::pasta::Eq;
+use zcash_tachyon::stamp::proof::summary;
+use zcash_tachyon::{Anchor, EpochIndex, Tachygram, TachygramSetPoly, witness};
 
 use super::fixtures::application;
 

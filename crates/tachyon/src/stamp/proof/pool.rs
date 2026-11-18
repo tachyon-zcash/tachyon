@@ -17,28 +17,28 @@
 //! block alignment is a consensus convention, with validators checking that
 //! anchor endpoints belong to the published per-block anchor sequence.
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use udon::{curve::Projective as _, field::Field as _};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Element, GadgetExt as _};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
+use udon::curve::Projective as _;
+use udon::field::Field as _;
 
-use super::{delegation::NoteNullifiers, qr::QrBucket};
-use crate::{
-    bridge_hash::bridge_hash,
-    digest::poseidon,
-    gadgets, note,
-    pasta::Fp,
-    primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetPoly,
-    },
+use super::delegation::NoteNullifiers;
+use super::qr::QrBucket;
+use crate::bridge_hash::bridge_hash;
+use crate::digest::poseidon;
+use crate::pasta::Fp;
+use crate::primitives::{
+    Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
+    TachygramSetPoly,
 };
+use crate::{gadgets, note};
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///

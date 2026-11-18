@@ -1,25 +1,27 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::iter;
 
-use ragu::{Polynomial, ProductionRank, pasta::Pasta};
+use ragu::pasta::Pasta;
+use ragu::{Polynomial, ProductionRank};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::curve::{Affine as _, Projective as _};
+use udon::field::Field as _;
+use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
+use zcash_tachyon::nullifier::Nullifier;
+use zcash_tachyon::pasta::{EpAffine, Eq, Fp};
+use zcash_tachyon::stamp::proof::{App, evidence, pool, qr};
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetBridge,
-    TachygramSetPoly,
-    constants::EVIDENCE_TREE_ARITY,
-    nullifier::Nullifier,
-    pasta::{EpAffine, Eq, Fp},
-    stamp::proof::{App, evidence, pool, qr},
-    witness,
+    TachygramSetPoly, witness,
 };
 
-use super::{Proved, keyed_rng, pool::PoolSim, wallet::shared_sk};
+use super::pool::PoolSim;
+use super::wallet::shared_sk;
+use super::{Proved, keyed_rng};
 
 /// The root, one level down, the last level with a bit to spare, and a full
 /// register.

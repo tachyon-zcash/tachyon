@@ -5,12 +5,10 @@ use core::cmp;
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use udon::curve::Affine as _;
 
-use crate::{
-    digest::poseidon,
-    pasta::{EpAffine, Fp},
-    primitives::{ActionDigest, Tachygram},
-    value,
-};
+use crate::digest::poseidon;
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::{ActionDigest, Tachygram};
+use crate::value;
 
 /// A bundle's fee descriptor: the max fee commitment and the fee value.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]

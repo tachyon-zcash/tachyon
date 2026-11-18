@@ -2,16 +2,14 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta};
+use ragu::pasta::Pasta;
+use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank};
 use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
-use crate::{
-    collections::multiset,
-    pasta,
-    pasta::{EpAffine, Eq, Fp},
-    serialization,
-};
+use crate::collections::multiset;
+use crate::pasta::{EpAffine, Eq, Fp};
+use crate::{pasta, serialization};
 
 /// Pedersen commitment to a tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]

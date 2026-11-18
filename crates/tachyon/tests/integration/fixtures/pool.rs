@@ -1,29 +1,30 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::{array, iter, ops::RangeInclusive};
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ops::RangeInclusive;
+use core::{array, iter};
 use std::sync::LazyLock;
 
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::ProductionRank;
+use ragu::pasta::Pasta;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
+use zcash_tachyon::nullifier::{self, Nullifier};
+use zcash_tachyon::pasta::Fp;
+use zcash_tachyon::stamp::proof::{App, pool, qr, summary};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Note, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetCommit, TachygramSetPoly, note,
-    nullifier::{self, Nullifier},
-    pasta::Fp,
-    stamp::proof::{App, pool, qr, summary},
-    value, witness,
+    TachygramSetCommit, TachygramSetPoly, note, value, witness,
 };
 
-use super::{
-    Proved, keyed_rng,
-    qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of,
-        qr_profile_triplet, shared_discriminant,
-    },
-    wallet::shared_sk,
+use super::qr::{
+    EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of, qr_profile_triplet,
+    shared_discriminant,
 };
+use super::wallet::shared_sk;
+use super::{Proved, keyed_rng};
 
 pub fn random_block<RNG: CryptoRng>(
     rng: &mut RNG,

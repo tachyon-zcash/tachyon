@@ -4,11 +4,9 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use derive_more::Debug;
-use ragu::{
-    Polynomial, ProductionRank,
-    header::{Has, Header, OnlinePoly},
-    step::{HeaderInput, Prepared},
-};
+use ragu::header::{Has, Header, OnlinePoly};
+use ragu::step::{HeaderInput, Prepared};
+use ragu::{Polynomial, ProductionRank};
 use udon::field::Field as _;
 
 use crate::pasta::Fp;

@@ -1,43 +1,35 @@
 extern crate alloc;
 
-use alloc::{
-    boxed::Box,
-    collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::assert_matches;
 
 use corez::io;
-use ragu::{ProductionRank, pasta::Pasta};
-use rand::{SeedableRng as _, rngs::StdRng};
+use ragu::ProductionRank;
+use ragu::pasta::Pasta;
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use rand_core::CryptoRng;
 use udon::curve::Projective as _;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::stamp::proof::App;
+use zcash_tachyon::stamp::proof::stamp::{Stamp, StampMerge};
+use zcash_tachyon::stamp::{self, ProveError};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action, bundle,
-    entropy::ActionEntropy,
-    fee,
-    stamp::{
-        self, ProveError,
-        proof::{
-            App,
-            stamp::{Stamp, StampMerge},
-        },
-    },
-    value, witness,
+    action, bundle, fee, value, witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    mock_sighash, mock_txid,
-    pool::PoolSim,
-    wallet::{
-        WalletSim, alice, alice_output_note, bob, later_output, lifted, merged, output_plan,
-        random_action, shared_sk, spend,
-    },
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet::{
+    WalletSim, alice, alice_output_note, bob, later_output, lifted, merged, output_plan,
+    random_action, shared_sk, spend,
 };
+use crate::fixtures::{mock_sighash, mock_txid};
 
 fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,

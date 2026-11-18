@@ -1,14 +1,14 @@
 //! Note master keys inside a circuit.
 
-use ragu::{
-    Result,
-    drivers::Driver,
-    gadgets::Gadget,
-    primitives::{Element, io::Write},
-};
+use ragu::Result;
+use ragu::drivers::Driver;
+use ragu::gadgets::Gadget;
+use ragu::primitives::Element;
+use ragu::primitives::io::Write;
 
 use super::epoch::EpochIndex;
-use crate::{digest::poseidon, pasta::Fp};
+use crate::digest::poseidon;
+use crate::pasta::Fp;
 
 /// A [`NoteMasterKey`](crate::keys::NoteMasterKey) inside a circuit.
 #[derive(Gadget, Write)]

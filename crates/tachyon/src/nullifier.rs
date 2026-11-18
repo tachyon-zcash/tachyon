@@ -4,7 +4,8 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use crate::{pasta::Fp, primitives::Tachygram};
+use crate::pasta::Fp;
+use crate::primitives::Tachygram;
 
 /// Epochs covered per nullifier derivation step.
 pub const NF_DERIVATION_WIDTH: usize = 16;

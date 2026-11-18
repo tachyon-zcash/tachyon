@@ -39,7 +39,8 @@ pub mod summary;
 
 use alloc::boxed::Box;
 
-use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank, pasta::Pasta};
+use ragu::pasta::Pasta;
+use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank};
 
 use crate::pasta;
 

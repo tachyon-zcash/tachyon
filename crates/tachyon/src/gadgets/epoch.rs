@@ -2,18 +2,21 @@
 
 use core::ops::Deref;
 
-use ragu::{
-    PoseidonPermutation as _, Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    pasta::PoseidonFp,
-    primitives::{Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
-};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::Gadget;
+use ragu::maybe::Maybe as _;
+use ragu::pasta::PoseidonFp;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::comparison::GadgetEquals;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Boolean, Element};
+use ragu::{PoseidonPermutation as _, Result};
 use udon::field::Field as _;
 
 use super::uint::Uint;
-use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};
+use crate::constants::EPOCH_MAX;
+use crate::pasta::Fp;
+use crate::primitives;
 
 /// A [`primitives::EpochIndex`] inside a circuit: an index in
 /// `0..=EPOCH_MAX`. `EPOCH_MAX + 1` is a power of two, so the bits of the

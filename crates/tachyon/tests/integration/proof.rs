@@ -1,31 +1,31 @@
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 use core::{array, iter};
 
-use ragu::{ProductionRank, pasta::Pasta};
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
+use ragu::ProductionRank;
+use ragu::pasta::Pasta;
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
+use udon::curve::Projective as _;
+use udon::field::Field as _;
+use zcash_tachyon::constants::EPOCH_MAX;
+use zcash_tachyon::digest::poseidon;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::keys::private;
+use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
+use zcash_tachyon::pasta::{Eq, Fp};
+use zcash_tachyon::stamp::proof::{App, delegation, output, pool, spend, spendable, stamp};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetPoly, action,
-    constants::EPOCH_MAX,
-    digest::poseidon,
-    entropy::ActionEntropy,
-    keys::private,
-    note,
-    nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::{Eq, Fp},
-    stamp::proof::{App, delegation, output, pool, spend, spendable, stamp},
-    value, witness,
+    TachygramSetPoly, action, note, value, witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    pool::{PoolSim, random_block, random_block_with},
-    qr::QrIntakeEntry,
-    wallet::{WalletSim, alice, later_output, shared_sk},
-};
+use crate::fixtures::pool::{PoolSim, random_block, random_block_with};
+use crate::fixtures::qr::QrIntakeEntry;
+use crate::fixtures::wallet::{WalletSim, alice, later_output, shared_sk};
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
     pool.mine(random_block_with(rng, &[vec![cm]], 4));

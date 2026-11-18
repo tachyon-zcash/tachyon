@@ -1,9 +1,11 @@
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use ragu::{Polynomial, ProductionRank};
-use udon::{field::Field as _, polynomial::vanishing_polynomial};
+use udon::field::Field as _;
+use udon::polynomial::vanishing_polynomial;
 
 use crate::pasta::Fp;
 

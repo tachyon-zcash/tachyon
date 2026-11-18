@@ -6,7 +6,8 @@
 //! drift; if `zcash_encoding` is ever pulled into this workspace as a path
 //! dep we can switch back.
 
-use core::{num::TryFromIntError, ops::RangeInclusive};
+use core::num::TryFromIntError;
+use core::ops::RangeInclusive;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
@@ -32,7 +33,7 @@ pub enum CompactSizeError {
 const MAX_COMPACT_SIZE: u32 = 0x0200_0000;
 
 /// Largest value canonically encoded in the single-byte form.
-const MAX_ONE_BYTE: u8 = 0xFC;
+const MAX_ONE_BYTE: u8 = 0xfc;
 
 /// Flag byte preceding a 2-byte little-endian `u16` payload.
 const FLAG_TWO_BYTES: u8 = MAX_ONE_BYTE + 1;

@@ -4,46 +4,37 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::{
-    boxed::Box,
-    collections::{BTreeMap, BTreeSet},
-    format,
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::ToString as _;
+use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::error;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
-use proof::{
-    App, HEADER_SIZE, output,
-    stamp::{
-        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
-        StampLift, StampMerge, StampUnmerge,
-    },
+use proof::stamp::{
+    ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
+    StampLift, StampMerge, StampUnmerge,
 };
-use ragu::{ProductionRank, Rank as _, pasta::Pasta, pcd::wire};
+use proof::{App, HEADER_SIZE, output};
+use ragu::pasta::Pasta;
+use ragu::pcd::wire;
+use ragu::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use udon::curve::{Affine as _, Projective as _};
+use udon::field::Field as _;
 
+use crate::bridge_hash::bridge_hash;
+use crate::bundle::StateByte;
+use crate::digest::{blake2b, poseidon};
+use crate::entropy::ActionEntropy;
+use crate::keys::{ProofAuthorizingKey, private};
+use crate::pasta::{EpAffine, Eq, Fp};
+use crate::primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit};
+use crate::stamp::proof::{delegation, pool, spend, spendable};
 use crate::{
-    ActionSetPoly, Note, TachygramSetPoly, action,
-    bridge_hash::bridge_hash,
-    bundle::StateByte,
-    digest::{blake2b, poseidon},
-    effect,
-    entropy::ActionEntropy,
-    fee,
-    keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, Eq, Fp},
-    primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
-    serialization,
-    stamp::proof::{delegation, pool, spend, spendable},
-    value, witness,
+    ActionSetPoly, Note, TachygramSetPoly, action, effect, fee, serialization, value, witness,
 };
 
 /// An empty stamp whose proof is carried by

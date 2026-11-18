@@ -2,16 +2,19 @@
 
 use core::ops::Deref;
 
-use ragu::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-    maybe::Maybe as _,
-    primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
-};
+use ragu::Result;
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::Gadget;
+use ragu::maybe::Maybe as _;
+use ragu::primitives::Element;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::comparison::GadgetEquals;
+use ragu::primitives::io::Write;
 
 use super::uint::Uint;
-use crate::{constants::MAX_MONEY, pasta::Fp, value};
+use crate::constants::MAX_MONEY;
+use crate::pasta::Fp;
+use crate::value;
 
 /// A [`value::Positive`] inside a circuit: an amount in `0..=MAX_MONEY`.
 #[derive(Gadget, Write, GadgetEquals)]

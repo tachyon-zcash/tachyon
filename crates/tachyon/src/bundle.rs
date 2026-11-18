@@ -103,31 +103,29 @@
 //! stamp has neither and takes the empty-input stamp hash. See
 //! [`blake2b::stamp_digest`].
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec::Vec,
-};
-use core::{cmp::Ordering, iter, ops::Neg as _};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::iter;
+use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use ragu::{ProductionRank, Rank as _, pasta::Pasta};
+use ragu::pasta::Pasta;
+use ragu::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
-use udon::{curve::Affine as _, field::Field as _};
+use udon::curve::Affine as _;
+use udon::field::Field as _;
 
+use crate::digest::blake2b;
+use crate::keys::{private, public};
+use crate::pasta::Fp;
+use crate::primitives::{Anchor, effect};
+use crate::stamp::proof::{App, pool};
+use crate::stamp::{self, ProofStamp, StampState, StrippedStamp};
 use crate::{
-    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
-    digest::blake2b,
-    fee,
-    keys::{private, public},
-    pasta::Fp,
-    primitives::{Anchor, effect},
-    reddsa, serialization,
-    stamp::{
-        self, ProofStamp, StampState, StrippedStamp,
-        proof::{App, pool},
-    },
-    value,
+    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action, fee, reddsa,
+    serialization, value,
 };
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format

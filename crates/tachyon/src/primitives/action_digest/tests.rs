@@ -1,15 +1,13 @@
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 use udon::field::Field as _;
 
 use super::*;
-use crate::{
-    entropy::ActionEntropy,
-    keys::{private, public},
-    note,
-    pasta::Fp,
-    primitives::{Tachygram, effect},
-    value,
-};
+use crate::entropy::ActionEntropy;
+use crate::keys::{private, public};
+use crate::pasta::Fp;
+use crate::primitives::{Tachygram, effect};
+use crate::{note, value};
 
 #[test]
 #[should_panic(expected = "cv must not be the identity")]

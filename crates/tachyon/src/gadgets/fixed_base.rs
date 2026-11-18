@@ -29,27 +29,17 @@ use alloc::vec::Vec;
 use core::array;
 
 use lazy_static::lazy_static;
-use ragu::{
-    Result,
-    drivers::{Coeff, Driver},
-    maybe::Maybe as _,
-    primitives::{
-        Boolean, Element, GadgetExt as _, Point, multiadd,
-        vec::{ConstLen, FixedVec},
-    },
-};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
-};
+use ragu::Result;
+use ragu::drivers::{Coeff, Driver};
+use ragu::maybe::Maybe as _;
+use ragu::primitives::vec::{ConstLen, FixedVec};
+use ragu::primitives::{Boolean, Element, GadgetExt as _, Point, multiadd};
+use udon::curve::{Affine as _, Projective as _};
+use udon::field::Field as _;
 
-use crate::{
-    constants::{
-        MAX_MONEY,
-        orchard::{self, ACTION_AUTH_GENERATOR},
-    },
-    pasta::{Ep, EpAffine, Fp, Fq},
-};
+use crate::constants::MAX_MONEY;
+use crate::constants::orchard::{self, ACTION_AUTH_GENERATOR};
+use crate::pasta::{Ep, EpAffine, Fp, Fq};
 
 lazy_static! {
     pub(crate) static ref R_BASE: FixedBase<85> = FixedBase::new(*orchard::VALUE_COMMIT_R, Ep::identity());

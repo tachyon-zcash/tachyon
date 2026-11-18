@@ -1,24 +1,20 @@
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
-use crate::{
-    entropy::ActionEntropy,
-    keys::PaymentKey,
-    note::{self, Note},
-    nullifier,
-    pasta::Fp,
-    primitives::{ActionSetPoly, Anchor, TachygramSetPoly},
-    stamp::proof::{
-        new_application,
-        output::OutputBind,
-        stamp::{FeeFuse, OutputAction},
-    },
-    witness,
-};
+use crate::entropy::ActionEntropy;
+use crate::keys::PaymentKey;
+use crate::note::{self, Note};
+use crate::pasta::Fp;
+use crate::primitives::{ActionSetPoly, Anchor, TachygramSetPoly};
+use crate::stamp::proof::new_application;
+use crate::stamp::proof::output::OutputBind;
+use crate::stamp::proof::stamp::{FeeFuse, OutputAction};
+use crate::{nullifier, witness};
 
 #[test]
 fn debug_value_trapdoor_redacts_scalar() {
-    let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
+    let rcv = ValueTrapdoor(Fq::from(0xfaceu64));
     assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
 }
 

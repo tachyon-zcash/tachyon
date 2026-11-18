@@ -8,23 +8,23 @@
 //! that epoch; [`SpendableLift`] advances the latter over [`NoteUnspent`]
 //! segments.
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Element, GadgetExt as _};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 
-use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
-use crate::{
-    digest::poseidon,
-    gadgets, note,
-    pasta::Fp,
-    primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly},
-};
+use super::delegation::NoteNullifiers;
+use super::pool::NoteUnspent;
+use super::qr::QrBucket;
+use crate::digest::poseidon;
+use crate::pasta::Fp;
+use crate::primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly};
+use crate::{gadgets, note};
 
 /// Wallet's spendable position, certified up to this point in every
 /// coordinate.

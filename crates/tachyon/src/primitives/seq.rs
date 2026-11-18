@@ -1,23 +1,21 @@
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
-use udon::{
-    exec::{ExecutionOptions, SerialExecutor},
-    fft::{Domain, Expansion, Transform},
-    field::Field as _,
-};
+use ragu::pasta::Pasta;
+use ragu::{Cycle as _, Polynomial, ProductionRank};
+use udon::exec::{ExecutionOptions, SerialExecutor};
+use udon::fft::{Domain, Expansion, Transform};
+use udon::field::Field as _;
 
-use crate::{
-    collections::indexed_multiset,
-    nullifier::Nullifier,
-    pasta,
-    pasta::{Eq, Fp},
-    primitives::{EpochIndex, PolySlot},
-};
+use crate::collections::indexed_multiset;
+use crate::nullifier::Nullifier;
+use crate::pasta;
+use crate::pasta::{Eq, Fp};
+use crate::primitives::{EpochIndex, PolySlot};
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]

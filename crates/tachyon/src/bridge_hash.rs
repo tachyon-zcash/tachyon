@@ -5,7 +5,9 @@
 //! commitment, the rank and the nested generators; the pinning test compares
 //! the result with `Application::bridge_hash`.
 
-use ragu::{AcceleratedProver, Cycle as _, ProductionRank, pasta::Pasta, pcd::bridge_hash};
+use ragu::pasta::Pasta;
+use ragu::pcd::bridge_hash;
+use ragu::{AcceleratedProver, Cycle as _, ProductionRank};
 
 use crate::pasta::{self, EpAffine, EqAffine};
 

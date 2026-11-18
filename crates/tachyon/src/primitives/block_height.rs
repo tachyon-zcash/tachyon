@@ -2,7 +2,8 @@ use core::num::TryFromIntError;
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 
-use crate::{constants::EPOCH_SIZE, primitives::EpochIndex};
+use crate::constants::EPOCH_SIZE;
+use crate::primitives::EpochIndex;
 
 /// A block height in the pool chain.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]

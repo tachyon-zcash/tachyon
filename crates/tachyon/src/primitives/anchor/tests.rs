@@ -1,9 +1,11 @@
 use core::assert_matches;
 
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
-use crate::{Tachygram, TachygramSetCommit, TachygramSetPoly, pasta::Eq};
+use crate::pasta::Eq;
+use crate::{Tachygram, TachygramSetCommit, TachygramSetPoly};
 
 #[test]
 fn next_stamp_binds_the_order_and_the_epoch() {

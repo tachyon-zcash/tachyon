@@ -3,14 +3,13 @@
 use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use ragu::{PoseidonPermutation as _, pasta::PoseidonFp};
+use ragu::PoseidonPermutation as _;
+use ragu::pasta::PoseidonFp;
 
-use crate::{
-    digest::poseidon,
-    nullifier::{NF_DERIVATION_WIDTH, Nullifier},
-    pasta::Fp,
-    primitives::EpochIndex,
-};
+use crate::digest::poseidon;
+use crate::nullifier::{NF_DERIVATION_WIDTH, Nullifier};
+use crate::pasta::Fp;
+use crate::primitives::EpochIndex;
 
 /// Per-note master key.
 ///

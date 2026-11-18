@@ -1,4 +1,7 @@
 edition = "2024"
+max_width = 100
+hex_literal_case = "Lower"
+format_macro_matchers = true
 
 newline_style = "Unix"
 
@@ -17,7 +20,7 @@ force_explicit_abi = true
 unstable_features = true
 
 group_imports = "StdExternalCrate"
-imports_granularity = "Crate"
+imports_granularity = "Module"
 
 reorder_impl_items = true
 

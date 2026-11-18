@@ -1,11 +1,9 @@
 use udon::curve::Projective as _;
 
 use super::bridge_hash;
-use crate::{
-    pasta::{Eq, Fp},
-    primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly},
-    stamp::proof::new_application,
-};
+use crate::pasta::{Eq, Fp};
+use crate::primitives::{Tachygram, TachygramSetCommit, TachygramSetPoly};
+use crate::stamp::proof::new_application;
 
 #[test]
 fn bridge_hash_matches_application() {

@@ -1,7 +1,10 @@
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use rand::rngs::StdRng;
+use rand::{Rng as _, SeedableRng as _};
 
 use super::*;
-use crate::{digest::poseidon, note, primitives::effect};
+use crate::digest::poseidon;
+use crate::note;
+use crate::primitives::effect;
 
 #[test]
 fn randomizer_embeds_the_poseidon_output() {
@@ -25,8 +28,8 @@ fn randomizer_embeds_the_poseidon_output() {
 
 #[test]
 fn debug_entropy_redacts_bytes() {
-    let mut bytes = [0xAB; 32];
-    bytes[31] = 0x2B;
+    let mut bytes = [0xab; 32];
+    bytes[31] = 0x2b;
     let theta = ActionEntropy::from_bytes(bytes).unwrap();
     assert_eq!(alloc::format!("{theta:?}"), "ActionEntropy(..)");
 }

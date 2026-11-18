@@ -1,32 +1,26 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec,
-};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec;
 use core::assert_matches;
 
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use udon::curve::Projective as _;
+use zcash_tachyon::stamp::proof::stamp::{Stamp, StampUnmerge};
+use zcash_tachyon::stamp::{self, ProofStamp};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
-    VerifyCoverageError, bundle,
-    stamp::{
-        self, ProofStamp,
-        proof::stamp::{Stamp, StampUnmerge},
-    },
-    value, witness,
+    VerifyCoverageError, bundle, value, witness,
 };
 
 use super::fixtures::application;
-use crate::fixtures::{
-    mock_sighash, mock_txid,
-    pool::PoolSim,
-    wallet::{
-        WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, merged, output_plan,
-        outputs_with_fees, shared_sk,
-    },
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet::{
+    WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, merged, output_plan,
+    outputs_with_fees, shared_sk,
 };
+use crate::fixtures::{mock_sighash, mock_txid};
 
 #[test]
 fn unmerge_removes_a_divisor_across_merge_boundaries() {

@@ -1,10 +1,8 @@
 //! Tests run at the shipped epoch size.
 #![cfg(test)]
 
-use zcash_tachyon::{
-    BlockHeight, EpochIndex,
-    constants::{BLOCK_MAX, EPOCH_MAX},
-};
+use zcash_tachyon::constants::{BLOCK_MAX, EPOCH_MAX};
+use zcash_tachyon::{BlockHeight, EpochIndex};
 
 #[test]
 #[should_panic(expected = "epoch index above EPOCH_MAX")]

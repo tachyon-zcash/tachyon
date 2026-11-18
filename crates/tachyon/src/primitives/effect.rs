@@ -8,13 +8,10 @@
 
 use udon::field::Field as _;
 
-use crate::{
-    digest::poseidon,
-    entropy::ActionEntropy,
-    note,
-    pasta::{Fp, Fq},
-    value,
-};
+use crate::digest::poseidon;
+use crate::entropy::ActionEntropy;
+use crate::pasta::{Fp, Fq};
+use crate::{note, value};
 
 /// Embeds a base-field element in the scalar field, which is larger.
 #[expect(

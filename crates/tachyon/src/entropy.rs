@@ -4,17 +4,16 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::{any::type_name, marker::PhantomData};
+use core::any::type_name;
+use core::marker::PhantomData;
 
 use derive_more::{Debug, Into};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use crate::{
-    note,
-    pasta::{Fp, Fq},
-    primitives::Effect,
-};
+use crate::note;
+use crate::pasta::{Fp, Fq};
+use crate::primitives::Effect;
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///

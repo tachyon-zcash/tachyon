@@ -1,32 +1,30 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::{cell::RefCell, ops::RangeInclusive};
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::ops::RangeInclusive;
 
-use ragu::{
-    PoseidonPermutation as _, ProductionRank,
-    pasta::{Pasta, PoseidonFp},
-};
-use rand::{SeedableRng as _, rngs::StdRng};
+use ragu::pasta::{Pasta, PoseidonFp};
+use ragu::{PoseidonPermutation as _, ProductionRank};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
-use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Tachygram, action,
-    bundle::{self, Bundle},
-    effect,
-    entropy::ActionEntropy,
-    keys::{ProofAuthorizingKey, private},
-    note::{self, Note},
-    nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::Fp,
-    stamp::{
-        self, ProofStamp,
-        proof::{App, delegation, pool, spendable},
-    },
-    value, witness,
-};
+use zcash_tachyon::bundle::{self, Bundle};
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::keys::{ProofAuthorizingKey, private};
+use zcash_tachyon::note::{self, Note};
+use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
+use zcash_tachyon::pasta::Fp;
+use zcash_tachyon::stamp::proof::{App, delegation, pool, spendable};
+use zcash_tachyon::stamp::{self, ProofStamp};
+use zcash_tachyon::{Anchor, BlockHeight, EpochIndex, Tachygram, action, effect, value, witness};
 
-use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBucketEntry};
+use super::pool::PoolSim;
+use super::qr::QrBucketEntry;
+use super::{Proved, keyed_rng, mock_sighash, mock_txid};
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
@@ -50,11 +48,11 @@ pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<ef
 }
 
 pub(crate) fn shared_sk() -> private::SpendingKey {
-    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7ac0_05eed))
 }
 
 pub(crate) fn other_sk() -> private::SpendingKey {
-    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0B0B_05EE_D000_0001))
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0b0b_05ee_d000_0001))
 }
 
 fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {

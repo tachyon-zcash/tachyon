@@ -1,10 +1,10 @@
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 
 use super::*;
-use crate::{
-    stamp::proof::{new_application, summary::SummarySeed},
-    witness,
-};
+use crate::stamp::proof::new_application;
+use crate::stamp::proof::summary::SummarySeed;
+use crate::witness;
 
 /// [`QrBucketSeal`]'s circuit over contents shifted by the witnessed constant.
 /// A zero shift prepares the intake's contents.

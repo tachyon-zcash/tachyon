@@ -7,28 +7,26 @@
 //! All headers are wallet-only, and no key material rides the exported
 //! [`NoteNullifiers`].
 
-use ragu::{
-    PoseidonPermutation as _,
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::{Pasta, PoseidonFp},
-    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu::PoseidonPermutation as _;
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::{Pasta, PoseidonFp};
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Element, GadgetExt as _, Point};
+use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
+use udon::curve::Affine as _;
+use udon::field::Field as _;
 
-use crate::{
-    digest::poseidon,
-    gadgets,
-    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey},
-    note::{self, Note},
-    nullifier::{self, NF_DERIVATION_WIDTH},
-    pasta::{EpAffine, Fp},
-    primitives::{EpochIndex, NfSeqPoly, PolySlot},
-    value,
-};
+use crate::digest::poseidon;
+use crate::keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey};
+use crate::note::{self, Note};
+use crate::nullifier::{self, NF_DERIVATION_WIDTH};
+use crate::pasta::{EpAffine, Fp};
+use crate::primitives::{EpochIndex, NfSeqPoly, PolySlot};
+use crate::{gadgets, value};
 
 /// A note's certified record: its commitment, its opening, and its master key
 /// (wallet-only).

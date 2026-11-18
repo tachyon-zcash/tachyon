@@ -1,16 +1,15 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
+use ragu::pasta::Pasta;
+use ragu::{Cycle as _, Polynomial, ProductionRank};
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
 use super::PolySlot;
-use crate::{
-    collections::qr,
-    pasta,
-    pasta::{Eq, Fp},
-};
+use crate::collections::qr;
+use crate::pasta;
+use crate::pasta::{Eq, Fp};
 
 /// A routing network's first discriminant $R_0$.
 ///

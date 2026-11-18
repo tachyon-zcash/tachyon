@@ -7,18 +7,13 @@ use ff::PrimeField as _;
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
-use super::{
-    note::{NullifierKey, PaymentKey},
-    proof, public,
-};
-use crate::{
-    action, bundle,
-    digest::blake2b,
-    entropy::ActionRandomizer,
-    pasta::{Fp, Fq},
-    primitives::{Effect, effect},
-    reddsa, value,
-};
+use super::note::{NullifierKey, PaymentKey};
+use super::{proof, public};
+use crate::digest::blake2b;
+use crate::entropy::ActionRandomizer;
+use crate::pasta::{Fp, Fq};
+use crate::primitives::{Effect, effect};
+use crate::{action, bundle, reddsa, value};
 
 /// A Tachyon spending key: raw 32-byte entropy.
 ///

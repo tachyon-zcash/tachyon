@@ -95,12 +95,11 @@ mod note {
     #[cfg(test)]
     use udon::field::Field as _;
 
-    use super::{master::NoteMasterKey, proof::SpendValidatingKey};
-    use crate::{
-        digest::poseidon,
-        nullifier,
-        pasta::{EpAffine, Fp},
-    };
+    use super::master::NoteMasterKey;
+    use super::proof::SpendValidatingKey;
+    use crate::digest::poseidon;
+    use crate::nullifier;
+    use crate::pasta::{EpAffine, Fp};
 
     /// A Tachyon nullifier deriving key.
     ///

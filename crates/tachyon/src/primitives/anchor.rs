@@ -4,15 +4,14 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
 use rand_core::CryptoRng;
-use udon::{curve::Projective as _, field::Field as _};
+use udon::curve::Projective as _;
+use udon::field::Field as _;
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::{
-    bridge_hash::bridge_hash,
-    digest::poseidon,
-    pasta::{Eq, Fp},
-    serialization,
-};
+use crate::bridge_hash::bridge_hash;
+use crate::digest::poseidon;
+use crate::pasta::{Eq, Fp};
+use crate::serialization;
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);

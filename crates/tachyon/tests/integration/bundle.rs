@@ -1,40 +1,34 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
-use core::{assert_matches, cmp::Reverse, mem};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cmp::Reverse;
+use core::{assert_matches, mem};
 
 use corez::io;
 use ragu::{ProductionRank, Rank as _};
-use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
-use zcash_tachyon::{
-    BlockHeight, SignatureError, Tachygram, action,
-    bundle::{Plan, PlanError, Signature},
-    constants::MAX_MONEY,
-    digest::blake2b,
-    effect,
-    entropy::ActionEntropy,
-    fee,
-    keys::private,
-    pasta::{Ep, Eq, Fp},
-    stamp::{self, ProofStamp, StrippedStamp},
-    value, *,
-};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use udon::curve::Projective as _;
+use udon::field::Field as _;
+use zcash_tachyon::bundle::{Plan, PlanError, Signature};
+use zcash_tachyon::constants::MAX_MONEY;
+use zcash_tachyon::digest::blake2b;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::keys::private;
+use zcash_tachyon::pasta::{Ep, Eq, Fp};
+use zcash_tachyon::stamp::{self, ProofStamp, StrippedStamp};
+use zcash_tachyon::{BlockHeight, SignatureError, Tachygram, action, effect, fee, value, *};
 
 use super::fixtures::application;
-use crate::fixtures::{
-    mock_sighash, mock_txid,
-    pool::PoolSim,
-    wallet::{
-        WalletSim, alice, entry_spends, merged, output_plan, random_action, shared_sk, spend,
-        zero_action,
-    },
+use crate::fixtures::pool::PoolSim;
+use crate::fixtures::wallet::{
+    WalletSim, alice, entry_spends, merged, output_plan, random_action, shared_sk, spend,
+    zero_action,
 };
+use crate::fixtures::{mock_sighash, mock_txid};
 
 #[test]
 fn sign_and_apply_signatures_verify_every_plan_shape() {
@@ -455,7 +449,7 @@ fn autonome_verify_rejects_flipped_signatures() {
 
     let mut binding_bytes = Vec::new();
     bundle.binding_sig.write(&mut binding_bytes).unwrap();
-    binding_bytes[0] ^= 0xFF;
+    binding_bytes[0] ^= 0xff;
     let mut bad_binding = bundle.clone();
     bad_binding.binding_sig = Signature::read(&mut binding_bytes.as_slice()).unwrap();
     assert_matches!(
@@ -465,7 +459,7 @@ fn autonome_verify_rejects_flipped_signatures() {
 
     let mut action_bytes = Vec::new();
     bundle.action_auth[0].0.write(&mut action_bytes).unwrap();
-    action_bytes[0] ^= 0xFF;
+    action_bytes[0] ^= 0xff;
     let bad_sig = action::Signature::read(&mut action_bytes.as_slice()).unwrap();
     let mut bad_action = bundle;
     bad_action.action_auth[0].0 = bad_sig;
@@ -651,7 +645,7 @@ fn stripped_bundle_round_trips() {
 fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     let app = &application();
     let (_, mut bundle) = spend(app);
-    bundle.memo = vec![0xA5, 0x5A, 0x23];
+    bundle.memo = vec![0xa5, 0x5a, 0x23];
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     assert_eq!(bytes[0], 0x01);
@@ -1334,7 +1328,7 @@ fn memo_binds_the_commitment_but_not_the_auth_digest() {
     let (_, mut bundle) = spend(app);
     let (commitment, auth_digest) = (bundle.commitment(), bundle.auth_digest());
 
-    bundle.memo = vec![0x5Au8; 128];
+    bundle.memo = vec![0x5au8; 128];
     assert_ne!(bundle.commitment(), commitment);
     assert_eq!(bundle.auth_digest(), auth_digest);
 
@@ -1348,7 +1342,7 @@ fn memo_round_trips_and_rejects_truncation() {
     let app = &application();
     let (_, mut bundle) = spend(app);
 
-    for memo in [Vec::new(), vec![0xABu8; 1500]] {
+    for memo in [Vec::new(), vec![0xabu8; 1500]] {
         bundle.memo = memo.clone();
         let mut buf = Vec::new();
         bundle.write(&mut buf).unwrap();
@@ -1373,7 +1367,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let memo = vec![0x7Fu8; 900];
+    let memo = vec![0x7fu8; 900];
     let (plan, original) = alice(app);
     let bundle_plan = plan.with_memo(memo.clone());
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());

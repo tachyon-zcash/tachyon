@@ -2,24 +2,21 @@
 
 extern crate alloc;
 
-use ragu::{
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    header::{Header, Padding, Suffix},
-    maybe::Maybe as _,
-    pasta::Pasta,
-    primitives::{Element, Point, allocator::Allocator, io::Write},
-    step::{Encoded, Index, Oracles, Step},
-};
+use ragu::drivers::{Driver, DriverValue};
+use ragu::gadgets::{Bound, Gadget, Kind};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::maybe::Maybe as _;
+use ragu::pasta::Pasta;
+use ragu::primitives::allocator::Allocator;
+use ragu::primitives::io::Write;
+use ragu::primitives::{Element, Point};
+use ragu::step::{Encoded, Index, Oracles, Step};
 use udon::curve::EndomorphismAffine;
 
-use crate::{
-    Tachygram,
-    gadgets::{self, fixed_base},
-    note::Note,
-    pasta::{EpAffine, Fp, Fq},
-    value,
-};
+use crate::gadgets::{self, fixed_base};
+use crate::note::Note;
+use crate::pasta::{EpAffine, Fp, Fq};
+use crate::{Tachygram, value};
 
 /// Header binding an output's tachygram pair and value to one note
 /// (wallet-only).
