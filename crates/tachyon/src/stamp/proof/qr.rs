@@ -40,7 +40,7 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
-    summary::{Summary, TachygramAccumulator},
+    summary::Summary,
 };
 pub use crate::collections::qr::classify;
 use crate::{
@@ -253,7 +253,7 @@ impl Step<Pasta> for QrSummaryIntake {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(TachygramSet, left.polynomial(TachygramAccumulator)))
+        Ok(Prepared::new().poly(TachygramSet, left.polynomial(TachygramSet)))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -306,7 +306,7 @@ impl Step<Pasta> for QrSummaryIntake {
             profile: gadgets::qr::QrProfile::root(dr),
         };
         let z = oracles.zeta().clone();
-        let accumulator = oracles.left(TachygramAccumulator).open(dr, &z)?;
+        let accumulator = oracles.left(TachygramSet).open(dr, &z)?;
         let contents = oracles.output(TachygramSet).open(dr, &z)?;
         accumulator.enforce_equal(dr, &contents)?;
         Ok((

@@ -212,9 +212,9 @@ for the witnessed `extended` $E$, the input's `elapsed` $P$ in its `NfSeq`, and 
 
 ### Summaries
 
-A `Summary` carries `(epoch, anchor_prev, anchor_end)` with the accumulator as its `TachygramAccumulator` polynomial: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
-`SummarySeed` places one stamp's tachygram set in both the accumulator and the `TachygramSet` slot and checks them equal at $\zeta$. The anchor absorbs the stamp's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
-`SummaryAdvance` takes the next stamp's set as its `TachygramSet` and checks at $\zeta$ that its accumulator is the input accumulator times that set. The anchor absorbs that stamp's bridge hash to advance `anchor_end`.
+A `Summary` carries `(epoch, anchor_prev, anchor_end)` with two `TachygramSet` polynomials, the accumulator first and the last stamp's set second: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
+`SummarySeed` places one stamp's tachygram set in both slots and checks them equal at $\zeta$. The anchor absorbs the stamp's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
+`SummaryAdvance` takes the next stamp's set as its second `TachygramSet` and checks at $\zeta$ that its accumulator is the input accumulator times that set. The anchor absorbs that stamp's bridge hash to advance `anchor_end`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
 No step joins two summaries directly: each enters through `QrSummaryIntake`, and `QrIntakeMerge` joins the intakes when the first's `anchor_end` meets the second's `anchor_prev`.
@@ -644,7 +644,7 @@ flowchart LR
 | Header | Fields | Slots |
 | ------ | ------ | ----- |
 | AnchorSpan | (anchor_start, anchor_end) | AnchorSet: members; TachygramSet |
-| Summary | (epoch, anchor_prev, anchor_end) | TachygramAccumulator: accumulator; TachygramSet |
+| Summary | (epoch, anchor_prev, anchor_end) | TachygramSet: accumulator; TachygramSet |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | TachygramSet: contents |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | QrResidues: residue; QrNonResidues: non_residue |
 | QrSideSelection | QrIntakeSides fields, including non_residue_hash | QrInterpolant: interpolant; QrQuotient: quotient |
