@@ -546,12 +546,11 @@ impl Plan {
     pub fn verify_signatures(
         &self,
         sighash: &[u8; 32],
-        (action_sigs, binding_sig): &(BTreeMap<action::Descriptor, action::Signature>, Signature),
+        signatures: &(BTreeMap<action::Descriptor, action::Signature>, Signature),
     ) -> Result<(), SignatureError> {
-        assert!(
-            self.descriptors().iter().eq(action_sigs.keys()),
-            "action descriptors do not match"
-        );
+        let action_sigs = &signatures.0;
+        let binding_sig = &signatures.1;
+        self.assert_signing_descriptors(action_sigs);
         let bvk = public::BindingVerificationKey::derive(
             action_sigs
                 .keys()
@@ -567,6 +566,16 @@ impl Plan {
                 .map_err(|_err| SignatureError::Action(*sig))?;
         }
         Ok(())
+    }
+
+    fn assert_signing_descriptors(
+        &self,
+        action_sigs: &BTreeMap<action::Descriptor, action::Signature>,
+    ) {
+        assert!(
+            self.descriptors().iter().eq(action_sigs.keys()),
+            "action descriptors do not match"
+        );
     }
 
     #[expect(clippy::expect_used, reason = "signing checks the planned balance")]
