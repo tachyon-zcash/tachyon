@@ -11,6 +11,9 @@ suppress-restriction-lint-in-const = true # indexing_slicing
 
 # naming
 allow-exact-repetitions = true # module_name_repetitions
+# min_ident_chars: `F` is Ragu's `Driver::F`. The `Gadget` and `Write` derives
+# only rewrite the literal `D::F`, and copy it into the impls they generate.
+allowed-idents-below-min-chars = ["..", "F"]
 disallowed-macros = [
   { path = "core::cmp::Eq", reason = "please use `derive_more` instead" },
 ]

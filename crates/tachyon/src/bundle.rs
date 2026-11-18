@@ -111,8 +111,7 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::pasta::Pasta;
+use ragu::{ProductionRank, Rank as _, pasta::Pasta};
 use rand_core::CryptoRng;
 use udon::{curve::Affine as _, field::Field as _};
 
@@ -306,7 +305,7 @@ pub enum VerificationError {
     Coverage(VerifyCoverageError),
     /// An error occurred while verifying the proof.
     #[display("proof verification error: {_0}")]
-    Proof(ragu_core::Error),
+    Proof(ragu::Error),
     /// The proof did not verify.
     #[display("proof did not verify")]
     Disproved,
@@ -640,7 +639,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system operation fails.
+    /// Returns [`ragu::Error`] if a proof-system operation fails.
     /// Empty `spans` leave the bundle unchanged.
     ///
     /// # Panics
@@ -652,8 +651,8 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<ragu_pcd::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
-    ) -> Result<Self, ragu_core::Error> {
+        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+    ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
@@ -825,14 +824,14 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// Returns [`ragu::Error`] if the proof system fails. A disproved
     /// proof is reported as `Ok(false)`, not an error.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: &[ActionDigest],
-    ) -> Result<bool, ragu_core::Error> {
+    ) -> Result<bool, ragu::Error> {
         self.stamp
             .verify_proof(rng, app, action_digests.iter().copied())
     }

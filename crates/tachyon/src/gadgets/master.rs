@@ -1,7 +1,11 @@
 //! Note master keys inside a circuit.
 
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
-use ragu_primitives::{Element, io::Write};
+use ragu::{
+    Result,
+    drivers::Driver,
+    gadgets::Gadget,
+    primitives::{Element, io::Write},
+};
 
 use super::epoch::EpochIndex;
 use crate::{digest::poseidon, pasta::Fp};

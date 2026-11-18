@@ -4,22 +4,20 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ragu_core::{
+use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, OnlinePoly, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
-};
-use ragu_pcd::{
-    header::{Header, OnlinePoly, Suffix},
+    primitives::{
+        Element, GadgetExt as _, Point,
+        allocator::Allocator,
+        decompose,
+        io::Write,
+        vec::{ConstLen, FixedVec},
+    },
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use ragu_primitives::{
-    Element, GadgetExt as _, Point,
-    allocator::Allocator,
-    decompose,
-    io::Write,
-    vec::{ConstLen, FixedVec},
 };
 use udon::{
     curve::{Affine as _, EndomorphismAffine},
@@ -99,7 +97,7 @@ impl Header<Fp> for Actions {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(ActionsOutput {
             anchor: Element::alloc(dr, allocator, witness.map(Fp::from))?,
         })
@@ -142,7 +140,7 @@ impl Header<Fp> for Stamp {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(StampOutput {
             anchor: Element::alloc(
                 dr,
@@ -190,7 +188,7 @@ impl Step<Pasta> for OutputAction {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let (cm, pad, cv) = *left.data;
         let alpha = witness
             .0
@@ -216,7 +214,7 @@ impl Step<Pasta> for OutputAction {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -322,7 +320,7 @@ impl Step<Pasta> for SpendAction {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let (cm, nf_current, nf_next, _, _, cv) = *left.data;
         let alpha = witness.0.randomizer::<effect::Spend>(cm);
         let rk = witness.1.ak.derive_action_public(&alpha);
@@ -350,7 +348,7 @@ impl Step<Pasta> for SpendAction {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -448,7 +446,7 @@ impl Step<Pasta> for StampMerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -467,7 +465,7 @@ impl Step<Pasta> for StampMerge {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -535,7 +533,7 @@ impl Step<Pasta> for ActionMerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -554,7 +552,7 @@ impl Step<Pasta> for ActionMerge {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -634,7 +632,7 @@ impl Step<Pasta> for StampLift {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -650,7 +648,7 @@ impl Step<Pasta> for StampLift {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -721,7 +719,7 @@ impl Step<Pasta> for ActionLift {
         &(): &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(ActionSet, left.polynomial(ActionSet))
             .poly(TachygramSet, left.polynomial(TachygramSet)))
@@ -734,7 +732,7 @@ impl Step<Pasta> for ActionLift {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -804,7 +802,7 @@ impl Step<Pasta> for FeeFuse {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -830,7 +828,7 @@ impl Step<Pasta> for FeeFuse {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -953,7 +951,7 @@ impl Step<Pasta> for FeeSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -977,7 +975,7 @@ impl Step<Pasta> for FeeSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -1115,7 +1113,7 @@ impl Step<Pasta> for StampUnmerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 ActionSet,
@@ -1134,7 +1132,7 @@ impl Step<Pasta> for StampUnmerge {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

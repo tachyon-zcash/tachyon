@@ -1,6 +1,6 @@
 use core::iter;
 
-use ragu_circuits::polynomials::sparse::Polynomial;
+use ragu::Polynomial;
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{

@@ -1,4 +1,4 @@
-use ragu_primitives::{Simulator, decompose};
+use ragu::primitives::{Simulator, decompose};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;

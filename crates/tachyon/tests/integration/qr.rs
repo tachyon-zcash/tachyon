@@ -69,7 +69,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
                 ),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
+        Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
     );
 }
 
@@ -184,7 +184,7 @@ fn qr_intake_split_rejects_an_empty_intake() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
+        Some(ragu::Error::InvalidWitness(err))
             if err.to_string() == "division by zero"
     );
 }
@@ -239,7 +239,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
                 selection,
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
+        Some(ragu::Error::InvalidWitness(err))
             if err.to_string() == "division by zero"
     );
 }
@@ -506,7 +506,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
                     rng, qr::QrUnspentInit, witness::qr_unspent_init((*bucket.pcd.data(), ()), cm),
                     bucket.pcd.clone(), app.bootstrap_proof().clone().carry::<()>(()),
                 ).err(),
-                Some(ragu_core::Error::InvalidWitness(error))
+                Some(ragu::Error::InvalidWitness(error))
                     if error.to_string() == "division by zero"
             );
         }
@@ -545,7 +545,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
         let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(member));
         assert_matches!(
             app.fuse(rng, qr::QrUnspentInit, witness, bucket.pcd.clone(), app.bootstrap_proof().clone().carry::<()>(())).err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
+            Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
         );
     }
     let tree = EvidenceTreeEntry::build(rng, app, slice::from_ref(&bucket));
@@ -645,7 +645,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
                 sides,
                 app.bootstrap_proof().clone().carry::<()>(()),
             ).err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
+            Some(ragu::Error::InvalidWitness(err)) if err.to_string()
                 == "division by zero"
         );
     }
@@ -1650,7 +1650,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .err(),
-            Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
+            Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
         );
     }
 }
@@ -1705,7 +1705,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string()
+        Some(ragu::Error::InvalidWitness(err)) if err.to_string()
             == "division by zero"
     );
 }
@@ -1887,7 +1887,7 @@ fn unspent_lift_rejects_invalid_extensions() {
                 bucket.pcd,
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
+        Some(ragu::Error::InvalidWitness(err))
             if err.to_string() == "division by zero"
     );
 }

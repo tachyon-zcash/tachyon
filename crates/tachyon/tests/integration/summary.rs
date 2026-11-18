@@ -114,6 +114,6 @@ fn summary_seed_rejects_empty_stamp() {
                 witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
             )
             .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
+        Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
     );
 }

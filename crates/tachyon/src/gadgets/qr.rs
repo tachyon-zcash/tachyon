@@ -1,12 +1,12 @@
 //! QR profiles inside a circuit.
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
+    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
 };
-use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
 use super::uint::Uint;
