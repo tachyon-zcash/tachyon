@@ -2,7 +2,6 @@ use ragu_primitives::Simulator;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
-use crate::pasta;
 
 #[test]
 fn scalar_multiplication_is_the_scalar_times_the_base() {
@@ -52,8 +51,8 @@ fn element_multiplication_accepts_254_bit_elements_and_rejects_wider() {
                     .map(|point| Point::constant(dr, point.to_affine()))
                     .transpose()?;
                 let point = fixed_base.mul_element(dr, &element, onto_point.as_ref())?;
-                let expected =
-                    base * pasta::digest_scalar(digest) + onto.unwrap_or_else(Ep::identity);
+                let scalar = Fq::from_bytes(digest.to_bytes()).unwrap();
+                let expected = base * scalar + onto.unwrap_or_else(Ep::identity);
                 assert_eq!(point.value().take(), expected.to_affine());
                 Ok(())
             })
@@ -73,14 +72,6 @@ fn element_multiplication_accepts_254_bit_elements_and_rejects_wider() {
         }
     }
 }
-
-/// The native embedding refuses the smallest digest the circuit rejects.
-#[test]
-#[should_panic(expected = "a Poseidon digest is below 2^254")]
-fn digest_scalar_rejects_wider_digests() {
-    let _scalar = pasta::digest_scalar(Fp::from(2).pow_u64(254));
-}
-
 #[test]
 fn value_multiplication_accepts_51_bit_values_and_rejects_wider() {
     let rng = &mut StdRng::seed_from_u64(0);

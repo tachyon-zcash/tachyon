@@ -68,8 +68,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
 
     /// The Fp digest representing the native maximum-fee blind.
     ///
-    /// Fixed-base element multiplication reads it as a 254-bit scalar, as the
-    /// native derivation does.
+    /// Fixed-base element multiplication reads its 254 bits as the scalar the
+    /// native derivation embeds in Fq, so a blind at or above $2^{254}$ has no
+    /// proof.
     pub(crate) fn derive_feemax_blind(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }
