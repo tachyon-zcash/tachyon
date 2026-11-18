@@ -795,6 +795,12 @@ impl Step<Pasta> for ActionLift {
 ///
 /// Opens both input and output sets. The fee note and fee are fixed before
 /// the challenge.
+///
+/// # Caller contract
+///
+/// The caller confirms that the max fee note's value is within `MAX_MONEY`
+/// and the fee is at most that value, or it risks producing a proof that is
+/// false.
 #[derive(Debug)]
 pub struct FeeFuse;
 

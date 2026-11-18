@@ -274,9 +274,8 @@ impl Header<Fp> for AnchorSpan {
 ///
 /// # Caller contract
 ///
-/// The stamp must hold a tachygram. An empty stamp fails witness generation
-/// with Ragu's `InvalidWitness("division by zero")`. A stamp built from
-/// tachygrams never commits to the identity; a polynomial that does panics.
+/// The caller confirms that the stamp holds a tachygram, or it risks
+/// producing a proof that is false.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 

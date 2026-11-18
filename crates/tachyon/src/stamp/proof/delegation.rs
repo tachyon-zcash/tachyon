@@ -296,8 +296,8 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// # Caller contract
 ///
-/// The window must end by `EPOCH_MAX`: `epoch_start` at most
-/// `EPOCH_MAX - 15`. A proof of a window past it doesn't verify.
+/// The caller confirms that the window ends by `EPOCH_MAX` (`epoch_start` at
+/// most `EPOCH_MAX - 15`), or it risks producing a proof that is false.
 ///
 /// Opens the derived sequence once.
 #[derive(Debug)]

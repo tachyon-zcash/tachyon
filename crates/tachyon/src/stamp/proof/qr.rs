@@ -1145,6 +1145,11 @@ impl Header<Fp> for QrBucket {
 /// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
 /// The left and output contents open once each to preserve the contents and
 /// certify their bridge hash.
+///
+/// # Caller contract
+///
+/// The caller confirms that the intake's epoch is before `EPOCH_MAX`, or it
+/// risks producing a proof that is false.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
