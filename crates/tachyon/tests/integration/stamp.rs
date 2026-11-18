@@ -10,8 +10,7 @@ use alloc::{
 use core::assert_matches;
 
 use corez::io;
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::pasta::Pasta;
+use ragu::{ProductionRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::curve::Projective as _;
@@ -46,7 +45,7 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
         &ProofStamp<stamp::Uncompressed>,
     ),
     (digests, tachygrams): (&[ActionDigest], &[Tachygram]),
-) -> ragu_pcd::Pcd<Pasta, ProductionRank, Stamp> {
+) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         app.bridge_hash(stamp_a.tachygram_set.as_ref().to_affine())
             .unwrap()

@@ -1,7 +1,7 @@
 //! The framework commits the prover-supplied polynomials before deriving the
 //! Fiat-Shamir challenge $z$. Each relation checks its algebraic identity over
 //! openings at $z$ that its caller makes through
-//! [`Oracle::open`](ragu_pcd::step::Oracle::open). The proof system verifies
+//! [`Oracle::open`](ragu::step::Oracle::open). The proof system verifies
 //! the openings.
 //!
 //! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
@@ -28,12 +28,15 @@
 //! operands it covers and any relation-specific nuance.
 //!
 //! Caller invariant: each operand value passed to a relation is the value
-//! [`Oracle::open`](ragu_pcd::step::Oracle::open) returned for that operand
+//! [`Oracle::open`](ragu::step::Oracle::open) returned for that operand
 //! at `z`. A caller that recomputed or separately witnessed a value could let
 //! the checked value diverge from the opened one and break soundness.
 
-use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::{Element, GadgetExt as _};
+use ragu::{
+    Result,
+    drivers::Driver,
+    primitives::{Element, GadgetExt as _},
+};
 use udon::field::Field as _;
 
 use crate::pasta::Fp;

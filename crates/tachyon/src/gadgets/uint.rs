@@ -2,15 +2,15 @@
 
 use alloc::vec::Vec;
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
-};
-use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, multipack,
-    vec::{ConstLen, FixedVec},
+    primitives::{
+        Boolean, Element, GadgetExt as _, multipack,
+        vec::{ConstLen, FixedVec},
+    },
 };
 use udon::field::Field;
 

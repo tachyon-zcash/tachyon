@@ -24,17 +24,15 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::array;
 
-use ragu_core::{
+use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, OnlinePoly, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
-};
-use ragu_pcd::{
-    header::{Header, OnlinePoly, Padding, Suffix},
+    primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::field::Field as _;
 
 use super::{
@@ -112,7 +110,7 @@ impl Header<Fp> for ArbitraryUnspent {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(ArbitraryUnspentOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -170,7 +168,7 @@ impl Header<Fp> for NoteUnspent {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(NoteUnspentOutput {
             cm: Element::alloc(
                 dr,
@@ -245,7 +243,7 @@ impl Header<Fp> for AnchorSpan {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(AnchorSpanOutput {
             anchor_start: Element::alloc(
                 dr,
@@ -294,7 +292,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         // The witness phase rejects the empty stamp at its polynomial opening.
         let anchor_end = witness.0.fold_stamp(witness.1, &witness.2.commit());
         Ok(Prepared::new()
@@ -318,7 +316,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -403,7 +401,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
             AnchorSet,
             witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
@@ -417,7 +415,7 @@ impl Step<Pasta> for AnchorSpanFuse {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -483,7 +481,7 @@ impl Step<Pasta> for UnspentFuse {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(NfSeq, witness.0.as_ref().iter_coeffs().collect::<Vec<_>>()))
     }
 
@@ -494,7 +492,7 @@ impl Step<Pasta> for UnspentFuse {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -592,7 +590,7 @@ impl Step<Pasta> for UnspentLift {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(NfSeq, witness.3.as_ref().iter_coeffs().collect::<Vec<_>>())
             .stage([Fp::from(witness.0)]))
@@ -605,7 +603,7 @@ impl Step<Pasta> for UnspentLift {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -738,7 +736,7 @@ impl Step<Pasta> for UnspentBind {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(NfSeq, witness.0.as_ref().iter_coeffs().collect::<Vec<_>>()))
     }
 
@@ -749,7 +747,7 @@ impl Step<Pasta> for UnspentBind {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

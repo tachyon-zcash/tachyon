@@ -6,8 +6,7 @@
 //! oracle slots. A circuit computes one member's factor at one point, to
 //! compare against a slot's opening there.
 
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
-use ragu_primitives::Element;
+use ragu::{Result, drivers::Driver, gadgets::Gadget, primitives::Element};
 use udon::field::Field as _;
 
 use crate::{collections::indexed_multiset::NON_RESIDUE, pasta::Fp};
@@ -29,7 +28,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Member<'dr, D> {
     /// the bound in the native module's Injectivity section; an epoch does.
     /// Comparing the result with an opening at the step's challenge is sound
     /// only if `index` and `value` were fixed before that challenge (see
-    /// [`Oracles::zeta`](ragu_pcd::step::Oracles::zeta)).
+    /// [`Oracles::zeta`](ragu::step::Oracles::zeta)).
     pub(crate) fn eval(&self, dr: &mut D, x: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let one = Element::constant(dr, Fp::ONE);
         let indexed = self.index.add(dr, &one).mul(dr, x)?;
