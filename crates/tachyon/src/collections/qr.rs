@@ -23,12 +23,17 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use udon::field::Field as _;
+use ragu::{Polynomial, ProductionRank, fft, ifft};
+use udon::{
+    field::Field as _,
+    polynomial::{
+        InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
+    },
+};
 
-use crate::{arithmetic, pasta::Fp};
+use crate::pasta::Fp;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
@@ -103,6 +108,10 @@ pub(crate) fn split(
 ///
 /// Returns `None` when two abscissas coincide or a point lies off the side.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "the buffers and FFT domain fit each operation and udon writes a monic divisor"
+)]
 pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
     class: Fp,
@@ -111,26 +120,59 @@ pub(crate) fn decomposition(
     Polynomial<Fp, ProductionRank>,
     Polynomial<Fp, ProductionRank>,
 )> {
-    let mut interpolant_coeffs = if points.is_empty() {
-        [Fp::ONE].to_vec()
+    let (abscissas, values): (Vec<_>, Vec<_>) = points.iter().copied().unzip();
+    let len = points.len();
+    let mut interpolant_coeffs = if len == 0 {
+        vec![Fp::ONE]
     } else {
-        arithmetic::interpolate(points)?
+        let mut weights = vec![Fp::ZERO; len];
+        let mut scratch = vec![Fp::ZERO; len];
+        let mut coeffs = vec![Fp::ZERO; len];
+        let plan = match InterpolationPlan::prepare(
+            Fp::as_slice(&abscissas),
+            Fp::as_slice_mut(&mut weights),
+            Fp::as_slice_mut(&mut scratch),
+        ) {
+            Ok(plan) => plan,
+            Err(InterpolationError::DuplicatePoints { .. }) => return None,
+            Err(err) => unreachable!("interpolation buffers match the point count: {err}"),
+        };
+        plan.interpolate(
+            Fp::as_slice(&values),
+            Fp::as_slice_mut(&mut coeffs),
+            Fp::as_slice_mut(&mut scratch),
+        )
+        .expect("interpolation values and buffers match the point count");
+        coeffs
     };
+    let mut vanishing = vec![Fp::ZERO; len + 1];
+    vanishing_polynomial(Fp::as_slice(&abscissas), Fp::as_slice_mut(&mut vanishing))
+        .expect("the buffer fits the abscissas and leading one");
     if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
-        let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
-        interpolant_coeffs = arithmetic::poly_with_roots(&abscissas);
+        interpolant_coeffs.clone_from(&vanishing);
     }
 
     let translate = [class * shift, class];
-    let mut h_coeffs = arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs);
-    if h_coeffs.len() < translate.len() {
-        h_coeffs.resize(translate.len(), Fp::ZERO);
+    let dividend_len = (2 * interpolant_coeffs.len() - 1).max(translate.len());
+    let domain = Fp::domain(dividend_len.next_power_of_two().trailing_zeros())
+        .expect("the square fits the FFT domain");
+    let mut dividend = interpolant_coeffs.clone();
+    dividend.resize(domain.size(), Fp::ZERO);
+    fft(domain, &mut dividend);
+    for evaluation in &mut dividend {
+        *evaluation = evaluation.square();
     }
-    for (coeff, &translate_coeff) in h_coeffs.iter_mut().zip(&translate) {
+    ifft(domain, &mut dividend);
+    dividend.truncate(dividend_len);
+    for (coeff, &translate_coeff) in dividend.iter_mut().zip(&translate) {
         *coeff -= translate_coeff;
     }
-    for &(abscissa, _) in points {
-        h_coeffs = arithmetic::divide_by_root(&h_coeffs, abscissa)?;
+    let remainder_len =
+        divide_monic_in_place(Fp::as_slice_mut(&mut dividend), Fp::as_slice(&vanishing))
+            .expect("the vanishing polynomial is monic");
+    let h_coeffs = dividend.split_off(remainder_len);
+    if dividend.iter().any(|coeff| coeff != &Fp::ZERO) {
+        return None;
     }
 
     Some((

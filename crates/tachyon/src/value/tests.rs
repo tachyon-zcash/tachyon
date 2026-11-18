@@ -1,4 +1,20 @@
+use rand::{SeedableRng as _, rngs::StdRng};
+
 use super::*;
+use crate::{
+    entropy::ActionEntropy,
+    keys::PaymentKey,
+    note::{self, Note},
+    nullifier,
+    pasta::Fp,
+    primitives::{ActionSetPoly, Anchor, TachygramSetPoly},
+    stamp::proof::{
+        new_application,
+        output::OutputBind,
+        stamp::{FeeFuse, OutputAction},
+    },
+    witness,
+};
 
 #[test]
 fn debug_value_trapdoor_redacts_scalar() {
@@ -16,4 +32,55 @@ fn positive_spans_zero_to_max_money() {
     ] {
         assert_eq!(input.is_ok(), accepted);
     }
+}
+
+#[test]
+fn fee_fuse_rejects_maximum_above_max_money() {
+    let app = new_application().unwrap();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let note = Note {
+        pk: PaymentKey::from(Fp::from(11)),
+        value: Positive::try_from(1u64).unwrap(),
+        psi: nullifier::Trapdoor::from(Fp::from(13)),
+        rcm: note::CommitmentTrapdoor::from(Fp::from(17)),
+    };
+    let (output, ()) = app
+        .seed(rng, OutputBind, (note, ValueTrapdoor(Fq::ONE)))
+        .unwrap();
+    let (actions, ()) = app
+        .fuse(
+            rng,
+            OutputAction,
+            witness::output_action(
+                (*output.data(), ()),
+                ActionEntropy(Fp::from(7)),
+                Anchor::default(),
+            ),
+            output,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+
+    // This module can hand-build the raw Value, bypassing Positive's cap.
+    let bad_witness = (
+        Note {
+            value: Value(i64::try_from(MAX_MONEY + 1).unwrap()),
+            ..note
+        },
+        Positive::ZERO,
+        (
+            ActionSetPoly::from_iter([]),
+            TachygramSetPoly::from_iter([]),
+        ),
+    );
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            FeeFuse,
+            bad_witness,
+            actions,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }

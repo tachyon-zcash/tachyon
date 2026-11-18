@@ -12,23 +12,21 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 
 ## Stamp absorption
 
-Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
+Each stamp lands at a definite position in an accepted block. The stamp fold updates the pool state:
 
 $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ u,\ v)
 $$
 
-where $e$ is the containing block's epoch and $(u, v)$ is the bridge-hash-style double commitment of the stamp's tachygram-set commitment[^tachygrams].
+Here $e$ is the containing block's epoch and $(u, v)$ gives the affine coordinates of the bridge hash of the stamp's [tachygram accumulator](./tachygrams.md#tachygram-sets). Full validation recomputes that accumulator from the covered bundles' tachygrams.
 
-[^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
-
-For a Vesta commitment $C = (x, y)$, with $x, y \in \mathbb{F}_q$, ragu's `Application::bridge_hash` provides the Pallas double commitment
+For a Vesta commitment $C$ with affine coordinates $x$ and $y$ in $\mathbb{F}_q$ the bridge hash is a Pallas point:
 
 $$
 H^\mathsf{bridge}(C) = [x]G_i + [y]G_j = (u, v).
 $$
 
-Pallas's scalar field is $\mathbb{F}_q$, so the coordinates need no reduction. Evidence-leaf hashes use the same representation of their contents commitment. Ragu defines the generators and stage layout; Tachyon delegates the construction to the application API.
+The points $G_i$ and $G_j$ are Ragu's fixed bridge-stage generators for the two coordinates. The coordinates need no reduction because $\mathbb{F}_q$ is Pallas's scalar field. The [evidence tree](./proof-tree.md#evidence-trees) uses the same construction for leaf contents commitments.
 
 ## Epoch boundary
 
@@ -50,4 +48,5 @@ Within a block, each stamp's absorption produces an intermediate hash value.
 
 Consensus actors should know about intermediate states, but may only acknowledge the anchor state at the end of a block.
 
-A proof such as `SpendableInit` will produce a header that is likely at an intra-block state, and should be lifted to the end of a block by proving state continuity.
+A proof such as `SpendableInit` may produce a header at an intra-block state: its anchor is the state right after the creation stamp, which is the end-of-block anchor only when that stamp is the block's last.
+A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#anchor-segments), which prove state continuity.

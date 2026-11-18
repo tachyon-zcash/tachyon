@@ -3,25 +3,21 @@
 extern crate alloc;
 
 use ragu::{
-    header::{Header, Suffix},
-    step::{Encoded, Index, Oracles, Step},
-};
-use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
+    primitives::{Element, Point, allocator::Allocator, io::Write},
+    step::{Encoded, Index, Oracles, Step},
 };
-use ragu_primitives::{Element, Point, allocator::Allocator, io::Write};
 use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,
-    constants::MAX_MONEY,
-    digest::poseidon,
+    gadgets::{self, fixed_base},
     note::Note,
-    pasta::{EpAffine, Fp},
-    ragu_constraint::enforce_nonzero,
+    pasta::{EpAffine, Fp, Fq},
     value,
 };
 
@@ -38,12 +34,14 @@ pub struct OutputHeader;
 pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
     pub cm: Element<'dr, D>,
     pub pad: Element<'dr, D>,
+    #[ragu(gadget)]
     pub cv: Point<'dr, D, C>,
 }
 
 impl Header<Fp> for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
+    type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; OutputHeaderOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -52,7 +50,7 @@ impl Header<Fp> for OutputHeader {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(OutputHeaderOutput {
             cm: Element::alloc(
                 dr,
@@ -90,11 +88,11 @@ impl Step<Pasta> for OutputBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -106,39 +104,58 @@ impl Step<Pasta> for OutputBind {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
-            let (note, rcv) = witness.take();
-            if u64::from(note.value) > MAX_MONEY {
-                return Err(ragu_core::Error::InvalidWitness(
-                    "OutputBind: note value exceeds maximum".into(),
-                ));
-            }
-
-            let (cm, pad) = {
-                let (rcm, pk, value, psi) = (
-                    Fp::from(note.rcm),
-                    Fp::from(note.pk),
-                    u64::from(note.value),
-                    Fp::from(note.psi),
-                );
-                (
-                    Tachygram::from(poseidon::note_commitment(rcm, pk, value, psi)),
-                    Tachygram::from(poseidon::pad_tachygram(rcm, pk, value, psi)),
-                )
-            };
-
-            // Two zero tachygrams collide whatever they were meant to be, and a
-            // zero root leaves the accumulator factor `(X - tg)` trivial.
-            enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
-            enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
-
-            Ok(((cm, pad, rcv.commit(-note.value)), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), data, aux))
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let amount = gadgets::uint::Uint::alloc(
+            dr,
+            witness
+                .as_ref()
+                .map(|&(note, _)| Fp::from(u64::from(note.value))),
+        )?;
+        let note = gadgets::note::Note {
+            rcm: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.rcm)),
+            )?,
+            pk: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.pk)),
+            )?,
+            value: gadgets::value::Positive::from_bits(dr, &amount)?,
+            psi: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|&(note, _)| Fp::from(note.psi)),
+            )?,
+        };
+        let cm = note.commitment(dr)?;
+        let pad = note.pad_tachygram(dr)?;
+        // Two zero tachygrams collide whatever they were meant to be, and a
+        // zero root leaves the set polynomial factor `(X - tg)` trivial.
+        cm.clone().enforce_nonzero(dr)?;
+        pad.clone().enforce_nonzero(dr)?;
+        // The blind's 254 bits are free: nothing else binds rcv, and their
+        // binary value below 2^254 is the scalar.
+        let blind_bits = gadgets::uint::Uint::<_, 254>::alloc(
+            dr,
+            witness.as_ref().map(|&(_, rcv)| Fq::from(rcv)),
+        )?;
+        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
+        let cv = fixed_base::NEG_V_BASE.mul_and_add(dr, amount.bits(), &blind_point)?;
+        let output = D::just(|| {
+            (
+                Tachygram::from(*cm.value().take()),
+                Tachygram::from(*pad.value().take()),
+                value::Commitment::from(cv.value().take()),
+            )
+        });
+        let fields = OutputHeaderOutput { cm, pad, cv };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            output,
+            D::unit(),
+        ))
     }
 }
