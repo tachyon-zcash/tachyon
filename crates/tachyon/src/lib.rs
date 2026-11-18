@@ -38,5 +38,5 @@ pub use bundle::{
 };
 pub use note::Note;
 pub use primitives::*;
-pub use serialization::compactsize::{CompactSize, CompactSizeError};
+pub use serialization::compact_size::{CompactSize, CompactSizeError};
 pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp};
