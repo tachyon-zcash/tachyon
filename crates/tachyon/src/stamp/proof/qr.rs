@@ -418,10 +418,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
-        stamp_at_z
-            .sub(dr, &one)
-            .enforce_nonzero(dr)
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -742,14 +739,7 @@ impl Step<Pasta> for QrIntakeSplit {
         contents_at_z.enforce_equal(dr, &product)?;
         // An empty intake's contents are the constant one.
         let one = Element::constant(dr, Fp::ONE);
-        contents_at_z
-            .sub(dr, &one)
-            .enforce_nonzero(dr)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrIntakeSplit: an empty intake cannot be split".into(),
-                )
-            })?;
+        contents_at_z.sub(dr, &one).enforce_nonzero(dr)?;
 
         let non_residue_hash = [
             oracles.bridge_hash().x().clone(),
@@ -847,11 +837,7 @@ impl Step<Pasta> for QrSideSelect {
             .add(dr, &sides.intake.profile.depth)
             .negate(dr);
         let value = oracles.left(QrNonResidues).open(dr, &exceptional_element)?;
-        value.enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QrSideSelect: exceptional value claimed the non-residue class".into(),
-            )
-        })?;
+        value.enforce_nonzero(dr)?;
         // The hints are checked by `QrSideDescend`; opening them here keeps
         // them committed rather than held to the constant one.
         let zeta = oracles.zeta().clone();
@@ -976,9 +962,7 @@ impl Step<Pasta> for QrSideDescend {
         let non_residue_at_z = oracles.left(QrNonResidues).open(dr, &z)?;
         let residue_at_z = oracles.left(QrResidues).open(dr, &z)?;
         let delta = non_residue_at_z.sub(dr, &residue_at_z);
-        delta.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrSideDescend: the two sides are the same set".into())
-        })?;
+        delta.clone().enforce_nonzero(dr)?;
         let selected_delta = bit.element().mul(dr, &delta)?;
         let sibling_at_z = residue_at_z.add(dr, &selected_delta);
         let selected_at_z = non_residue_at_z.sub(dr, &selected_delta);
@@ -1004,11 +988,7 @@ impl Step<Pasta> for QrSideDescend {
             anchor_prev: sides.intake.anchor_prev.clone(),
             anchor_end: sides.intake.anchor_end.clone(),
             discriminant: sides.intake.discriminant.clone(),
-            profile: sides.intake.profile.descend(dr, &bit).map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "QrSideDescend: profile has no bit left for another side".into(),
-                )
-            })?,
+            profile: sides.intake.profile.descend(dr, &bit)?,
         };
         let output = D::just(|| {
             let (epoch, anchor_prev, anchor_end, discriminant, profile, _) = left.take();
@@ -1218,9 +1198,8 @@ impl QrBucketSeal {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error::InvalidWitness`] if the intake is in the
-    /// final epoch. Construction does not check satisfaction of the boundary
-    /// constraint.
+    /// Propagates errors from Ragu operations. Construction does not check
+    /// satisfaction of the boundary constraint.
     #[expect(
         clippy::type_complexity,
         reason = "the return type is `Step::witness`'s without its auxiliary value"
@@ -1245,9 +1224,7 @@ impl QrBucketSeal {
         let left_encoded = Encoded::<D, QrIntake, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
         let intake = left_encoded.as_gadget();
         let right_encoded = Encoded::<D, (), HEADER_SIZE>::new(dr, &mut (), right)?;
-        let next = intake.epoch.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrBucketSeal: crossing past the final epoch".into())
-        })?;
+        let next = intake.epoch.next(dr)?;
         let previous = Element::alloc(
             dr,
             &mut (),
@@ -1409,9 +1386,7 @@ impl Step<Pasta> for QrUnspentInit {
             &mut (),
             witness.as_ref().map(|&(value, ..)| Fp::from(value)),
         )?;
-        value_element.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrUnspentInit: tested value is zero".into())
-        })?;
+        value_element.clone().enforce_nonzero(dr)?;
         bucket.profile.enforce_sides_of(
             dr,
             &value_element,
@@ -1419,9 +1394,7 @@ impl Step<Pasta> for QrUnspentInit {
             witness.as_ref().map(|&(_, classes, ..)| classes),
             witness.as_ref().map(|&(_, _, mask, _)| mask),
         )?;
-        let epoch_next_element = bucket.epoch.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())
-        })?;
+        let epoch_next_element = bucket.epoch.next(dr)?;
         #[expect(
             clippy::indexing_slicing,
             reason = "the framework enforces NUM_STAGED = 1"
@@ -1440,9 +1413,7 @@ impl Step<Pasta> for QrUnspentInit {
             contents_at_value.wire().clone(),
             contents_at_value.value().map(|value| *value),
         );
-        nonzero_value.enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrUnspentInit: found nullifier in the bucket".into())
-        })?;
+        nonzero_value.enforce_nonzero(dr)?;
 
         let output = D::just(|| {
             let (bucket_epoch, bucket_anchor_start, bucket_anchor_next, ..) = left.take();

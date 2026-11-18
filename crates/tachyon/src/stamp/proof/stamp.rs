@@ -833,10 +833,6 @@ impl Step<Pasta> for FeeFuse {
             ]))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "keep the fee note's checked parts and the set identities together"
-    )]
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -863,21 +859,14 @@ impl Step<Pasta> for FeeFuse {
             witness
                 .as_ref()
                 .map(|&(Note { value, .. }, ..)| Fp::from(MAX_MONEY) - Fp::from(u64::from(value))),
-        )
-        .map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeFuse: maximum fee exceeds MAX_MONEY".into())
-        })?;
+        )?;
         let maximum = gadgets::value::Positive::from_slack(dr, &slack)?;
-        let (fee, change) = maximum
-            .split(
-                dr,
-                witness
-                    .as_ref()
-                    .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
-            )
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
-            })?;
+        let (fee, change) = maximum.split(
+            dr,
+            witness
+                .as_ref()
+                .map(|&(_, fee, _)| Fp::from(u64::from(fee))),
+        )?;
         let max_fee_note = gadgets::note::Note {
             rcm: Element::alloc(
                 dr,
@@ -921,9 +910,7 @@ impl Step<Pasta> for FeeFuse {
         .commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee, &fee_change)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeFuse: fee change note commitment is zero".into())
-        })?;
+        fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let left_actions = oracles.left(ActionSet).open(dr, &z)?;
         let output_actions = oracles.output(ActionSet).open(dr, &z)?;
@@ -1048,10 +1035,7 @@ impl Step<Pasta> for FeeSeed {
                     .as_ref()
                     .map(|&(Note { value, .. }, ..)| Fp::from(u64::from(value))),
             )
-            .and_then(|element| gadgets::value::Positive::from_zero(dr, element))
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("FeeSeed: maximum fee must be zero".into())
-            })?,
+            .and_then(|element| gadgets::value::Positive::from_zero(dr, element))?,
             psi: Element::alloc(
                 dr,
                 &mut (),
@@ -1073,9 +1057,7 @@ impl Step<Pasta> for FeeSeed {
         let fee_change = max_fee_note.commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero, &fee_change)?;
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        fee_change.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("FeeSeed: fee change note commitment is zero".into())
-        })?;
+        fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSet).open(dr, &z)?;
         enforce_poly_roots(dr, &z, &action_set, &[fee_digest])?;

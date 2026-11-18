@@ -258,9 +258,7 @@ impl Step<Pasta> for QrSpendableInit {
             .anchor_start
             .enforce_equal(dr, &unspent.anchor_start)?;
         bucket.anchor_next.enforce_equal(dr, &unspent.anchor_next)?;
-        let epoch_next = bucket.epoch.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
-        })?;
+        let epoch_next = bucket.epoch.next(dr)?;
         // The anchor equality rejects a wrong epoch label only through the
         // crossing digest's collision resistance; this ties `epoch_next` to the
         // bucket directly.

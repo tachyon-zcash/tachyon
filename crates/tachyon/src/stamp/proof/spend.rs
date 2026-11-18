@@ -158,18 +158,12 @@ impl Step<Pasta> for SpendBind {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let secret = right_encoded.as_gadget();
         spendable.cm.enforce_equal(dr, &secret.cm)?;
-        let epoch_next = spendable.epoch_current.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
-        })?;
+        let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
         // A zero nullifier would collide with the note's own cm tachygram.
-        nf_current.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: current-epoch nullifier is zero".into())
-        })?;
-        nf_next.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendBind: next-epoch nullifier is zero".into())
-        })?;
+        nf_current.clone().enforce_nonzero(dr)?;
+        nf_next.clone().enforce_nonzero(dr)?;
 
         // The blind's 254 bits are free: nothing else binds rcv, and their
         // binary value below 2^254 is the scalar.

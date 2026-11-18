@@ -225,9 +225,7 @@ impl Step<Pasta> for NoteSeed {
             &mut (),
             witness.as_ref().map(|&(_, _, rcm, _)| Fp::from(rcm)),
         )?;
-        rcm.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("NoteSeed: commitment trapdoor is zero".into())
-        })?;
+        rcm.clone().enforce_nonzero(dr)?;
         let nk = Element::alloc(
             dr,
             &mut (),
@@ -367,12 +365,7 @@ impl Step<Pasta> for NullifierDerive {
                 .as_ref()
                 .map(|&(_, epoch_start, _)| Fp::from(epoch_start)),
         )
-        .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))
-        .map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "NullifierDerive: epoch_start is not group-aligned".into(),
-            )
-        })?;
+        .and_then(|bits| gadgets::epoch::EpochIndex::from_group_start(dr, &bits))?;
         oracles.staged()[0].enforce_equal(dr, &epoch_start)?;
         // The whole window must land inside the epoch range: an index past
         // EPOCH_MAX maps to no block height, so it labels nothing.
@@ -404,12 +397,7 @@ impl Step<Pasta> for NullifierDerive {
             cm: secret.cm.clone(),
             epoch_start,
             epoch_end: gadgets::uint::Uint::from_element(dr, &epoch_end)
-                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "NullifierDerive: window exceeds the epoch range".into(),
-                    )
-                })?,
+                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))?,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

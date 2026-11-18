@@ -136,12 +136,8 @@ impl Step<Pasta> for OutputBind {
         let pad = note.pad_tachygram(dr)?;
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the set polynomial factor `(X - tg)` trivial.
-        cm.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("OutputBind: note commitment is zero".into())
-        })?;
-        pad.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("OutputBind: padding tachygram is zero".into())
-        })?;
+        cm.clone().enforce_nonzero(dr)?;
+        pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their
         // binary value below 2^254 is the scalar.
         let blind_bits = gadgets::uint::Uint::<_, 254>::alloc(

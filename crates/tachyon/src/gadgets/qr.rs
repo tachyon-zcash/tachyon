@@ -115,12 +115,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let expected_square = multiplier.mul(dr, &shifted)?;
             root.square(dr)?.enforce_equal(dr, &expected_square)?;
             side.conditional_select(dr, &shifted, &one)?
-                .enforce_nonzero(dr)
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "QR profile: exceptional discriminant claimed the non-residue class".into(),
-                    )
-                })?;
+                .enforce_nonzero(dr)?;
             depth_acc = depth_acc.add(dr, &selected.element());
             let index_term = selected.element().mul(dr, &position_element)?;
             index_acc = index_acc.add(dr, &index_term);

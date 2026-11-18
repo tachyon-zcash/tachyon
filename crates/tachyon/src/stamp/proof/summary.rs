@@ -165,10 +165,7 @@ impl Step<Pasta> for SummarySeed {
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
-        stamp_at_z
-            .sub(dr, &one)
-            .enforce_nonzero(dr)
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -262,10 +259,7 @@ impl Step<Pasta> for SummaryAdvance {
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
-        stamp_at_z
-            .sub(dr, &one)
-            .enforce_nonzero(dr)
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         // The epoch is in range: `SummarySeed` range-checks it and every
         // `SummaryAdvance` carries it unchanged.
         let anchor =

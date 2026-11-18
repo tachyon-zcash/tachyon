@@ -86,6 +86,6 @@ fn fee_fuse_rejects_maximum_above_max_money() {
             app.bootstrap_proof().clone().carry::<()>(()),
         ).err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "FeeFuse: maximum fee exceeds MAX_MONEY"
+            if err.to_string() == "value exceeds its bit width"
     );
 }

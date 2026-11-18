@@ -35,7 +35,7 @@ use ragu_pcd::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
+use udon::{curve::Projective as _, field::Field as _};
 
 use super::{
     delegation::{NfSeq, NoteNullifiers},
@@ -43,6 +43,7 @@ use super::{
     stamp::FoldedStamp,
 };
 use crate::{
+    bridge_hash::bridge_hash,
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
@@ -290,10 +291,12 @@ impl Step<Pasta> for AnchorSpanSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
-        let anchor_end = witness
-            .0
-            .next_stamp(witness.1, &witness.2.commit())
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        // The witness phase rejects the empty stamp at its polynomial opening.
+        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+            witness.0.into(),
+            witness.1.into(),
+            bridge_hash(witness.2.commit().as_ref().to_affine()),
+        ));
         Ok(Prepared::new()
             .poly(
                 AnchorSet,
@@ -346,10 +349,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         let z = oracles.zeta().clone();
         let stamp_at_z = oracles.output(FoldedStamp).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
-        stamp_at_z
-            .sub(dr, &one)
-            .enforce_nonzero(dr)
-            .map_err(|_err| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+        stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -622,9 +622,7 @@ impl Step<Pasta> for UnspentLift {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let bucket = right_encoded.as_gadget();
-        let epoch_next_element = bucket.epoch.next(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
-        })?;
+        let epoch_next_element = bucket.epoch.next(dr)?;
         unspent
             .anchor_next
             .enforce_equal(dr, &bucket.anchor_start)?;
@@ -634,9 +632,7 @@ impl Step<Pasta> for UnspentLift {
             &mut (),
             witness.as_ref().map(|&(value, ..)| Fp::from(value)),
         )?;
-        value_element.clone().enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("UnspentLift: tested value is zero".into())
-        })?;
+        value_element.clone().enforce_nonzero(dr)?;
         bucket.profile.enforce_sides_of(
             dr,
             &value_element,
@@ -664,9 +660,7 @@ impl Step<Pasta> for UnspentLift {
             contents_at_value.wire().clone(),
             contents_at_value.value().map(Clone::clone),
         );
-        nonzero_value.enforce_nonzero(dr).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("UnspentLift: found nullifier in the bucket".into())
-        })?;
+        nonzero_value.enforce_nonzero(dr)?;
 
         let output = D::just(|| {
             let (unspent_anchor_start, unspent_epoch_start, ..) = left.take();

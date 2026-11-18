@@ -136,7 +136,7 @@ fn fee_fuse_binds_its_sets() {
             )
             .err(),
         Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "FeeFuse: change is out of range"
+            if err.to_string() == "value exceeds its bit width"
     );
 
     for (corrupt, expected) in [
@@ -225,7 +225,7 @@ fn fee_fuse_slack_boundaries() {
                     app.bootstrap_proof().clone().carry::<()>(()),
                 ).err(),
                 Some(ragu_core::Error::InvalidWitness(err))
-                    if err.to_string() == "FeeFuse: change is out of range"
+                    if err.to_string() == "value exceeds its bit width"
             );
         }
     }
