@@ -212,7 +212,7 @@ for the witnessed `extended` $E$, the input's `elapsed` $P$ in its `NfSeq`, and 
 
 ### Summaries
 
-A `Summary` carries `(epoch, anchor_prev, anchor_end)` with two `TachygramSet` polynomials, the accumulator first and the last stamp's set second: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
+A `Summary` carries `(epoch, anchor_prev, anchor_end)` with two `TachygramSet` slots, holding the accumulator first and the last stamp's tachygram set second: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
 `SummarySeed` places one stamp's tachygram set in both slots and checks them equal at $\zeta$. The anchor absorbs the stamp's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
 `SummaryAdvance` takes the next stamp's set as its second `TachygramSet` and checks at $\zeta$ that its accumulator is the input accumulator times that set. The anchor absorbs that stamp's bridge hash to advance `anchor_end`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
@@ -242,7 +242,7 @@ The split's discriminant at this depth is defined by the progression:
 
 $$R = R_0 + \mathsf{depth}$$
 
-Split puts the residue polynomial and the non-residue polynomial q0 in `QrIntakeSides`'s two `TachygramSet` slots, in that order, and records the bridge hash of the non-residue polynomial in `QrIntakeSides`.
+Split puts the residue polynomial and the non-residue polynomial $q_0$ in `QrIntakeSides`'s two `TachygramSet` slots, in that order, and records the bridge hash of the non-residue polynomial in `QrIntakeSides`.
 `QrSideSelect` copies the split's scalar metadata and that hash, and fixes the interpolant and quotient as `QrSideSelection`'s `QrInterpolant` and `QrQuotient`.
 It opens the split's non-residue polynomial at $-R$ and requires the opening to be nonzero, which is the exceptional-value assignment:
 
@@ -269,7 +269,7 @@ The framework's challenge zeta fixes both input headers and their slots; the sid
 Every step of one network classifies at the progression carried by its headers.
 Split opens its input and two output polynomials once at its product challenge.
 Selection opens the non-residue input at the exceptional point and produces the two hint commitments, opening each hint once at zeta so it stays committed rather than held to 1.
-Descent opens the split's residue and non-residue polynomials and the selection's `QrInterpolant` and `QrQuotient` once each at zeta, selects the sibling evaluation with its staged bit, and forwards the selected child as its `TachygramSet`, whose one opening at zeta checks the copy.
+Descent opens the split's residue and non-residue polynomials and the selection's `QrInterpolant` and `QrQuotient` once each at $\zeta$, selects the sibling evaluation with its staged bit, and forwards the selected side as its `TachygramSet`, whose one opening at $\zeta$ checks the copy.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
@@ -384,7 +384,7 @@ Binding the profile into the leaf is what makes the replay safe: a real bucket's
 Leaf and node digests use different domains, $\texttt{Tachyon-QrBucket}$ and $\texttt{Tachyon-EvidNode}$, so no path can stop one level short and present a node as a bucket.
 
 A leaf digest absorbs eight elements, two permutations at rate four. A node absorbs four, one permutation.
-No evidence step multiplies a point. Only `EvidenceTreeOpen` opens a polynomial: its output's `TachygramSet`, once at $\zeta$, so that Ragu does not hold the slot to the constant 1.
+No evidence step multiplies a point. Only `EvidenceTreeOpen` opens a polynomial: its emitted `TachygramSet` slot, once at $\zeta$, so that Ragu does not hold the slot to the constant 1.
 Permutations per step:
 
 | Step | Permutations |
@@ -661,7 +661,7 @@ flowchart LR
 | Actions | (anchor) | ActionSet: action set; TachygramSet: tachygram set |
 | Stamp | (tachygram_set_bridge, anchor) | ActionSet: action set; TachygramSet: tachygram set |
 
-Slots lists each header's polynomial kinds in slot order, with the contents consumers read; — marks a header whose slots are padding. A kind listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeq` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, `TachygramSet` holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
+Slots lists each header's polynomial kinds in slot order, with the contents consumers read; — marks a header whose slots are padding. A kind listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeq` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, the second slot's `TachygramSet` holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
 `contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's second slot, a `TachygramSet`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's non-residue polynomial, not of the selection's own `QrQuotient`.
 
