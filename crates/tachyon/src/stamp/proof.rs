@@ -28,6 +28,7 @@ pub mod summary;
 
 use alloc::boxed::Box;
 
+use ragu_acceleration::AcceleratedProver;
 use ragu_circuits::{polynomials::ProductionRank, staging::wire_degree};
 use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 use ragu_pcd::{Application, ApplicationBuilder};
@@ -77,8 +78,9 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
     (g_x.to_projective() * x + g_y.to_projective() * y).to_affine()
 }
 
-/// The Tachyon Ragu application.
-pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
+/// The Tachyon Ragu application, with accelerated proving and reference
+/// verification kernels.
+pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>;
 
 /// Builds the Tachyon application with the baked setup.
 ///
@@ -91,7 +93,7 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE>;
 /// Returns an error if step registration or application finalization fails.
 #[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
 pub fn new_application() -> Result<Box<App<'static>>, ragu_core::Error> {
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?

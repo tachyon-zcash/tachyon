@@ -951,6 +951,7 @@ dependencies = [
  "ff",
  "group",
  "lazy_static",
+ "ragu_acceleration",
  "ragu_circuits",
  "ragu_core",
  "ragu_pcd",
