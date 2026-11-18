@@ -26,6 +26,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::{fft, ifft};
 use udon::{
     field::Field as _,
     polynomial::{
@@ -33,7 +34,7 @@ use udon::{
     },
 };
 
-use crate::{arithmetic, pasta::Fp};
+use crate::pasta::Fp;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
@@ -110,7 +111,7 @@ pub(crate) fn split(
 #[must_use]
 #[expect(
     clippy::expect_used,
-    reason = "the buffers are sized for each operation and udon writes a monic divisor"
+    reason = "the buffers and FFT domain fit each operation and udon writes a monic divisor"
 )]
 pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
@@ -153,10 +154,17 @@ pub(crate) fn decomposition(
     }
 
     let translate = [class * shift, class];
-    let mut dividend = arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs);
-    if dividend.len() < translate.len() {
-        dividend.resize(translate.len(), Fp::ZERO);
+    let dividend_len = (2 * interpolant_coeffs.len() - 1).max(translate.len());
+    let domain = Fp::domain(dividend_len.next_power_of_two().trailing_zeros())
+        .expect("the square fits the FFT domain");
+    let mut dividend = interpolant_coeffs.clone();
+    dividend.resize(domain.size(), Fp::ZERO);
+    fft(domain, &mut dividend);
+    for evaluation in &mut dividend {
+        *evaluation = evaluation.square();
     }
+    ifft(domain, &mut dividend);
+    dividend.truncate(dividend_len);
     for (coeff, &translate_coeff) in dividend.iter_mut().zip(&translate) {
         *coeff -= translate_coeff;
     }
