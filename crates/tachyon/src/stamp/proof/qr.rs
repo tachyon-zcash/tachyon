@@ -27,17 +27,15 @@ mod tests;
 
 use alloc::vec::Vec;
 
-use ragu_core::{
+use ragu::{
     drivers::{Coeff, Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
+    header::{Header, OnlinePoly, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
-};
-use ragu_pcd::{
-    header::{Header, OnlinePoly, Padding, Suffix},
+    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
-use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
 use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
@@ -120,7 +118,7 @@ impl Header<Fp> for QrIntake {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         Ok(QrIntakeOutput {
             epoch: gadgets::epoch::EpochIndex::alloc(
                 dr,
@@ -193,7 +191,7 @@ impl Header<Fp> for QrIntakeSides {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         #[expect(
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
@@ -246,7 +244,7 @@ impl Header<Fp> for QrSideSelection {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         QrIntakeSides::encode(dr, allocator, witness)
     }
 }
@@ -274,7 +272,7 @@ impl Step<Pasta> for QrSummaryIntake {
         _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(QrContents, left.polynomial(TachygramAccumulator)))
     }
 
@@ -285,7 +283,7 @@ impl Step<Pasta> for QrSummaryIntake {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -365,7 +363,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
             QrContents,
             witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
@@ -379,7 +377,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -485,7 +483,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -520,7 +518,7 @@ impl QrEmptyIntakeSeed {
         witness: DriverValue<D, (Anchor, EpochIndex, QrDiscriminant)>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, (), HEADER_SIZE>,
             Encoded<'dr, D, (), HEADER_SIZE>,
@@ -598,7 +596,7 @@ impl Step<Pasta> for QrIntakeMerge {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
             QrContents,
             witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
@@ -612,7 +610,7 @@ impl Step<Pasta> for QrIntakeMerge {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -697,7 +695,7 @@ impl Step<Pasta> for QrIntakeSplit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 QrResidues,
@@ -716,7 +714,7 @@ impl Step<Pasta> for QrIntakeSplit {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -797,7 +795,7 @@ impl Step<Pasta> for QrSideSelect {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
                 QrInterpolant,
@@ -816,7 +814,7 @@ impl Step<Pasta> for QrSideSelect {
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -896,7 +894,7 @@ impl Step<Pasta> for QrSideDescend {
         witness: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let selected = if witness.0 {
             left.polynomial(QrResidues)
         } else {
@@ -914,7 +912,7 @@ impl Step<Pasta> for QrSideDescend {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -1052,7 +1050,7 @@ impl Header<Fp> for QrBucket {
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
-    ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
         #[expect(
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
@@ -1168,7 +1166,7 @@ impl Step<Pasta> for QrBucketSeal {
         _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(QrContents, left.polynomial(QrContents)))
     }
 
@@ -1179,7 +1177,7 @@ impl Step<Pasta> for QrBucketSeal {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -1215,7 +1213,7 @@ impl QrBucketSeal {
         witness: &DriverValue<D, (Anchor,)>,
         left: DriverValue<D, <QrIntake as Header<Fp>>::Data>,
         right: DriverValue<D, ()>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, QrIntake, HEADER_SIZE>,
             Encoded<'dr, D, (), HEADER_SIZE>,
@@ -1358,7 +1356,7 @@ impl Step<Pasta> for QrUnspentInit {
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(NfSeq, witness.3.as_ref().iter_coeffs().collect::<Vec<_>>())
             .stage([Fp::from(witness.0)]))
@@ -1371,7 +1369,7 @@ impl Step<Pasta> for QrUnspentInit {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

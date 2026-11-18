@@ -25,7 +25,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu::{Polynomial, ProductionRank};
 use udon::field::Field as _;
 
 use crate::{arithmetic, pasta::Fp};

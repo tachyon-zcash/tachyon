@@ -1,7 +1,7 @@
 use alloc::{string::ToString as _, vec};
 use core::assert_matches;
 
-use ragu_circuits::polynomials::sparse::Polynomial;
+use ragu::Polynomial;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -25,7 +25,7 @@ fn anchor_span_seed_proves_a_stamp_and_refuses_an_empty_one() {
             witness::anchor_span_seed(((), ()), anchor, epoch, &[]),
         )
         .err(),
-        Some(ragu_core::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
+        Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
     );
 }
 

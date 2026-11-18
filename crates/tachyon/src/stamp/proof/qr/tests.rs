@@ -1,9 +1,7 @@
-use ragu_core::{
+use ragu::{
     drivers::{Driver, DriverValue},
-    pasta::Pasta,
-};
-use ragu_pcd::{
     header::Header,
+    pasta::Pasta,
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -35,7 +33,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
         _: &Self::Witness<'_>,
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let mut contents = left.polynomial(QrContents).to_vec();
         contents[0] += Fp::ONE;
         Ok(Prepared::new().poly(QrContents, contents))
@@ -48,7 +46,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
@@ -123,7 +121,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         _: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu_core::Result<Prepared<Fp, Self::Output>> {
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(QrContents, [Fp::ONE, Fp::ONE]))
     }
 
@@ -134,7 +132,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu_core::Result<(
+    ) -> ragu::Result<(
         (
             Encoded<'dr, D, Self::Left, HEADER_SIZE>,
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,

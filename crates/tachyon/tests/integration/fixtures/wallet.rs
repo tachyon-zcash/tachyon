@@ -3,9 +3,8 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, ops::RangeInclusive};
 
-use ragu_circuits::polynomials::ProductionRank;
-use ragu_core::{
-    PoseidonPermutation as _,
+use ragu::{
+    PoseidonPermutation as _, ProductionRank,
     pasta::{Pasta, PoseidonFp},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -408,7 +407,7 @@ impl WalletSim {
         app: &App<'_>,
         bucket: &QrBucketEntry,
         note: &Note,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let arbitrary = bucket.segment(rng, app, |epoch| {
             self.pak
                 .nk
@@ -475,7 +474,7 @@ impl WalletSim {
     pub fn covering_window(
         &self,
         note: &Note,
-        range: &ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
+        range: &ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
         let (_, start, last) = *range.data();
         let mk = self.pak.nk.derive_note_private(note.psi);
@@ -488,8 +487,8 @@ impl WalletSim {
         &self,
         app: &App<'_>,
         note: Note,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
-        static SECRETS: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteSecret>> =
+    ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
+        static SECRETS: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>> =
             Proved::new("note_secret");
 
         let key = [
@@ -515,10 +514,10 @@ impl WalletSim {
         note: Note,
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers> {
-        static WINDOWS: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
+    ) -> ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers> {
+        static WINDOWS: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
             Proved::new("note_nullifiers_window");
-        static RANGES: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
+        static RANGES: Proved<ragu::Pcd<Pasta, ProductionRank, delegation::NoteNullifiers>> =
             Proved::new("note_nullifiers_range");
 
         let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
@@ -586,8 +585,8 @@ impl WalletSim {
         pool: &PoolSim,
         note: &Note,
         init_height: BlockHeight,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
-        static SPENDABLE: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
+        static SPENDABLE: Proved<ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
             Proved::new("spendable_init");
 
         let cm = note.commitment();
@@ -644,8 +643,8 @@ impl WalletSim {
         pool: &PoolSim,
         note: &Note,
         (epoch_start, epoch_next): (EpochIndex, EpochIndex),
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
-        static UNSPENT: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, pool::NoteUnspent>> =
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
+        static UNSPENT: Proved<ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent>> =
             Proved::new("note_unspent");
 
         assert!(u32::from(epoch_start) < u32::from(epoch_next));
@@ -674,9 +673,9 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         app: &App<'_>,
-        arbitrary: ragu_pcd::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
+        arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, pool::NoteUnspent> {
         let (_, epoch_start, epoch_next, _) = *arbitrary.data();
         let range = self.note_nullifiers(app, *note, epoch_start, epoch_next);
         let mk = self.pak.nk.derive_note_private(note.psi);
@@ -703,10 +702,10 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         app: &App<'_>,
-        spendable: ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-        arbitrary: ragu_pcd::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
+        spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
+        arbitrary: ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
         let unspent = self.unspent_bind(rng, app, arbitrary, note);
         let (lifted, ()) = app
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
@@ -720,8 +719,8 @@ impl WalletSim {
         pool: &PoolSim,
         note: &Note,
         target: EpochIndex,
-    ) -> ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
-        static SPENDABLE: Proved<ragu_pcd::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
+    ) -> ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
+        static SPENDABLE: Proved<ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>> =
             Proved::new("spendable_at");
 
         let creation_height = pool

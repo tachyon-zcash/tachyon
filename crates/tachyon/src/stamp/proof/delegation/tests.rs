@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu::ProductionRank;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -12,10 +12,7 @@ use crate::{
     witness,
 };
 
-fn note_secret(
-    app: &App<'_>,
-    rng: &mut StdRng,
-) -> ragu_pcd::Pcd<Pasta, ProductionRank, NoteSecret> {
+fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, ProductionRank, NoteSecret> {
     let pak = private::SpendingKey::from([0xAB; 32]).derive_proof_private();
     let note = Note {
         pk: pak.derive_payment_key(),

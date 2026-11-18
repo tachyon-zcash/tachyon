@@ -29,14 +29,14 @@ use alloc::vec::Vec;
 use core::array;
 
 use lazy_static::lazy_static;
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Coeff, Driver},
     maybe::Maybe as _,
-};
-use ragu_primitives::{
-    Boolean, Element, GadgetExt as _, Point, multiadd,
-    vec::{ConstLen, FixedVec},
+    primitives::{
+        Boolean, Element, GadgetExt as _, Point, multiadd,
+        vec::{ConstLen, FixedVec},
+    },
 };
 use udon::{
     curve::{Affine as _, Projective as _},

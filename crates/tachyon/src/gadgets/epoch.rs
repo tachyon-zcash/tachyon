@@ -2,15 +2,13 @@
 
 use core::ops::Deref;
 
-use ragu_core::{
+use ragu::{
     PoseidonPermutation as _, Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
     pasta::PoseidonFp,
-};
-use ragu_primitives::{
-    Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write,
+    primitives::{Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
 };
 use udon::field::Field as _;
 
