@@ -132,7 +132,7 @@ impl<E: Effect> PartialOrd for Plan<E> {
 impl Plan<effect::Spend> {
     /// Plan a spend of `note` with fresh $\theta$ and $\mathsf{rcv}$, selecting
     /// each again while it, or $\alpha$ for $\theta$, exceeds the
-    /// [`Fp::CAPACITY`](crate::pasta::Fp::CAPACITY) bits the stamp steps read
+    /// `Fp::CAPACITY` bits the stamp steps read
     /// it from.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
@@ -170,7 +170,7 @@ impl Plan<effect::Spend> {
 impl Plan<effect::Output> {
     /// Plan an output of `note` with fresh $\theta$ and $\mathsf{rcv}$,
     /// selecting each again while it, or $\alpha$ for $\theta$, exceeds the
-    /// [`Fp::CAPACITY`](crate::pasta::Fp::CAPACITY) bits the stamp steps read
+    /// `Fp::CAPACITY` bits the stamp steps read
     /// it from.
     ///
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
