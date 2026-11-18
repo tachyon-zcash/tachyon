@@ -1016,6 +1016,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
 }
 
 #[test]
+#[should_panic(expected = "profile has no bit left for another side")]
 fn qr_side_descend_refuses_a_full_register() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1048,19 +1049,15 @@ fn qr_side_descend_refuses_a_full_register() {
         )
         .unwrap();
     assert!(app.verify_uncompressed(&selection, &mut *rng).unwrap());
-    assert_matches!(
-        app
-            .fuse(
-                rng,
-                qr::QrSideDescend,
-                witness::qr_side_descend((*sides.data(), *selection.data()), true),
-                sides,
-                selection,
-            )
-            .err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "value exceeds its bit width"
-    );
+    let (_descended, ()) = app
+        .fuse(
+            rng,
+            qr::QrSideDescend,
+            witness::qr_side_descend((*sides.data(), *selection.data()), true),
+            sides,
+            selection,
+        )
+        .unwrap();
 }
 
 #[test]
