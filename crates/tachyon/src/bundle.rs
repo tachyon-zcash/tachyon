@@ -695,9 +695,13 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 
     fn read_proof_body<R: Read>(reader: R) -> io::Result<Self> {
         let bundle = Self::read_body(reader)?;
-        if 2 * bundle.actions.len() + bundle.stamp.adjuncts.len() + 1
-            > ProductionRank::num_coeffs() - 1
-        {
+        let root_count = bundle
+            .actions
+            .len()
+            .checked_mul(2)
+            .and_then(|count| count.checked_add(bundle.stamp.adjuncts.len()))
+            .and_then(|count| count.checked_add(1));
+        if root_count.is_none_or(|count| count >= ProductionRank::num_coeffs()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many adjuncts",
@@ -759,13 +763,19 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         &self,
         adjuncts: &[&Bundle<StrippedStamp>],
     ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
-        let n_actions =
-            self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
-        let n_fees = 1 + adjuncts.len();
+        let n_actions = adjuncts
+            .iter()
+            .try_fold(self.actions.len(), |count, adjunct| {
+                count.checked_add(adjunct.actions.len())
+            });
+        let root_count = n_actions
+            .and_then(|count| count.checked_mul(2))
+            .and_then(|count| count.checked_add(adjuncts.len()))
+            .and_then(|count| count.checked_add(1));
 
         // A set polynomial with n roots has n + 1 coefficients, so no
         // commitment matches a larger set.
-        if 2 * n_actions + n_fees > ProductionRank::num_coeffs() - 1 {
+        if root_count.is_none_or(|count| count >= ProductionRank::num_coeffs()) {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
@@ -915,12 +925,16 @@ impl<S: StampState> Bundle<S> {
 
         // A bundle's two tachygrams per action and its fee change are roots of
         // one set polynomial, which has one more coefficient than roots.
-        if 2 * n_actions + 1 > ProductionRank::num_coeffs() - 1 {
+        let Some(root_count) = n_actions
+            .checked_mul(2)
+            .and_then(|count| count.checked_add(1))
+            .filter(|&count| count < ProductionRank::num_coeffs())
+        else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many actions",
             ));
-        }
+        };
 
         if n_actions == 0 && value_balance != value::Balance::ZERO {
             return Err(io::Error::new(
@@ -984,7 +998,7 @@ impl<S: StampState> Bundle<S> {
         };
         let cm_change = Tachygram::read(&mut reader)?;
         seen.insert(cm_change);
-        if seen.len() != 2 * n_actions + 1 {
+        if seen.len() != root_count {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "tachygrams are not unique",

@@ -266,7 +266,10 @@ impl<P: Proof> ProofStamp<P> {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
-            if n_adjuncts + 1 > ProductionRank::num_coeffs() - 1 {
+            if n_adjuncts
+                .checked_add(1)
+                .is_none_or(|count| count >= ProductionRank::num_coeffs())
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many adjuncts",
