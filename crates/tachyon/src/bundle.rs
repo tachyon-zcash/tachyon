@@ -121,10 +121,11 @@ use crate::digest::blake2b;
 use crate::keys::{private, public};
 use crate::pasta::Fp;
 use crate::primitives::{Anchor, effect};
+use crate::reddsa::{self, BindingAuth};
 use crate::stamp::proof::{App, pool};
 use crate::stamp::{self, ProofStamp, StampState, StrippedStamp};
 use crate::{
-    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action, fee, reddsa,
+    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action, fee,
     serialization, value,
 };
 
@@ -1265,7 +1266,7 @@ impl TachyonBundle {
 /// digest computed at the transaction layer. The validator verifies
 /// `binding_sig` against it under $\mathsf{bvk}$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
+pub struct Signature(pub(crate) reddsa::Signature<BindingAuth>);
 
 impl Signature {
     /// Read a binding signature from the consensus wire format.
@@ -1274,8 +1275,9 @@ impl Signature {
     ///
     /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sig = serialization::read_binding_sig(&mut reader)?;
-        Ok(Self(sig))
+        let mut bytes = [0u8; 64];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self(reddsa::Signature::<BindingAuth>::from(bytes)))
     }
 
     /// Write a binding signature to the consensus wire format.
@@ -1284,7 +1286,7 @@ impl Signature {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_binding_sig(&mut writer, &self.0)?;
-        Ok(())
+        let bytes: [u8; 64] = self.0.into();
+        writer.write_all(&bytes)
     }
 }

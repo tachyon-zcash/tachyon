@@ -14,7 +14,8 @@ use crate::keys::{private, public};
 use crate::note::Note;
 use crate::pasta::EpAffine;
 use crate::primitives::{ActionDigest, Effect, Tachygram, effect};
-use crate::{reddsa, serialization, value};
+use crate::reddsa::{self, ActionAuth};
+use crate::{serialization, value};
 
 /// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
@@ -58,7 +59,16 @@ impl Descriptor {
                 "action commitment is the identity",
             ));
         }
-        let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
+        let mut rk_bytes = [0u8; 32];
+        reader.read_exact(&mut rk_bytes)?;
+        let rk = public::ActionVerificationKey(
+            reddsa::VerificationKey::<ActionAuth>::try_from(rk_bytes).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid action verification key",
+                )
+            })?,
+        );
         if EpAffine::from(rk).is_identity() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -75,8 +85,8 @@ impl Descriptor {
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_ep_affine(&mut writer, &self.cv.into())?;
-        serialization::write_action_vk(&mut writer, &self.rk.0)?;
-        Ok(())
+        let bytes: [u8; 32] = self.rk.0.into();
+        writer.write_all(&bytes)
     }
 }
 
@@ -218,7 +228,7 @@ impl<E: Effect> Plan<E> {
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
 #[display("Signature({:?})", self.0)]
-pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
+pub struct Signature(pub(crate) reddsa::Signature<ActionAuth>);
 
 impl PartialOrd for Signature {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
@@ -241,8 +251,9 @@ impl Signature {
     ///
     /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sig = serialization::read_action_sig(&mut reader)?;
-        Ok(Self(sig))
+        let mut bytes = [0u8; 64];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self(reddsa::Signature::<ActionAuth>::from(bytes)))
     }
 
     /// Write an action signature in the consensus wire format.
@@ -251,8 +262,8 @@ impl Signature {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_action_sig(&mut writer, &self.0)?;
-        Ok(())
+        let bytes: [u8; 64] = self.0.into();
+        writer.write_all(&bytes)
     }
 }
 

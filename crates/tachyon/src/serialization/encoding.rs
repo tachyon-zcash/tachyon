@@ -9,18 +9,17 @@ use udon::curve::Affine as _;
 use udon::field::Field as _;
 
 use crate::pasta::{EpAffine, EqAffine, Fp};
-use crate::reddsa;
-use crate::serialization::compact_size::{self, CompactSize};
+use crate::serialization::compact_size::{CompactSize, CompactSizeError};
 
 pub(crate) fn read_compactsize<R: Read>(mut reader: R) -> io::Result<u64> {
     let compact_size =
         CompactSize::read(&mut reader)?
             .enforce_valid()
             .map_err(|err| match err {
-                compact_size::CompactSizeError::NonCanonical(_) => {
+                CompactSizeError::NonCanonical(_) => {
                     io::Error::new(io::ErrorKind::InvalidData, "non-canonical compact size")
                 },
-                compact_size::CompactSizeError::ExceedsMaximum(_) => io::Error::new(
+                CompactSizeError::ExceedsMaximum(_) => io::Error::new(
                     io::ErrorKind::InvalidData,
                     "compact size exceeds consensus maximum",
                 ),
@@ -71,61 +70,4 @@ pub(crate) fn read_eq_affine<R: Read>(mut reader: R) -> io::Result<EqAffine> {
 /// Write a Vesta affine curve point (`EqAffine`) as 32 compressed bytes.
 pub(crate) fn write_eq_affine<W: Write>(mut writer: W, point: &EqAffine) -> io::Result<()> {
     writer.write_all(&point.to_bytes())
-}
-
-/// Read a RedPallas action verification key from 32 bytes.
-pub(crate) fn read_action_vk<R: Read>(
-    mut reader: R,
-) -> io::Result<reddsa::VerificationKey<reddsa::ActionAuth>> {
-    let mut bytes = [0u8; 32];
-    reader.read_exact(&mut bytes)?;
-    reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map_err(|_err| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid action verification key",
-        )
-    })
-}
-
-/// Write a RedPallas action verification key as 32 bytes.
-pub(crate) fn write_action_vk<W: Write>(
-    mut writer: W,
-    key: &reddsa::VerificationKey<reddsa::ActionAuth>,
-) -> io::Result<()> {
-    let bytes: [u8; 32] = (*key).into();
-    writer.write_all(&bytes)
-}
-
-/// Read a RedPallas action signature from 64 bytes.
-pub(crate) fn read_action_sig<R: Read>(
-    mut reader: R,
-) -> io::Result<reddsa::Signature<reddsa::ActionAuth>> {
-    let mut bytes = [0u8; 64];
-    reader.read_exact(&mut bytes)?;
-    Ok(reddsa::Signature::<reddsa::ActionAuth>::from(bytes))
-}
-
-/// Write a RedPallas action signature as 64 bytes.
-pub(crate) fn write_action_sig<W: Write>(
-    mut writer: W,
-    sig: &reddsa::Signature<reddsa::ActionAuth>,
-) -> io::Result<()> {
-    let bytes: [u8; 64] = (*sig).into();
-    writer.write_all(&bytes)
-}
-
-pub(crate) fn read_binding_sig<R: Read>(
-    mut reader: R,
-) -> io::Result<reddsa::Signature<reddsa::BindingAuth>> {
-    let mut bytes = [0u8; 64];
-    reader.read_exact(&mut bytes)?;
-    Ok(reddsa::Signature::<reddsa::BindingAuth>::from(bytes))
-}
-
-pub(crate) fn write_binding_sig<W: Write>(
-    mut writer: W,
-    sig: &reddsa::Signature<reddsa::BindingAuth>,
-) -> io::Result<()> {
-    let bytes: [u8; 64] = (*sig).into();
-    writer.write_all(&bytes)
 }
