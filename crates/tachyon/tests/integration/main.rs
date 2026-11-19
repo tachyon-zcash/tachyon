@@ -28,6 +28,8 @@ mod fixtures;
 #[cfg(test)]
 mod pczt_plan_review;
 #[cfg(test)]
+mod pczt_section;
+#[cfg(test)]
 mod proof;
 #[cfg(test)]
 mod qr;

@@ -1,6 +1,7 @@
 //! The Tachyon section of a partially constructed transaction.
 
 pub mod mirror;
+mod signing;
 #[cfg(test)]
 mod tests;
 mod updater;
@@ -9,6 +10,10 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use ragu::{Pcd, ProductionRank, Rank as _, pasta::Pasta};
+pub use signing::{
+    ApplySignatureError, IoFinalizerError, IoFinalizerField, MaxFeeOpeningReason, OpeningReason,
+    SignError, SignField, SignOpeningError,
+};
 use udon::{curve::Affine as _, field::Field as _};
 pub use updater::{InvalidIndex, SetPakError, Updater, WitnessAccessError, WitnessUpdateError};
 
@@ -184,6 +189,7 @@ struct Opening<E: OpeningEffect> {
 struct CheckedOpening<E: OpeningEffect> {
     opening: Opening<E>,
     descriptor: action::Descriptor,
+    alpha: ActionRandomizer<E>,
 }
 
 enum OpeningCheckError {
@@ -207,6 +213,7 @@ impl<E: OpeningEffect> Opening<E> {
         Ok(CheckedOpening {
             opening: self,
             descriptor,
+            alpha,
         })
     }
 }
@@ -453,6 +460,28 @@ pub enum OpeningField {
     Rcv,
 }
 
+/// A preimage field needed once the action kind and authority are known.
+#[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
+pub enum OpeningDataField {
+    /// A field of the note opening.
+    #[display("note {_0}")]
+    Note(NoteField),
+    /// Action entropy.
+    Theta,
+    /// Value commitment trapdoor.
+    Rcv,
+}
+
+impl From<OpeningDataField> for OpeningField {
+    fn from(field: OpeningDataField) -> Self {
+        match field {
+            OpeningDataField::Note(note) => Self::Note(note),
+            OpeningDataField::Theta => Self::Theta,
+            OpeningDataField::Rcv => Self::Rcv,
+        }
+    }
+}
+
 /// A field of a note opening.
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
 pub enum NoteField {
@@ -594,7 +623,7 @@ impl Bundle {
                     let ak = spend.ak.ok_or_else(|| missing(OpeningField::Ak))?;
                     let opening = action
                         .opening::<effect::Spend>(ak)
-                        .map_err(missing)?
+                        .map_err(|field| missing(field.into()))?
                         .check()
                         .map_err(|err| ReviewError::Plan(err.into()))?;
                     if action.descriptor != opening.descriptor {
@@ -605,7 +634,7 @@ impl Bundle {
                 ActionWitness::Output(_) => {
                     let opening = action
                         .opening::<effect::Output>(())
-                        .map_err(missing)?
+                        .map_err(|field| missing(field.into()))?
                         .check()
                         .map_err(|err| ReviewError::Plan(err.into()))?;
                     if action.descriptor != opening.descriptor {
@@ -709,7 +738,7 @@ impl Action {
     fn opening<E: OpeningEffect>(
         &self,
         authority: E::Authority,
-    ) -> Result<Opening<E>, OpeningField> {
+    ) -> Result<Opening<E>, OpeningDataField> {
         Self::opening_from(&self.note, self.theta, self.rcv, authority)
     }
 
@@ -718,11 +747,11 @@ impl Action {
         theta: Option<ActionEntropy>,
         rcv: Option<value::Trapdoor>,
         authority: E::Authority,
-    ) -> Result<Opening<E>, OpeningField> {
+    ) -> Result<Opening<E>, OpeningDataField> {
         Ok(Opening {
-            note: note.complete().map_err(OpeningField::Note)?,
-            theta: theta.ok_or(OpeningField::Theta)?,
-            rcv: rcv.ok_or(OpeningField::Rcv)?,
+            note: note.complete().map_err(OpeningDataField::Note)?,
+            theta: theta.ok_or(OpeningDataField::Theta)?,
+            rcv: rcv.ok_or(OpeningDataField::Rcv)?,
             authority,
         })
     }
@@ -760,11 +789,11 @@ impl Action {
                 rcv,
                 spend.ak.ok_or(DescriptorError::Missing(OpeningField::Ak))?,
             )
-            .map_err(DescriptorError::Missing)?
+            .map_err(|field| DescriptorError::Missing(field.into()))?
             .check()
             .map(|checked| checked.descriptor),
             ActionWitness::Output(_) => Self::opening_from::<effect::Output>(note, theta, rcv, ())
-                .map_err(DescriptorError::Missing)?
+                .map_err(|field| DescriptorError::Missing(field.into()))?
                 .check()
                 .map(|checked| checked.descriptor),
         };
