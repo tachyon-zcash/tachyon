@@ -1,5 +1,6 @@
 import Mathlib.Data.List.Prime
 import Tachyon.Qr
+import Tachyon.Spend
 
 /-!
 # Unspent lineages
@@ -114,18 +115,10 @@ inductive NoteNullifiersDerivable (member : ℕ → F → F[X]) (nf : C → ℕ 
         NoteNullifiersDerivable member nf emax
           ⟨left.cm, left.epoch_start, right.epoch_end, left.seq * right.seq⟩
 
-/-- A `NoteUnspent`'s header data `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`. -/
-structure NoteUnspent (C A : Type*) where
-  cm : C
-  anchor_start : A
-  epoch_start : ℕ
-  epoch_next : ℕ
-  anchor_next : A
-
 /-- `UnspentBind`: the derivation's sequence is `elapsed` times a witnessed complement. -/
-inductive NoteUnspentDerivable (Bucket : QrBucket F A → Prop) (qnr : F) (member : ℕ → F → F[X])
-    (nf : C → ℕ → F) (emax : ℕ) : NoteUnspent C A → Prop
-  | bind {unspent : ArbitraryUnspent F A} {nullifiers : NoteNullifiers F C} (complement : F[X]) :
+inductive NoteUnspentDerivable (Bucket : QrBucket F F → Prop) (qnr : F) (member : ℕ → F → F[X])
+    (nf : F → ℕ → F) (emax : ℕ) : NoteUnspent F → Prop
+  | bind {unspent : ArbitraryUnspent F F} {nullifiers : NoteNullifiers F F} (complement : F[X]) :
       ArbitraryUnspentDerivable Bucket qnr member emax unspent →
       NoteNullifiersDerivable member nf emax nullifiers →
       nullifiers.seq = unspent.elapsed * complement →
@@ -199,10 +192,12 @@ theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp
 /-- **Unspent lineage.** A derivable `NoteUnspent` that ends on the published entry anchor of its
 `epoch_next` starts on the entry anchor of its `epoch_start`, and the note's nullifier at each
 epoch of `[epoch_start, epoch_next)` is unpublished in that epoch. -/
-theorem NoteUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
+theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop} {nf : F → ℕ → F}
+    {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F} {zero genesis : F}
+    {chain : List (Chain.Stamp F F)} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
     (hqnr : ¬ IsSquare qnr) (hmember : MemberLaw member emax)
     (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch)
-    {u : NoteUnspent C A} (hu : NoteUnspentDerivable Bucket qnr member nf emax u)
+    {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member nf emax u)
     (hnext : u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next) :
     u.anchor_start = entry nextStamp nextEpoch zero chain u.epoch_start ∧
       ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (nf u.cm x) := by

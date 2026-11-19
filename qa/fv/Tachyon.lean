@@ -10,3 +10,6 @@ import Tachyon.Consensus.Entry
 import Tachyon.Qr
 import Tachyon.Unspent
 import Tachyon.Consensus
+import Tachyon.Spend
+import Tachyon.SpendTree
+import Tachyon.Consensus.Spends
