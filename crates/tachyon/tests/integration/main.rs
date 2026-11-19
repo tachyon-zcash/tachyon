@@ -30,6 +30,8 @@ mod pczt_delegated;
 #[cfg(test)]
 mod pczt_plan_review;
 #[cfg(test)]
+mod pczt_roles;
+#[cfg(test)]
 mod pczt_section;
 #[cfg(test)]
 mod proof;
