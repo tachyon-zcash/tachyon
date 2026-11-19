@@ -5,7 +5,7 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta};
 use udon::curve::Projective as _;
 
-use super::{ActionDigest, Anchor, Tachygram};
+use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
     collections::multiset,
     pasta,
@@ -13,7 +13,7 @@ use crate::{
     serialization,
 };
 
-/// Pedersen commitment to a stamp's tachygram set.
+/// Pedersen commitment to a tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
@@ -107,7 +107,7 @@ impl AnchorSetCommit {
     }
 }
 
-/// Witness polynomial for a stamp's tachygram set (members encoded as roots).
+/// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
@@ -122,6 +122,9 @@ pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
 
 impl AnchorSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
@@ -142,6 +145,9 @@ impl FromIterator<Anchor> for AnchorSetPoly {
 }
 
 impl TachygramSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Wraps an arbitrary polynomial, skipping set encoding, to exercise step
     /// inputs.
     #[cfg(any(test, feature = "test-utils"))]
@@ -164,6 +170,9 @@ impl TachygramSetPoly {
 }
 
 impl ActionSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
