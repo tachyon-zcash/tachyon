@@ -54,7 +54,8 @@ structure NoteSecret (F : Type*) where
   master : F
 
 /-- `NoteUnspent` header data `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
-(`pool.rs`). Its derivability is a parameter, modelled on `lean/qr-lineage`. -/
+(`pool.rs`). Its derivability is `NoteUnspentDerivable` (`Unspent.lean`); the steps here take
+it as a parameter. -/
 structure NoteUnspent (F : Type*) where
   cm : F
   anchor_start : F
@@ -106,12 +107,12 @@ theorem NoteSecretDerivable.master_eq {noteCommit : W → F → F → F} {paymen
       obtain rfl := hlaw.paymentKey_binds hpk
       rfl
 
-/-- The properties of `NoteUnspent` derivability the spend argument consumes, discharged on
-`lean/qr-lineage`. `QrBucketSeal` computes a bucket's `anchor_next` as the epoch fold of its final
-anchor and `epoch + 1`; `UnspentLift` and `UnspentFuse` emit a bucket's or their right input's
-far bound. -/
+/-- The property of `NoteUnspent` derivability the spend pair consumes
+(`NoteUnspentDerivable.spec`). `QrBucketSeal` computes a bucket's `anchor_next` as the epoch fold
+of its final anchor and `epoch + 1`; `UnspentLift` and `UnspentFuse` emit a bucket's or their right
+input's far bound. -/
 structure UnspentSpec (nextEpoch : F → ℕ → F) (Unspent : NoteUnspent F → Prop) : Prop where
-  /-- `anchor_next` is the entry anchor of `epoch_next`. -/
+  /-- `anchor_next` is a boundary digest into `epoch_next`. -/
   anchor_next_entry : ∀ {u : NoteUnspent F}, Unspent u →
     ∃ a, u.anchor_next = nextEpoch a u.epoch_next
 

@@ -109,6 +109,30 @@ info: 'Tachyon.no_double_spend_of_covered_spends' depends on axioms: [propext, C
 #print axioms Tachyon.no_double_spend_of_covered_spends
 
 /--
+info: 'Tachyon.QrBucketDerivable.covers' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.QrBucketDerivable.covers
+
+/--
+info: 'Tachyon.QrBucket.Covers.onChain' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.QrBucket.Covers.onChain
+
+/--
+info: 'Tachyon.NoteUnspentDerivable.lineage' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.NoteUnspentDerivable.lineage
+
+/--
+info: 'Tachyon.SpendDerivable.lineage' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.SpendDerivable.lineage
+
+/--
 info: 'Tachyon.Chain.Node.epoch_unique' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in

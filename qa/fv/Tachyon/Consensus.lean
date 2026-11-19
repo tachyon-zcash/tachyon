@@ -19,7 +19,8 @@ fails the window. One anchored later crosses the first's publication epoch and f
 
 `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes recency
 and the window from `Chain.Valid`, leaving the lineage and the nullifier pairs as hypotheses.
-`no_double_spend_of_covered_spends` (`Consensus/Spends.lean`) proves the pairs.
+`no_double_spend_of_covered_spends` (`Consensus/Spends.lean`) proves the pairs, the lineage and,
+unless `cm` is published again, its start bound.
 
 The second spend's lineage must start no later than the first's publication. A lineage starting
 from a later publication of the same `cm` spends a second paid note, not the first one again.
