@@ -8,7 +8,8 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{
-        Element, allocator::Allocator, comparison::GadgetEquals, enforce_le_bits, io::Write,
+        Element, allocator::Allocator, comparison::GadgetEquals, decompose_n, enforce_le_bits,
+        io::Write,
     },
 };
 
@@ -88,11 +89,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;
         let rest = self.element.sub(dr, &packed);
-        rest.enforce_lt::<{ MAX_MONEY.bit_width() as usize }>(
-            dr,
-            &mut (),
-            Fp::from(1u64 << MAX_MONEY.bit_width()),
-        )?;
+        decompose_n::<_, { MAX_MONEY.bit_width() as usize }>(dr, &mut (), &rest)?;
         Ok((Self { element: packed }, Self { element: rest }))
     }
 
