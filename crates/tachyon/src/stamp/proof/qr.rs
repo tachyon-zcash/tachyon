@@ -26,6 +26,7 @@ extern crate alloc;
 mod tests;
 
 use alloc::vec::Vec;
+use core::convert::Infallible;
 
 use ragu::{
     drivers::{Coeff, Driver, DriverValue},
@@ -49,9 +50,9 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeq, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolant,
-        QrInterpolantPoly, QrProfile, QrQuotient, QrQuotientPoly, Tachygram, TachygramSet,
-        TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeq, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant,
+        QrInterpolant, QrInterpolantPoly, QrProfile, QrQuotient, QrQuotientPoly, Tachygram,
+        TachygramSet, TachygramSetBridge, TachygramSetPoly,
     },
 };
 
@@ -126,10 +127,26 @@ impl Header<Fp> for QrIntake {
 /// A factorization of one intake's members. Selecting and extracting either
 /// side attests the exceptional-value assignment and the other side's class.
 ///
-/// Both slots hold a [`TachygramSet`]: the residue side, then the non-residue
-/// side.
+/// Both polynomials are a [`TachygramSetPoly`]: [`QrIntakeSides::RESIDUE`],
+/// then [`QrIntakeSides::NON_RESIDUE`].
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
+
+/// The members a split files on the residue side.
+#[derive(Debug)]
+pub struct ResidueSide(Infallible);
+
+/// The members a split files on the non-residue side. Its bridge hash is the
+/// header's `non_residue_hash`.
+#[derive(Debug)]
+pub struct NonResidueSide(Infallible);
+
+impl QrIntakeSides {
+    /// The [`ResidueSide`] polynomial.
+    pub const RESIDUE: PolySlot<TachygramSetPoly, ResidueSide> = PolySlot::new();
+    /// The [`NonResidueSide`] polynomial.
+    pub const NON_RESIDUE: PolySlot<TachygramSetPoly, NonResidueSide> = PolySlot::new();
+}
 
 #[derive(Gadget, Write)]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
@@ -151,7 +168,10 @@ impl Header<Fp> for QrIntakeSides {
         QrProfile,
         TachygramSetBridge,
     );
-    type OnlinePolyCommit = (TachygramSet, TachygramSet);
+    type OnlinePolyCommit = (
+        PolySlot<TachygramSetPoly, ResidueSide>,
+        PolySlot<TachygramSetPoly, NonResidueSide>,
+    );
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -242,7 +262,7 @@ impl Step<Pasta> for QrSummaryIntake {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(TachygramSet, left.polynomial(TachygramSet)))
+        Ok(Prepared::new().poly(TachygramSet, left.polynomial(Summary::ACCUMULATED)))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -295,9 +315,9 @@ impl Step<Pasta> for QrSummaryIntake {
             profile: gadgets::qr::QrProfile::root(dr),
         };
         let z = oracles.zeta().clone();
-        let accumulator = oracles.left(TachygramSet).open(dr, &z)?;
+        let accumulated = oracles.left(Summary::ACCUMULATED).open(dr, &z)?;
         let contents = oracles.output(TachygramSet).open(dr, &z)?;
-        accumulator.enforce_equal(dr, &contents)?;
+        accumulated.enforce_equal(dr, &contents)?;
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
@@ -639,11 +659,11 @@ impl Step<Pasta> for QrIntakeSplit {
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
             .poly(
-                TachygramSet,
+                QrIntakeSides::RESIDUE,
                 witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
             )
             .poly(
-                TachygramSet,
+                QrIntakeSides::NON_RESIDUE,
                 witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
             ))
     }
@@ -671,8 +691,8 @@ impl Step<Pasta> for QrIntakeSplit {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let z = oracles.zeta().clone();
-        let residue_at_z = oracles.output(TachygramSet).open(dr, &z)?;
-        let non_residue_at_z = oracles.output(TachygramSet).open(dr, &z)?;
+        let residue_at_z = oracles.output(QrIntakeSides::RESIDUE).open(dr, &z)?;
+        let non_residue_at_z = oracles.output(QrIntakeSides::NON_RESIDUE).open(dr, &z)?;
         let contents_at_z = oracles.left(TachygramSet).open(dr, &z)?;
         let product = residue_at_z.mul(dr, &non_residue_at_z)?;
         contents_at_z.enforce_equal(dr, &product)?;
@@ -775,7 +795,7 @@ impl Step<Pasta> for QrSideSelect {
             .discriminant
             .add(dr, &sides.intake.profile.depth)
             .negate(dr);
-        let value = oracles.left(TachygramSet).open(dr, &exceptional_element)?;
+        let value = oracles.left(QrIntakeSides::NON_RESIDUE).open(dr, &exceptional_element)?;
         value.enforce_nonzero(dr)?;
         // The hints are checked by `QrSideDescend`; opening them here keeps
         // them committed rather than held to the constant one.
@@ -837,9 +857,9 @@ impl Step<Pasta> for QrSideDescend {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         let selected = if witness.0 {
-            left.polynomial(TachygramSet)
+            left.polynomial(QrIntakeSides::RESIDUE)
         } else {
-            left.polynomial(TachygramSet)
+            left.polynomial(QrIntakeSides::NON_RESIDUE)
         };
         Ok(Prepared::new()
             .poly(TachygramSet, selected)
@@ -898,8 +918,8 @@ impl Step<Pasta> for QrSideDescend {
         )]
         bit.element().enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let non_residue_at_z = oracles.left(TachygramSet).open(dr, &z)?;
-        let residue_at_z = oracles.left(TachygramSet).open(dr, &z)?;
+        let non_residue_at_z = oracles.left(QrIntakeSides::NON_RESIDUE).open(dr, &z)?;
+        let residue_at_z = oracles.left(QrIntakeSides::RESIDUE).open(dr, &z)?;
         let delta = non_residue_at_z.sub(dr, &residue_at_z);
         delta.clone().enforce_nonzero(dr)?;
         let selected_delta = bit.element().mul(dr, &delta)?;
