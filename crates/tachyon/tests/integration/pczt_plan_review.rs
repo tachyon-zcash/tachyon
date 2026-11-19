@@ -33,3 +33,23 @@ fn checked_plan_rejects_duplicate_actions() {
         PlanError::DuplicateAction
     );
 }
+
+#[test]
+fn section_review_reconstructs_the_checked_plan() {
+    let rng = &mut StdRng::seed_from_u64(22);
+    let wallet = WalletSim::new(shared_sk());
+    let output = output_plan(rng, wallet.random_note(100));
+    let plan = Plan::new(
+        vec![],
+        vec![(output.note, output.theta, output.rcv)],
+        wallet.random_note(10),
+        vec![],
+    )
+    .unwrap();
+    let section = Bundle::from_plan(&plan);
+    section.actions()[0].verify_opening().unwrap();
+    assert_eq!(
+        section.plan().unwrap().effects().commitment(),
+        plan.effects().commitment()
+    );
+}
