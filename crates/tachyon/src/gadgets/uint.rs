@@ -8,7 +8,7 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{
-        Boolean, Element, GadgetExt as _, multipack,
+        Boolean, Element, decompose_n, multipack,
         vec::{ConstLen, FixedVec},
     },
 };
@@ -44,9 +44,9 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
-        let uint = Self::alloc(dr, element.value().map(Clone::clone))?;
-        uint.pack(dr)?.enforce_equal(dr, element)?;
-        Ok(uint)
+        Ok(Self {
+            bits: decompose_n(dr, &mut (), element)?,
+        })
     }
 
     /// The value the bits encode.

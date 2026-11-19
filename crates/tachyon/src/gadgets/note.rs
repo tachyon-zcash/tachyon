@@ -5,13 +5,7 @@ use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
-    primitives::{
-        Element, GadgetExt as _, Point,
-        allocator::Allocator,
-        decompose,
-        io::Write,
-        vec::{ConstLen, FixedVec},
-    },
+    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
 };
 
 use crate::{
@@ -90,7 +84,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         let blind = self.derive_feemax_blind(dr)?;
         // The blind's 254 bits recompose to it, so they are its canonical
         // bits; a blind at or above 2^254 has no proof.
-        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        let blind_bits = decompose_n::<_, 254>(dr, &mut (), &blind)?;
         let blind_point = fixed_base::R_BASE.mul(dr, &blind_bits)?;
         fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
@@ -102,7 +96,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         let blind = self.derive_feemax_blind(dr)?;
         // The blind's 254 bits recompose to it, so they are its canonical
         // bits; a blind at or above 2^254 has no proof.
-        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        let blind_bits = decompose_n::<_, 254>(dr, &mut (), &blind)?;
         fixed_base::R_BASE.mul(dr, &blind_bits)
     }
 

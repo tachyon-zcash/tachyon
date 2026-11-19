@@ -6,13 +6,7 @@ use ragu::{
     header::{Header, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
-    primitives::{
-        Element, GadgetExt as _, Point,
-        allocator::Allocator,
-        decompose,
-        io::Write,
-        vec::{ConstLen, FixedVec},
-    },
+    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use udon::{curve::Affine as _, field::Field as _};
@@ -227,7 +221,7 @@ impl Step<Pasta> for OutputAction {
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_output(dr, &theta, &cm_root)?;
         // Alpha's 254 bits recompose to it, so they are its canonical bits.
-        let alpha_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &alpha)?)?;
+        let alpha_bits = decompose_n::<_, 254>(dr, &mut (), &alpha)?;
         let rk = fixed_base::G_BASE.mul(dr, &alpha_bits)?;
         let action_root = poseidon::circuit::action_digest(
             dr,
@@ -373,7 +367,7 @@ impl Step<Pasta> for SpendAction {
         let theta = Element::alloc(dr, &mut (), witness.as_ref().map(|&(theta, ..)| theta.0))?;
         let alpha = poseidon::circuit::alpha_spend(dr, &theta, &cm)?;
         // Alpha's 254 bits recompose to it, so they are its canonical bits.
-        let alpha_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &alpha)?)?;
+        let alpha_bits = decompose_n::<_, 254>(dr, &mut (), &alpha)?;
         let rk = fixed_base::G_BASE.mul_and_add(dr, &alpha_bits, &ak)?;
         let action_root = poseidon::circuit::action_digest(dr, &cv, &rk, (&nf_current, &nf_next))?;
         #[expect(clippy::indexing_slicing, reason = "framework enforces NUM_STAGED = 1")]
