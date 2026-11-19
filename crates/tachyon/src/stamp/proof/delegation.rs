@@ -7,10 +7,6 @@
 //! All headers are wallet-only, and no key material rides the exported
 //! [`NoteNullifiers`].
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
@@ -309,11 +305,9 @@ impl Step<Pasta> for NullifierDerive {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                NfSeqPoly::SLOT,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let seq = &witness.1;
+        Ok(NfSeqPoly::SLOT
+            .poly(Prepared::new(), seq)
             .stage([Fp::from(witness.0)]))
     }
 
@@ -446,10 +440,8 @@ impl Step<Pasta> for NullifierFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            NfSeqPoly::SLOT,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let merged_seq = &witness.0;
+        Ok(NfSeqPoly::SLOT.poly(Prepared::new(), merged_seq))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

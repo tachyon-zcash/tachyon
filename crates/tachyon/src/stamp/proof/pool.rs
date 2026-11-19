@@ -19,10 +19,6 @@
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
@@ -286,18 +282,10 @@ impl Step<Pasta> for AnchorSpanSeed {
             witness.1.into(),
             bridge_hash(witness.2.commit().as_ref().to_affine()),
         ));
-        Ok(Prepared::new()
-            .poly(
-                AnchorSetPoly::SLOT,
-                AnchorSetPoly::from_iter([anchor_end])
-                    .as_ref()
-                    .iter_coeffs()
-                    .collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let stamp = &witness.2;
+        let prepared =
+            AnchorSetPoly::SLOT.poly(Prepared::new(), &AnchorSetPoly::from_iter([anchor_end]));
+        Ok(TachygramSetPoly::SLOT.poly(prepared, stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -399,10 +387,8 @@ impl Step<Pasta> for AnchorSpanFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            AnchorSetPoly::SLOT,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let combined = &witness.0;
+        Ok(AnchorSetPoly::SLOT.poly(Prepared::new(), combined))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -480,10 +466,8 @@ impl Step<Pasta> for UnspentFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            NfSeqPoly::SLOT,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let combined_elapsed_seq = &witness.0;
+        Ok(NfSeqPoly::SLOT.poly(Prepared::new(), combined_elapsed_seq))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -593,11 +577,9 @@ impl Step<Pasta> for UnspentLift {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                NfSeqPoly::SLOT,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let extended_seq = &witness.3;
+        Ok(NfSeqPoly::SLOT
+            .poly(Prepared::new(), extended_seq)
             .stage([Fp::from(witness.0)]))
     }
 
@@ -744,10 +726,8 @@ impl Step<Pasta> for UnspentBind {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            NfSeqPoly::SLOT,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let complement_seq = &witness.0;
+        Ok(NfSeqPoly::SLOT.poly(Prepared::new(), complement_seq))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

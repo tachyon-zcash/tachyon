@@ -1,9 +1,5 @@
 //! Stamp header and stamp-producing/transforming steps.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
@@ -193,15 +189,10 @@ impl Step<Pasta> for OutputAction {
             .randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let digest = ActionDigest::new(cv, rk, (cm, pad));
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (action_set, tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, tachygram_set)
             .stage([Fp::from(digest)]))
     }
 
@@ -327,15 +318,10 @@ impl Step<Pasta> for SpendAction {
             rk,
             (Tachygram::from(nf_current), Tachygram::from(nf_next)),
         );
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (action_set, tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, tachygram_set)
             .stage([Fp::from(digest)]))
     }
 
@@ -445,15 +431,9 @@ impl Step<Pasta> for StampMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -541,15 +521,9 @@ impl Step<Pasta> for ActionMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -640,15 +614,9 @@ impl Step<Pasta> for StampLift {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                left.polynomial(TachygramSetPoly::SLOT),
-            ))
+        let action_set = &witness.0;
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -733,12 +701,8 @@ impl Step<Pasta> for ActionLift {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(ActionSetPoly::SLOT, left.polynomial(ActionSetPoly::SLOT))
-            .poly(
-                TachygramSetPoly::SLOT,
-                left.polynomial(TachygramSetPoly::SLOT),
-            ))
+        let prepared = ActionSetPoly::SLOT.copy_from(Prepared::new(), &left, ActionSetPoly::SLOT);
+        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -819,15 +783,10 @@ impl Step<Pasta> for FeeFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.2.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.2.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (output_action_set, output_tachygram_set) = (&witness.2.0, &witness.2.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), output_action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, output_tachygram_set)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -977,15 +936,10 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (fee_action_set, fee_tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), fee_action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, fee_tachygram_set)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -1148,15 +1102,9 @@ impl Step<Pasta> for StampUnmerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSetPoly::SLOT,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSetPoly::SLOT,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

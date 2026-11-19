@@ -12,9 +12,6 @@
 //! serves that bucket's own proof, which every consumer of a replayed bucket
 //! takes unchanged.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
 use core::array;
 
 use ragu::{
@@ -726,10 +723,8 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let contents = &witness.1;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), contents))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

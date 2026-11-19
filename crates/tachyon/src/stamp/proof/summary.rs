@@ -7,9 +7,6 @@
 //! summaries whose anchors are equal. The joined chain contains every stamp
 //! absorption.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
 use core::convert::Infallible;
 
 use ragu::{
@@ -128,10 +125,9 @@ impl Step<Pasta> for SummarySeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let stamp = witness.2.as_ref().iter_coeffs().collect::<Vec<_>>();
-        Ok(Prepared::new()
-            .poly(Summary::ACCUMULATED, stamp.clone())
-            .poly(Summary::LAST_STAMP, stamp))
+        let stamp = &witness.2;
+        let prepared = Summary::ACCUMULATED.poly(Prepared::new(), stamp);
+        Ok(Summary::LAST_STAMP.poly(prepared, stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -226,15 +222,9 @@ impl Step<Pasta> for SummaryAdvance {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                Summary::ACCUMULATED,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                Summary::LAST_STAMP,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (extended, stamp) = (&witness.0, &witness.1);
+        let prepared = Summary::ACCUMULATED.poly(Prepared::new(), extended);
+        Ok(Summary::LAST_STAMP.poly(prepared, stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(

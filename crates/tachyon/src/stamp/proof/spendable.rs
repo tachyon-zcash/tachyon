@@ -8,10 +8,6 @@
 //! that epoch; [`SpendableLift`] advances the latter over [`NoteUnspent`]
 //! segments.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
@@ -117,10 +113,8 @@ impl Step<Pasta> for SpendableInit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let creation_set = &witness.1;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), creation_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
