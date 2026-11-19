@@ -216,3 +216,66 @@ fn mirror_round_trips_proofs_and_rejects_invalid_pairs() {
         "duplicate tachygram in actions proof 0"
     );
 }
+
+#[test]
+fn combine_is_order_independent_and_rejects_conflicts() {
+    use crate::{Tachygram, stamp::proof::new_application};
+
+    let note = Note {
+        pk: Fp::ONE.into(),
+        value: value::Positive::ZERO,
+        psi: Fp::ONE.into(),
+        rcm: Fp::ONE.into(),
+    };
+    let outputs = [1, 2].map(|scalar| {
+        (
+            note,
+            ActionEntropy(Fp::ONE),
+            value::ValueTrapdoor(Fq::from(scalar)),
+        )
+    });
+    let plan = Plan::new(Vec::new(), Vec::from(outputs), note, Vec::new()).unwrap();
+    let section = Bundle::from_plan(&plan);
+    let mut left = section.clone();
+    let mut right = section.clone();
+    left.memo.push(1);
+    assert_eq!(
+        left.clone().combine(right.clone()).unwrap_err().to_string(),
+        "effects mismatch"
+    );
+    left.memo.clear();
+    left.actions[0].note.psi = None;
+    right.actions[1].theta = None;
+    assert_eq!(
+        left.clone().combine(right.clone()).unwrap().to_mirror(),
+        right.clone().combine(left.clone()).unwrap().to_mirror()
+    );
+
+    right.actions[0].rcv = Some(value::ValueTrapdoor(Fq::from(3)));
+    assert_eq!(
+        left.clone().combine(right).unwrap_err().to_string(),
+        "field conflict: action 0 Rcv"
+    );
+
+    let mut full = section;
+    let app = new_application().unwrap();
+    let [left_first, right_first, left_second, right_second] =
+        [1, 2, 3, 4].map(|value| Tachygram::from(Fp::from(value)));
+    let first = full.actions[0].descriptor;
+    let second = full.actions[1].descriptor;
+    let common = stamp::ActionsProof {
+        pairs: BTreeMap::from([(first, (left_first, right_first))]),
+        anchor: Anchor::default(),
+        proof: Box::new(app.bootstrap_proof().clone()),
+    };
+    let mut overlapping = common.clone();
+    overlapping
+        .pairs
+        .insert(second, (left_second, right_second));
+    left.actions_proofs.push(common);
+    full.actions_proofs.push(overlapping);
+    assert_eq!(
+        left.combine(full).unwrap_err().to_string(),
+        "overlapping action proofs"
+    );
+}
