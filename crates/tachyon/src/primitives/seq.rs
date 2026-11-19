@@ -16,7 +16,7 @@ use crate::{
     nullifier::Nullifier,
     pasta,
     pasta::{Eq, Fp},
-    primitives::EpochIndex,
+    primitives::{EpochIndex, PolySlot},
 };
 
 /// Pedersen commitment to a nullifier sequence.
@@ -29,6 +29,9 @@ pub struct NfSeqCommit(Eq);
 pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
 
 impl NfSeqPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Build the sequence polynomial for one contiguous run: the members of
     /// the consecutive epochs starting at `epoch_start`.
     #[must_use]

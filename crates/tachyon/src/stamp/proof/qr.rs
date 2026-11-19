@@ -20,17 +20,15 @@
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
 //! profile against a bucket and opens the bucket at it.
 
-extern crate alloc;
-
 #[cfg(test)]
 mod tests;
 
-use alloc::vec::Vec;
+use core::convert::Infallible;
 
 use ragu::{
     drivers::{Coeff, Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, OnlinePoly, Padding, Suffix},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
     primitives::{Boolean, Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
@@ -39,9 +37,8 @@ use ragu::{
 use udon::{curve::EndomorphismAffine, field::Field as _};
 
 use super::{
-    delegation::NfSeq,
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
-    summary::{Summary, TachygramAccumulator},
+    summary::Summary,
 };
 pub use crate::collections::qr::classify;
 use crate::{
@@ -50,41 +47,10 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
+        QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
     },
 };
-
-/// The polynomial whose roots are the tachygrams an intake routes or a bucket
-/// holds.
-#[derive(Clone, Copy, Debug)]
-pub struct QrContents;
-
-impl OnlinePoly for QrContents {}
-
-/// The polynomial whose roots are a split's residue-side members.
-#[derive(Clone, Copy, Debug)]
-pub struct QrResidues;
-
-impl OnlinePoly for QrResidues {}
-
-/// The polynomial whose roots are a split's non-residue-side members.
-#[derive(Clone, Copy, Debug)]
-pub struct QrNonResidues;
-
-impl OnlinePoly for QrNonResidues {}
-
-/// A descent's interpolant hint.
-#[derive(Clone, Copy, Debug)]
-pub struct QrInterpolant;
-
-impl OnlinePoly for QrInterpolant {}
-
-/// A descent's quotient hint.
-#[derive(Clone, Copy, Debug)]
-pub struct QrQuotient;
-
-impl OnlinePoly for QrQuotient {}
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
 ///
@@ -108,7 +74,7 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for QrIntake {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
-    type OnlinePolyCommit = (Padding, QrContents);
+    type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; QrIntakeOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(4);
@@ -157,9 +123,26 @@ impl Header<Fp> for QrIntake {
 /// A factorization of one intake's members. Selecting and extracting either
 /// side attests the exceptional-value assignment and the other side's class.
 ///
-/// The output polynomials are ordered residue, then non-residue.
+/// Both polynomials are a [`TachygramSetPoly`]: [`QrIntakeSides::RESIDUE`],
+/// then [`QrIntakeSides::NON_RESIDUE`].
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
+
+/// The members a split files on the residue side.
+#[derive(Debug)]
+pub struct ResidueSide(Infallible);
+
+/// The members a split files on the non-residue side. Its bridge hash is the
+/// header's `non_residue_hash`.
+#[derive(Debug)]
+pub struct NonResidueSide(Infallible);
+
+impl QrIntakeSides {
+    /// The [`NonResidueSide`] polynomial.
+    pub const NON_RESIDUE: PolySlot<TachygramSetPoly, NonResidueSide> = PolySlot::new();
+    /// The [`ResidueSide`] polynomial.
+    pub const RESIDUE: PolySlot<TachygramSetPoly, ResidueSide> = PolySlot::new();
+}
 
 #[derive(Gadget, Write)]
 pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D::F>> {
@@ -182,7 +165,10 @@ impl Header<Fp> for QrIntakeSides {
         QrProfile,
         TachygramSetBridge,
     );
-    type OnlinePolyCommit = (QrResidues, QrNonResidues);
+    type OnlinePolyCommit = (
+        PolySlot<TachygramSetPoly, ResidueSide>,
+        PolySlot<TachygramSetPoly, NonResidueSide>,
+    );
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -220,7 +206,7 @@ pub struct QrSideSelection;
 
 impl Header<Fp> for QrSideSelection {
     type Data = <QrIntakeSides as Header<Fp>>::Data;
-    type OnlinePolyCommit = (QrInterpolant, QrQuotient);
+    type OnlinePolyCommit = (PolySlot<QrInterpolantPoly>, PolySlot<QrQuotientPoly>);
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(16);
@@ -258,7 +244,7 @@ impl Step<Pasta> for QrSummaryIntake {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(QrContents, left.polynomial(TachygramAccumulator)))
+        Ok(TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, Summary::ACCUMULATED))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -311,9 +297,9 @@ impl Step<Pasta> for QrSummaryIntake {
             profile: gadgets::qr::QrProfile::root(dr),
         };
         let z = oracles.zeta().clone();
-        let accumulator = oracles.left(TachygramAccumulator).open(dr, &z)?;
-        let contents = oracles.output(QrContents).open(dr, &z)?;
-        accumulator.enforce_equal(dr, &contents)?;
+        let accumulated = oracles.left(Summary::ACCUMULATED).open(dr, &z)?;
+        let contents = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
+        accumulated.enforce_equal(dr, &contents)?;
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),
             data,
@@ -349,10 +335,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            QrContents,
-            witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let stamp = &witness.3;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -397,7 +381,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
             witness.as_ref().map(|&(_, epoch, ..)| epoch),
         )?;
         let z = oracles.zeta().clone();
-        let stamp_at_z = oracles.output(QrContents).open(dr, &z)?;
+        let stamp_at_z = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         // The empty set polynomial is the constant one, so a stamp whose
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
@@ -481,7 +465,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let zeta = oracles.zeta().clone();
-        let contents = oracles.output(QrContents).open(dr, &zeta)?;
+        let contents = oracles.output(TachygramSetPoly::SLOT).open(dr, &zeta)?;
         let one = Element::constant(dr, Fp::ONE);
         contents.enforce_equal(dr, &one)?;
         let anchor_element = Element::alloc(
@@ -547,10 +531,8 @@ impl Step<Pasta> for QrIntakeMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            QrContents,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let merged = &witness.0;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), merged))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -578,9 +560,9 @@ impl Step<Pasta> for QrIntakeMerge {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let right_intake = right_encoded.as_gadget();
         let z = oracles.zeta().clone();
-        let left_contents = oracles.left(QrContents).open(dr, &z)?;
-        let right_contents = oracles.right(QrContents).open(dr, &z)?;
-        let merged_contents = oracles.output(QrContents).open(dr, &z)?;
+        let left_contents = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let right_contents = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let merged_contents = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let expected_contents = left_contents.mul(dr, &right_contents)?;
         merged_contents.enforce_equal(dr, &expected_contents)?;
         for (left_element, right_element) in [
@@ -647,15 +629,9 @@ impl Step<Pasta> for QrIntakeSplit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                QrResidues,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                QrNonResidues,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (non_residue, residue) = (&witness.0, &witness.1);
+        let prepared = QrIntakeSides::RESIDUE.poly(Prepared::new(), residue);
+        Ok(QrIntakeSides::NON_RESIDUE.poly(prepared, non_residue))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -681,9 +657,9 @@ impl Step<Pasta> for QrIntakeSplit {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let z = oracles.zeta().clone();
-        let residue_at_z = oracles.output(QrResidues).open(dr, &z)?;
-        let non_residue_at_z = oracles.output(QrNonResidues).open(dr, &z)?;
-        let contents_at_z = oracles.left(QrContents).open(dr, &z)?;
+        let residue_at_z = oracles.output(QrIntakeSides::RESIDUE).open(dr, &z)?;
+        let non_residue_at_z = oracles.output(QrIntakeSides::NON_RESIDUE).open(dr, &z)?;
+        let contents_at_z = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
         let product = residue_at_z.mul(dr, &non_residue_at_z)?;
         contents_at_z.enforce_equal(dr, &product)?;
         // An empty intake's contents are the constant one.
@@ -740,15 +716,9 @@ impl Step<Pasta> for QrSideSelect {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                QrInterpolant,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                QrQuotient,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (interpolant, quotient) = (&witness.0, &witness.1);
+        let prepared = QrInterpolantPoly::SLOT.poly(Prepared::new(), interpolant);
+        Ok(QrQuotientPoly::SLOT.poly(prepared, quotient))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -778,13 +748,15 @@ impl Step<Pasta> for QrSideSelect {
             .discriminant
             .add(dr, &sides.intake.profile.depth)
             .negate(dr);
-        let value = oracles.left(QrNonResidues).open(dr, &exceptional_element)?;
+        let value = oracles
+            .left(QrIntakeSides::NON_RESIDUE)
+            .open(dr, &exceptional_element)?;
         value.enforce_nonzero(dr)?;
         // The hints are checked by `QrSideDescend`; opening them here keeps
         // them committed rather than held to the constant one.
         let zeta = oracles.zeta().clone();
-        oracles.output(QrInterpolant).open(dr, &zeta)?;
-        oracles.output(QrQuotient).open(dr, &zeta)?;
+        oracles.output(QrInterpolantPoly::SLOT).open(dr, &zeta)?;
+        oracles.output(QrQuotientPoly::SLOT).open(dr, &zeta)?;
         let encoded = Encoded::from_gadget(sides.clone());
         Ok(((left_encoded, right_encoded, encoded), left, D::unit()))
     }
@@ -839,14 +811,13 @@ impl Step<Pasta> for QrSideDescend {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let selected = if witness.0 {
-            left.polynomial(QrResidues)
+        let &(bit,) = witness;
+        let prepared = if bit {
+            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
         } else {
-            left.polynomial(QrNonResidues)
+            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
         };
-        Ok(Prepared::new()
-            .poly(QrContents, selected)
-            .stage([Fp::from(u64::from(witness.0))]))
+        Ok(prepared.stage([Fp::from(u64::from(bit))]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -897,19 +868,19 @@ impl Step<Pasta> for QrSideDescend {
         )]
         bit.element().enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let non_residue_at_z = oracles.left(QrNonResidues).open(dr, &z)?;
-        let residue_at_z = oracles.left(QrResidues).open(dr, &z)?;
+        let non_residue_at_z = oracles.left(QrIntakeSides::NON_RESIDUE).open(dr, &z)?;
+        let residue_at_z = oracles.left(QrIntakeSides::RESIDUE).open(dr, &z)?;
         let delta = non_residue_at_z.sub(dr, &residue_at_z);
         delta.clone().enforce_nonzero(dr)?;
         let selected_delta = bit.element().mul(dr, &delta)?;
         let sibling_at_z = residue_at_z.add(dr, &selected_delta);
         let selected_at_z = non_residue_at_z.sub(dr, &selected_delta);
         oracles
-            .output(QrContents)
+            .output(TachygramSetPoly::SLOT)
             .open(dr, &z)?
             .enforce_equal(dr, &selected_at_z)?;
-        let interpolant_at_z = oracles.right(QrInterpolant).open(dr, &z)?;
-        let quotient_at_z = oracles.right(QrQuotient).open(dr, &z)?;
+        let interpolant_at_z = oracles.right(QrInterpolantPoly::SLOT).open(dr, &z)?;
+        let quotient_at_z = oracles.right(QrQuotientPoly::SLOT).open(dr, &z)?;
         let shifted = z.add(dr, &discriminant_element);
         let sibling_product = sibling_at_z.mul(dr, &quotient_at_z)?;
         let interpolant_square = interpolant_at_z.square(dr)?;
@@ -953,8 +924,8 @@ impl Step<Pasta> for QrSideDescend {
 /// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
 /// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
 /// computes `anchor_next` from the intake's `anchor_end`.
-/// [`QrContents`] holds the contents. `contents_hash` is its certified bridge
-/// hash.
+/// The [`TachygramSetPoly`] holds the contents. `contents_hash` is its
+/// certified bridge hash.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -982,7 +953,7 @@ impl Header<Fp> for QrBucket {
         QrProfile,
         TachygramSetBridge,
     );
-    type OnlinePolyCommit = (Padding, QrContents);
+    type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; QrBucketOutput<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(11);
@@ -1093,7 +1064,7 @@ impl Step<Pasta> for QrBucketSeal {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(QrContents, left.polynomial(QrContents)))
+        Ok(TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1149,9 +1120,9 @@ impl Step<Pasta> for QrBucketSeal {
             )
         });
         let zeta = oracles.zeta().clone();
-        let contents = oracles.left(QrContents).open(dr, &zeta)?;
+        let contents = oracles.left(TachygramSetPoly::SLOT).open(dr, &zeta)?;
         oracles
-            .output(QrContents)
+            .output(TachygramSetPoly::SLOT)
             .open(dr, &zeta)?
             .enforce_equal(dr, &contents)?;
         Ok((
@@ -1241,8 +1212,9 @@ impl Step<Pasta> for QrUnspentInit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(NfSeq, witness.3.as_ref().iter_coeffs().collect::<Vec<_>>())
+        let sequence = &witness.3;
+        Ok(NfSeqPoly::SLOT
+            .poly(Prepared::new(), sequence)
             .stage([Fp::from(witness.0)]))
     }
 
@@ -1288,14 +1260,16 @@ impl Step<Pasta> for QrUnspentInit {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let sequence_at_z = oracles.output(NfSeq).open(dr, &z)?;
+        let sequence_at_z = oracles.output(NfSeqPoly::SLOT).open(dr, &z)?;
         let expected_sequence = gadgets::indexed_multiset::Member {
             index: (*bucket.epoch).clone(),
             value: value_element.clone(),
         }
         .eval(dr, &z)?;
         sequence_at_z.enforce_equal(dr, &expected_sequence)?;
-        let contents_at_value = oracles.left(QrContents).open(dr, &value_element)?;
+        let contents_at_value = oracles
+            .left(TachygramSetPoly::SLOT)
+            .open(dr, &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
             contents_at_value.value().map(|value| *value),

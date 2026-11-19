@@ -8,10 +8,6 @@
 //! that epoch; [`SpendableLift`] advances the latter over [`NoteUnspent`]
 //! segments.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
@@ -22,17 +18,12 @@ use ragu::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
-use super::{
-    delegation::NoteNullifiers,
-    pool::NoteUnspent,
-    qr::{QrBucket, QrContents},
-    stamp::FoldedStamp,
-};
+use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly},
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -53,7 +44,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
-    type OnlinePolyCommit = (Padding, FoldedStamp);
+    type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -122,10 +113,8 @@ impl Step<Pasta> for SpendableInit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            FoldedStamp,
-            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let creation_set = &witness.1;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), creation_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -172,7 +161,9 @@ impl Step<Pasta> for SpendableInit {
         let anchor =
             poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_hash)?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let evaluation = oracles.output(FoldedStamp).open(dr, &nullifiers.cm)?;
+        let evaluation = oracles
+            .output(TachygramSetPoly::SLOT)
+            .open(dr, &nullifiers.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (cm, ..) = left.take();
@@ -259,7 +250,9 @@ impl Step<Pasta> for QrSpendableInit {
         // bucket directly.
         epoch_next.enforce_equal(dr, &unspent.epoch_next)?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.right(QrContents).open(dr, &unspent.cm)?;
+        let evaluation = oracles
+            .right(TachygramSetPoly::SLOT)
+            .open(dr, &unspent.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();

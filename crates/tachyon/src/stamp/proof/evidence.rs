@@ -12,9 +12,6 @@
 //! serves that bucket's own proof, which every consumer of a replayed bucket
 //! takes unchanged.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
 use core::array;
 
 use ragu::{
@@ -27,7 +24,7 @@ use ragu::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
-use super::qr::{QrBucket, QrBucketOutput, QrContents};
+use super::qr::{QrBucket, QrBucketOutput};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
@@ -686,8 +683,8 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
 /// Two permutations (the leaf digest).
-/// [`QrContents`] holds the contents and opens once. Its bridge hash enters the
-/// leaf.
+/// The [`TachygramSetPoly`] holds the contents and opens once. Its bridge hash
+/// enters the leaf.
 ///
 /// # Soundness
 ///
@@ -725,10 +722,8 @@ impl Step<Pasta> for EvidenceTreeOpen {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            QrContents,
-            witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let contents = &witness.1;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), contents))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -766,7 +761,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             contents_hash: gadgets::bridge_hash::point(dr, oracles.bridge_hash())?,
         };
         let zeta = oracles.zeta().clone();
-        oracles.output(QrContents).open(dr, &zeta)?;
+        oracles.output(TachygramSetPoly::SLOT).open(dr, &zeta)?;
         let leaf = poseidon::circuit::evidence_tree_leaf(
             dr,
             &fields.epoch,
