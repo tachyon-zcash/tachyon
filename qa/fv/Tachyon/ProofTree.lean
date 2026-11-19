@@ -9,11 +9,13 @@ differs (`Actions`: anchor; `Stamp`: O1 bridge hash and anchor). `Actions` carri
 lineage. `Stamp` carries fee-bearing content and is the kind consensus verifies. `ActionsDerivable`
 and `StampDerivable` are the headers an idealized PCD verifier accepts at each kind: every accepted
 header is the output of a registered step on accepted inputs, which idealizes PCD knowledge
-soundness.
+soundness. Ragu's internal rerandomization step carries its input's header data and both slots
+unchanged, so it adds no derivable state and has no constructor.
 
-`IsFee` is the fee-digest domain, separate from the action-digest domain. `R e d` is the tachygram
-multiset digest `d` derives at epoch `e`: a spend's nullifier pair, an output's `cm` and pad, or a
-fee's change commitment.
+`IsFee` is the fee-digest domain (`Tachyon-FeeDg`), separate from the action-digest domain
+(`Tachyon-ActionDg`). `R e d` is the tachygram multiset digest `d` derives at epoch `e`: a spend's
+nullifier pair, an output's `cm` and pad, or a fee's change commitment. The digest's preimage holds
+those tachygrams.
 
 `FeeFuse` is the only step from `Actions` to `Stamp`. It multiplies in exactly one fee leaf over
 non-empty fee-free content (`ActionsDerivable.feeFuse_leaves`). `StampUnmerge` can divide that fee

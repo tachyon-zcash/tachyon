@@ -498,7 +498,7 @@ Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand,
 `FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note). Its fee digest absorbs the same fee change commitment that it adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
 
 The Lean results in `qa/fv` prove this multiset argument for a hand-written semantic model, not equivalence with the Rust steps or production PCD soundness.
-They assume a common digest-to-tachygram pairing at each epoch, commitment/bridge binding, polynomial identities in place of random-point checks, and accepted derivations under the fixed Tachyon registry.
+They take the digest-to-tachygram pairing above as exact rather than collision-resistant, and assume commitment/bridge binding, polynomial identities in place of random-point checks, and accepted derivations under the fixed Tachyon registry.
 Lift epoch preservation remains a hypothesis of stamp derivability; the separate span theorem supplies it under an idealized hash law and output chain membership, without proving that membership propagates through an entire derivation.
 The algebraic unmerge relation can remove a fee leaf too: coverage of the published bundle's fee descriptor, not derivability alone, supplies its fee leaf.
 The no-double-spend result additionally assumes the second spend's exclusion lineage and that it starts no later than the first spend's publication; it does not certify the scaled-split or oversized-bucket cases above. `qa/fv/README.md` records the source correspondence and remaining boundaries.

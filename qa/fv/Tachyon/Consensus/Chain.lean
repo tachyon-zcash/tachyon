@@ -167,7 +167,8 @@ theorem BlockAnchor.toNode {e : E} {a : A}
 /-! ## Anchor spans and `StampLift` epoch invariance -/
 
 /-- Semantic `AnchorSpan` state: Rust header data is `(anchor_start, anchor_end)`;
-`members` is output slot O0, idealized as its committed polynomial in `F[X]`. -/
+`members` is output slot O0, idealized as its committed polynomial in `F[X]`. Slot O1 holds the
+seed's tachygram set for its bridge hash; no lift reads it, so the model omits it. -/
 structure AnchorSpan (F : Type*) [Field F] where
   anchor_start : F
   members : F[X]
@@ -262,8 +263,9 @@ end AnchorChain
 
 /-! ## Block-level published stamps, anchor recency, and the two-epoch window -/
 
-/-- A stamp as included in a block: its referenced pool `anchor`, its wire `tachygrams` list, and
-the publication `epoch` of the containing block. -/
+/-- A stamp as included in a block: its referenced pool `anchor`, the `tachygrams` its covered
+bundles publish (each action's pair and each bundle's fee change), and the publication `epoch` of
+the containing block. -/
 structure Stamp (F A : Type*) where
   anchor : A
   tachygrams : List F
@@ -274,8 +276,8 @@ def InWindow (e₁ e₂ : ℕ) : Prop :=
   e₁ ≤ e₂ ∧ e₂ ≤ e₁ + 1
 
 /-- Consensus acceptance of a single published stamp `s`:
-1. `tachygrams` is non-empty (`ProofStamp::read` rejects `n_tachygrams == 0`).
-2. `tachygrams` has no duplicates (`ProofStamp::read` enforces uniqueness).
+1. `tachygrams` is non-empty (every covered bundle contributes its fee change).
+2. `tachygrams` has no duplicates (`Bundle::verify_covered` rejects a repeated tachygram).
 3. **Anchor membership**: `s.anchor` is an accepted end-of-block anchor at its epoch
    `epoch s.anchor`.
 4. **Anchor recency**: `s.anchor`'s epoch is either the block's publication epoch `s.epoch` or the

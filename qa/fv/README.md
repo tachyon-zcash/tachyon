@@ -14,16 +14,18 @@ compares a Lean step with the circuit it models. Read
 Rust carries two output slots, O0 (actions) and O1 (tachygrams); `Actions` header data is the anchor,
 and `Stamp` header data is `(O1 bridge hash, anchor)`. The Lean `Stamp` packages both slots and the
 anchor. Each Pedersen commitment and its bridge binding is idealized by its polynomial opening.
-Each `enforce_poly_product` at the framework's shared `zeta` is read as the identity it checks.
-An accepted state is one that a registered step derives from accepted
-inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
+Each product check opens its slots at the framework's shared `zeta` and compares openings; the
+model reads it as the identity it checks. An accepted state is one that a registered step derives
+from accepted inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
+Ragu's internal rerandomization step keeps its input's header data and slots, so it adds no state.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
 stated on these root multisets. A product of set polynomials is the sum of their multisets.
 
-`R e d` is the tachygram multiset that a leaf with digest `d` derives at epoch `e`. Taking `R` as a
-function encodes the pairing assumption. Two leaf proofs with one digest in one epoch derive the
-same tachygrams.
+`R e d` is the tachygram multiset that a leaf with digest `d` derives at epoch `e`. Each action
+digest absorbs its tachygram pair's sum and product, and each fee digest absorbs its fee change, so
+under Poseidon collision resistance two leaf proofs with one digest derive the same tachygrams.
+Taking `R` as a function idealizes that collision resistance as exact.
 
 `Consensus/Bundle.lean` models `Bundle::verify`. `Consensus/Chain.lean` models the anchor chain and
 the publication rules that `Chain.Valid` collects.
@@ -66,10 +68,13 @@ hypothesis, which [Double spends](#double-spends) discusses.
 ### Publication
 
 `BundleVerified` covers the action digests of the bundle's and its adjuncts' descriptors, followed by
-the fee digests of the bundle's and its adjuncts' fees (`coveredDigests`). It requires the
-published tachygrams to be non-empty and duplicate-free, with two per descriptor and one per fee.
-The carried tachygram-set commitment is `setPoly` of the published tachygrams, and the header built
-from the covered digests, that commitment and the anchor is `StampDerivable`.
+the fee digests of the bundle's and its adjuncts' fees (`coveredDigests`). The stamp carries no
+tachygram list: each covered action carries its tachygram pair, each covered bundle its fee change,
+and the digests absorb them. The model reads a descriptor together with its pair, and a fee
+descriptor together with its fee change. It requires the published tachygrams, the covered pairs and
+fee changes, to be non-empty and duplicate-free, with two per descriptor and one per fee. The
+carried tachygram-set commitment is `setPoly` of the published tachygrams, and the header built from
+the covered digests, that commitment and the anchor is `StampDerivable`.
 
 - A verified bundle publishes exactly its covered leaves' tachygrams, with multiplicity, at its
   anchor's epoch (`StampDerivable.published`, `BundleVerified.tachygrams_eq`).
@@ -78,42 +83,47 @@ from the covered digests, that commitment and the anchor is `StampDerivable`.
 - The bundle's own fee leaf's tachygrams are published (`BundleVerified.fee_published`). Coverage
   supplies the fee, since unmerge can divide it out of a derivable stamp.
 
-`BundleVerified` leaves out the BLAKE2b coverage digest, which compares the stamp's coverage field
-against the same descriptors. It checks neither anchor membership nor anchor recency. Those are
+`BundleVerified` checks neither anchor membership nor anchor recency. Those are
 [consensus rules](#consensus-rules) on the chain.
 
 ### Source correspondence at pinned main
 
-The maintenance audit against main `dca1ecb58e204e8aca979bbc55e0f3f0d1be3271` is a manual source
-comparison, not an extraction or equivalence proof. The relevant correspondence is:
+The maintenance audit against main `26fcd5a1f246b83b727686547424446cd1c96552`, with Ragu pinned at
+`70fb72e8c71721a7cfc85384a15a6c4fc99024d2`, is a manual source comparison, not an extraction or
+equivalence proof. The relevant correspondence is:
 
 | Rust source | Lean interpretation | Boundary |
 | --- | --- | --- |
 | `stamp/proof/stamp.rs`: `ActionMerge`, `StampMerge`, `StampUnmerge` | `Stamp.lean`: `Merge`, `Unmerge`; `ProofTree.lean`: derivability | Equal anchors and both slot-product equations agree, conditional on binding and replacing random-point checks with identities. |
-| `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints, fee/action digest separation and the digest-to-tachygram pairing `R` are assumed, not verified. |
+| `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints are assumed, not verified. The digest-to-tachygram pairing `R` and fee/action digest separation idealize collision resistance of the `Tachyon-ActionDg` and `Tachyon-FeeDg` digests, whose preimages hold the leaf's tachygrams. |
 | `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep` | The polynomial span argument is proved under `HashLaw` and output chain membership; propagating that membership through an entire stamp derivation is not proved. |
-| `bundle.rs`: `verify_coverage`, `verify_tachygrams`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Descriptor uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, coverage hashing, wire bounds and adjunct pointers are not modelled. |
+| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Descriptor, fee and tachygram uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, wire bounds and adjunct pointers are not modelled. |
 
 Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
-`7a4cf57e`, the relevant changes are:
+`dca1ecb5`, the relevant changes are:
 
-- **Caller-owned application (#270).** Proof APIs now take `&App`, built by `new_application`
-  in `stamp/proof.rs`, rather than a global `PROOF_SYSTEM`. The constructor retains the fixed
-  registry and baked setup. Derivability assumes this Tachyon registry and setup; the `App` type
-  alias alone does not establish them for an arbitrary caller-supplied application.
-- **Native bridge helper (#302).** `stamp/proof.rs::bridge_hash` computes the two-generator
-  combination of a commitment's affine coordinates using the baked setup's bridge-wire degrees.
-  `stamp.rs` uses it to reconstruct the `Stamp` header, and `Anchor::next_stamp` uses it before
-  the Poseidon fold. The model still abstracts polynomial commitment, bridge hashing and the fold
-  as a composition; it proves neither this helper's equality with Ragu nor its collision resistance.
-  `stamp/proof/tests.rs` compares three commitments with the application's helper and tests the
-  identity-input panic. These are finite Rust tests, not Lean results. `Anchor::next_stamp` rejects
-  identity and empty-set commitments before hashing; the helper itself panics on identity.
-- **QR characterization and fixtures (#278, #303).** The book retains the observed acceptance of
-  scaled, non-monic QR factors and oversized depth-32 buckets, and explicitly leaves broader
-  non-canonical safety open. This branch has no QR transition model: its no-double-spend theorem
-  assumes the second spend's exclusion lineage and its start bound. Neither those finite tests nor
-  a green Lean build discharge that premise. Fixture/API changes do not change the stamp equations.
+- **Real proofs (#272, #310).** Tachyon proves with real Ragu instead of the mock. Steps open typed
+  online slots through `Oracle::open` and check each polynomial identity inline at `zeta`. Proof
+  APIs take a caller-built `&App` from `new_application` in `stamp/proof.rs`, which registers the
+  fixed steps over the baked setup. Derivability assumes this Tachyon registry and setup; the `App`
+  type alias alone does not establish them for an arbitrary caller-supplied application.
+- **Tachygrams bound into digests (#280).** An action digest absorbs its tachygram pair's sum and
+  product, and a fee digest its fee change. The stamp no longer carries a tachygram list or a
+  coverage field; each action carries its pair, and `verify_covered` rebuilds the tachygram set from
+  the pairs and fee changes. This binding is what `R` idealizes.
+- **Native bridge hash (#272, #310).** `bridge_hash.rs::bridge_hash` calls Ragu's
+  `bridge_hash::digest` on a commitment. `stamp.rs` uses it to reconstruct the `Stamp` header, and
+  `Anchor::next_stamp` uses it before the Poseidon fold. The model abstracts commitment, bridge
+  hashing and the fold as one composition; it proves neither the helper's equality with Ragu nor
+  its collision resistance. `bridge_hash/tests.rs` compares three commitments with the
+  application's bridge hash and tests the identity-input panic. These are finite Rust tests, not
+  Lean results. `Anchor::next_stamp` rejects identity and empty-set commitments before hashing.
+- **Typed slots and arithmetic (#309, #314).** Slot markers become `PolySlot<P>`, and native
+  polynomial arithmetic moves to Udon and Ragu. Neither changes a stamp equation.
+- **QR characterization (#278, #303).** The book retains the observed acceptance of scaled,
+  non-monic QR factors and oversized depth-32 buckets, and leaves broader non-canonical safety
+  open. This branch has no QR transition model: its no-double-spend theorem assumes the second
+  spend's exclusion lineage and its start bound.
 
 ### Leaf provenance
 
@@ -156,8 +166,8 @@ choices that no theorem here discharges.
 ### Proof system
 
 - **PCD knowledge extraction.** Derivability stands in for it. An accepted proof is assumed to come
-  from the fixed Tachyon registered steps on accepted inputs. The configured Rust dependency uses
-  Ragu's mock driver; a passing mock test is not a proof of production PCD soundness.
+  from the fixed Tachyon registered steps on accepted inputs. Rust tests run the real Ragu prover
+  and verifier; a passing test is not a proof of PCD soundness.
 - **Commitment/bridge binding and the random challenge.** The model reads committed output slots
   as polynomials, abstracts the O1 bridge hash by its bound opening, and reads checks as identities.
   Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
@@ -170,8 +180,9 @@ choices that no theorem here discharges.
 
 ### Hashes and the pairing
 
-- **The pairing `R`.** Unmerge soundness depends on it. In the protocol it rests on Poseidon and on
-  the leaf proofs deriving their tachygrams from the digest preimage.
+- **The pairing `R`.** Unmerge soundness depends on it. Each leaf step derives its digest from a
+  preimage holding its tachygrams, so the pairing rests on Poseidon collision resistance, which the
+  model takes as exact.
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and

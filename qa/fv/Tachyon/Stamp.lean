@@ -8,14 +8,16 @@ hash of output slot O1. The proof carries exactly two output polynomials: O0 is 
 O1 is the tachygram set. `Actions` has only `anchor` as header data, with the same two slots.
 This model's `Stamp` is the enriched semantic state of those slots and the anchor, not the encoded
 Rust header. It replaces committed polynomials with their openings, idealizing commitment/bridge
-binding, and reads `enforce_poly_product` at the framework's shared `zeta` as the polynomial
-identity it pins, idealizing Schwartz-Zippel. Merge checks L0 * R0 = O0 and L1 * R1 = O1;
-unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
+binding. Each product check opens its three slots at the framework's shared `zeta` and compares the
+product of two openings with the third; the model reads it as the polynomial identity it pins,
+idealizing Schwartz-Zippel. Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks
+R0 * O0 = L0 and R1 * O1 = L1.
 
 Leaf digests and tachygrams are both field elements. `R e d` is the tachygram multiset that a leaf
 with digest `d` derives at epoch `e`: a spend's nullifier pair, an output's `cm` and pad, or a fee's
-change commitment. Taking `R` as a function encodes the pairing assumption that two leaf proofs with
-the same digest in one epoch derive the same tachygrams.
+change commitment. Each action digest absorbs its tachygram pair's sum and product, and each fee
+digest absorbs its fee change, so under Poseidon collision resistance a digest determines its
+leaf's tachygrams. Taking `R` as a function idealizes that collision resistance as exact.
 -/
 
 namespace Tachyon
