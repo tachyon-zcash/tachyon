@@ -98,3 +98,37 @@ fn mirror_round_trips_fields_and_rejects_duplicate_descriptors() {
         "descriptors are not strictly ascending in actions",
     );
 }
+
+#[test]
+fn mirror_derives_compact_spend_and_output_effects() {
+    use zcash_tachyon::{entropy::ActionEntropy, value};
+
+    let rng = &mut StdRng::seed_from_u64(26);
+    let wallet = WalletSim::new(shared_sk());
+    let output = output_plan(rng, wallet.random_note(100));
+    let plan = Plan::new(
+        vec![(
+            wallet.random_note(200),
+            ActionEntropy::random(rng),
+            value::Trapdoor::random(rng),
+            wallet.pak.ak,
+        )],
+        vec![(output.note, output.theta, output.rcv)],
+        wallet.random_note(10),
+        vec![],
+    )
+    .unwrap();
+    let full = Bundle::from_plan(&plan).to_mirror();
+    let mut compact = full.clone();
+    compact.value_balance = None;
+    for action in &mut compact.actions {
+        action.descriptor = None;
+    }
+    assert_eq!(Bundle::parse(compact.clone()).unwrap().to_mirror(), full);
+
+    compact.actions[0].theta = None;
+    assert_eq!(
+        Bundle::parse(compact).unwrap_err().to_string(),
+        "missing action 0 Theta for compact effect"
+    );
+}

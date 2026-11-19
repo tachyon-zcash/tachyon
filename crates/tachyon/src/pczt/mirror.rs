@@ -11,7 +11,7 @@ use corez::io;
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use udon::{curve::Affine as _, field::Field as _};
 
-use super::{NoteField, Zip32Derivation};
+use super::{DescriptorError, NoteField, OpeningField, Zip32Derivation};
 use crate::{
     Anchor, EpochIndex, Note, action,
     constants::EPOCH_MAX,
@@ -200,6 +200,8 @@ pub enum ValueReason {
     Range,
     /// A section without actions must have zero balance.
     NonzeroActionlessBalance,
+    /// The supplied opening cannot derive the omitted effect.
+    CompactDerivation,
 }
 
 /// The cause of a mirror decoding failure.
@@ -266,14 +268,12 @@ pub enum ParseError {
 #[derive(Clone, Copy, Debug, Display)]
 #[expect(
     variant_size_differences,
-    reason = "only a missing descriptor needs an action index"
+    reason = "only action opening fields carry an action index"
 )]
 pub enum MissingEffectField {
-    /// The section's balance.
-    ValueBalance,
-    /// The indexed action's descriptor.
-    #[display("descriptor at action {_0}")]
-    Descriptor(usize),
+    /// A field of the indexed action's opening.
+    #[display("action {_0} {_1}")]
+    Action(usize, OpeningField),
     /// A field of the maximum fee opening.
     #[display("maximum fee note {_0}")]
     MaxFeeNote(NoteField),
@@ -303,8 +303,8 @@ impl pczt::Bundle {
     ///
     /// # Errors
     ///
-    /// Returns an error for invalid or missing effects, inconsistent spend
-    /// keys, or invalid encodings.
+    /// Returns an error for invalid effects, missing fields needed for compact
+    /// effects, inconsistent spend keys, or invalid encodings.
     pub fn parse(mirror: Bundle) -> Result<Self, ParseError> {
         if mirror.actions.len() > pczt::max_actions() {
             return Err(ParseError::Limit(Field::Actions));
@@ -329,9 +329,26 @@ impl pczt::Bundle {
             ));
         }
         let max_fee = mirror.max_fee.parse()?;
-        let balance = mirror.value_balance.ok_or(ParseError::MissingForEffect(
-            MissingEffectField::ValueBalance,
-        ))?;
+        let balance = if let Some(balance) = mirror.value_balance {
+            i128::from(balance)
+        } else {
+            let fee = max_fee.note.value.ok_or(ParseError::MissingForEffect(
+                MissingEffectField::MaxFeeNote(NoteField::Value),
+            ))?;
+            let mut sum = -i128::from(fee);
+            for (index, action) in actions.iter().enumerate() {
+                let amount = i128::from(action.note.value.ok_or(ParseError::MissingForEffect(
+                    MissingEffectField::Action(index, OpeningField::Note(NoteField::Value)),
+                ))?);
+                sum += match *action.witness.as_ref().ok_or(ParseError::MissingForEffect(
+                    MissingEffectField::Action(index, OpeningField::Witness),
+                ))? {
+                    pczt::ActionWitness::Spend(_) => amount,
+                    pczt::ActionWitness::Output(_) => -amount,
+                };
+            }
+            sum
+        };
         let value_balance = value::Balance::try_from(balance)
             .map_err(|_err| ParseError::InvalidValue(Field::ValueBalance, ValueReason::Range))?;
         if actions.is_empty() && value_balance != value::Balance::ZERO {
@@ -396,10 +413,6 @@ impl pczt::Bundle {
 
 impl Action {
     fn parse(self, index: usize) -> Result<pczt::Action, ParseError> {
-        let descriptor_bytes = self.descriptor.ok_or(ParseError::MissingForEffect(
-            MissingEffectField::Descriptor(index),
-        ))?;
-        let descriptor = parse_descriptor(descriptor_bytes, Field::Descriptor(index))?;
         let note = self.note.parse(|field| Field::ActionNote(index, field))?;
         let theta = self
             .theta
@@ -428,6 +441,21 @@ impl Action {
                 })
             })
             .transpose()?;
+        let field = Field::Descriptor(index);
+        let descriptor = if let Some(descriptor_bytes) = self.descriptor {
+            parse_descriptor(descriptor_bytes, field)?
+        } else {
+            let derived = pczt::Action::derive_from_opening(&note, theta, rcv, witness.as_ref())
+                .map_err(|err| match err {
+                    DescriptorError::Missing(opening_field) => ParseError::MissingForEffect(
+                        MissingEffectField::Action(index, opening_field),
+                    ),
+                    DescriptorError::ZeroRcm | DescriptorError::Randomness => {
+                        ParseError::InvalidValue(field, ValueReason::CompactDerivation)
+                    },
+                })?;
+            checked_descriptor(derived, field)?
+        };
         Ok(pczt::Action {
             descriptor,
             sig,
