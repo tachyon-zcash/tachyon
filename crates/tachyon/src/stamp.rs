@@ -24,7 +24,7 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
-    App, HEADER_SIZE, output,
+    App, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
@@ -158,7 +158,7 @@ pub trait Proof: sealed::Sealed {
 
 impl Proof for Uncompressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<HEADER_SIZE>()
+        Self::encoded_len()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
@@ -194,7 +194,7 @@ impl Proof for Uncompressed {
 
 impl Proof for Compressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<ProductionRank, HEADER_SIZE>()
+        Self::encoded_len::<ProductionRank>()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
