@@ -1,6 +1,11 @@
 //! Byte fields for a transaction container to carry and redact independently.
 
-use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::BTreeMap,
+    string::{String, ToString as _},
+    vec::Vec,
+};
 
 use corez::io;
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
@@ -8,11 +13,17 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use super::{NoteField, Zip32Derivation};
 use crate::{
-    action,
+    Anchor, EpochIndex, Note, action,
+    constants::EPOCH_MAX,
     entropy::ActionEntropy,
-    keys::{NullifierKey, ProofAuthorizingKey, SpendValidatingKey, private, public},
+    keys::{NoteMasterKey, NullifierKey, ProofAuthorizingKey, SpendValidatingKey, private, public},
     pasta::{EpAffine, Fp, Fq},
-    pczt, reddsa, serialization, value,
+    pczt, reddsa, serialization,
+    stamp::{
+        self,
+        proof::{delegation, pool, spendable},
+    },
+    value,
 };
 
 /// The section's mirror. Absent effects require sufficient opening fields.
@@ -84,8 +95,22 @@ pub struct SpendWitness {
     pub ak: Option<[u8; 32]>,
     /// The spend validating key and nullifier key, in that order.
     pub pak: Option<[[u8; 32]; 2]>,
+    /// The predecessor proofs and their carried data.
+    pub lineage: Option<SpendLineage>,
     /// The key locator.
     pub zip32_derivation: Option<Zip32Derivation>,
+}
+
+/// Byte fields for the predecessor proofs of a spend.
+#[derive(Clone, Debug, PartialEq, TotalEq)]
+#[debug("SpendLineage(..)")]
+pub struct SpendLineage {
+    /// Note secret proof and its commitment, note and master key.
+    pub secret: Vec<u8>,
+    /// Spendable proof and its commitment, epoch and anchor.
+    pub spendable: Vec<u8>,
+    /// Span proofs with their start and end anchors.
+    pub spans: Vec<Vec<u8>>,
 }
 
 /// Recipient metadata for display and change recognition.
@@ -115,6 +140,9 @@ pub struct MaxFee {
 /// A field of the byte mirror.
 #[derive(Clone, Copy, Debug, Display)]
 pub enum Field {
+    /// Lineage data at an action.
+    #[display("lineage {_1} at action {_0}")]
+    Lineage(usize, LineagePart),
     /// Spend validating key at an action.
     #[display("validating key at action {_0}")]
     Ak(usize),
@@ -151,6 +179,18 @@ pub enum Field {
     MaxFeeNote(NoteField),
 }
 
+/// A proof in a spend's predecessor lineage.
+#[derive(Clone, Copy, Debug, Display)]
+pub enum LineagePart {
+    /// The note secret.
+    Secret,
+    /// The spendable note.
+    Spendable,
+    /// An indexed anchor span.
+    #[display("span {_0}")]
+    Span(usize),
+}
+
 /// A decoded value violates an invariant.
 #[derive(Clone, Copy, Debug, Display)]
 pub enum ValueReason {
@@ -166,6 +206,27 @@ pub enum ValueReason {
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum EncodingCause {
+    /// The proof has an incorrect encoded length.
+    #[display("expected {expected} proof bytes, got {actual}")]
+    ProofLength {
+        /// Required length.
+        expected: usize,
+        /// Supplied length.
+        actual: usize,
+    },
+    /// A proof field is incomplete.
+    #[display("truncated proof at byte {offset}: need {requested} bytes, have {available}")]
+    ProofTruncated {
+        /// Field offset.
+        offset: usize,
+        /// Required length.
+        requested: usize,
+        /// Available length.
+        available: usize,
+    },
+    /// The proof decoder rejected the encoding, with its diagnostic.
+    #[display("invalid proof: {_0}")]
+    ProofInvalid(#[error(not(source))] String),
     /// The bytes are not canonical.
     #[display("noncanonical encoding")]
     Noncanonical,
@@ -237,7 +298,7 @@ impl ParseError {
     reason = "mirror conversion is separate from section construction"
 )]
 impl pczt::Bundle {
-    /// Parse the mirror fields, including the optional action witnesses.
+    /// Parse the mirror fields, including spend lineage.
     /// Derive an omitted `cv_feemax` from a complete fee note.
     ///
     /// # Errors
@@ -301,15 +362,15 @@ impl pczt::Bundle {
         })
     }
 
-    /// Encode the mirror fields, including the optional action witnesses.
+    /// Encode the mirror fields, including spend lineage.
     ///
     /// # Panics
     ///
-    /// Panics if a descriptor cannot be encoded.
+    /// Panics if a descriptor or lineage proof cannot be encoded.
     #[must_use]
     #[expect(
         clippy::expect_used,
-        reason = "action descriptors fit their fixed-width buffers"
+        reason = "fixed-width fields and in-memory proofs are encodable"
     )]
     pub fn to_mirror(&self) -> Bundle {
         Bundle {
@@ -385,7 +446,11 @@ impl Action {
             note: NoteOpening::from_opening(action.note),
             theta: action.theta.map(|entropy| entropy.0.to_bytes()),
             rcv: action.rcv.map(|rcv| Fq::from(rcv).to_bytes()),
-            witness: action.witness.as_ref().map(ActionWitness::serialize),
+            witness: action
+                .witness
+                .as_ref()
+                .map(ActionWitness::serialize)
+                .transpose()?,
             proprietary: action.proprietary.clone(),
         })
     }
@@ -522,7 +587,10 @@ impl ActionWitness {
                 pczt::ActionWitness::Spend(pczt::SpendWitness {
                     ak,
                     pak,
-                    lineage: None,
+                    lineage: spend
+                        .lineage
+                        .map(|lineage| lineage.parse(index))
+                        .transpose()?,
                     zip32_derivation: spend.zip32_derivation,
                 })
             },
@@ -534,20 +602,25 @@ impl ActionWitness {
     }
 
     #[expect(clippy::ref_patterns, reason = "borrow witness fields")]
-    fn serialize(witness: &pczt::ActionWitness) -> Self {
-        match *witness {
+    fn serialize(witness: &pczt::ActionWitness) -> io::Result<Self> {
+        Ok(match *witness {
             pczt::ActionWitness::Spend(ref spend) => Self::Spend(SpendWitness {
                 ak: spend.ak.map(|ak| ak.0.into()),
                 pak: spend
                     .pak()
                     .map(|pak| [pak.ak.0.into(), Fp::from(pak.nk).to_bytes()]),
+                lineage: spend
+                    .lineage
+                    .as_ref()
+                    .map(SpendLineage::serialize)
+                    .transpose()?,
                 zip32_derivation: spend.zip32_derivation.clone(),
             }),
             pczt::ActionWitness::Output(ref output) => Self::Output(OutputWitness {
                 zip32_derivation: output.zip32_derivation.clone(),
                 user_address: output.user_address.clone(),
             }),
-        }
+        })
     }
 }
 
@@ -555,4 +628,157 @@ fn encode_descriptor(descriptor: action::Descriptor) -> io::Result<[u8; 64]> {
     let mut bytes = [0; 64];
     descriptor.write(bytes.as_mut_slice())?;
     Ok(bytes)
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "Ragu-produced proofs have a canonical encoding"
+)]
+fn encode_proof(proof: &stamp::Uncompressed) -> Vec<u8> {
+    proof.to_bytes().expect("Ragu-produced proof is encodable")
+}
+
+fn parse_proof(bytes: &[u8], field: Field) -> Result<stamp::Uncompressed, ParseError> {
+    let expected_len = stamp::Uncompressed::encoded_len::<{ stamp::proof::HEADER_SIZE }>();
+    if bytes.len() != expected_len {
+        return Err(ParseError::InvalidEncoding(
+            field,
+            EncodingCause::ProofLength {
+                expected: expected_len,
+                actual: bytes.len(),
+            },
+        ));
+    }
+    stamp::Uncompressed::from_bytes(bytes).map_err(|cause| {
+        use ragu::pcd::wire;
+        let diagnostic = if let wire::Error::Length { expected, actual } = cause {
+            EncodingCause::ProofLength { expected, actual }
+        } else {
+            EncodingCause::ProofInvalid(cause.to_string())
+        };
+        ParseError::InvalidEncoding(field, diagnostic)
+    })
+}
+
+impl SpendLineage {
+    fn parse(self, index: usize) -> Result<pczt::SpendLineage, ParseError> {
+        use io::Read as _;
+
+        let secret_field = Field::Lineage(index, LineagePart::Secret);
+        Self::check_prefix(&self.secret, 5 * 32 + 8, secret_field)?;
+        let secret_error = |_cause| ParseError::noncanonical(secret_field);
+        let mut secret_bytes = self.secret.as_slice();
+        let cm = serialization::read_fp(&mut secret_bytes).map_err(secret_error)?;
+        let pk = serialization::read_fp(&mut secret_bytes).map_err(secret_error)?;
+        let mut value_bytes = [0; 8];
+        secret_bytes
+            .read_exact(&mut value_bytes)
+            .map_err(secret_error)?;
+        let value = value::Positive::try_from(u64::from_le_bytes(value_bytes))
+            .map_err(|_err| ParseError::InvalidValue(secret_field, ValueReason::Range))?;
+        let psi = serialization::read_fp(&mut secret_bytes).map_err(secret_error)?;
+        let rcm = serialization::read_fp(&mut secret_bytes).map_err(secret_error)?;
+        let mk = NoteMasterKey(serialization::read_fp(&mut secret_bytes).map_err(secret_error)?);
+        let note = Note {
+            pk: pk.into(),
+            value,
+            psi: psi.into(),
+            rcm: rcm.into(),
+        };
+        let secret = parse_proof(secret_bytes, secret_field)?.carry::<delegation::NoteSecret>((
+            cm.into(),
+            note,
+            mk,
+        ));
+
+        let spendable_field = Field::Lineage(index, LineagePart::Spendable);
+        Self::check_prefix(&self.spendable, 2 * 32 + 4, spendable_field)?;
+        let spendable_error = |_cause| ParseError::noncanonical(spendable_field);
+        let mut spendable_bytes = self.spendable.as_slice();
+        let spendable_cm = serialization::read_fp(&mut spendable_bytes).map_err(spendable_error)?;
+        let mut epoch_bytes = [0; 4];
+        spendable_bytes
+            .read_exact(&mut epoch_bytes)
+            .map_err(spendable_error)?;
+        let epoch = u32::from_le_bytes(epoch_bytes);
+        if epoch > EPOCH_MAX {
+            return Err(ParseError::InvalidValue(
+                spendable_field,
+                ValueReason::Range,
+            ));
+        }
+        let anchor = Anchor::read(&mut spendable_bytes).map_err(spendable_error)?;
+        let spendable = parse_proof(spendable_bytes, spendable_field)?
+            .carry::<spendable::NoteSpendable>((
+                spendable_cm.into(),
+                EpochIndex::new(epoch),
+                anchor,
+            ));
+
+        let spans = self
+            .spans
+            .iter()
+            .enumerate()
+            .map(|(span_index, span)| {
+                let field = Field::Lineage(index, LineagePart::Span(span_index));
+                Self::check_prefix(span, 2 * 32, field)?;
+                let encoding = |_cause| ParseError::noncanonical(field);
+                let mut bytes = span.as_slice();
+                let start = Anchor::read(&mut bytes).map_err(encoding)?;
+                let end = Anchor::read(&mut bytes).map_err(encoding)?;
+                Ok(parse_proof(bytes, field)?.carry::<pool::AnchorSpan>((start, end)))
+            })
+            .collect::<Result<_, ParseError>>()?;
+        Ok(pczt::SpendLineage::new(secret, spendable, spans))
+    }
+
+    const fn check_prefix(bytes: &[u8], requested: usize, field: Field) -> Result<(), ParseError> {
+        if bytes.len() >= requested {
+            Ok(())
+        } else {
+            Err(ParseError::InvalidEncoding(
+                field,
+                EncodingCause::ProofTruncated {
+                    offset: 0,
+                    requested,
+                    available: bytes.len(),
+                },
+            ))
+        }
+    }
+
+    fn serialize(lineage: &pczt::SpendLineage) -> io::Result<Self> {
+        let (cm, note, mk) = *lineage.secret.data();
+        let mut secret = Vec::new();
+        secret.extend_from_slice(&Fp::from(cm).to_bytes());
+        secret.extend_from_slice(&Fp::from(note.pk).to_bytes());
+        secret.extend_from_slice(&u64::from(note.value).to_le_bytes());
+        secret.extend_from_slice(&Fp::from(note.psi).to_bytes());
+        secret.extend_from_slice(&Fp::from(note.rcm).to_bytes());
+        secret.extend_from_slice(&mk.0.to_bytes());
+        secret.extend(encode_proof(lineage.secret.proof()));
+        let (spendable_cm, epoch, anchor) = *lineage.spendable.data();
+        let mut spendable = Vec::new();
+        spendable.extend_from_slice(&Fp::from(spendable_cm).to_bytes());
+        spendable.extend_from_slice(&u32::from(epoch).to_le_bytes());
+        anchor.write(&mut spendable)?;
+        spendable.extend(encode_proof(lineage.spendable.proof()));
+        let spans = lineage
+            .spans
+            .iter()
+            .map(|span| {
+                let (start, end) = *span.data();
+                let mut bytes = Vec::new();
+                start.write(&mut bytes)?;
+                end.write(&mut bytes)?;
+                bytes.extend(encode_proof(span.proof()));
+                Ok(bytes)
+            })
+            .collect::<io::Result<_>>()?;
+        Ok(Self {
+            secret,
+            spendable,
+            spans,
+        })
+    }
 }

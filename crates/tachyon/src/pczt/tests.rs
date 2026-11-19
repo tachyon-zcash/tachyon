@@ -68,6 +68,7 @@ fn mirror_round_trips_spend_keys_and_rejects_key_mismatch() {
     let mut spend = mirror::SpendWitness {
         ak: Some(pak.ak.0.into()),
         pak: Some([pak.ak.0.into(), Fp::from(pak.nk).to_bytes()]),
+        lineage: None,
         zip32_derivation: Some(path.clone()),
     };
     fields.actions[spend_index].witness = Some(mirror::ActionWitness::Spend(spend.clone()));
@@ -84,5 +85,64 @@ fn mirror_round_trips_spend_keys_and_rejects_key_mismatch() {
     assert_eq!(
         Bundle::parse(fields).unwrap_err().to_string(),
         alloc::format!("spend keys disagree at action {spend_index}")
+    );
+}
+
+#[test]
+fn mirror_round_trips_lineage_and_rejects_truncated_span() {
+    use core::error::Error as _;
+
+    use crate::{EpochIndex, keys::NoteMasterKey, stamp::proof::new_application};
+
+    let rng = &mut StdRng::seed_from_u64(25);
+    let owner = private::SpendingKey::random(rng).derive_proof_private();
+    let note = Note {
+        pk: owner.derive_payment_key(),
+        value: value::Positive::ZERO,
+        psi: Fp::ONE.into(),
+        rcm: Fp::ONE.into(),
+    };
+    let plan = Plan::new(
+        Vec::from([(
+            note,
+            ActionEntropy(Fp::ONE),
+            value::ValueTrapdoor(Fq::ONE),
+            owner.ak,
+        )]),
+        Vec::new(),
+        note,
+        Vec::new(),
+    )
+    .unwrap();
+    let app = new_application().unwrap();
+    let proof = app.bootstrap_proof();
+    let anchor = Anchor::default();
+    let cm = note.commitment();
+    let lineage = SpendLineage::new(
+        proof
+            .clone()
+            .carry::<delegation::NoteSecret>((cm, note, NoteMasterKey(Fp::ONE))),
+        proof
+            .clone()
+            .carry::<spendable::NoteSpendable>((cm, EpochIndex::new(0), anchor)),
+        Vec::from([proof.clone().carry::<pool::AnchorSpan>((anchor, anchor))]),
+    );
+    let mut section = Bundle::from_plan(&plan);
+    if let Some(ActionWitness::Spend(ref mut spend)) = section.actions[0].witness {
+        spend.lineage = Some(lineage);
+    }
+    let mut fields = section.to_mirror();
+    assert_eq!(Bundle::parse(fields.clone()).unwrap().to_mirror(), fields);
+    if let Some(mirror::ActionWitness::Spend(ref mut spend)) = fields.actions[0].witness {
+        spend.lineage.as_mut().unwrap().spans[0].truncate(31);
+    }
+    let err = Bundle::parse(fields).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "invalid encoding for lineage span 0 at action 0"
+    );
+    assert_eq!(
+        err.source().unwrap().to_string(),
+        "truncated proof at byte 0: need 64 bytes, have 31"
     );
 }
