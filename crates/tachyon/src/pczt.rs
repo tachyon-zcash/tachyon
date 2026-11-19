@@ -3,6 +3,7 @@
 mod combiner;
 mod extractor;
 pub mod mirror;
+mod prover;
 mod signing;
 #[cfg(test)]
 mod tests;
@@ -13,6 +14,10 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 pub use combiner::{ActionConflictField, CombineError, ConflictField, ConflictLocation};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 pub use extractor::{ExtractionCoverage, ExtractionField, TxExtractorError, Unbound};
+pub use prover::{
+    ApplyFeeError, ApplyFeeField, LiftActionsProofError, ProveActionField, ProveActionsError,
+    ProveField,
+};
 use ragu::{Pcd, ProductionRank, Rank as _, pasta::Pasta};
 pub use signing::{
     ApplySignatureError, IoFinalizerError, IoFinalizerField, MaxFeeOpeningReason, OpeningReason,
