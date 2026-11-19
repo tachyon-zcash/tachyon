@@ -15,10 +15,9 @@ An `NfSeqPoly` holds the product of indexed members `member i m`, the encoding
 `(m + (i + 1) X) ^ 3 - c` in Rust. `MemberLaw` states the two facts the bind uses: a member at an
 epoch index is prime, and one member divides another only when their indices and values agree.
 
-`nf cm x` is the nullifier at epoch `x` of the note with commitment `cm`. `NoteSeed` derives the
-master key from the opening that `cm` commits to, and `NullifierDerive` derives the nullifiers from
-the master key, so under collision resistance `cm` determines them. The model folds `NoteSeed`
-into `NullifierDerive` and takes that function as exact.
+`NullifierDerive` reads a `NoteSecret` from `NoteSeed` (`Spend.lean`) and derives
+`nullifier mk x` from its master key `mk`. A commitment fixes its master key
+(`NoteSecretDerivable.master_eq`), so every derivation for one `cm` holds the same nullifiers.
 
 The model omits `NullifierFuse`'s contiguity check, `NullifierDerive`'s group alignment, the
 nonzero tested value and the empty-segment exclusion: no result here uses them.
@@ -28,7 +27,7 @@ namespace Tachyon
 
 open Polynomial Chain
 
-variable {F A C : Type*} [Field F]
+variable {F A : Type*} [Field F]
 
 /-- The indexed-member encoding's injectivity over epoch indices up to `emax` (`EPOCH_MAX`). -/
 structure MemberLaw (member : ℕ → F → F[X]) (emax : ℕ) : Prop where
@@ -94,57 +93,87 @@ inductive ArbitraryUnspentDerivable (Bucket : QrBucket F A → Prop) (qnr : F)
             left.elapsed * member b.epoch value⟩
 
 /-- A `NoteNullifiers`: header data `(cm, epoch_start, epoch_end)` and the sequence slot. -/
-structure NoteNullifiers (F C : Type*) [Field F] where
-  cm : C
+structure NoteNullifiers (F : Type*) [Field F] where
+  cm : F
   epoch_start : ℕ
   epoch_end : ℕ
   seq : F[X]
 
-/-- `NullifierDerive` over `NoteSeed`, with its `NF_DERIVATION_WIDTH = 16` window, and
-`NullifierFuse`. -/
-inductive NoteNullifiersDerivable (member : ℕ → F → F[X]) (nf : C → ℕ → F) (emax : ℕ) :
-    NoteNullifiers F C → Prop
-  | derive (cm : C) (epoch_start : ℕ) :
-      epoch_start + 15 ≤ emax →
-        NoteNullifiersDerivable member nf emax
-          ⟨cm, epoch_start, epoch_start + 15,
-            ((List.range 16).map fun k => member (epoch_start + k) (nf cm (epoch_start + k))).prod⟩
-  | fuse {left right : NoteNullifiers F C} :
-      NoteNullifiersDerivable member nf emax left → NoteNullifiersDerivable member nf emax right →
-      left.cm = right.cm →
-        NoteNullifiersDerivable member nf emax
+/-- `NullifierDerive` over a `NoteSecret` that `Secret` accepts, with its
+`NF_DERIVATION_WIDTH = 16` window, and `NullifierFuse`. `nullifier mk x` is the nullifier of
+master key `mk` at epoch `x`. -/
+inductive NoteNullifiersDerivable (Secret : NoteSecret F → Prop) (member : ℕ → F → F[X])
+    (nullifier : F → ℕ → F) (emax : ℕ) : NoteNullifiers F → Prop
+  | derive {secret : NoteSecret F} (epoch_start : ℕ) :
+      Secret secret → epoch_start + 15 ≤ emax →
+        NoteNullifiersDerivable Secret member nullifier emax
+          ⟨secret.cm, epoch_start, epoch_start + 15,
+            ((List.range 16).map fun k =>
+              member (epoch_start + k) (nullifier secret.master (epoch_start + k))).prod⟩
+  | fuse {left right : NoteNullifiers F} :
+      NoteNullifiersDerivable Secret member nullifier emax left →
+      NoteNullifiersDerivable Secret member nullifier emax right → left.cm = right.cm →
+        NoteNullifiersDerivable Secret member nullifier emax
           ⟨left.cm, left.epoch_start, right.epoch_end, left.seq * right.seq⟩
 
 /-- `UnspentBind`: the derivation's sequence is `elapsed` times a witnessed complement. -/
 inductive NoteUnspentDerivable (Bucket : QrBucket F F → Prop) (qnr : F) (member : ℕ → F → F[X])
-    (nf : F → ℕ → F) (emax : ℕ) : NoteUnspent F → Prop
-  | bind {unspent : ArbitraryUnspent F F} {nullifiers : NoteNullifiers F F} (complement : F[X]) :
+    (Secret : NoteSecret F → Prop) (nullifier : F → ℕ → F) (emax : ℕ) : NoteUnspent F → Prop
+  | bind {unspent : ArbitraryUnspent F F} {nullifiers : NoteNullifiers F} (complement : F[X]) :
       ArbitraryUnspentDerivable Bucket qnr member emax unspent →
-      NoteNullifiersDerivable member nf emax nullifiers →
+      NoteNullifiersDerivable Secret member nullifier emax nullifiers →
       nullifiers.seq = unspent.elapsed * complement →
-        NoteUnspentDerivable Bucket qnr member nf emax
+        NoteUnspentDerivable Bucket qnr member Secret nullifier emax
           ⟨nullifiers.cm, unspent.anchor_start, unspent.epoch_start, unspent.epoch_next,
             unspent.anchor_next⟩
 
-variable {Bucket : QrBucket F A → Prop} {qnr : F} {member : ℕ → F → F[X]} {nf : C → ℕ → F}
+variable {Bucket : QrBucket F A → Prop} {qnr : F} {member : ℕ → F → F[X]}
+  {Secret : NoteSecret F → Prop} {nullifier : F → ℕ → F}
   {emax : ℕ} {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A} {zero : A}
   {chain : List (Chain.Stamp F A)} {genesis : A} {e₀ : ℕ}
 
-theorem NoteNullifiersDerivable.seq_eq {n : NoteNullifiers F C}
-    (h : NoteNullifiersDerivable member nf emax n) :
-    ∃ M : List ℕ, (∀ y ∈ M, y ≤ emax) ∧ n.seq = (M.map fun y => member y (nf n.cm y)).prod := by
+/-- A derivation's sequence holds one note secret's nullifiers, given that a commitment fixes its
+master key (`NoteSecretDerivable.master_eq`). -/
+theorem NoteNullifiersDerivable.seq_eq
+    (hmaster : ∀ {k₁ k₂ : NoteSecret F}, Secret k₁ → Secret k₂ → k₁.cm = k₂.cm →
+      k₁.master = k₂.master)
+    {n : NoteNullifiers F} (h : NoteNullifiersDerivable Secret member nullifier emax n) :
+    ∃ secret, Secret secret ∧ secret.cm = n.cm ∧ ∃ M : List ℕ, (∀ y ∈ M, y ≤ emax) ∧
+      n.seq = (M.map fun y => member y (nullifier secret.master y)).prod := by
   induction h with
-  | derive cm s hs =>
-    refine ⟨(List.range 16).map (s + ·), ?_, by simp [List.map_map, Function.comp_def]⟩
+  | @derive secret s hsecret hs =>
+    refine ⟨secret, hsecret, rfl, (List.range 16).map (s + ·), ?_,
+      by simp [List.map_map, Function.comp_def]⟩
     intro y hy
     obtain ⟨k, hk, rfl⟩ := List.mem_map.mp hy
     have := List.mem_range.mp hk
     omega
   | fuse _ _ hcm ihl ihr =>
-    obtain ⟨ML, hML, hl⟩ := ihl
-    obtain ⟨MR, hMR, hr⟩ := ihr
-    refine ⟨ML ++ MR, fun y hy => (List.mem_append.mp hy).elim (hML y) (hMR y), ?_⟩
-    simp only [hl, hr, hcm, List.map_append, List.prod_append]
+    obtain ⟨kL, hkL, hkLcm, ML, hML, hl⟩ := ihl
+    obtain ⟨kR, hkR, hkRcm, MR, hMR, hr⟩ := ihr
+    have hmk : kR.master = kL.master := hmaster hkR hkL (by rw [hkRcm, hkLcm, hcm])
+    refine ⟨kL, hkL, hkLcm, ML ++ MR, fun y hy => (List.mem_append.mp hy).elim (hML y) (hMR y), ?_⟩
+    simp only [hl, hr, hmk, List.map_append, List.prod_append]
+
+/-- Every derivable segment ends on a boundary digest into its `epoch_next`. -/
+theorem ArbitraryUnspentDerivable.anchor_next_boundary
+    (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch) {u : ArbitraryUnspent F A}
+    (hu : ArbitraryUnspentDerivable Bucket qnr member emax u) :
+    ∃ a, u.anchor_next = nextEpoch a u.epoch_next := by
+  induction hu with
+  | init _ hb =>
+    obtain ⟨_, _, -, hnext, -⟩ := hbucket _ hb
+    exact ⟨_, hnext⟩
+  | fuse _ _ _ _ _ ihr => exact ihr
+  | lift _ _ hb =>
+    obtain ⟨_, _, -, hnext, -⟩ := hbucket _ hb
+    exact ⟨_, hnext⟩
+
+/-- The property of `NoteUnspent` derivability the spend lineage consumes. -/
+theorem NoteUnspentDerivable.spec {Bucket : QrBucket F F → Prop} {nextStamp : F → ℕ → F[X] → F}
+    {nextEpoch : F → ℕ → F} (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch) :
+    UnspentSpec nextEpoch (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) where
+  anchor_next_entry := fun ⟨_, hunspent, _, _⟩ => hunspent.anchor_next_boundary hbucket
 
 /-- A derivable `ArbitraryUnspent` that ends on the published entry anchor of its `epoch_next`
 starts on the entry anchor of its `epoch_start`, and for each epoch `x` it covers, `elapsed` holds
@@ -190,23 +219,27 @@ theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp
       exact ⟨v, by omega, dvd_mul_left _ _, hfresh⟩
 
 /-- **Unspent lineage.** A derivable `NoteUnspent` that ends on the published entry anchor of its
-`epoch_next` starts on the entry anchor of its `epoch_start`, and the note's nullifier at each
-epoch of `[epoch_start, epoch_next)` is unpublished in that epoch. -/
-theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop} {nf : F → ℕ → F}
+`epoch_next` starts on the entry anchor of its `epoch_start`, and for every note secret of its
+`cm`, the nullifier at each epoch of `[epoch_start, epoch_next)` is unpublished in that epoch. -/
+theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop}
     {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F} {zero genesis : F}
     {chain : List (Chain.Stamp F F)} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
     (hqnr : ¬ IsSquare qnr) (hmember : MemberLaw member emax)
+    (hmaster : ∀ {k₁ k₂ : NoteSecret F}, Secret k₁ → Secret k₂ → k₁.cm = k₂.cm →
+      k₁.master = k₂.master)
     (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch)
-    {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member nf emax u)
+    {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member Secret nullifier emax u)
     (hnext : u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next) :
     u.anchor_start = entry nextStamp nextEpoch zero chain u.epoch_start ∧
-      ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (nf u.cm x) := by
+      ∀ k, Secret k → k.cm = u.cm →
+        ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (nullifier k.master x) := by
   obtain @⟨unspent, nullifiers, complement, hunspent, hnullifiers, hbind⟩ := hu
   obtain ⟨hstart, hlineage⟩ := hunspent.lineage hlaw hqnr hbucket hnext
-  obtain ⟨M, hM, hseq⟩ := hnullifiers.seq_eq
-  refine ⟨hstart, fun x hx hx' => ?_⟩
+  obtain ⟨secret, hsecret, hcm, M, hM, hseq⟩ := hnullifiers.seq_eq hmaster
+  refine ⟨hstart, fun k hk hkcm x hx hx' => ?_⟩
+  rw [hmaster hk hsecret (hkcm.trans hcm.symm)]
   obtain ⟨v, hv, hdvd, hfresh⟩ := hlineage x hx hx'
-  have hdvd' : member x v ∣ (M.map fun y => member y (nf nullifiers.cm y)).prod := by
+  have hdvd' : member x v ∣ (M.map fun y => member y (nullifier secret.master y)).prod := by
     rw [← hseq, hbind]
     exact hdvd.mul_right _
   obtain ⟨_, hmem, hfactor⟩ := (Prime.dvd_prod_iff (hmember.prime (m := v) hv)).mp hdvd'
