@@ -57,14 +57,6 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     pub(crate) const fn bits(&self) -> &FixedVec<Boolean<'dr, D>, ConstLen<BITS>> {
         &self.bits
     }
-
-    /// Bounds the value to `0..=maximum` and returns `maximum - value`, which
-    /// fits the same width: the two sum to `maximum`, so neither wraps.
-    pub(crate) fn enforce_max(&self, dr: &mut D, maximum: u64) -> Result<Self> {
-        let packed = self.pack(dr)?;
-        let slack = Element::constant(dr, Fp::from(maximum)).sub(dr, &packed);
-        Self::from_element(dr, &slack)
-    }
 }
 
 #[expect(
