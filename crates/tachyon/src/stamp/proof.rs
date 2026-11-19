@@ -60,7 +60,6 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, Accel
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
