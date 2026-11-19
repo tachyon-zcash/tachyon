@@ -35,6 +35,12 @@ the publication rules that `Chain.Valid` collects.
 `StampTree`) with `SpendAction` leaves over those headers and lifts over derivable anchor spans.
 `Consensus/Spends.lean` joins them to the chain.
 
+`Qr.lean` models the QR evidence: summaries, intakes, the split and descent, `QrBucketSeal`, and the
+evidence trees, whose `EvidenceTreeOpen` replays a bucket. `Unspent.lean` models `ArbitraryUnspent`
+(`QrUnspentInit`, `UnspentFuse`, `UnspentLift`), `NoteNullifiers` (`NullifierDerive`,
+`NullifierFuse`) and `UnspentBind`. `Consensus/Entry.lean` derives a published chain's entry anchors
+and the anchors it reaches (`OnChain`) from its stamps.
+
 ## What is verified
 
 The merge and unmerge results follow the soundness argument for `StampUnmerge` in three parts. Every
@@ -105,7 +111,12 @@ equivalence proof. The relevant correspondence is:
 | `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep`; `SpendTree.lean`: `ActionsTree.lift`, `StampTree.lift` | The span argument and its propagation through a whole derivation are proved under `HashLaw` and chain membership of the root anchor. |
 | `stamp/proof/stamp.rs`: `SpendAction` | `SpendTree.lean`: `ActionsTree.spend` | The action set is the action digest of the header's pair, the tachygram set is the pair, and the anchor is the header's. The `pk` check and `rk` are not modelled; `DigestLaw` idealizes the digest. |
 | `stamp/proof/delegation.rs`: `NoteSeed`; `stamp/proof/spend.rs`: `SpendBind` | `Spend.lean`: `NoteSecretDerivable`, `SpendDerivable` | `cm` commits to `pk = paymentKey(ak, nk)` and `psi`, and `mk = nfMaster(psi, nk)`; `NoteLaw` idealizes binding. `SpendBind`'s `cm` equality and pair derivation at `e`, `e + 1` agree. Nullifier non-zero checks, `cv` and `pk` are not modelled. |
-| `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s bucket checks are dropped. `SpendableLift`'s three equalities agree. `NoteUnspent` derivability is a parameter constrained by `UnspentSpec`. |
+| `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s epoch, `anchor_next` and successor equalities and its `cm` opening agree; its `anchor_start` equality is dropped. `SpendableLift`'s three equalities agree. |
+| `stamp/proof/summary.rs`: `SummarySeed`, `SummaryAdvance`; `stamp/proof/qr.rs`: `QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeMerge` | `Qr.lean`: `SummaryDerivable`, `QrIntakeDerivable` | Folds, epoch, discriminant and profile equalities, and slot products agree. Each fold absorbs the slot polynomial its bridge hash binds. Non-empty stamp and intake checks and epoch range checks are dropped. |
+| `stamp/proof/qr.rs`: `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend` | `Qr.lean`: `QrIntakeDerivable.descend` | One constructor: the split's product, the selection's exceptional-value opening on the split's non-residue polynomial, and the descent's class identity at `R₀ + depth`. The distinct-sides check and the depth bound are dropped. |
+| `stamp/proof/qr.rs`: `QrBucketSeal`; `stamp/proof/evidence.rs`: evidence steps | `Qr.lean`: `QrEvidenceDerivable` | The seal's two boundary digests and contents copy agree. The leaf and node digests are exact under `EvidenceLaw`; a multi-level descent is a chain of one-level descents; network field equalities are dropped. |
+| `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value is dropped. |
+| `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable` | The window's sixteen members over a `NoteSecret`'s master key, the window's range and the `cm` equality agree. Group alignment and contiguity are dropped. |
 | `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Descriptor, fee and tachygram uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, wire bounds and adjunct pointers are not modelled. |
 
 Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
@@ -130,9 +141,10 @@ Rust paths in the table are relative to `crates/tachyon/src/`. Since the precedi
 - **Typed slots and arithmetic (#309, #314).** Slot markers become `PolySlot<P>`, and native
   polynomial arithmetic moves to Udon and Ragu. Neither changes a stamp equation.
 - **QR characterization (#278, #303).** The book retains the observed acceptance of scaled,
-  non-monic QR factors and oversized depth-32 buckets, and leaves broader non-canonical safety
-  open. This branch has no QR transition model: its no-double-spend theorems assume the second
-  spend's exclusion lineage and its start bound, and `UnspentSpec` for `NoteUnspent`.
+  non-monic QR factors and oversized depth-32 buckets. The QR model admits both: a split may be any
+  factorization of the contents, and a descent has no depth bound. The bucket results below hold
+  for every such derivation, so neither case affects the no-double-spend result. Uses of a bucket
+  other than exclusion and `QrSpendableInit`'s inclusion are not modelled.
 
 ### Leaf provenance
 
@@ -157,15 +169,43 @@ carries or about the leaf step's constraints on it.
 ### Double spends
 
 - `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes
-  anchor recency and the two-epoch window from `Chain.Valid`, and each stamp's nullifier pair as a
-  hypothesis. `no_double_spend_of_covered_spends` proves the pairs. All three take the second
-  spend's spendable lineage as a hypothesis.
+  anchor recency and the two-epoch window from `Chain.Valid`, and each stamp's nullifier pair and
+  the second spend's lineage and its start bound as hypotheses. `no_double_spend_of_covered_spends`
+  proves the pairs and the lineage from the stamps' derivations, and the start bound unless `cm` is
+  published again between the first spend's publication and the second spend's anchor epoch.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
-  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). Merge, unmerge and `FeeFuse`
-  keep the anchor, so in a derivation whose anchor is a chain node at epoch `e`, every leaf is
-  anchored on a chain node at `e` (`StampTree.leaves_node`), and the derivation is `StampDerivable`
+  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). The argument needs only an
+  anchor set that holds the stamp-fold predecessors of its members (`StampClosed`). Chain nodes form
+  one, and so do the anchors a published chain reaches (`OnChain.stampClosed`). Merge, unmerge and
+  `FeeFuse` keep the anchor, so in a derivation anchored in such a set at epoch `e`, every leaf is
+  anchored in it at `e` (`StampTree.leaves_node`), and the derivation is `StampDerivable`
   (`StampTree.derivable`). Consensus checks only the published anchor; this carries it to every
   leaf.
+- A published chain has one entry anchor per epoch: the boundary digest of the previous epoch's
+  final anchor, which folds the epoch's published stamps in chain order onto its entry anchor.
+  Folds from a boundary digest that end on one anchor fold the same stamps from the same start
+  (`foldBlock_inj`).
+- Every derivable bucket's range starts on a boundary digest into its epoch and ends on the
+  boundary digest of a run of stamp folds into the next. Its contents hold every root of those
+  stamps whose sides match its path, and divide their product (`QrBucketDerivable.covers`). A
+  descent leaves a root of the sibling only on the sibling's side, so a member of the child's class
+  stays in the child; a scaled or non-monic split changes no root. `EvidenceTreeOpen` replays a
+  bucket some step admitted, so it adds none. A bucket that ends on the published entry anchor of
+  the next epoch therefore holds every tachygram published in its epoch with a matching path, and
+  only tachygrams published in its epoch (`QrBucket.Covers.onChain`).
+- `QrUnspentInit` and `UnspentLift` test a value whose sides match the bucket's path and at which
+  the contents open nonzero, so the value is unpublished in the bucket's epoch. A segment joins
+  buckets on entry anchors, so one that ends on the published entry anchor of its `epoch_next`
+  holds, for each epoch it covers, a member whose value is unpublished there
+  (`ArbitraryUnspentDerivable.lineage`). `UnspentBind` divides that sequence into a derivation's,
+  and each member factor is prime, so each member is the note secret's nullifier at its epoch
+  (`NoteUnspentDerivable.lineage`).
+- A spendable lineage whose anchor the chain reaches in epoch `e` starts at an epoch that published
+  its `cm`, and each of its nullifiers from there up to `e` is unpublished
+  (`SpendDerivable.lineage`). A `SpendableInit` lineage starts at its creation stamp's epoch and
+  covers no epoch. A `QrSpendableInit` lineage starts at its bucket's epoch, whose contents hold
+  `cm`. Each `NoteUnspent` segment ends on the published entry anchor of the next segment's epoch,
+  because a boundary digest the chain reaches is an entry anchor (`OnChain.of_nextEpoch`).
 - A spend whose anchor is a chain node at epoch `e` carries its note secret's nullifiers at `e` and
   `e + 1` (`SpendDerivable.pair`). A `SpendableInit` lineage's anchor folds the creation stamp at
   its witnessed epoch, and a stamp fold is a chain node only in its own epoch. Every other lineage
@@ -198,6 +238,9 @@ choices that no theorem here discharges.
   unblinded digest recomputed natively. Rust reconstructs that canonical digest for published stamp
   verification and native chain advancement. The model assumes the canonical composition; it does
   not prove that these boundary checks close every intermediate bridge encoding in a proof tree.
+  The QR steps rely on the same binding: each in-step anchor fold absorbs the slot polynomial its
+  bridge hash covers, a bucket's `contents_hash` and the leaf digest bind its contents, and the
+  selection's `non_residue_hash` binds the split's non-residue polynomial.
 - **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
   step. Hash inputs are assumed to use canonical encodings with no ignored fields.
 
@@ -210,6 +253,15 @@ choices that no theorem here discharges.
   is not a fee digest. The digest absorbs the pair's sum and product, which fix the pair.
 - **`NoteLaw`.** The note commitment binds `pk` and `psi`, and the payment key binds `nk`, so a
   note commitment fixes its master key. Collision resistance is taken as exact.
+- **`EvidenceLaw`.** The `Tachyon-QrBucket` leaf digest is injective on a bucket's header fields
+  and contents, the `Tachyon-EvidNode` node digest is injective on its four children, and no leaf
+  digest is a node digest. Collision resistance and domain separation are taken as exact.
+- **`MemberLaw`.** An indexed member `(m + (i + 1) X) ^ 3 - c` at an epoch index `i ≤ EPOCH_MAX` is
+  prime, and one such member divides another only when their indices and values agree. This is the
+  injectivity claim of `collections/indexed_multiset.rs` for indices below `⌊√(p/3)⌋`, taken as a
+  hypothesis, not proved.
+- **The quadratic non-residue.** The QR results take `qnr` to be a non-square. Rust fixes it to `5`
+  in the Pallas base field.
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
 - **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
@@ -224,16 +276,18 @@ choices that no theorem here discharges.
 `Chain.Valid` is a hypothesis of the chain-level theorems. It includes these rules.
 
 - **Anchor membership.** A stamp's anchor is an acknowledged end-of-block anchor on the accepted
-  chain.
+  chain. `no_double_spend_of_covered_spends` takes the accepted anchors to be the anchors the
+  published chain reaches (`OnChain`), which include every end-of-block anchor.
 - **Two-epoch window.** A published tachygram is absent from every earlier stamp of its publication
   epoch and the epoch before.
 - **Anchor recency.** A stamp's anchor epoch is its publication epoch or the epoch before
   (`StampAccepted.recency`).
 
 The chain model folds each anchor with the epoch of the block that contains it. Consensus must
-compute the folds with the same epochs. `no_double_spend_of_covered_spends` takes the anchors'
-`epoch` labelling to agree with `Chain.Node` (`hepoch`), as `StampLiftStep.epoch_eq` does, and the
-accepted anchors to be `BlockAnchor`s.
+compute the folds with the same epochs, apply the boundary digest once per epoch, empty epochs
+included, and start epoch zero from the boundary digest of the zero anchor.
+`no_double_spend_of_covered_spends` takes the anchors' `epoch` labelling to agree with `Chain.Node`
+(`hepoch`), as `StampLiftStep.epoch_eq` does, with `HashLaw` rooted at epoch zero's entry anchor.
 
 ### Spend lineage
 
@@ -242,16 +296,18 @@ accepted anchors to be `BlockAnchor`s.
   carries the rebuilt action set and the published tachygram set as the verified header's slots,
   which `BundleVerified` checks; the link from a `BundleVerified` bundle to a `Chain.Stamp` is not
   modelled.
-- **Dropped constraints.** `SpendableInit`'s `cm` is free instead of coming from a
-  `NoteNullifiers`. `QrSpendableInit`'s bucket checks and the nullifier non-zero checks are
-  dropped. Dropping a constraint only adds derivable headers, so the results still hold.
-- **`NoteUnspent`.** Its derivability is the parameter `Unspent`, modelled on `lean/qr-lineage`.
-  The spend argument consumes one property of it (`UnspentSpec.anchor_next_entry`): a derivable
-  segment's `anchor_next` is the epoch fold of some anchor with `epoch_next`. `QrBucketSeal`
-  computes it so (`qr.rs`), and `UnspentLift` and `UnspentFuse` emit a bucket's or their right
-  input's bound (`pool.rs`). It is discharged on `lean/qr-lineage`.
-- **Lineage.** `no_double_spend_of_covered_spends` takes the second spend's exclusion lineage over
-  the master key of a `NoteSecret` for `cm`, and its start bound, as hypotheses.
+- **Dropped constraints.** Each step's table row names the constraints the model drops. Dropping a
+  constraint only adds derivable headers, so the results still hold.
+- **QR side tests.** `enforce_sides_of` is read through its per-position root equations on the
+  bucket's path. Its mask sums and bit fold select exactly the first `depth` positions and compare
+  them with `bits`; that this arithmetic does not wrap in the field is assumed, not proved. A
+  profile is carried as its path, since `QrSideDescend`'s depth bound keeps `(depth, bits)`
+  injective on paths.
+- **Same note.** Two spends of one note are two spends with one `cm` whose lineages start at one
+  publication of `cm`. A lineage starts at an epoch that published `cm`, and the tree pins nothing
+  more: consensus may publish `cm` again two epochs later, and that output pays for a second note
+  with the same nullifiers. `no_double_spend_of_covered_spends` therefore takes `cm` unpublished
+  after the first spend's publication up to the second spend's anchor epoch (`hfresh`).
 
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
 `a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
