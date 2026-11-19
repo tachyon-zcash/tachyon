@@ -489,7 +489,8 @@ The work splits as follows, each stamp step also opening its action-set and tach
 Every stamp's action set polynomial is a product of linear factors, one per action or fee digest, and its tachygram set polynomial is the product over exactly those digests' tachygrams.
 Unique factorization makes the division exact: the divisor's digests are a sub-multiset of the dividend's. Each digest determines its tachygrams by Poseidon collision resistance, so the tachygram quotient holds exactly the remaining digests' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note). Its fee digest absorbs the same fee change commitment that it adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
+
+[`FeeFuse`](./fee.md#fee-steps) transforms `Actions` into a `Stamp` by multiplying each set polynomial by its linear fee factor. Its fee digest absorbs the same fee change commitment that the step adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
 
 ### Stamp anchor
 
@@ -503,7 +504,7 @@ Every stamp-producing operation rerandomizes its PCD before releasing a stamp: `
 
 Stamps cross trust boundaries when a wallet publishes an autonome to the mempool and when an aggregator publishes a merged, lifted, or unmerged stamp while retaining the stamps it combined. Rerandomization at each handoff is required and is the mechanism intended to make a released stamp proof unlinkable to the private lineage that built it and to other releases from that lineage.
 
-Ragu does not yet provide zero knowledge for either uncompressed or compressed stamp proofs, and its present rerandomizer does not yet establish unlinkability. `rerandomize` fuses the `Stamp` PCD with the application's cached seeded unit PCD, preserving the `Stamp` header and copying its `ActionSet` and `TachygramSet` polynomials. Without an accumulator randomizer at the fuse step, the resulting accumulator remains a deterministic function of the input PCD, the cached unit PCD, and the transcript challenges.
+Ragu does not yet provide zero knowledge for either uncompressed or compressed stamp proofs, and its present rerandomizer does not yet establish unlinkability. `rerandomize` fuses the `Stamp` PCD with the application's cached seeded unit PCD, preserving the `Stamp` header and copying its `ActionSetPoly` and `TachygramSetPoly` slots. Without an accumulator randomizer at the fuse step, the resulting accumulator remains a deterministic function of the input PCD, the cached unit PCD, and the transcript challenges.
 
 Because `rerandomize` runs after `FeeFuse`, `FeeSeed`, `StampMerge`, `StampLift`, or `StampUnmerge`, the released stamp proof's immediate predecessor headers are the public `Stamp` header `(tachygram_set_bridge, anchor)` and the unit header rather than wallet-private headers such as `NoteSecret` or `SpendHeader`. Beyond the `Stamp` header and the two public slot commitments, the serialized stamp proof bytes still disclose internal step data:
 
