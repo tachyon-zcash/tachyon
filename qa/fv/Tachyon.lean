@@ -6,4 +6,7 @@ import Tachyon.ProofTree
 import Tachyon.ProvenanceTraces
 import Tachyon.Consensus.Bundle
 import Tachyon.Consensus.Chain
+import Tachyon.Consensus.Entry
+import Tachyon.Qr
+import Tachyon.Unspent
 import Tachyon.Consensus
