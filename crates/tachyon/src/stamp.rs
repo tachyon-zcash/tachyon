@@ -22,7 +22,9 @@ use alloc::{
 };
 use core::error;
 
-pub use actions::{ActionsPlan, ActionsProof, ActionsProveError, MergeError};
+pub use actions::{
+    ActionsPlan, ActionsProof, ActionsProveError, AutonomeParts, FeeError, MergeError, SeedError,
+};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{

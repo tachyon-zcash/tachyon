@@ -1,7 +1,8 @@
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    BlockHeight,
-    stamp::{ActionsPlan, proof::stamp::Actions},
+    Anchor, BlockHeight, fee,
+    stamp::{ActionsPlan, AutonomeParts, proof::stamp::Actions},
+    value,
 };
 
 use super::fixtures::{
@@ -34,6 +35,11 @@ fn pre_fee_proofs_lift_and_merge_at_a_common_anchor() {
     assert_eq!(lifted.anchor, to);
     let lifted_pcd = lifted.proof.clone().carry::<Actions>(to);
     assert!(app.verify_uncompressed(&lifted_pcd, &mut *rng).unwrap());
+    let max_fee = wallet.random_note(10);
+    let lifted_parts = lifted
+        .clone()
+        .fee(rng, app, max_fee, value::Positive::ZERO)
+        .unwrap();
     let other = ActionsPlan::new(
         vec![],
         vec![(second.descriptor(), second.theta, second.note, second.rcv)],
@@ -43,6 +49,48 @@ fn pre_fee_proofs_lift_and_merge_at_a_common_anchor() {
     .unwrap();
     let merged = lifted.merge(rng, app, other).unwrap();
     assert_eq!(merged.pairs.len(), 2);
+    let before = merged
+        .clone()
+        .fee(rng, app, max_fee, value::Positive::ZERO)
+        .unwrap();
+    let chosen_fee = value::Positive::try_from(2u64).unwrap();
+    let after = merged.clone().fee(rng, app, max_fee, chosen_fee).unwrap();
+    assert_eq!(before.pairs, after.pairs);
+    assert_eq!(after.fee, chosen_fee);
+    for parts in [lifted_parts, before, after] {
+        let descriptor = fee::Descriptor {
+            cv_feemax: max_fee.cv_feemax(),
+            v_fee: parts.fee,
+        };
+        let digests = parts
+            .pairs
+            .iter()
+            .map(|(desc, pair)| desc.digest(*pair))
+            .chain([descriptor.digest(parts.cm_change)]);
+        assert!(parts.stamp.verify_proof(rng, app, digests).unwrap());
+    }
     let pcd = merged.proof.carry::<Actions>(to);
     assert!(app.verify_uncompressed(&pcd, rng).unwrap());
+}
+
+#[test]
+fn fee_seed_proves_an_actionless_stamp() {
+    let rng = &mut StdRng::seed_from_u64(14);
+    let app = &application();
+    let wallet = WalletSim::new(shared_sk());
+    let max_fee = wallet.random_note(0);
+    let anchor = Anchor::random(rng);
+    let parts = AutonomeParts::seed(rng, app, max_fee, anchor).unwrap();
+    assert!(parts.pairs.is_empty());
+    assert_eq!(parts.fee, value::Positive::ZERO);
+    let descriptor = fee::Descriptor {
+        cv_feemax: max_fee.cv_feemax(),
+        v_fee: parts.fee,
+    };
+    assert!(
+        parts
+            .stamp
+            .verify_proof(rng, app, [descriptor.digest(parts.cm_change)])
+            .unwrap()
+    );
 }

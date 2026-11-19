@@ -8,8 +8,9 @@ use udon::field::Field as _;
 
 use super::{
     ActionDigest, ActionEntropy, ActionLift, ActionMerge, Actions, Anchor, App, Box, CryptoRng,
-    Debug, Display, Error, Fp, Note, Pasta, ProductionRank, ProofAuthorizingKey, ProofStamp,
-    Tachygram, Uncompressed, Vec, action, delegation, pool, spend, spendable, value, witness,
+    Debug, Display, Error, FeeFuse, FeeSeed, Fp, Note, Pasta, ProductionRank, ProofAuthorizingKey,
+    ProofStamp, Stamp, Tachygram, TachygramSetCommit, Uncompressed, Vec, action, delegation, pool,
+    spend, spendable, value, witness,
 };
 
 /// The action descriptors and their witnesses at one anchor, without a fee.
@@ -291,6 +292,126 @@ impl ActionsProof {
             proof: Box::new(proof),
         })
     }
+
+    /// Apply the fee and rerandomize the stamp. Keep a copy of the actions
+    /// proof to change the fee without proving the actions again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FeeError`] if the max fee note's `rcm` is zero, the fee
+    /// exceeds its value, or Ragu cannot construct the proof.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a descriptor with an identity `cv` or `rk`.
+    pub fn fee<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        max_fee_note: Note,
+        fee: value::Positive,
+    ) -> Result<AutonomeParts, FeeError> {
+        if Fp::from(max_fee_note.rcm) == Fp::ZERO {
+            return Err(FeeError::ZeroRcm);
+        }
+        let value = value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+            .map_err(|_err| FeeError::FeeAboveMax)?;
+        let cm_change = Tachygram::from(
+            Note {
+                value,
+                ..max_fee_note
+            }
+            .commitment(),
+        );
+        let (digests, tachygrams) = Self::sets(self.pairs.iter());
+        let (fee_note, v_fee, (action_poly, tachygram_poly)) =
+            witness::fee_fuse((self.anchor, ()), max_fee_note, fee, &digests, &tachygrams);
+        let tachygram_set = tachygram_poly.commit();
+        let (pcd, ()) = app
+            .fuse(
+                rng,
+                FeeFuse,
+                (fee_note, v_fee, (action_poly, tachygram_poly)),
+                self.proof.carry::<Actions>(self.anchor),
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .map_err(FeeError::ProofFailed)?;
+        let stamp =
+            AutonomeParts::finish(rng, app, pcd, tachygram_set).map_err(FeeError::ProofFailed)?;
+        Ok(AutonomeParts {
+            stamp,
+            pairs: self.pairs,
+            fee,
+            cm_change,
+        })
+    }
+}
+
+/// A stamp and the bundle authorization data that it binds.
+#[derive(Clone, Debug)]
+pub struct AutonomeParts {
+    /// The stamp, with no adjuncts.
+    pub stamp: ProofStamp<Uncompressed>,
+    /// The covered descriptors and their ordered tachygram pairs.
+    pub pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+    /// The actual fee, not the maximum.
+    pub fee: value::Positive,
+    /// The fee change note commitment.
+    pub cm_change: Tachygram,
+}
+
+impl AutonomeParts {
+    /// Prove a stamp for a bundle with no actions and no fee.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SeedError`] if the max fee note's `rcm` or value is invalid,
+    /// or Ragu cannot construct the proof.
+    pub fn seed<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &App<'_>,
+        max_fee_note: Note,
+        anchor: Anchor,
+    ) -> Result<Self, SeedError> {
+        if Fp::from(max_fee_note.rcm) == Fp::ZERO {
+            return Err(SeedError::ZeroRcm);
+        }
+        if max_fee_note.value != value::Positive::ZERO {
+            return Err(SeedError::NonzeroMaxFee);
+        }
+        let (fee_note, seed_anchor, action_poly, tachygram_poly) =
+            witness::fee_seed(((), ()), max_fee_note, anchor);
+        let tachygram_set = tachygram_poly.commit();
+        let (pcd, ()) = app
+            .seed(
+                rng,
+                FeeSeed,
+                (fee_note, seed_anchor, action_poly, tachygram_poly),
+            )
+            .map_err(SeedError::ProofFailed)?;
+        let stamp = Self::finish(rng, app, pcd, tachygram_set).map_err(SeedError::ProofFailed)?;
+        Ok(Self {
+            stamp,
+            pairs: BTreeMap::new(),
+            fee: value::Positive::ZERO,
+            cm_change: max_fee_note.commitment().into(),
+        })
+    }
+
+    fn finish<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &App<'_>,
+        pcd: ragu::Pcd<Pasta, ProductionRank, Stamp>,
+        tachygram_set: TachygramSetCommit,
+    ) -> Result<ProofStamp<Uncompressed>, ragu::Error> {
+        let (proof, (_, anchor)) = app.rerandomize(pcd, rng)?.into_parts();
+        Ok(ProofStamp {
+            anchor,
+            tachygram_set,
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(proof),
+        })
+    }
 }
 
 /// Errors while proving planned actions.
@@ -324,6 +445,36 @@ pub enum MergeError {
     /// Both proofs cover the same descriptor.
     #[display("action proofs overlap")]
     OverlappingActions,
+    /// Ragu cannot construct the proof.
+    #[display("proof failed: {_0}")]
+    ProofFailed(ragu::Error),
+}
+
+/// Errors while applying a fee to proven actions.
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum FeeError {
+    /// The max fee note has a zero commitment trapdoor.
+    #[display("zero max fee note commitment trapdoor")]
+    ZeroRcm,
+    /// The fee exceeds the max fee note's value.
+    #[display("fee exceeds maximum")]
+    FeeAboveMax,
+    /// Ragu cannot construct the proof.
+    #[display("proof failed: {_0}")]
+    ProofFailed(ragu::Error),
+}
+
+/// Errors while proving a stamp without actions.
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum SeedError {
+    /// The max fee note has a zero commitment trapdoor.
+    #[display("zero max fee note commitment trapdoor")]
+    ZeroRcm,
+    /// The max fee note has a nonzero value.
+    #[display("nonzero maximum fee without actions")]
+    NonzeroMaxFee,
     /// Ragu cannot construct the proof.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu::Error),
