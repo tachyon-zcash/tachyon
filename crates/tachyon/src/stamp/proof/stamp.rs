@@ -1,13 +1,9 @@
 //! Stamp header and stamp-producing/transforming steps.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, OnlinePoly, Suffix},
+    header::{Header, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
     primitives::{
@@ -23,7 +19,7 @@ use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
     output::OutputHeader,
-    pool::{AnchorSet, AnchorSpan, AnchorSpanOutput},
+    pool::{AnchorSpan, AnchorSpanOutput},
     spend::{SpendHeader, SpendHeaderOutput},
 };
 use crate::{
@@ -35,30 +31,11 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     pasta::{EpAffine, Fp},
-    primitives::{ActionDigest, Anchor, Tachygram, TachygramSetBridge, effect},
+    primitives::{
+        ActionDigest, Anchor, AnchorSetPoly, PolySlot, Tachygram, TachygramSetBridge, effect,
+    },
     value,
 };
-
-/// The polynomial whose roots are a set of action and fee digests.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionSet;
-
-impl OnlinePoly for ActionSet {}
-
-/// The polynomial whose roots are a stamp's tachygrams. A header that carries
-/// it keeps it last, where the bridge hash digests it.
-#[derive(Clone, Copy, Debug)]
-pub struct TachygramSet;
-
-impl OnlinePoly for TachygramSet {}
-
-/// The polynomial whose roots are the tachygrams of the stamp the producing
-/// step folds into its anchor. A header that carries it keeps it last, where
-/// the bridge hash the fold absorbs digests it.
-#[derive(Clone, Copy, Debug)]
-pub struct FoldedStamp;
-
-impl OnlinePoly for FoldedStamp {}
 
 /// Non-empty proven action content with no fee in its lineage.
 ///
@@ -85,7 +62,7 @@ pub struct ActionsOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for Actions {
     /// `anchor`
     type Data = Anchor;
-    type OnlinePolyCommit = (ActionSet, TachygramSet);
+    type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; ActionsOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(15);
@@ -103,8 +80,8 @@ impl Header<Fp> for Actions {
 
 /// Header for one or more fee-bearing lineages.
 ///
-/// [`ActionSet`] and [`TachygramSet`] hold the action and tachygram sets.
-/// `tachygram_set_bridge` holds the bridge hash of [`TachygramSet`].
+/// The polynomials are an [`ActionSetPoly`] and a [`TachygramSetPoly`].
+/// `tachygram_set_bridge` holds the bridge hash of the [`TachygramSetPoly`].
 /// [`StampMerge`] enforces both output sets as input products.
 ///
 /// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
@@ -127,7 +104,7 @@ pub struct StampOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for Stamp {
     /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);
-    type OnlinePolyCommit = (ActionSet, TachygramSet);
+    type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; StampOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
@@ -177,8 +154,8 @@ impl Header<Fp> for Stamp {
 /// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
 /// [`OutputBind`](super::output::OutputBind) derived, derives the action
 /// randomizer `alpha` from the witnessed `theta` and `cm`, then the randomized
-/// action key `rk`, and enforces the one-action set plus the stamp accumulator
-/// over the two-element tachygram set `{cm, pad}`.
+/// action key `rk`, and enforces the one-action set plus the two-element
+/// tachygram set `{cm, pad}`.
 ///
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
@@ -212,15 +189,10 @@ impl Step<Pasta> for OutputAction {
             .randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let digest = ActionDigest::new(cv, rk, (cm, pad));
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (action_set, tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, tachygram_set)
             .stage([Fp::from(digest)]))
     }
 
@@ -270,13 +242,13 @@ impl Step<Pasta> for OutputAction {
         // The action-set commitment commits to exactly the one action this
         // step derives. `cv` carries the note's value; `rk` derives from
         // `alpha`, and so from `cm`.
-        let action_set = oracles.output(ActionSet).open(dr, &z)?;
+        let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &action_root);
         action_set.enforce_equal(dr, &action_factor)?;
-        // The stamp accumulator commits to exactly the tachygram pair on the
+        // The tachygram set holds exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
-        let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
+        let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let mut expected_tachygram_set = Element::constant(dr, Fp::ONE);
         for root in [&cm_root, &output_header.pad] {
             let factor = z.sub(dr, root);
@@ -301,9 +273,8 @@ impl Step<Pasta> for OutputAction {
 /// [`SpendHeader`] [`SpendBind`](super::spend::SpendBind) derived. The step
 /// derives the action randomizer `alpha` from the witnessed `theta` and `cm`,
 /// then the randomized action key `rk`, and enforces the one-action set plus
-/// the stamp accumulator over the two-element tachygram set
-/// `{nf_current, nf_next}` (the pair `SpendBind` derived from the master
-/// key).
+/// the two-element tachygram set `{nf_current, nf_next}` (the pair `SpendBind`
+/// derived from the master key).
 ///
 /// `pk = payment_key(ak, nk)` is the only thing tying `ak` to the note.
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
@@ -346,15 +317,10 @@ impl Step<Pasta> for SpendAction {
             rk,
             (Tachygram::from(nf_current), Tachygram::from(nf_next)),
         );
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (action_set, tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, tachygram_set)
             .stage([Fp::from(digest)]))
     }
 
@@ -416,13 +382,13 @@ impl Step<Pasta> for SpendAction {
         let z = oracles.zeta().clone();
         // The action-set commitment commits to exactly the one action this
         // step derives; the root is in-circuit from the certified note.
-        let action_set = oracles.output(ActionSet).open(dr, &z)?;
+        let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &action_root);
         action_set.enforce_equal(dr, &action_factor)?;
-        // The stamp accumulator commits to exactly the nullifier pair on the
+        // The tachygram set holds exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
-        let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
+        let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let mut expected_tachygram_set = Element::constant(dr, Fp::ONE);
         for root in [&nf_current, &nf_next] {
             let factor = z.sub(dr, root);
@@ -464,15 +430,9 @@ impl Step<Pasta> for StampMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -499,14 +459,14 @@ impl Step<Pasta> for StampMerge {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // Confirm union via product-opening relation.
         let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSet).open(dr, &z)?;
-        let right_actions = oracles.right(ActionSet).open(dr, &z)?;
-        let merged_actions = oracles.output(ActionSet).open(dr, &z)?;
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let right_actions = oracles.right(ActionSetPoly::SLOT).open(dr, &z)?;
+        let merged_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let expected_actions = left_actions.mul(dr, &right_actions)?;
         merged_actions.enforce_equal(dr, &expected_actions)?;
-        let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
-        let right_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
-        let merged_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let right_tachygrams = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let merged_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let expected_tachygrams = left_tachygrams.mul(dr, &right_tachygrams)?;
         merged_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
@@ -560,15 +520,9 @@ impl Step<Pasta> for ActionMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -595,14 +549,14 @@ impl Step<Pasta> for ActionMerge {
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         // Confirm union via product-opening relation.
         let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSet).open(dr, &z)?;
-        let right_actions = oracles.right(ActionSet).open(dr, &z)?;
-        let merged_actions = oracles.output(ActionSet).open(dr, &z)?;
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let right_actions = oracles.right(ActionSetPoly::SLOT).open(dr, &z)?;
+        let merged_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let expected_actions = left_actions.mul(dr, &right_actions)?;
         merged_actions.enforce_equal(dr, &expected_actions)?;
-        let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
-        let right_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
-        let merged_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let right_tachygrams = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let merged_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let expected_tachygrams = left_tachygrams.mul(dr, &right_tachygrams)?;
         merged_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
@@ -659,12 +613,9 @@ impl Step<Pasta> for StampLift {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(TachygramSet, left.polynomial(TachygramSet)))
+        let action_set = &witness.0;
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -694,14 +645,14 @@ impl Step<Pasta> for StampLift {
             anchor_end,
         } = right_encoded.as_gadget().clone();
         let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSet).open(dr, &z)?;
-        let output_actions = oracles.output(ActionSet).open(dr, &z)?;
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         left_actions.enforce_equal(dr, &output_actions)?;
-        let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
         let StampOutput { anchor, .. } = left_encoded.as_gadget().clone();
-        let anchor_evaluation = oracles.right(AnchorSet).open(dr, &anchor)?;
+        let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
@@ -749,9 +700,8 @@ impl Step<Pasta> for ActionLift {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(ActionSet, left.polynomial(ActionSet))
-            .poly(TachygramSet, left.polynomial(TachygramSet)))
+        let prepared = ActionSetPoly::SLOT.copy_from(Prepared::new(), &left, ActionSetPoly::SLOT);
+        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -781,14 +731,14 @@ impl Step<Pasta> for ActionLift {
             anchor_end,
         } = right_encoded.as_gadget().clone();
         let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSet).open(dr, &z)?;
-        let output_actions = oracles.output(ActionSet).open(dr, &z)?;
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         left_actions.enforce_equal(dr, &output_actions)?;
-        let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
         let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
-        let anchor_evaluation = oracles.right(AnchorSet).open(dr, &anchor)?;
+        let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
@@ -832,15 +782,10 @@ impl Step<Pasta> for FeeFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.2.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.2.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (output_action_set, output_tachygram_set) = (&witness.2.0, &witness.2.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), output_action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, output_tachygram_set)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -929,10 +874,10 @@ impl Step<Pasta> for FeeFuse {
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSet).open(dr, &z)?;
-        let output_actions = oracles.output(ActionSet).open(dr, &z)?;
-        let left_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         for (left_value, output_value, root) in [
             (left_actions, output_actions, fee_digest),
             (left_tachygrams, output_tachygrams, fee_change),
@@ -990,15 +935,10 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.2.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let (fee_action_set, fee_tachygram_set) = (&witness.2, &witness.3);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), fee_action_set);
+        Ok(TachygramSetPoly::SLOT
+            .poly(prepared, fee_tachygram_set)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -1076,10 +1016,10 @@ impl Step<Pasta> for FeeSeed {
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
-        let action_set = oracles.output(ActionSet).open(dr, &z)?;
+        let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &fee_digest);
         action_set.enforce_equal(dr, &action_factor)?;
-        let tachygram_set = oracles.output(TachygramSet).open(dr, &z)?;
+        let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let tachygram_factor = z.sub(dr, &fee_change);
         tachygram_set.enforce_equal(dr, &tachygram_factor)?;
         let tachygram_set_bridge = [
@@ -1161,15 +1101,9 @@ impl Step<Pasta> for StampUnmerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                ActionSet,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                TachygramSet,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (action_set, tachygram_set) = (&witness.0, &witness.1);
+        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
+        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1195,14 +1129,14 @@ impl Step<Pasta> for StampUnmerge {
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let z = oracles.zeta().clone();
-        let divisor_actions = oracles.right(ActionSet).open(dr, &z)?;
-        let quotient_actions = oracles.output(ActionSet).open(dr, &z)?;
-        let dividend_actions = oracles.left(ActionSet).open(dr, &z)?;
+        let divisor_actions = oracles.right(ActionSetPoly::SLOT).open(dr, &z)?;
+        let quotient_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
+        let dividend_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
         let expected_actions = divisor_actions.mul(dr, &quotient_actions)?;
         dividend_actions.enforce_equal(dr, &expected_actions)?;
-        let divisor_tachygrams = oracles.right(TachygramSet).open(dr, &z)?;
-        let quotient_tachygrams = oracles.output(TachygramSet).open(dr, &z)?;
-        let dividend_tachygrams = oracles.left(TachygramSet).open(dr, &z)?;
+        let divisor_tachygrams = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let quotient_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let dividend_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
         let expected_tachygrams = divisor_tachygrams.mul(dr, &quotient_tachygrams)?;
         dividend_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();

@@ -698,7 +698,7 @@ impl ProofStamp<Uncompressed> {
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputAction`]
     /// derives `alpha` from `theta` and the bound `cm`, proves the action over
-    /// the pair, and enforces the stamp accumulator. Both tachygrams
+    /// the pair, and enforces the tachygram set. Both tachygrams
     /// are returned for publication in the bundle's authorization data.
     /// `digests` holds the proved action's digest.
     ///
@@ -769,7 +769,7 @@ impl ProofStamp<Uncompressed> {
     /// availability and the value commitment `cv` are read straight off the
     /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
     /// [`SpendAction`] derives `alpha` from `theta` and the bound `cm`, proves
-    /// the action `(cv, rk, pair)`, and enforces the stamp accumulator over the
+    /// the action `(cv, rk, pair)`, and enforces the tachygram set over the
     /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
     /// validation lives inside the spendable lineage. `digests` holds the
     /// proved action's digest.
