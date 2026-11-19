@@ -279,3 +279,58 @@ fn combine_is_order_independent_and_rejects_conflicts() {
         "overlapping action proofs"
     );
 }
+
+#[test]
+fn extract_rejects_wrong_binding_key_and_stamp_coverage() {
+    use crate::{Tachygram, primitives::TachygramSetPoly, stamp::proof::new_application};
+
+    let rng = &mut StdRng::seed_from_u64(29);
+    let note = Note {
+        pk: Fp::ONE.into(),
+        value: value::Positive::ZERO,
+        psi: Fp::ONE.into(),
+        rcm: Fp::ONE.into(),
+    };
+    let plan = Plan::new(
+        Vec::new(),
+        Vec::from([(note, ActionEntropy(Fp::ONE), value::ValueTrapdoor(Fq::ONE))]),
+        note,
+        Vec::new(),
+    )
+    .unwrap();
+    let mut section = Bundle::from_plan(&plan);
+    section.bsk = Some(private::BindingSigningKey::from([value::ValueTrapdoor(
+        Fq::ZERO,
+    )]));
+    assert_eq!(
+        section.clone().extract().unwrap_err(),
+        TxExtractorError::BindingKeyMismatch
+    );
+    section.bsk = None;
+    section.finalize_io([0; 32], rng).unwrap();
+
+    let app = new_application().unwrap();
+    let change = Tachygram::from(note.commitment());
+    let mut parts = stamp::AutonomeParts {
+        stamp: stamp::ProofStamp {
+            anchor: Anchor::default(),
+            tachygram_set: TachygramSetPoly::from_iter([change]).commit(),
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(app.bootstrap_proof().clone()),
+        },
+        pairs: BTreeMap::new(),
+        fee: value::Positive::ZERO,
+        cm_change: change,
+    };
+    section.autonome_parts = Some(parts.clone());
+    assert_eq!(
+        section.clone().extract().unwrap_err(),
+        TxExtractorError::Coverage(ExtractionCoverage::PairKeys)
+    );
+    parts.stamp.adjuncts.insert([1; 32]);
+    section.autonome_parts = Some(parts);
+    assert_eq!(
+        section.extract().unwrap_err(),
+        TxExtractorError::Coverage(ExtractionCoverage::Adjuncts)
+    );
+}
