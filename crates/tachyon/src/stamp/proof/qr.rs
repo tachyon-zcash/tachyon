@@ -20,12 +20,9 @@
 //! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
 //! profile against a bucket and opens the bucket at it.
 
-extern crate alloc;
-
 #[cfg(test)]
 mod tests;
 
-use alloc::vec::Vec;
 use core::convert::Infallible;
 
 use ragu::{
@@ -261,10 +258,7 @@ impl Step<Pasta> for QrSummaryIntake {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            left.polynomial(Summary::ACCUMULATED),
-        ))
+        Ok(TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, Summary::ACCUMULATED))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -355,10 +349,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let stamp = &witness.3;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), stamp))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -559,10 +551,8 @@ impl Step<Pasta> for QrIntakeMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-        ))
+        let merged = &witness.0;
+        Ok(TachygramSetPoly::SLOT.poly(Prepared::new(), merged))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -659,15 +649,9 @@ impl Step<Pasta> for QrIntakeSplit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                QrIntakeSides::RESIDUE,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                QrIntakeSides::NON_RESIDUE,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (non_residue, residue) = (&witness.0, &witness.1);
+        let prepared = QrIntakeSides::RESIDUE.poly(Prepared::new(), residue);
+        Ok(QrIntakeSides::NON_RESIDUE.poly(prepared, non_residue))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -759,15 +743,9 @@ impl Step<Pasta> for QrSideSelect {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                QrInterpolantPoly::SLOT,
-                witness.0.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
-            .poly(
-                QrQuotientPoly::SLOT,
-                witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            ))
+        let (interpolant, quotient) = (&witness.0, &witness.1);
+        let prepared = QrInterpolantPoly::SLOT.poly(Prepared::new(), interpolant);
+        Ok(QrQuotientPoly::SLOT.poly(prepared, quotient))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -860,14 +838,13 @@ impl Step<Pasta> for QrSideDescend {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let selected = if witness.0 {
-            left.polynomial(QrIntakeSides::RESIDUE)
+        let &(bit,) = witness;
+        let prepared = if bit {
+            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
         } else {
-            left.polynomial(QrIntakeSides::NON_RESIDUE)
+            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
         };
-        Ok(Prepared::new()
-            .poly(TachygramSetPoly::SLOT, selected)
-            .stage([Fp::from(u64::from(witness.0))]))
+        Ok(prepared.stage([Fp::from(u64::from(bit))]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1132,10 +1109,7 @@ impl Step<Pasta> for QrBucketSeal {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new().poly(
-            TachygramSetPoly::SLOT,
-            left.polynomial(TachygramSetPoly::SLOT),
-        ))
+        Ok(TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, TachygramSetPoly::SLOT))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1291,11 +1265,9 @@ impl Step<Pasta> for QrUnspentInit {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        Ok(Prepared::new()
-            .poly(
-                NfSeqPoly::SLOT,
-                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
-            )
+        let sequence = &witness.3;
+        Ok(NfSeqPoly::SLOT
+            .poly(Prepared::new(), sequence)
             .stage([Fp::from(witness.0)]))
     }
 
