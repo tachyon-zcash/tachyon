@@ -50,9 +50,9 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeq, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant,
-        QrInterpolant, QrInterpolantPoly, QrProfile, QrQuotient, QrQuotientPoly, Tachygram,
-        TachygramSet, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolant,
+        QrInterpolantPoly, QrProfile, QrQuotient, QrQuotientPoly, Tachygram, TachygramSet,
+        TachygramSetBridge, TachygramSetPoly,
     },
 };
 
@@ -795,7 +795,9 @@ impl Step<Pasta> for QrSideSelect {
             .discriminant
             .add(dr, &sides.intake.profile.depth)
             .negate(dr);
-        let value = oracles.left(QrIntakeSides::NON_RESIDUE).open(dr, &exceptional_element)?;
+        let value = oracles
+            .left(QrIntakeSides::NON_RESIDUE)
+            .open(dr, &exceptional_element)?;
         value.enforce_nonzero(dr)?;
         // The hints are checked by `QrSideDescend`; opening them here keeps
         // them committed rather than held to the constant one.
@@ -1285,7 +1287,10 @@ impl Step<Pasta> for QrUnspentInit {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new()
-            .poly(NfSeq, witness.3.as_ref().iter_coeffs().collect::<Vec<_>>())
+            .poly(
+                NfSeqPoly::SLOT,
+                witness.3.as_ref().iter_coeffs().collect::<Vec<_>>(),
+            )
             .stage([Fp::from(witness.0)]))
     }
 
@@ -1331,7 +1336,7 @@ impl Step<Pasta> for QrUnspentInit {
         )]
         value_element.enforce_equal(dr, &oracles.staged()[0])?;
         let z = oracles.zeta().clone();
-        let sequence_at_z = oracles.output(NfSeq).open(dr, &z)?;
+        let sequence_at_z = oracles.output(NfSeqPoly::SLOT).open(dr, &z)?;
         let expected_sequence = gadgets::indexed_multiset::Member {
             index: (*bucket.epoch).clone(),
             value: value_element.clone(),

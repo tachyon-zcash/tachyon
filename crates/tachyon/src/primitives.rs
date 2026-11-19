@@ -17,13 +17,13 @@ pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochIndex};
 pub use evidence::EvidenceTreeRoot;
 pub use qr::{
-    QrClassRoot, QrDiscriminant, QrInterpolant, QrInterpolantCommit, QrInterpolantPoly,
-    QrProfile, QrQuotient, QrQuotientCommit, QrQuotientPoly,
+    QrClassRoot, QrDiscriminant, QrInterpolant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
+    QrQuotient, QrQuotientCommit, QrQuotientPoly,
 };
-pub use seq::{NfSeq, NfSeqCommit, NfSeqPoly};
+pub use seq::{NfSeqCommit, NfSeqPoly};
 pub use sets::{
-    ActionSet, ActionSetCommit, ActionSetPoly, AnchorSet, AnchorSetCommit, AnchorSetPoly,
-    TachygramSet, TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
+    ActionSetCommit, ActionSetPoly, AnchorSetCommit, AnchorSetPoly, TachygramSet,
+    TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
 };
 pub use slot::PolySlot;
 pub use tachygram::Tachygram;

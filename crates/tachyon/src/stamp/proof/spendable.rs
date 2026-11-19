@@ -22,16 +22,12 @@ use ragu::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
-use super::{
-    delegation::NoteNullifiers,
-    pool::NoteUnspent,
-    qr::QrBucket,
-};
+use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, TachygramSet, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, PolySlot, TachygramSet, TachygramSetPoly},
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -52,7 +48,7 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
-    type OnlinePolyCommit = (Padding, TachygramSet);
+    type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -122,7 +118,7 @@ impl Step<Pasta> for SpendableInit {
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
         Ok(Prepared::new().poly(
-            TachygramSet,
+            TachygramSetPoly::SLOT,
             witness.1.as_ref().iter_coeffs().collect::<Vec<_>>(),
         ))
     }
@@ -177,7 +173,9 @@ impl Step<Pasta> for SpendableInit {
             ],
         )?;
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let evaluation = oracles.output(TachygramSet).open(dr, &nullifiers.cm)?;
+        let evaluation = oracles
+            .output(TachygramSetPoly::SLOT)
+            .open(dr, &nullifiers.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (cm, ..) = left.take();

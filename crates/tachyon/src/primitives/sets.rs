@@ -3,8 +3,7 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, header::OnlinePoly,
-    pasta::Pasta,
+    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, header::OnlinePoly, pasta::Pasta,
 };
 use udon::curve::Projective as _;
 
@@ -125,22 +124,10 @@ impl OnlinePoly for TachygramSet {}
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
-/// The polynomial whose roots are a set of action and fee digests.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionSet;
-
-impl OnlinePoly for ActionSet {}
-
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
-
-/// The polynomial whose roots are an anchor span's anchors.
-#[derive(Clone, Copy, Debug)]
-pub struct AnchorSet;
-
-impl OnlinePoly for AnchorSet {}
 
 impl AnchorSetPoly {
     /// Names this polynomial in a header that carries one.

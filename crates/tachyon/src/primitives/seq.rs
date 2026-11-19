@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, header::OnlinePoly, pasta::Pasta};
+use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
 use udon::{
     exec::{ExecutionOptions, SerialExecutor},
     fft::{Domain, Expansion, Transform},
@@ -27,13 +27,6 @@ pub struct NfSeqCommit(Eq);
 /// encodings, one per member.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
-
-/// The polynomial whose roots are a sequence of nullifiers, each indexed by
-/// its epoch.
-#[derive(Clone, Copy, Debug)]
-pub struct NfSeq;
-
-impl OnlinePoly for NfSeq {}
 
 impl NfSeqPoly {
     /// Names this polynomial in a header that carries one.
