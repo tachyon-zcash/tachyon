@@ -85,6 +85,30 @@ info: 'Tachyon.no_double_spend_of_valid' depends on axioms: [propext, Classical.
 #print axioms Tachyon.no_double_spend_of_valid
 
 /--
+info: 'Tachyon.SpendDerivable.pair' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.SpendDerivable.pair
+
+/--
+info: 'Tachyon.StampTree.leaves_node' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTree.leaves_node
+
+/--
+info: 'Tachyon.StampTree.derivable' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTree.derivable
+
+/--
+info: 'Tachyon.no_double_spend_of_covered_spends' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_of_covered_spends
+
+/--
 info: 'Tachyon.Chain.Node.epoch_unique' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
