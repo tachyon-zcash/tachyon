@@ -75,5 +75,23 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
     #[into(skip)] pub(crate) PhantomData<S>,
 );
 
+impl<S: sealed::RandomizerState> ActionRandomizer<S> {
+    /// Whether this scalar fits the base field's capacity in bits.
+    #[must_use]
+    pub fn fits_base_field_capacity(&self) -> bool {
+        fits_base_field_capacity(self.0)
+    }
+}
+
+#[expect(clippy::as_conversions, reason = "constant field capacity")]
+pub(crate) fn fits_base_field_capacity(scalar: Fq) -> bool {
+    !scalar
+        .to_le_bits()
+        .as_ref()
+        .iter()
+        .skip(Fp::CAPACITY as usize)
+        .any(|&bit| bit)
+}
+
 #[cfg(test)]
 mod tests;

@@ -14,6 +14,7 @@ use crate::{
         MAX_MONEY,
         orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V},
     },
+    entropy::fits_base_field_capacity,
     pasta::{Ep, EpAffine, Fq},
 };
 
@@ -51,6 +52,12 @@ impl Trapdoor {
     /// Generate a random trapdoor for an action.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
+    /// Whether this scalar fits the base field's capacity in bits.
+    #[must_use]
+    pub fn fits_base_field_capacity(&self) -> bool {
+        fits_base_field_capacity(self.0)
     }
 
     /// Commit to a given value with this trapdoor.
