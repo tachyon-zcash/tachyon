@@ -26,6 +26,8 @@ mod fee;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod pczt_plan_review;
+#[cfg(test)]
 mod proof;
 #[cfg(test)]
 mod qr;

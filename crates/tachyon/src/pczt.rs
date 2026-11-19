@@ -2,14 +2,18 @@
 
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 
-use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use ragu::{Pcd, ProductionRank, pasta::Pasta};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
+use ragu::{Pcd, ProductionRank, Rank as _, pasta::Pasta};
+use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
-    Anchor, action,
-    entropy::ActionEntropy,
-    keys::{PaymentKey, ProofAuthorizingKey, SpendValidatingKey, private},
+    Anchor, CompactSize, Note, action,
+    digest::blake2b,
+    entropy::{ActionEntropy, ActionRandomizer},
+    keys::{PaymentKey, ProofAuthorizingKey, SpendValidatingKey, private, public},
     note, nullifier,
+    pasta::{EpAffine, Fp},
+    primitives::{Effect, effect},
     stamp::{
         self,
         proof::{delegation, pool, spendable},
@@ -108,7 +112,364 @@ pub struct MaxFee {
     proprietary: BTreeMap<String, Vec<u8>>,
 }
 
+trait OpeningEffect: Effect {
+    type Authority: Copy;
+    fn verification_key(
+        authority: Self::Authority,
+        alpha: &ActionRandomizer<Self>,
+    ) -> public::ActionVerificationKey;
+}
+
+impl OpeningEffect for effect::Spend {
+    type Authority = SpendValidatingKey;
+
+    fn verification_key(
+        authority: Self::Authority,
+        alpha: &ActionRandomizer<Self>,
+    ) -> public::ActionVerificationKey {
+        authority.derive_action_public(alpha)
+    }
+}
+
+impl OpeningEffect for effect::Output {
+    type Authority = ();
+
+    fn verification_key(
+        _authority: (),
+        alpha: &ActionRandomizer<Self>,
+    ) -> public::ActionVerificationKey {
+        private::ActionSigningKey::new(alpha).derive_action_public()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Opening<E: OpeningEffect> {
+    note: Note,
+    theta: ActionEntropy,
+    rcv: value::Trapdoor,
+    authority: E::Authority,
+}
+
+#[derive(Clone, Copy)]
+struct CheckedOpening<E: OpeningEffect> {
+    opening: Opening<E>,
+    descriptor: action::Descriptor,
+}
+
+enum OpeningCheckError {
+    ZeroRcm,
+    Randomness,
+}
+
+impl<E: OpeningEffect> Opening<E> {
+    fn check(self) -> Result<CheckedOpening<E>, OpeningCheckError> {
+        if Fp::from(self.note.rcm) == Fp::ZERO {
+            return Err(OpeningCheckError::ZeroRcm);
+        }
+        let alpha = self.theta.randomizer::<E>(self.note.commitment());
+        if !alpha.fits_base_field_capacity() || !self.rcv.fits_base_field_capacity() {
+            return Err(OpeningCheckError::Randomness);
+        }
+        let descriptor = action::Descriptor {
+            cv: E::commit_value(self.rcv, self.note.value),
+            rk: E::verification_key(self.authority, &alpha),
+        };
+        Ok(CheckedOpening {
+            opening: self,
+            descriptor,
+        })
+    }
+}
+
+/// Checked preimages of the committed section.
+#[derive(Clone, Debug)]
+#[debug("Plan(..)")]
+pub struct Plan {
+    spends: Vec<CheckedOpening<effect::Spend>>,
+    outputs: Vec<CheckedOpening<effect::Output>>,
+    max_fee_note: Note,
+    effects: Effects,
+}
+
+fn max_actions() -> usize {
+    (ProductionRank::num_coeffs() - 2).div_euclid(2)
+}
+
+fn memo_fits(len: usize) -> bool {
+    u64::try_from(len).is_ok_and(|size| CompactSize::from(size).enforce_valid().is_ok())
+}
+
+/// The plan's effecting data in commitment order.
+#[derive(Clone, Debug)]
+pub struct Effects {
+    /// Action descriptors in commitment order.
+    pub actions: Vec<action::Descriptor>,
+    /// The signed net value.
+    pub value_balance: value::Balance,
+    /// The commitment to the maximum fee.
+    pub cv_feemax: value::Commitment,
+    /// The committed memo bytes.
+    pub memo: Vec<u8>,
+}
+
+impl Effects {
+    /// Compute the bundle's sighash contribution.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        let descriptors: Vec<[u8; 64]> = self.actions.iter().copied().collect();
+        blake2b::bundle_commitment(
+            &blake2b::action_descriptor_digest(&descriptors),
+            self.value_balance.into(),
+            &self.cv_feemax.into(),
+            &blake2b::memo_digest(&self.memo),
+        )
+    }
+}
+
+/// A preimage cannot be used to construct a checked plan.
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
+#[non_exhaustive]
+pub enum PlanError {
+    /// A note commitment trapdoor is zero.
+    #[display("zero note commitment trapdoor")]
+    ZeroRcm,
+    /// Action randomness is not representable.
+    #[display("unrepresentable action randomness")]
+    UnrepresentableActionRandomness,
+    /// The maximum fee blind is not representable.
+    #[display("unrepresentable maximum fee blind")]
+    UnrepresentableFeeBlind,
+    /// The section has too many actions.
+    #[display("too many actions")]
+    TooManyActions,
+    /// The memo exceeds the bundle encoding limit.
+    #[display("memo exceeds the bundle encoding limit")]
+    MemoTooLong,
+    /// The signed balance is out of range.
+    #[display("value balance out of range")]
+    BalanceOverflow,
+    /// Two actions have the same descriptor.
+    #[display("duplicate action descriptor")]
+    DuplicateAction,
+    /// An effect contains the identity point.
+    #[display("identity effect")]
+    IdentityPoint,
+    /// A section without actions has a nonzero maximum fee.
+    #[display("nonzero maximum fee without actions")]
+    FeeWithoutActions,
+}
+
+impl From<OpeningCheckError> for PlanError {
+    fn from(error: OpeningCheckError) -> Self {
+        match error {
+            OpeningCheckError::ZeroRcm => Self::ZeroRcm,
+            OpeningCheckError::Randomness => Self::UnrepresentableActionRandomness,
+        }
+    }
+}
+
+enum CheckedPlanError {
+    ZeroRcm,
+    UnrepresentableFeeBlind,
+    BalanceOverflow,
+    DuplicateAction,
+    IdentityPoint,
+    FeeWithoutActions,
+}
+
+impl From<CheckedPlanError> for PlanError {
+    fn from(error: CheckedPlanError) -> Self {
+        match error {
+            CheckedPlanError::ZeroRcm => Self::ZeroRcm,
+            CheckedPlanError::UnrepresentableFeeBlind => Self::UnrepresentableFeeBlind,
+            CheckedPlanError::BalanceOverflow => Self::BalanceOverflow,
+            CheckedPlanError::DuplicateAction => Self::DuplicateAction,
+            CheckedPlanError::IdentityPoint => Self::IdentityPoint,
+            CheckedPlanError::FeeWithoutActions => Self::FeeWithoutActions,
+        }
+    }
+}
+
+impl Plan {
+    /// Construct a plan from spend and output preimages.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the preimages cannot form a valid plan.
+    pub fn new(
+        spends: Vec<(Note, ActionEntropy, value::Trapdoor, SpendValidatingKey)>,
+        outputs: Vec<(Note, ActionEntropy, value::Trapdoor)>,
+        max_fee_note: Note,
+        memo: Vec<u8>,
+    ) -> Result<Self, PlanError> {
+        if spends.len().saturating_add(outputs.len()) > max_actions() {
+            return Err(PlanError::TooManyActions);
+        }
+        if !memo_fits(memo.len()) {
+            return Err(PlanError::MemoTooLong);
+        }
+        let checked_spends = spends
+            .into_iter()
+            .map(|(note, theta, rcv, authority)| {
+                Opening::<effect::Spend> {
+                    note,
+                    theta,
+                    rcv,
+                    authority,
+                }
+                .check()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let checked_outputs = outputs
+            .into_iter()
+            .map(|(note, theta, rcv)| {
+                Opening::<effect::Output> {
+                    note,
+                    theta,
+                    rcv,
+                    authority: (),
+                }
+                .check()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::from_checked(checked_spends, checked_outputs, max_fee_note, memo)
+            .map_err(PlanError::from)
+    }
+
+    fn from_checked(
+        spends: Vec<CheckedOpening<effect::Spend>>,
+        outputs: Vec<CheckedOpening<effect::Output>>,
+        max_fee_note: Note,
+        memo: Vec<u8>,
+    ) -> Result<Self, CheckedPlanError> {
+        if spends.is_empty() && outputs.is_empty() && max_fee_note.value != value::Positive::ZERO {
+            return Err(CheckedPlanError::FeeWithoutActions);
+        }
+        if Fp::from(max_fee_note.rcm) == Fp::ZERO {
+            return Err(CheckedPlanError::ZeroRcm);
+        }
+        if !max_fee_note
+            .derive_feemax_blind()
+            .fits_base_field_capacity()
+        {
+            return Err(CheckedPlanError::UnrepresentableFeeBlind);
+        }
+        let balance = spends
+            .iter()
+            .map(|entry| i128::from(entry.opening.note.value))
+            .sum::<i128>()
+            - outputs
+                .iter()
+                .map(|entry| i128::from(entry.opening.note.value))
+                .sum::<i128>()
+            - i128::from(max_fee_note.value);
+        let value_balance =
+            value::Balance::try_from(balance).map_err(|_err| CheckedPlanError::BalanceOverflow)?;
+        let cv_feemax = max_fee_note.cv_feemax();
+        let mut actions = spends
+            .iter()
+            .map(|entry| entry.descriptor)
+            .chain(outputs.iter().map(|entry| entry.descriptor))
+            .collect::<Vec<action::Descriptor>>();
+        if EpAffine::from(cv_feemax).is_identity()
+            || actions.iter().any(|descriptor| {
+                EpAffine::from(descriptor.cv).is_identity()
+                    || EpAffine::from(descriptor.rk).is_identity()
+            })
+        {
+            return Err(CheckedPlanError::IdentityPoint);
+        }
+        actions.sort_unstable();
+        if actions
+            .iter()
+            .zip(actions.iter().skip(1))
+            .any(|(left, right)| left == right)
+        {
+            return Err(CheckedPlanError::DuplicateAction);
+        }
+        Ok(Self {
+            spends,
+            outputs,
+            max_fee_note,
+            effects: Effects {
+                actions,
+                value_balance,
+                cv_feemax,
+                memo,
+            },
+        })
+    }
+
+    /// View the commitment data derived from the checked preimages.
+    #[must_use]
+    pub const fn effects(&self) -> &Effects {
+        &self.effects
+    }
+}
+
 impl Bundle {
+    /// Open the section from a complete plan, without role contributions.
+    #[must_use]
+    pub fn from_plan(plan: &Plan) -> Self {
+        let mut actions = plan
+            .spends
+            .iter()
+            .copied()
+            .map(|opening| {
+                Action::from_opening(
+                    opening,
+                    ActionWitness::Spend(SpendWitness {
+                        ak: Some(opening.opening.authority),
+                        pak: None,
+                        lineage: None,
+                        zip32_derivation: None,
+                    }),
+                )
+            })
+            .chain(plan.outputs.iter().copied().map(|opening| {
+                Action::from_opening(
+                    opening,
+                    ActionWitness::Output(OutputWitness {
+                        zip32_derivation: None,
+                        user_address: None,
+                    }),
+                )
+            }))
+            .collect::<Vec<_>>();
+        actions.sort_unstable_by_key(|action| action.descriptor);
+        Self {
+            actions,
+            value_balance: plan.effects.value_balance,
+            max_fee: MaxFee {
+                cv_feemax: plan.effects.cv_feemax,
+                note: NoteOpening::from_note(plan.max_fee_note),
+                zip32_derivation: None,
+                proprietary: BTreeMap::new(),
+            },
+            memo: plan.effects.memo.clone(),
+            anchor: None,
+            actions_proofs: Vec::new(),
+            autonome_parts: None,
+            bsk: None,
+            proprietary: BTreeMap::new(),
+        }
+    }
+
+    /// The stored effects, which need not have openings.
+    #[must_use]
+    pub fn effects(&self) -> Effects {
+        Effects {
+            value_balance: self.value_balance,
+            actions: self
+                .actions
+                .iter()
+                .map(|action| action.descriptor)
+                .collect(),
+            cv_feemax: self.max_fee.cv_feemax,
+            memo: self.memo.clone(),
+        }
+    }
+
     /// The actions in commitment order.
     #[must_use]
     pub fn actions(&self) -> &[Action] {
@@ -165,6 +526,21 @@ impl Bundle {
 }
 
 impl Action {
+    const fn from_opening<E: OpeningEffect>(
+        checked: CheckedOpening<E>,
+        witness: ActionWitness,
+    ) -> Self {
+        Self {
+            descriptor: checked.descriptor,
+            sig: None,
+            note: NoteOpening::from_note(checked.opening.note),
+            theta: Some(checked.opening.theta),
+            rcv: Some(checked.opening.rcv),
+            witness: Some(witness),
+            proprietary: BTreeMap::new(),
+        }
+    }
+
     /// The action's descriptor.
     #[must_use]
     pub const fn descriptor(&self) -> action::Descriptor {
@@ -209,6 +585,15 @@ impl Action {
 }
 
 impl NoteOpening {
+    const fn from_note(note: Note) -> Self {
+        Self {
+            pk: Some(note.pk),
+            value: Some(note.value),
+            psi: Some(note.psi),
+            rcm: Some(note.rcm),
+        }
+    }
+
     /// The payment key.
     #[must_use]
     pub const fn pk(&self) -> Option<PaymentKey> {
