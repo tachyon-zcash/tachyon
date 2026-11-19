@@ -13,7 +13,7 @@ use crate::{
     serialization,
 };
 
-/// Pedersen commitment to a stamp's tachygram set.
+/// Pedersen commitment to a tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
@@ -107,7 +107,7 @@ impl AnchorSetCommit {
     }
 }
 
-/// Witness polynomial for a stamp's tachygram set (members encoded as roots).
+/// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 

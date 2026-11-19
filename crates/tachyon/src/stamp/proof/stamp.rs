@@ -154,8 +154,8 @@ impl Header<Fp> for Stamp {
 /// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
 /// [`OutputBind`](super::output::OutputBind) derived, derives the action
 /// randomizer `alpha` from the witnessed `theta` and `cm`, then the randomized
-/// action key `rk`, and enforces the one-action set plus the stamp accumulator
-/// over the two-element tachygram set `{cm, pad}`.
+/// action key `rk`, and enforces the one-action set plus the two-element
+/// tachygram set `{cm, pad}`.
 ///
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
@@ -245,7 +245,7 @@ impl Step<Pasta> for OutputAction {
         let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &action_root);
         action_set.enforce_equal(dr, &action_factor)?;
-        // The stamp accumulator commits to exactly the tachygram pair on the
+        // The tachygram set holds exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
         let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
@@ -273,9 +273,8 @@ impl Step<Pasta> for OutputAction {
 /// [`SpendHeader`] [`SpendBind`](super::spend::SpendBind) derived. The step
 /// derives the action randomizer `alpha` from the witnessed `theta` and `cm`,
 /// then the randomized action key `rk`, and enforces the one-action set plus
-/// the stamp accumulator over the two-element tachygram set
-/// `{nf_current, nf_next}` (the pair `SpendBind` derived from the master
-/// key).
+/// the two-element tachygram set `{nf_current, nf_next}` (the pair `SpendBind`
+/// derived from the master key).
 ///
 /// `pk = payment_key(ak, nk)` is the only thing tying `ak` to the note.
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
@@ -386,7 +385,7 @@ impl Step<Pasta> for SpendAction {
         let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &action_root);
         action_set.enforce_equal(dr, &action_factor)?;
-        // The stamp accumulator commits to exactly the nullifier pair on the
+        // The tachygram set holds exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
         let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
