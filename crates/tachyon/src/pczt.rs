@@ -1,5 +1,6 @@
 //! The Tachyon section of a partially constructed transaction.
 
+pub mod mirror;
 #[cfg(test)]
 mod tests;
 
