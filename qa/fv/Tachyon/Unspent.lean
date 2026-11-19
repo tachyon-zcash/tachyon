@@ -169,6 +169,20 @@ theorem ArbitraryUnspentDerivable.anchor_next_boundary
     obtain ⟨_, _, -, hnext, -⟩ := hbucket _ hb
     exact ⟨_, hnext⟩
 
+/-- Every derivable segment covers at least one epoch. -/
+theorem ArbitraryUnspentDerivable.epoch_lt {u : ArbitraryUnspent F A}
+    (hu : ArbitraryUnspentDerivable Bucket qnr member emax u) : u.epoch_start < u.epoch_next := by
+  induction hu with
+  | init => exact Nat.lt_succ_self _
+  | fuse _ _ _ hepoch ihl ihr => exact ihl.trans (hepoch ▸ ihr)
+  | lift _ _ _ _ hepoch _ _ ih => exact (hepoch ▸ ih).trans (Nat.lt_succ_self _)
+
+theorem NoteUnspentDerivable.epoch_lt {Bucket : QrBucket F F → Prop} {u : NoteUnspent F}
+    (hu : NoteUnspentDerivable Bucket qnr member Secret nullifier emax u) :
+    u.epoch_start < u.epoch_next := by
+  obtain ⟨_, hunspent, _, _⟩ := hu
+  exact hunspent.epoch_lt
+
 /-- The property of `NoteUnspent` derivability the spend lineage consumes. -/
 theorem NoteUnspentDerivable.spec {Bucket : QrBucket F F → Prop} {nextStamp : F → ℕ → F[X] → F}
     {nextEpoch : F → ℕ → F} (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch) :

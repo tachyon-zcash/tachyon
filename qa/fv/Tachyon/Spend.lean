@@ -1,4 +1,4 @@
-import Tachyon.Consensus.Chain
+import Tachyon.Qr
 
 /-!
 # Spend lineage
@@ -117,42 +117,45 @@ structure UnspentSpec (nextEpoch : F → ℕ → F) (Unspent : NoteUnspent F →
 
 variable [Field F]
 
-/-- `NoteSpendable` headers: `SpendableInit`, `QrSpendableInit` and `SpendableLift`.
-`SpendableInit`'s `cm` comes from any `NoteNullifiers`, here left free. `QrSpendableInit`'s bucket
-checks are dropped. -/
-inductive SpendableDerivable (nextStamp : F → ℕ → F[X] → F) (Unspent : NoteUnspent F → Prop) :
-    NoteSpendable F → Prop
+/-- `NoteSpendable` headers: `SpendableInit`, `QrSpendableInit` over the buckets `Bucket` admits,
+and `SpendableLift`. `SpendableInit`'s `cm` comes from any `NoteNullifiers`, here left free.
+`QrSpendableInit`'s `anchor_start` equality is dropped. -/
+inductive SpendableDerivable (nextStamp : F → ℕ → F[X] → F) (Bucket : QrBucket F F → Prop)
+    (Unspent : NoteUnspent F → Prop) : NoteSpendable F → Prop
   | init (cm prev : F) (creation : F[X]) (e : ℕ) :
       creation.eval cm = 0 →
-        SpendableDerivable nextStamp Unspent ⟨cm, e, nextStamp prev e creation⟩
-  | qrInit {u : NoteUnspent F} :
-      Unspent u → SpendableDerivable nextStamp Unspent ⟨u.cm, u.epoch_next, u.anchor_next⟩
+        SpendableDerivable nextStamp Bucket Unspent ⟨cm, e, nextStamp prev e creation⟩
+  | qrInit {u : NoteUnspent F} {b : QrBucket F F} :
+      Unspent u → Bucket b → b.epoch = u.epoch_start → b.anchor_next = u.anchor_next →
+      b.epoch + 1 = u.epoch_next → b.contents.eval u.cm = 0 →
+        SpendableDerivable nextStamp Bucket Unspent ⟨u.cm, u.epoch_next, u.anchor_next⟩
   | lift {s : NoteSpendable F} {u : NoteUnspent F} :
-      SpendableDerivable nextStamp Unspent s → Unspent u → s.cm = u.cm →
+      SpendableDerivable nextStamp Bucket Unspent s → Unspent u → s.cm = u.cm →
         s.epoch_current = u.epoch_start → s.anchor = u.anchor_start →
-        SpendableDerivable nextStamp Unspent ⟨s.cm, u.epoch_next, u.anchor_next⟩
+        SpendableDerivable nextStamp Bucket Unspent ⟨s.cm, u.epoch_next, u.anchor_next⟩
 
 /-- `SpendBind`: the secret's `cm` is the lineage's, and the pair is the secret's nullifiers at the
 lineage's epoch and its successor. -/
-inductive SpendDerivable (nextStamp : F → ℕ → F[X] → F) (Unspent : NoteUnspent F → Prop)
-    (Secret : NoteSecret F → Prop) (nullifier : F → ℕ → F) : SpendHeader F → Prop
+inductive SpendDerivable (nextStamp : F → ℕ → F[X] → F) (Bucket : QrBucket F F → Prop)
+    (Unspent : NoteUnspent F → Prop) (Secret : NoteSecret F → Prop) (nullifier : F → ℕ → F) :
+    SpendHeader F → Prop
   | bind {s : NoteSpendable F} {k : NoteSecret F} :
-      SpendableDerivable nextStamp Unspent s → Secret k → s.cm = k.cm →
-        SpendDerivable nextStamp Unspent Secret nullifier
+      SpendableDerivable nextStamp Bucket Unspent s → Secret k → s.cm = k.cm →
+        SpendDerivable nextStamp Bucket Unspent Secret nullifier
           ⟨s.cm, nullifier k.master s.epoch_current, nullifier k.master (s.epoch_current + 1),
             s.anchor⟩
 
 variable {genesis : F} {e₀ : ℕ} {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F}
-  {Unspent : NoteUnspent F → Prop}
+  {Bucket : QrBucket F F → Prop} {Unspent : NoteUnspent F → Prop}
 
 /-- A spendable lineage whose anchor is a chain node at epoch `e` is at epoch `e`. -/
 theorem SpendableDerivable.epoch_eq (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
     (hunspent : UnspentSpec nextEpoch Unspent) {s : NoteSpendable F}
-    (h : SpendableDerivable nextStamp Unspent s) {e : ℕ}
+    (h : SpendableDerivable nextStamp Bucket Unspent s) {e : ℕ}
     (hnode : Chain.Node genesis e₀ nextStamp nextEpoch e s.anchor) : s.epoch_current = e := by
   cases h with
   | init _ _ _ _ _ => exact (Chain.Node.of_nextStamp hlaw hnode).1
-  | qrInit hu =>
+  | qrInit hu _ _ _ _ _ =>
     obtain ⟨a, ha⟩ := hunspent.anchor_next_entry hu
     rw [ha] at hnode
     exact Chain.Node.of_nextEpoch hlaw hnode
@@ -166,7 +169,7 @@ and `e + 1`. -/
 theorem SpendDerivable.pair (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
     (hunspent : UnspentSpec nextEpoch Unspent) {Secret : NoteSecret F → Prop}
     {nullifier : F → ℕ → F} {h : SpendHeader F}
-    (hspend : SpendDerivable nextStamp Unspent Secret nullifier h) {e : ℕ}
+    (hspend : SpendDerivable nextStamp Bucket Unspent Secret nullifier h) {e : ℕ}
     (hnode : Chain.Node genesis e₀ nextStamp nextEpoch e h.anchor) :
     ∃ k, Secret k ∧ k.cm = h.cm ∧ h.nf_current = nullifier k.master e ∧
       h.nf_next = nullifier k.master (e + 1) := by
