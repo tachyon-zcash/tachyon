@@ -35,10 +35,10 @@ noncomputable def entry (nextStamp : A → ℕ → F[X] → A) (nextEpoch : A �
 variable {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A} {zero : A}
   {chain : List (Stamp F A)}
 
-theorem entry_boundary (e : ℕ) : ∃ p e', entry nextStamp nextEpoch zero chain e = nextEpoch p e' := by
+theorem entry_boundary (e : ℕ) : ∃ p, entry nextStamp nextEpoch zero chain e = nextEpoch p e := by
   cases e with
-  | zero => exact ⟨zero, 0, rfl⟩
-  | succ e => exact ⟨_, e + 1, rfl⟩
+  | zero => exact ⟨zero, rfl⟩
+  | succ e => exact ⟨_, rfl⟩
 
 /-- Every tachygram published in epoch `e` is a root of one of the epoch's stamp polynomials. -/
 theorem published_root {e : ℕ} {t : F} (h : published chain e t) :
@@ -104,7 +104,72 @@ theorem entry_succ_inj {genesis : A} {e₀ : ℕ} (hlaw : HashLaw genesis e₀ n
       entry nextStamp nextEpoch zero chain (e + 1)) :
     a = entry nextStamp nextEpoch zero chain e ∧ L = epochStamps chain e := by
   obtain ⟨hfold, -⟩ := hlaw.nextEpoch_inj h
-  obtain ⟨hL, haa⟩ := foldBlock_inj hlaw ha (entry_boundary e) hfold
+  obtain ⟨p, hp⟩ := entry_boundary (nextStamp := nextStamp) (zero := zero) (chain := chain) e
+  obtain ⟨hL, haa⟩ := foldBlock_inj hlaw ha ⟨p, e, hp⟩ hfold
   exact ⟨haa, hL⟩
+
+/-- `a` is an anchor `chain` reaches in epoch `e`: the entry anchor of `e` folded with a prefix of
+the stamps published in `e`. Every end-of-block anchor of `e` is one. -/
+def OnChain (nextStamp : A → ℕ → F[X] → A) (nextEpoch : A → ℕ → A) (zero : A)
+    (chain : List (Stamp F A)) (e : ℕ) (a : A) : Prop :=
+  ∃ P S : List F[X], P ++ S = epochStamps chain e ∧
+    a = foldBlock nextStamp e (entry nextStamp nextEpoch zero chain e) P
+
+theorem entry_onChain (e : ℕ) :
+    OnChain nextStamp nextEpoch zero chain e (entry nextStamp nextEpoch zero chain e) :=
+  ⟨[], _, rfl, rfl⟩
+
+/-- A stamp fold the chain reaches in epoch `e` folds a stamp published in `e`, at `e`, onto an
+anchor the chain reaches in `e`. -/
+theorem OnChain.of_nextStamp {genesis : A} {e₀ : ℕ} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
+    {e e_s : ℕ} {a : A} {c : F[X]}
+    (h : OnChain nextStamp nextEpoch zero chain e (nextStamp a e_s c)) :
+    e_s = e ∧ OnChain nextStamp nextEpoch zero chain e a ∧ c ∈ epochStamps chain e := by
+  obtain ⟨P, S, hPS, ha⟩ := h
+  rcases P.eq_nil_or_concat with rfl | ⟨P', c', rfl⟩
+  · obtain ⟨p, hp⟩ := entry_boundary (nextStamp := nextStamp) (zero := zero) (chain := chain) e
+    exact absurd (ha.trans hp) hlaw.stamp_ne_epoch
+  · simp only [foldBlock, List.concat_eq_append, List.foldl_append, List.foldl_cons,
+      List.foldl_nil] at ha
+    obtain ⟨rfl, rfl, rfl⟩ := hlaw.nextStamp_inj ha
+    refine ⟨rfl, ⟨P', c :: S, by rw [← hPS]; simp, rfl⟩, ?_⟩
+    rw [← hPS]
+    simp
+
+theorem OnChain.stampClosed {genesis : A} {e₀ : ℕ} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch) :
+    StampClosed nextStamp (OnChain nextStamp nextEpoch zero chain) :=
+  fun h => ⟨(h.of_nextStamp hlaw).1, (h.of_nextStamp hlaw).2.1⟩
+
+/-- A boundary digest the chain reaches in epoch `e` is the entry anchor of `e`. -/
+theorem OnChain.of_nextEpoch {genesis : A} {e₀ : ℕ} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
+    {e e' : ℕ} {a : A} (h : OnChain nextStamp nextEpoch zero chain e (nextEpoch a e')) :
+    nextEpoch a e' = entry nextStamp nextEpoch zero chain e ∧ e' = e := by
+  obtain ⟨P, S, -, ha⟩ := h
+  rcases P.eq_nil_or_concat with rfl | ⟨P', c', rfl⟩
+  · obtain ⟨p, hp⟩ := entry_boundary (nextStamp := nextStamp) (zero := zero) (chain := chain) e
+    exact ⟨ha, (hlaw.nextEpoch_inj (ha.trans hp)).2⟩
+  · simp only [foldBlock, List.concat_eq_append, List.foldl_append, List.foldl_cons,
+      List.foldl_nil] at ha
+    exact absurd ha.symm hlaw.stamp_ne_epoch
+
+/-- On a chain whose stamps each publish a tachygram, every anchor the chain reaches is a chain
+node at its epoch, rooted at epoch zero's entry anchor. -/
+theorem OnChain.toNode (hne : ∀ s ∈ chain, s.tachygrams ≠ []) {e : ℕ} {a : A}
+    (h : OnChain nextStamp nextEpoch zero chain e a) :
+    Node (nextEpoch zero 0) 0 nextStamp nextEpoch e a := by
+  have hstamps : ∀ e, ∀ c ∈ epochStamps chain e, c ≠ 1 := by
+    intro e c hc hone
+    obtain ⟨s, hs, rfl⟩ := List.mem_map.mp hc
+    have hroots := congrArg Polynomial.roots hone
+    rw [roots_setPoly, roots_one, Multiset.empty_eq_zero, Multiset.coe_eq_zero] at hroots
+    exact hne s (List.mem_filter.mp hs).1 hroots
+  have hentry : ∀ e, Node (nextEpoch zero 0) 0 nextStamp nextEpoch e
+      (entry nextStamp nextEpoch zero chain e) := by
+    intro e
+    induction e with
+    | zero => exact Node.genesis
+    | succ e ih => exact (ih.foldBlock (hstamps e)).epoch (Nat.succ_ne_zero e)
+  obtain ⟨P, S, hPS, rfl⟩ := h
+  exact (hentry e).foldBlock fun c hc => hstamps e c (hPS ▸ List.mem_append_left S hc)
 
 end Tachyon.Chain
