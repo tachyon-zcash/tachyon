@@ -22,8 +22,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::curve::Affine as _,
 };
-use udon::curve::Affine as _;
 
 use super::qr::{QrBucket, QrBucketOutput};
 use crate::{

@@ -3,12 +3,15 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::iter;
 
-use ragu::{Polynomial, ProductionRank, pasta::Pasta};
-use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
+use ragu::{
+    Polynomial, ProductionRank,
+    pasta::Pasta,
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
+use rand_core::CryptoRng;
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetBridge,
     TachygramSetPoly,

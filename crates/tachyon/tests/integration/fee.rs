@@ -6,8 +6,8 @@ use alloc::{
 };
 use core::assert_matches;
 
+use ragu::udon::{curve::Projective as _, field::Field as _};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, bundle,

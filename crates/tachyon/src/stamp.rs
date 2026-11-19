@@ -24,18 +24,22 @@ use core::error;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
-    App, HEADER_SIZE, output,
+    App, output,
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::{ProductionRank, Rank as _, pasta::Pasta, pcd::wire};
-use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
+use ragu::{
+    ProductionRank, Rank as _,
+    pasta::Pasta,
+    pcd::wire,
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
+use rand_core::CryptoRng;
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
@@ -158,7 +162,7 @@ pub trait Proof: sealed::Sealed {
 
 impl Proof for Uncompressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<HEADER_SIZE>()
+        Self::encoded_len()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
@@ -194,7 +198,7 @@ impl Proof for Uncompressed {
 
 impl Proof for Compressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<ProductionRank, HEADER_SIZE>()
+        Self::encoded_len::<ProductionRank>()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {

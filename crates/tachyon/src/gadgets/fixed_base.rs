@@ -37,10 +37,10 @@ use ragu::{
         Boolean, Element, GadgetExt as _, Point, multiadd,
         vec::{ConstLen, FixedVec},
     },
-};
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
 
 use crate::{

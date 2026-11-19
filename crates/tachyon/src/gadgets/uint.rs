@@ -11,8 +11,8 @@ use ragu::{
         Boolean, Element, GadgetExt as _, multipack,
         vec::{ConstLen, FixedVec},
     },
+    udon::field::Field,
 };
-use udon::field::Field;
 
 use crate::pasta::Fp;
 

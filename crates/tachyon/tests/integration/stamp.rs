@@ -10,10 +10,9 @@ use alloc::{
 use core::assert_matches;
 
 use corez::io;
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{ProductionRank, pasta::Pasta, udon::curve::Projective as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
     action, bundle,

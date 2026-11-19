@@ -14,8 +14,8 @@ use ragu::{
     maybe::{Always, Maybe as _},
     pasta::PoseidonFp,
     primitives::Element,
+    udon::curve::Affine as _,
 };
-use udon::curve::Affine as _;
 
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
@@ -289,8 +289,8 @@ pub(crate) mod circuit {
             poseidon::{Sponge, SpongeState},
             vec::FixedVec,
         },
+        udon::field::Field as _,
     };
-    use udon::field::Field as _;
 
     use super::{
         ACTION_DIGEST_DOMAIN, ANCHOR_EPOCH_DOMAIN, ANCHOR_STAMP_DOMAIN, EVIDENCE_NODE_DOMAIN,

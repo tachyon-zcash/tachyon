@@ -2,8 +2,8 @@ use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use crate::{pasta::Fp, serialization};
 
