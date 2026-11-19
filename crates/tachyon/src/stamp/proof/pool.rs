@@ -42,7 +42,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
-        TachygramSet, TachygramSetPoly,
+        TachygramSetPoly,
     },
 };
 
@@ -658,7 +658,9 @@ impl Step<Pasta> for UnspentLift {
         .eval(dr, &z)?;
         let expected_extended = elapsed_at_z.mul(dr, &factor)?;
         extended_at_z.enforce_equal(dr, &expected_extended)?;
-        let contents_at_value = oracles.right(TachygramSet).open(dr, &value_element)?;
+        let contents_at_value = oracles
+            .right(TachygramSetPoly::SLOT)
+            .open(dr, &value_element)?;
         let nonzero_value = Element::promote(
             contents_at_value.wire().clone(),
             contents_at_value.value().map(Clone::clone),

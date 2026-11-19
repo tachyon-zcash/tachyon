@@ -27,7 +27,7 @@ use crate::{
     digest::poseidon,
     gadgets, note,
     pasta::Fp,
-    primitives::{Anchor, EpochIndex, PolySlot, TachygramSet, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly},
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -262,7 +262,9 @@ impl Step<Pasta> for QrSpendableInit {
         // bucket directly.
         epoch_next.enforce_equal(dr, &unspent.epoch_next)?;
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
-        let evaluation = oracles.right(TachygramSet).open(dr, &unspent.cm)?;
+        let evaluation = oracles
+            .right(TachygramSetPoly::SLOT)
+            .open(dr, &unspent.cm)?;
         evaluation.enforce_zero(dr)?;
         let output = D::just(|| {
             let (unspent_cm, _, _, unspent_epoch_next, unspent_anchor_next) = left.take();

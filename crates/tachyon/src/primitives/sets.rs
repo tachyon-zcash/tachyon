@@ -2,9 +2,7 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, header::OnlinePoly, pasta::Pasta,
-};
+use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta};
 use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
@@ -112,12 +110,6 @@ impl AnchorSetCommit {
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
-
-/// The polynomial whose roots are a set of tachygrams.
-#[derive(Clone, Copy, Debug)]
-pub struct TachygramSet;
-
-impl OnlinePoly for TachygramSet {}
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
