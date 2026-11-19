@@ -132,3 +132,94 @@ fn mirror_derives_compact_spend_and_output_effects() {
         "missing action 0 Theta for compact effect"
     );
 }
+
+#[test]
+#[expect(
+    clippy::ref_patterns,
+    reason = "borrow the witness fields from the section"
+)]
+fn updater_attaches_proving_and_signing_metadata() {
+    use core::error::Error;
+
+    use zcash_tachyon::{
+        BlockHeight,
+        entropy::ActionEntropy,
+        pasta::Fp,
+        pczt::{ActionWitness, SpendLineage, Zip32Derivation},
+        value,
+    };
+
+    use super::fixtures::{application, pool::PoolSim};
+
+    let rng = &mut StdRng::seed_from_u64(27);
+    let app = &application();
+    let pool = PoolSim::shared();
+    let wallet = WalletSim::new(shared_sk());
+    let note = PoolSim::shared_note(1000);
+    let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
+    let anchor = spendable.data().2;
+    let lineage = SpendLineage::new(wallet.note_secret(app, note), spendable, vec![]);
+    let output = output_plan(rng, wallet.random_note(100));
+    let plan = Plan::new(
+        vec![(
+            note,
+            ActionEntropy::random(rng),
+            value::Trapdoor::random(rng),
+            wallet.pak.ak,
+        )],
+        vec![(output.note, output.theta, output.rcv)],
+        wallet.random_note(10),
+        vec![],
+    )
+    .unwrap();
+    let mut section = Bundle::from_plan(&plan);
+    let output_index = plan
+        .effects()
+        .actions
+        .binary_search(&output.descriptor())
+        .unwrap();
+    let spend_index = 1 - output_index;
+    let path = Zip32Derivation::new([1; 32], vec![0x8000_0001]);
+    section
+        .update_with(|mut updater| -> Result<(), Box<dyn Error>> {
+            updater.set_anchor(anchor);
+            updater.set_pak(spend_index, wallet.pak)?;
+            updater.set_lineage(spend_index, lineage)?;
+            updater.set_zip32_derivation(spend_index, path.clone())?;
+            updater.set_zip32_derivation(output_index, path.clone())?;
+            updater.set_max_fee_zip32_derivation(path.clone());
+            updater.set_user_address(output_index, "recipient".into())?;
+            updater.set_proprietary("global".into(), vec![1]);
+            updater.set_action_proprietary(output_index, "action".into(), vec![2])?;
+            updater.set_max_fee_proprietary("fee".into(), vec![3]);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(section.anchor(), Some(anchor));
+    let spend = section.actions()[spend_index]
+        .witness()
+        .and_then(|witness| match *witness {
+            ActionWitness::Spend(ref spend) => Some(spend),
+            ActionWitness::Output(_) => None,
+        })
+        .unwrap();
+    assert_eq!(
+        Fp::from(spend.pak().unwrap().derive_payment_key()),
+        Fp::from(wallet.pak.derive_payment_key())
+    );
+    assert_eq!(spend.lineage().unwrap().spendable().data().2, anchor);
+    assert_eq!(spend.zip32_derivation(), Some(&path));
+    let recipient = section.actions()[output_index]
+        .witness()
+        .and_then(|witness| match *witness {
+            ActionWitness::Spend(_) => None,
+            ActionWitness::Output(ref recipient) => Some(recipient),
+        })
+        .unwrap();
+    assert_eq!(recipient.zip32_derivation(), Some(&path));
+    assert_eq!(recipient.user_address(), Some("recipient"));
+    assert_eq!(section.max_fee().zip32_derivation(), Some(&path));
+    assert_eq!(section.proprietary()["global"], [1]);
+    assert_eq!(section.actions()[output_index].proprietary()["action"], [2]);
+    assert_eq!(section.max_fee().proprietary()["fee"], [3]);
+}
