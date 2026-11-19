@@ -113,3 +113,6 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         poseidon::circuit::pad_tachygram(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }
 }
+
+#[cfg(test)]
+mod tests;
