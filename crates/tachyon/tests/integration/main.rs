@@ -32,6 +32,8 @@ mod qr;
 #[cfg(test)]
 mod stamp;
 #[cfg(test)]
+mod stamp_pre_fee;
+#[cfg(test)]
 mod summary;
 #[cfg(test)]
 mod unmerge;
