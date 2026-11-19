@@ -67,7 +67,7 @@ theorem CoveredSpend.pair_le (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEp
   have htachygrams : (s.tachygrams : Multiset F) = p.covered.bind (R (epoch s.anchor)) :=
     setPoly_injective ((p.tree.derivable hlaw hepoch hdigest hs).published rfl)
   obtain ⟨k, hk, hkcm, hcurrent, hnext⟩ :=
-    p.spend.pair hlaw hunspent (p.tree.leaves_node hlaw hs _ p.leaf)
+    p.spend.pair hlaw hunspent (p.tree.leaves_node (Chain.Node.stampClosed hlaw) hs _ p.leaf)
   obtain rfl : k.master = master := hk.master_eq hnote hsecret (hkcm.trans p.cm_eq)
   rw [htachygrams, ← hcurrent, ← hnext,
     ← hdigest.pair (epoch s.anchor) p.witness p.header.nf_current p.header.nf_next]

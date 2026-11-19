@@ -123,12 +123,11 @@ structure DigestLaw (IsFee : F → Prop) (R : ℕ → F → Multiset F)
 
 variable {genesis : F} {e₀ : ℕ} {nextEpoch : F → ℕ → F}
 
-/-- Every leaf of an `Actions` derivation whose anchor is a chain node at epoch `e` is anchored on a
-chain node at `e`. -/
-theorem ActionsTree.leaves_node (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
+/-- Every leaf of an `Actions` derivation whose anchor is in a stamp-closed anchor set at epoch `e`,
+such as the chain nodes, is anchored in that set at `e`. -/
+theorem ActionsTree.leaves_node {Good : ℕ → F → Prop} (hclosed : Chain.StampClosed nextStamp Good)
     {s : Stamp F F} (t : ActionsTree IsFee epoch R nextStamp actionDigest Spend s) {e : ℕ} :
-    Chain.Node genesis e₀ nextStamp nextEpoch e s.anchor →
-      ∀ l ∈ t.leaves, Chain.Node genesis e₀ nextStamp nextEpoch e l.anchor := by
+    Good e s.anchor → ∀ l ∈ t.leaves, Good e l.anchor := by
   induction t with
   | output d a _ => simp [ActionsTree.leaves, TreeLeaf.anchor]
   | spend h hspend g => simp [ActionsTree.leaves, TreeLeaf.anchor]
@@ -137,20 +136,19 @@ theorem ActionsTree.leaves_node (hlaw : Chain.HashLaw genesis e₀ nextStamp nex
     rw [hm.merged_anchor] at hs
     rw [ActionsTree.leaves, List.mem_append] at hl
     exact hl.elim (ihl hs l) (ihr (hm.anchor ▸ hs) l)
-  | lift _ hspan hlift ih => exact fun hs => ih (hlift.node_same_epoch hlaw hspan hs)
+  | lift _ hspan hlift ih => exact fun hs => ih (hlift.node_same_epoch hclosed hspan hs)
 
-/-- Every leaf of a `Stamp` derivation whose anchor is a chain node at epoch `e` is anchored on a
-chain node at `e`. -/
-theorem StampTree.leaves_node (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
+/-- Every leaf of a `Stamp` derivation whose anchor is in a stamp-closed anchor set at epoch `e`,
+such as the chain nodes, is anchored in that set at `e`. -/
+theorem StampTree.leaves_node {Good : ℕ → F → Prop} (hclosed : Chain.StampClosed nextStamp Good)
     {s : Stamp F F} (t : StampTree IsFee epoch R nextStamp actionDigest Spend s) {e : ℕ} :
-    Chain.Node genesis e₀ nextStamp nextEpoch e s.anchor →
-      ∀ l ∈ t.leaves, Chain.Node genesis e₀ nextStamp nextEpoch e l.anchor := by
+    Good e s.anchor → ∀ l ∈ t.leaves, Good e l.anchor := by
   induction t with
   | feeFuse f actions _ =>
     intro hs l hl
     rw [StampTree.leaves, List.mem_append, List.mem_singleton] at hl
     rcases hl with hl | rfl
-    · exact actions.leaves_node hlaw hs l hl
+    · exact actions.leaves_node hclosed hs l hl
     · exact hs
   | feeSeed f a _ => simp [StampTree.leaves, TreeLeaf.anchor]
   | merge _ _ hm ihl ihr =>
@@ -163,7 +161,7 @@ theorem StampTree.leaves_node (hlaw : Chain.HashLaw genesis e₀ nextStamp nextE
     rw [hu.quotient_anchor] at hs
     rw [StampTree.leaves, List.mem_append] at hl
     exact hl.elim (ihdividend hs l) (ihdivisor (hu.anchor ▸ hs) l)
-  | lift _ hspan hlift ih => exact fun hs => ih (hlift.node_same_epoch hlaw hspan hs)
+  | lift _ hspan hlift ih => exact fun hs => ih (hlift.node_same_epoch hclosed hspan hs)
 
 /-- An `Actions` derivation whose anchor is a chain node is `ActionsDerivable`: each lift preserves
 the epoch. -/
@@ -186,7 +184,7 @@ theorem ActionsTree.derivable (hlaw : Chain.HashLaw genesis e₀ nextStamp nextE
   | lift _ hspan hlift ih =>
     intro hs
     have hepoch_eq := hlift.epoch_eq hlaw hepoch hspan hs
-    have hprev := ih (hlift.node_same_epoch hlaw hspan hs)
+    have hprev := ih (hlift.node_same_epoch (Chain.Node.stampClosed hlaw) hspan hs)
     obtain ⟨-, rfl⟩ := hlift
     exact .lift _ hprev hepoch_eq
 
@@ -211,7 +209,7 @@ theorem StampTree.derivable (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpo
   | lift _ hspan hlift ih =>
     intro hs
     have hepoch_eq := hlift.epoch_eq hlaw hepoch hspan hs
-    have hprev := ih (hlift.node_same_epoch hlaw hspan hs)
+    have hprev := ih (hlift.node_same_epoch (Chain.Node.stampClosed hlaw) hspan hs)
     obtain ⟨-, rfl⟩ := hlift
     exact .lift _ hprev hepoch_eq
 

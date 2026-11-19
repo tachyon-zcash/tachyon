@@ -197,25 +197,33 @@ def StampLiftStep (s : Tachyon.Stamp F F) (span : AnchorSpan F) (s' : Tachyon.St
 
 variable {genesisF : F} {nextStampF : F → E → F[X] → F} {nextEpochF : F → E → F}
 
-/-- If a derivable `AnchorSpan` ends on a chain node at epoch `e`, then `anchor_start` is a chain
-node at epoch `e`, and `members` is `setPoly M` for a multiset `M` of chain nodes all at epoch `e`. -/
-theorem SpanDerivable.node_epoch
-    (hlaw : HashLaw genesisF e₀ nextStampF nextEpochF)
+/-- A set of anchors labelled by epoch that holds every `nextStamp` predecessor of its members, at
+the member's epoch. Chain nodes form one (`Node.stampClosed`), and so do the anchors a published
+chain reaches (`OnChain.stampClosed`). -/
+def StampClosed (nextStamp : A → E → F[X] → A) (Good : E → A → Prop) : Prop :=
+  ∀ {e e_s : E} {a : A} {c : F[X]}, Good e (nextStamp a e_s c) → e_s = e ∧ Good e a
+
+theorem Node.stampClosed (hlaw : HashLaw genesis e₀ nextStamp nextEpoch) :
+    StampClosed nextStamp (Node genesis e₀ nextStamp nextEpoch) :=
+  fun h => Node.of_nextStamp hlaw h
+
+/-- If a derivable `AnchorSpan` ends on a member of a stamp-closed set at epoch `e`, then
+`anchor_start` is a member at epoch `e`, and `members` is `setPoly M` for a multiset `M` of members
+all at epoch `e`. -/
+theorem SpanDerivable.node_epoch {Good : E → F → Prop} (hclosed : StampClosed nextStampF Good)
     {span : AnchorSpan F} (hspan : SpanDerivable nextStampF span)
-    {e : E} (hend : Node genesisF e₀ nextStampF nextEpochF e span.anchor_end) :
-    Node genesisF e₀ nextStampF nextEpochF e span.anchor_start ∧
-      ∃ M : Multiset F, span.members = setPoly M ∧
-        ∀ m ∈ M, Node genesisF e₀ nextStampF nextEpochF e m := by
+    {e : E} (hend : Good e span.anchor_end) :
+    Good e span.anchor_start ∧ ∃ M : Multiset F, span.members = setPoly M ∧ ∀ m ∈ M, Good e m := by
   induction hspan with
   | seed a e_s c _ =>
-    obtain ⟨rfl, ha⟩ := Node.of_nextStamp hlaw hend
+    obtain ⟨rfl, ha⟩ := hclosed hend
     refine ⟨ha, {nextStampF a e_s c}, rfl, ?_⟩
     intro m hm
     rw [Multiset.mem_singleton] at hm
     exact hm ▸ hend
   | fuse _ _ hjoin hcomb ihl ihr =>
     obtain ⟨hr_start, MR, hMR, hMR_nodes⟩ := ihr hend
-    have hl_end : Node genesisF e₀ nextStampF nextEpochF e _ := hjoin ▸ hr_start
+    have hl_end : Good e _ := hjoin ▸ hr_start
     obtain ⟨hl_start, ML, hML, hML_nodes⟩ := ihl hl_end
     refine ⟨hl_start, ML + MR, ?_, ?_⟩
     · rw [hcomb, hML, hMR, setPoly_add]
@@ -224,16 +232,15 @@ theorem SpanDerivable.node_epoch
       exact hm.elim (hML_nodes m) (hMR_nodes m)
 
 /-- **Span argument for `StampLift`**: if `span` is derivable, `StampLiftStep s span s'` holds, and
-`s'.anchor` is a chain node at epoch `e`, then `s.anchor` is also a chain node at epoch `e`. -/
-theorem StampLiftStep.node_same_epoch
-    (hlaw : HashLaw genesisF e₀ nextStampF nextEpochF)
+`s'.anchor` is a member of a stamp-closed set at epoch `e`, such as a chain node, then `s.anchor`
+is also a member at epoch `e`. -/
+theorem StampLiftStep.node_same_epoch {Good : E → F → Prop} (hclosed : StampClosed nextStampF Good)
     {s s' : Tachyon.Stamp F F} {span : AnchorSpan F}
     (hspan : SpanDerivable nextStampF span)
     (hlift : StampLiftStep s span s')
-    {e : E} (hend : Node genesisF e₀ nextStampF nextEpochF e s'.anchor) :
-    Node genesisF e₀ nextStampF nextEpochF e s.anchor := by
+    {e : E} (hend : Good e s'.anchor) : Good e s.anchor := by
   obtain ⟨heval, rfl⟩ := hlift
-  obtain ⟨hstart, M, hM, hM_nodes⟩ := hspan.node_epoch hlaw hend
+  obtain ⟨hstart, M, hM, hM_nodes⟩ := hspan.node_epoch hclosed hend
   rcases mul_eq_zero.mp heval with hmem | hstart_eq
   · have hroot : s.anchor ∈ (setPoly M).roots := by
       rw [mem_roots (setPoly_ne_zero M), IsRoot.def, ← hM]
@@ -256,7 +263,7 @@ theorem StampLiftStep.epoch_eq
     {e : E} (hend : Node genesisF e₀ nextStampF nextEpochF e s'.anchor) :
     epoch s'.anchor = epoch s.anchor := by
   have hs : Node genesisF e₀ nextStampF nextEpochF e s.anchor :=
-    hlift.node_same_epoch hlaw hspan hend
+    hlift.node_same_epoch (Node.stampClosed hlaw) hspan hend
   rw [hepoch hend, hepoch hs]
 
 end AnchorChain
