@@ -68,7 +68,7 @@ lazy_static = { version = "1.5.0", default-features = false, features = [
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
-# Pinned to ragu#985 (remove-mock).
+# Pinned to ragu main (2b9e5000).
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2b9e50004841aaf3ce6db589eb42a6f2a8c259c7", default-features = false, features = [
     "baked",
 ] }
