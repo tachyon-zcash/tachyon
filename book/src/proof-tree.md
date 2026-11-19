@@ -499,9 +499,9 @@ Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand,
 
 The Lean results in `qa/fv` prove this multiset argument for a hand-written semantic model, not equivalence with the Rust steps or production PCD soundness.
 They take the digest-to-tachygram pairing above as exact rather than collision-resistant, and assume commitment/bridge binding, polynomial identities in place of random-point checks, and accepted derivations under the fixed Tachyon registry.
-Lift epoch preservation remains a hypothesis of stamp derivability; the separate span theorem supplies it under an idealized hash law and output chain membership, without proving that membership propagates through an entire derivation.
+Lift epoch preservation is proved through an entire derivation: when a published stamp's anchor is on the chain, every leaf's anchor is on the chain in the same epoch, under an idealized hash law.
 The algebraic unmerge relation can remove a fee leaf too: coverage of the published bundle's fee descriptor, not derivability alone, supplies its fee leaf.
-The no-double-spend result additionally assumes the second spend's exclusion lineage and that it starts no later than the first spend's publication; it does not certify the scaled-split or oversized-bucket cases above. `qa/fv/README.md` records the source correspondence and remaining boundaries.
+The no-double-spend result derives both spends' nullifier pairs and the second spend's exclusion lineage from modelled spend, unspent and QR steps, and the scaled-split and oversized-bucket cases above do not affect it. It assumes the note commitment is not published again between the first spend's publication and the second spend's anchor epoch; a second publication makes a second note. `qa/fv/README.md` records the source correspondence and remaining boundaries.
 
 ### Stamp anchor
 
