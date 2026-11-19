@@ -5,6 +5,7 @@ use ragu::{Cycle as _, Polynomial, ProductionRank, header::OnlinePoly, pasta::Pa
 use rand_core::CryptoRng;
 use udon::field::Field as _;
 
+use super::PolySlot;
 use crate::{
     collections::qr,
     pasta,
@@ -51,6 +52,9 @@ pub struct QrInterpolant;
 impl OnlinePoly for QrInterpolant {}
 
 impl QrInterpolantPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
@@ -80,6 +84,9 @@ pub struct QrQuotient;
 impl OnlinePoly for QrQuotient {}
 
 impl QrQuotientPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {

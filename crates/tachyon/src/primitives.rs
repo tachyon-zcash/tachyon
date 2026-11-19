@@ -7,6 +7,7 @@ mod evidence;
 mod qr;
 mod seq;
 mod sets;
+mod slot;
 mod tachygram;
 
 pub use action_digest::ActionDigest;
@@ -24,4 +25,5 @@ pub use sets::{
     ActionSet, ActionSetCommit, ActionSetPoly, AnchorSet, AnchorSetCommit, AnchorSetPoly,
     TachygramSet, TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
 };
+pub use slot::PolySlot;
 pub use tachygram::Tachygram;

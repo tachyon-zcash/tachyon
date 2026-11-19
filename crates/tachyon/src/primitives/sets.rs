@@ -8,7 +8,7 @@ use ragu::{
 };
 use udon::curve::Projective as _;
 
-use super::{ActionDigest, Anchor, Tachygram};
+use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
     collections::multiset,
     pasta,
@@ -143,6 +143,9 @@ pub struct AnchorSet;
 impl OnlinePoly for AnchorSet {}
 
 impl AnchorSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
@@ -163,6 +166,9 @@ impl FromIterator<Anchor> for AnchorSetPoly {
 }
 
 impl TachygramSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Wraps an arbitrary polynomial, skipping set encoding, to exercise step
     /// inputs.
     #[cfg(any(test, feature = "test-utils"))]
@@ -185,6 +191,9 @@ impl TachygramSetPoly {
 }
 
 impl ActionSetPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
