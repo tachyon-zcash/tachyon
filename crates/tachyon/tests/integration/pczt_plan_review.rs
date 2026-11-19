@@ -53,3 +53,48 @@ fn section_review_reconstructs_the_checked_plan() {
         plan.effects().commitment()
     );
 }
+
+#[test]
+fn mirror_round_trips_fields_and_rejects_duplicate_descriptors() {
+    use zcash_tachyon::{effect, keys::private::ActionSigningKey};
+
+    let rng = &mut StdRng::seed_from_u64(23);
+    let wallet = WalletSim::new(shared_sk());
+    let output = output_plan(rng, wallet.random_note(100));
+    let plan = Plan::new(
+        vec![],
+        vec![(output.note, output.theta, output.rcv)],
+        wallet.random_note(10),
+        vec![1, 2],
+    )
+    .unwrap();
+    let mut mirror = Bundle::from_plan(&plan).to_mirror();
+    assert!(mirror.actions[0].note.psi.take().is_some());
+    let alpha = output
+        .theta
+        .randomizer::<effect::Output>(output.note.commitment());
+    let signature = ActionSigningKey::new(&alpha).sign(rng, &[0; 32]);
+    let mut signature_bytes = [0; 64];
+    signature.write(signature_bytes.as_mut_slice()).unwrap();
+    mirror.actions[0].sig = Some(signature_bytes);
+    mirror.bsk = Some([0; 32]);
+    assert_eq!(Bundle::parse(mirror.clone()).unwrap().to_mirror(), mirror);
+
+    let mut compact_fee = mirror.clone();
+    compact_fee.max_fee.cv_feemax = None;
+    assert_eq!(
+        Bundle::parse(compact_fee.clone()).unwrap().to_mirror(),
+        mirror
+    );
+    compact_fee.max_fee.note.psi = None;
+    assert_eq!(
+        Bundle::parse(compact_fee).unwrap_err().to_string(),
+        "missing maximum fee note Psi for compact effect"
+    );
+
+    mirror.actions.push(mirror.actions[0].clone());
+    assert_eq!(
+        Bundle::parse(mirror).unwrap_err().to_string(),
+        "descriptors are not strictly ascending in actions",
+    );
+}

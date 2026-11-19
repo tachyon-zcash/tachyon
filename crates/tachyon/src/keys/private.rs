@@ -261,6 +261,10 @@ impl ActionSigningKey<effect::Output> {
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl BindingSigningKey {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
+        self.0.into()
+    }
+
     /// Sign a transaction sighash with this binding key.
     pub fn sign<RNG: CryptoRng>(&self, rng: &mut RNG, sighash: &[u8; 32]) -> bundle::Signature {
         bundle::Signature(self.0.sign(rng, sighash))
