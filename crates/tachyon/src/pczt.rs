@@ -882,6 +882,12 @@ impl MaxFee {
 }
 
 impl SpendWitness {
+    fn keys_match(ak: Option<SpendValidatingKey>, pak: Option<ProofAuthorizingKey>) -> bool {
+        ak.zip(pak).is_none_or(|(owner, delegate)| {
+            <[u8; 32]>::from(owner.0) == <[u8; 32]>::from(delegate.ak.0)
+        })
+    }
+
     /// The spend's owner.
     #[must_use]
     pub const fn ak(&self) -> Option<SpendValidatingKey> {

@@ -1,6 +1,6 @@
 //! Byte fields for a transaction container to carry and redact independently.
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 
 use corez::io;
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
@@ -10,9 +10,9 @@ use super::{NoteField, Zip32Derivation};
 use crate::{
     action,
     entropy::ActionEntropy,
-    keys::{private, public},
+    keys::{NullifierKey, ProofAuthorizingKey, SpendValidatingKey, private, public},
     pasta::{EpAffine, Fp, Fq},
-    pczt, serialization, value,
+    pczt, reddsa, serialization, value,
 };
 
 /// The section's mirror. Absent effects require sufficient opening fields.
@@ -47,6 +47,8 @@ pub struct Action {
     pub theta: Option<[u8; 32]>,
     /// Canonical value commitment trapdoor.
     pub rcv: Option<[u8; 32]>,
+    /// Fields specific to the kind of action.
+    pub witness: Option<ActionWitness>,
     /// Action metadata.
     pub proprietary: BTreeMap<String, Vec<u8>>,
 }
@@ -63,6 +65,37 @@ pub struct NoteOpening {
     pub psi: Option<[u8; 32]>,
     /// The commitment trapdoor.
     pub rcm: Option<[u8; 32]>,
+}
+
+/// Action-kind-specific byte fields.
+#[derive(Clone, Debug, PartialEq, TotalEq)]
+pub enum ActionWitness {
+    /// A spend.
+    Spend(SpendWitness),
+    /// An output.
+    Output(OutputWitness),
+}
+
+/// Spend authority and delegated proving fields.
+#[derive(Clone, Debug, PartialEq, TotalEq)]
+#[debug("SpendWitness(..)")]
+pub struct SpendWitness {
+    /// The canonical spend validating key.
+    pub ak: Option<[u8; 32]>,
+    /// The spend validating key and nullifier key, in that order.
+    pub pak: Option<[[u8; 32]; 2]>,
+    /// The key locator.
+    pub zip32_derivation: Option<Zip32Derivation>,
+}
+
+/// Recipient metadata for display and change recognition.
+#[derive(Clone, Debug, PartialEq, TotalEq)]
+#[debug("OutputWitness(..)")]
+pub struct OutputWitness {
+    /// The key locator.
+    pub zip32_derivation: Option<Zip32Derivation>,
+    /// An unauthenticated address for display.
+    pub user_address: Option<String>,
 }
 
 /// Maximum fee byte fields.
@@ -82,6 +115,12 @@ pub struct MaxFee {
 /// A field of the byte mirror.
 #[derive(Clone, Copy, Debug, Display)]
 pub enum Field {
+    /// Spend validating key at an action.
+    #[display("validating key at action {_0}")]
+    Ak(usize),
+    /// Nullifier key at an action.
+    #[display("nullifier key at action {_0}")]
+    Nk(usize),
     /// Action list.
     Actions,
     /// Memo.
@@ -157,6 +196,9 @@ pub enum ParseError {
     /// Descriptors are not strictly ascending.
     #[display("descriptors are not strictly ascending in {_0}")]
     DescriptorOrder(#[error(not(source))] DescriptorOrderLocation),
+    /// Supplied spend authority and delegated key disagree.
+    #[display("spend keys disagree at action {_0}")]
+    KeyMismatch(#[error(not(source))] usize),
 }
 
 /// A mirror field required to resolve an effect.
@@ -195,12 +237,13 @@ impl ParseError {
     reason = "mirror conversion is separate from section construction"
 )]
 impl pczt::Bundle {
-    /// Parse the effect, note, entropy, trapdoor, signature and metadata
-    /// fields. Derive an omitted `cv_feemax` from a complete fee note.
+    /// Parse the mirror fields, including the optional action witnesses.
+    /// Derive an omitted `cv_feemax` from a complete fee note.
     ///
     /// # Errors
     ///
-    /// Returns an error for invalid or missing effect fields.
+    /// Returns an error for invalid or missing effects, inconsistent spend
+    /// keys, or invalid encodings.
     pub fn parse(mirror: Bundle) -> Result<Self, ParseError> {
         if mirror.actions.len() > pczt::max_actions() {
             return Err(ParseError::Limit(Field::Actions));
@@ -258,13 +301,11 @@ impl pczt::Bundle {
         })
     }
 
-    /// Encode the effect, note, entropy, trapdoor, signature and metadata
-    /// fields.
+    /// Encode the mirror fields, including the optional action witnesses.
     ///
     /// # Panics
     ///
-    /// Panics if an action descriptor cannot be written to its fixed-width
-    /// buffer.
+    /// Panics if a descriptor cannot be encoded.
     #[must_use]
     #[expect(
         clippy::expect_used,
@@ -314,6 +355,10 @@ impl Action {
                     .ok_or_else(|| ParseError::noncanonical(Field::Rcv(index)))
             })
             .transpose()?;
+        let witness = self
+            .witness
+            .map(|witness| witness.parse(index))
+            .transpose()?;
         let sig = self
             .sig
             .map(|bytes| {
@@ -328,7 +373,7 @@ impl Action {
             note,
             theta,
             rcv,
-            witness: None,
+            witness,
             proprietary: self.proprietary,
         })
     }
@@ -340,6 +385,7 @@ impl Action {
             note: NoteOpening::from_opening(action.note),
             theta: action.theta.map(|entropy| entropy.0.to_bytes()),
             rcv: action.rcv.map(|rcv| Fq::from(rcv).to_bytes()),
+            witness: action.witness.as_ref().map(ActionWitness::serialize),
             proprietary: action.proprietary.clone(),
         })
     }
@@ -439,6 +485,70 @@ fn checked_descriptor(
         return Err(ParseError::InvalidValue(field, ValueReason::Identity));
     }
     Ok(descriptor)
+}
+
+fn parse_ak(bytes: [u8; 32], index: usize) -> Result<SpendValidatingKey, ParseError> {
+    if EpAffine::from_bytes(bytes).is_some_and(|point| point.is_identity()) {
+        return Err(ParseError::InvalidValue(
+            Field::Ak(index),
+            ValueReason::Identity,
+        ));
+    }
+    reddsa::VerificationKey::try_from(bytes)
+        .map(SpendValidatingKey)
+        .map_err(|_cause| ParseError::noncanonical(Field::Ak(index)))
+}
+
+impl ActionWitness {
+    fn parse(self, index: usize) -> Result<pczt::ActionWitness, ParseError> {
+        Ok(match self {
+            Self::Spend(spend) => {
+                let ak = spend.ak.map(|bytes| parse_ak(bytes, index)).transpose()?;
+                let pak = spend
+                    .pak
+                    .map(|[delegated, nk]| -> Result<_, ParseError> {
+                        Ok(Box::new(ProofAuthorizingKey {
+                            ak: parse_ak(delegated, index)?,
+                            nk: NullifierKey::from_field(
+                                Fp::from_bytes(nk)
+                                    .ok_or_else(|| ParseError::noncanonical(Field::Nk(index)))?,
+                            ),
+                        }))
+                    })
+                    .transpose()?;
+                if !pczt::SpendWitness::keys_match(ak, pak.as_deref().copied()) {
+                    return Err(ParseError::KeyMismatch(index));
+                }
+                pczt::ActionWitness::Spend(pczt::SpendWitness {
+                    ak,
+                    pak,
+                    lineage: None,
+                    zip32_derivation: spend.zip32_derivation,
+                })
+            },
+            Self::Output(output) => pczt::ActionWitness::Output(pczt::OutputWitness {
+                zip32_derivation: output.zip32_derivation,
+                user_address: output.user_address,
+            }),
+        })
+    }
+
+    #[expect(clippy::ref_patterns, reason = "borrow witness fields")]
+    fn serialize(witness: &pczt::ActionWitness) -> Self {
+        match *witness {
+            pczt::ActionWitness::Spend(ref spend) => Self::Spend(SpendWitness {
+                ak: spend.ak.map(|ak| ak.0.into()),
+                pak: spend
+                    .pak()
+                    .map(|pak| [pak.ak.0.into(), Fp::from(pak.nk).to_bytes()]),
+                zip32_derivation: spend.zip32_derivation.clone(),
+            }),
+            pczt::ActionWitness::Output(ref output) => Self::Output(OutputWitness {
+                zip32_derivation: output.zip32_derivation.clone(),
+                user_address: output.user_address.clone(),
+            }),
+        }
+    }
 }
 
 fn encode_descriptor(descriptor: action::Descriptor) -> io::Result<[u8; 64]> {
