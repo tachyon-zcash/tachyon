@@ -1,4 +1,4 @@
-use alloc::string::ToString as _;
+use alloc::{collections::BTreeSet, string::ToString as _};
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -144,5 +144,75 @@ fn mirror_round_trips_lineage_and_rejects_truncated_span() {
     assert_eq!(
         err.source().unwrap().to_string(),
         "truncated proof at byte 0: need 64 bytes, have 31"
+    );
+}
+
+#[test]
+fn mirror_round_trips_proofs_and_rejects_invalid_pairs() {
+    use crate::{Tachygram, primitives::TachygramSetPoly, stamp::proof::new_application};
+
+    let note = Note {
+        pk: Fp::ONE.into(),
+        value: value::Positive::ZERO,
+        psi: Fp::ONE.into(),
+        rcm: Fp::ONE.into(),
+    };
+    let outputs = [1, 2].map(|scalar| {
+        (
+            note,
+            ActionEntropy(Fp::ONE),
+            value::ValueTrapdoor(Fq::from(scalar)),
+        )
+    });
+    let plan = Plan::new(Vec::new(), Vec::from(outputs), note, Vec::new()).unwrap();
+    let mut section = Bundle::from_plan(&plan);
+    let app = new_application().unwrap();
+    let anchor = Anchor::default();
+    let tachygrams = [1, 2, 3, 4, 5].map(|value| Tachygram::from(Fp::from(value)));
+    let [left_first, right_first, left_second, right_second, change] = tachygrams;
+    let pairs = BTreeMap::from([
+        (section.actions[0].descriptor, (left_first, right_first)),
+        (section.actions[1].descriptor, (left_second, right_second)),
+    ]);
+    let proof = app.bootstrap_proof();
+    section.anchor = Some(anchor);
+    section.actions_proofs.push(stamp::ActionsProof {
+        pairs: pairs.clone(),
+        anchor,
+        proof: Box::new(proof.clone()),
+    });
+    section.autonome_parts = Some(stamp::AutonomeParts {
+        stamp: stamp::ProofStamp {
+            anchor,
+            tachygram_set: TachygramSetPoly::from_iter(tachygrams).commit(),
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(proof.clone()),
+        },
+        pairs,
+        fee: value::Positive::ZERO,
+        cm_change: change,
+    });
+    let mut fields = section.to_mirror();
+    assert_eq!(Bundle::parse(fields.clone()).unwrap().to_mirror(), fields);
+
+    let mut empty = fields.clone();
+    empty.actions_proofs[0].pairs.clear();
+    assert_eq!(
+        Bundle::parse(empty).unwrap_err().to_string(),
+        "invalid coverage in actions proof 0: Empty"
+    );
+
+    let mut unordered = fields.clone();
+    unordered.actions_proofs[0].pairs.swap(0, 1);
+    assert_eq!(
+        Bundle::parse(unordered).unwrap_err().to_string(),
+        "descriptors are not strictly ascending in pairs in actions proof 0"
+    );
+
+    let pair = &mut fields.actions_proofs[0].pairs[0].pair;
+    pair[1] = pair[0];
+    assert_eq!(
+        Bundle::parse(fields).unwrap_err().to_string(),
+        "duplicate tachygram in actions proof 0"
     );
 }

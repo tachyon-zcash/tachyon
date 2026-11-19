@@ -506,6 +506,10 @@ pub enum ReviewError {
 }
 
 impl Bundle {
+    fn sort_actions_proofs(proofs: &mut [stamp::ActionsProof]) {
+        proofs.sort_unstable_by_key(|proof| proof.pairs.keys().next().copied());
+    }
+
     /// Open the section from a complete plan, without role contributions.
     #[must_use]
     pub fn from_plan(plan: &Plan) -> Self {
