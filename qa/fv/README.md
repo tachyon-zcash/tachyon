@@ -123,8 +123,8 @@ accepting a stamp, and the double-spend theorems take `BundleCovered` with a `St
 
 ### Source correspondence at pinned main
 
-The maintenance audit against main `26fcd5a1f246b83b727686547424446cd1c96552`, with Ragu pinned at
-`70fb72e8c71721a7cfc85384a15a6c4fc99024d2`, is a one-time manual source comparison at those pinned
+The maintenance audit against main `8919018e6bd07e3c65c86a3ea735cf09c88c5ac7`, with Ragu pinned at
+`5d225645e6ddce482bcbb2cb6540a7a58a83b5a8`, is a one-time manual source comparison at those pinned
 commits, with no automated drift detection and not an extraction or equivalence proof. The relevant
 correspondence is:
 
