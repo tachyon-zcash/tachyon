@@ -26,7 +26,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{
-    Polynomial, ProductionRank, fft, ifft,
+    Polynomial, WalletRank, fft, ifft,
     udon::{
         field::Field as _,
         polynomial::{
@@ -118,10 +118,7 @@ pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
     class: Fp,
     shift: Fp,
-) -> Option<(
-    Polynomial<Fp, ProductionRank>,
-    Polynomial<Fp, ProductionRank>,
-)> {
+) -> Option<(Polynomial<Fp, WalletRank>, Polynomial<Fp, WalletRank>)> {
     let (abscissas, values): (Vec<_>, Vec<_>) = points.iter().copied().unzip();
     let len = points.len();
     let mut interpolant_coeffs = if len == 0 {

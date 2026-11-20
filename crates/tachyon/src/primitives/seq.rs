@@ -5,7 +5,7 @@ use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, Polynomial, ProductionRank,
+    Cycle as _, Polynomial, WalletRank,
     pasta::Pasta,
     udon::{
         curve::Projective as _,
@@ -30,7 +30,7 @@ pub struct NfSeqCommit(EqAffine);
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
+pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 
 impl NfSeqPoly {
     /// Names this polynomial in a header that carries one.

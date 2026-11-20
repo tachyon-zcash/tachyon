@@ -3,7 +3,7 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, Polynomial, ProductionRank,
+    Cycle as _, Polynomial, WalletRank,
     pasta::Pasta,
     udon::curve::{Affine as _, Projective as _},
 };
@@ -70,17 +70,17 @@ pub struct AnchorSetCommit(EqAffine);
 
 /// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
+pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
+pub struct ActionSetPoly(Polynomial<Fp, WalletRank>);
 
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
+pub struct AnchorSetPoly(Polynomial<Fp, WalletRank>);
 
 impl AnchorSetPoly {
     /// Names this polynomial in a header that carries one.
@@ -111,7 +111,7 @@ impl TachygramSetPoly {
     /// inputs.
     #[cfg(any(test, feature = "test-utils"))]
     #[must_use]
-    pub const fn arbitrary(poly: Polynomial<Fp, ProductionRank>) -> Self {
+    pub const fn arbitrary(poly: Polynomial<Fp, WalletRank>) -> Self {
         Self(poly)
     }
 
