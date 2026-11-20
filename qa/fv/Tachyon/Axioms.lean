@@ -20,7 +20,8 @@ particular on no `sorryAx` (`#check_axiom_budget`, which also checks that every 
   Tachyon.NoteUnspentDerivable.lineage Tachyon.SpendDerivable.lineage Tachyon.Chain.Node.epoch_unique
   Tachyon.Chain.StampLiftStep.epoch_eq Tachyon.Chain.Valid.disjoint_of_window
   Tachyon.Chain.Valid.nodup_two_epochs Tachyon.StampTree.fee_leaf Tachyon.CoveredSpend.fee_leaf
-  Tachyon.cubicMember_law Tachyon.Instances.rust_memberLaw
+  Tachyon.cubicMember_law Tachyon.Instances.rust_memberLaw Tachyon.Pallas.prime
+  Tachyon.Pallas.quadraticNonResidue Tachyon.Pallas.memberLaw
 
 /--
 info: 'Tachyon.ActionsDerivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -207,3 +208,21 @@ info: 'Tachyon.Instances.rust_memberLaw' depends on axioms: [propext, Classical.
 -/
 #guard_msgs in
 #print axioms Tachyon.Instances.rust_memberLaw
+
+/--
+info: 'Tachyon.Pallas.prime' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.Pallas.prime
+
+/--
+info: 'Tachyon.Pallas.quadraticNonResidue' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.Pallas.quadraticNonResidue
+
+/--
+info: 'Tachyon.Pallas.memberLaw' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.Pallas.memberLaw

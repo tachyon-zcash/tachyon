@@ -37,9 +37,9 @@ the chain and the derivations make, so every scoped law holds on them.
 The chain instance's `member` is not Rust's encoding `(m + (i + 1) X) ^ 3 - c`. It is a family of
 monic irreducible quadratics, enough to show `MemberLaw` at sixteen epoch indices is satisfiable
 together with the rest. Rust's encoding (`cubicMember`) satisfies `MemberLaw` at sixteen indices
-over `ZMod 307` with `c = 5` (`rust_memberLaw`, from `cubicMember_law`). At the Pallas field
-`cubicMember_law`'s hypotheses are facts about its prime that this module doesn't check. `qnr` is a
-non-residue of `ZMod 37`, not Rust's `NON_RESIDUE`.
+over `ZMod 307` with `c = 5` (`rust_memberLaw`, from `cubicMember_law`), and at the Pallas field
+with Rust's `c = 2` (`Pallas.memberLaw`). `qnr` is a non-residue of `ZMod 37`, not Rust's
+`QUADRATIC_NON_RESIDUE = 5`, which `Pallas.quadraticNonResidue` checks at Pallas.
 -/
 
 namespace Tachyon.Instances
