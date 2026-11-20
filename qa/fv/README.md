@@ -79,24 +79,28 @@ the span relation, and [Double spends](#double-spends) discharges it under a cha
 
 ### Publication
 
-`BundleVerified` covers the action digests of the bundle's and its adjuncts' descriptors, followed by
+`BundleVerified` covers the action digests of the bundle's and its adjuncts' actions, followed by
 the fee digests of the bundle's and its adjuncts' fees (`coveredDigests`). The stamp carries no
-tachygram list: each covered action carries its tachygram pair, each covered bundle its fee change,
-and the digests absorb them. The model reads a descriptor together with its pair, and a fee
-descriptor together with its fee change. It requires the published tachygrams, the covered pairs and
-fee changes, to be non-empty and duplicate-free, with two per descriptor and one per fee. The
-carried tachygram-set commitment is `setPoly` of the published tachygrams, and the header built from
-the covered digests, that commitment and the anchor is `StampDerivable`.
+tachygram list: each covered action is a bare descriptor paired with its tachygram pair, each
+covered fee is a fee descriptor paired with its fee change, and the digests absorb them. Uniqueness
+is checked on the bare descriptors and fee descriptors alone (`descs_nodup`, `fees_nodup`). It
+requires the published tachygrams, the covered pairs and fee changes, to be non-empty and
+duplicate-free, with two per action and one per fee. The carried tachygram-set commitment is
+`setPoly` of the published tachygrams, and the header built from the covered digests, that
+commitment and the anchor is `StampDerivable`.
 
 - A verified bundle publishes exactly its covered leaves' tachygrams, with multiplicity, at its
   anchor's epoch (`StampDerivable.published`, `BundleVerified.tachygrams_eq`).
 - No two covered leaf occurrences share a tachygram. A digest covered twice has no tachygrams
   (`BundleVerified.leaves_disjoint`).
-- The bundle's own fee leaf's tachygrams are published (`BundleVerified.fee_published`). Coverage
-  supplies the fee, since unmerge can divide it out of a derivable stamp.
+- The tachygrams paired with the bundle's own fee digest are published
+  (`BundleVerified.fee_published`), and under `FeeDigestLaw` the bundle's own fee change is among
+  the published tachygrams (`BundleVerified.fee_change_published`). Coverage supplies the fee
+  change, since unmerge can divide a fee leaf out of a derivable stamp.
 
-`BundleVerified` checks neither anchor membership nor anchor recency. Those are
-[consensus rules](#consensus-rules) on the chain.
+`BundleVerified` checks neither anchor membership nor anchor recency (`Bundle::verify` takes no
+publication epoch). The chain validator enforces those [consensus rules](#consensus-rules) when
+accepting a stamp.
 
 ### Source correspondence at pinned main
 
@@ -117,7 +121,7 @@ equivalence proof. The relevant correspondence is:
 | `stamp/proof/qr.rs`: `QrBucketSeal`; `stamp/proof/evidence.rs`: evidence steps | `Qr.lean`: `QrEvidenceDerivable` | The seal's two boundary digests and contents copy agree. The leaf and node digests are exact under `EvidenceLaw`; a multi-level descent is a chain of one-level descents; network field equalities are dropped. |
 | `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value is dropped. |
 | `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable` | The window's sixteen members over a `NoteSecret`'s master key, the window's range and the `cm` equality agree. Group alignment and contiguity are dropped. |
-| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Descriptor, fee and tachygram uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, wire bounds and adjunct pointers are not modelled. |
+| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, wire bounds and adjunct pointers are not modelled. |
 
 Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
 `dca1ecb5`, the relevant changes are:
@@ -143,7 +147,7 @@ Rust paths in the table are relative to `crates/tachyon/src/`. Since the precedi
 - **QR characterization (#278, #303).** The book retains the observed acceptance of scaled,
   non-monic QR factors and oversized depth-32 buckets. The QR model admits both: a split may be any
   factorization of the contents, and a descent has no depth bound. The bucket results below hold
-  for every such derivation, so neither case affects the no-double-spend result. Uses of a bucket
+  for every such derivation, so neither case affects the no-double-spend results. Uses of a bucket
   other than exclusion and `QrSpendableInit`'s inclusion are not modelled.
 
 ### Leaf provenance
@@ -168,11 +172,18 @@ carries or about the leaf step's constraints on it.
 
 ### Double spends
 
-- `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes
-  anchor recency and the two-epoch window from `Chain.Valid`, and each stamp's nullifier pair and
-  the second spend's lineage and its start bound as hypotheses. `no_double_spend_of_covered_spends`
-  proves the pairs and the lineage from the stamps' derivations, and the start bound unless `cm` is
-  published again between the first spend's publication and the second spend's anchor epoch.
+- Across two stamps, `no_double_spend` states the argument over abstract epochs.
+  `no_double_spend_of_valid` takes anchor recency and the two-epoch window from `Chain.Valid`, and
+  each stamp's nullifier pair and the second spend's lineage and its start bound as hypotheses.
+  `no_double_spend_of_covered_spends` proves the pairs and the lineage from the stamps' derivations,
+  taking `Chain.Valid` (including anchor recency) and `hfresh` (that `cm` is not `Chain.published`
+  after the first spend's publication up to the second spend's anchor epoch) for the start bound.
+- Within one stamp, `no_double_spend_in_stamp` rules out two covered spends of one note under
+  `hoccurrences`, the hypothesis that the two spends' action digests form a sub-multiset of the
+  covered digests. Both spends share the stamp's anchor epoch and publish the same nullifier pair,
+  contradicting `StampAccepted.tachygrams_nodup`. `CoveredSpend.digest_covered` is membership, and
+  `CoveredSpend` is not linked to `BundleVerified`'s descriptor uniqueness, so two covered
+  occurrences remain a hypothesis.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
   epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). The argument needs only an
   anchor set that holds the stamp-fold predecessors of its members (`StampClosed`). Chain nodes form
@@ -250,7 +261,17 @@ choices that no theorem here discharges.
   preimage holding its tachygrams, so the pairing rests on Poseidon collision resistance, which the
   model takes as exact.
 - **`DigestLaw`.** A spend leaf's action digest pairs with its tachygram pair at every epoch, and
-  is not a fee digest. The digest absorbs the pair's sum and product, which fix the pair.
+  is not a fee digest. The digest absorbs the pair's sum and product, which fix the pair. With the
+  spend witness and epoch fixed, `DigestLaw.pair` assigns a distinct digest to each unordered pair
+  of field elements; a field of size `p` has `p(p + 1) / 2` such pairs and only `p` digests, so no
+  function on the production field satisfies it. Like `Chain.HashLaw`, it is a symbolic
+  idealization of collision resistance, not a property that a finite-field proof could discharge.
+- **`FeeDigestLaw`.** A fee digest pairs with the singleton of its fee change at every epoch
+  (`BundleVerified.fee_change_published`). The digest absorbs the fee descriptor and fee change. It
+  makes the fee change a function of `feeDigest φ c` across every fee descriptor `φ`, whereas a
+  Poseidon digest over `(cv_feemax, v_fee, c)` has collisions across `φ`, so no production function
+  satisfies it over all inputs. Like `DigestLaw`, it is a symbolic idealization of collision
+  resistance, not a property that a finite-field proof could discharge.
 - **`NoteLaw`.** The note commitment binds `pk` and `psi`, and the payment key binds `nk`, so a
   note commitment fixes its master key. Collision resistance is taken as exact.
 - **`EvidenceLaw`.** The `Tachyon-QrBucket` leaf digest is injective on a bucket's header fields
@@ -276,8 +297,9 @@ choices that no theorem here discharges.
 `Chain.Valid` is a hypothesis of the chain-level theorems. It includes these rules.
 
 - **Anchor membership.** A stamp's anchor is an acknowledged end-of-block anchor on the accepted
-  chain. `no_double_spend_of_covered_spends` takes the accepted anchors to be the anchors the
-  published chain reaches (`OnChain`), which include every end-of-block anchor.
+  chain. `no_double_spend_of_covered_spends` and `no_double_spend_in_stamp` take the accepted
+  anchors to be the anchors the published chain reaches (`OnChain`), which include every
+  end-of-block anchor.
 - **Two-epoch window.** A published tachygram is absent from every earlier stamp of its publication
   epoch and the epoch before.
 - **Anchor recency.** A stamp's anchor epoch is its publication epoch or the epoch before
@@ -286,8 +308,9 @@ choices that no theorem here discharges.
 The chain model folds each anchor with the epoch of the block that contains it. Consensus must
 compute the folds with the same epochs, apply the boundary digest once per epoch, empty epochs
 included, and start epoch zero from the boundary digest of the zero anchor.
-`no_double_spend_of_covered_spends` takes the anchors' `epoch` labelling to agree with `Chain.Node`
-(`hepoch`), as `StampLiftStep.epoch_eq` does, with `HashLaw` rooted at epoch zero's entry anchor.
+`no_double_spend_of_covered_spends` and `no_double_spend_in_stamp` take the anchors' `epoch`
+labelling to agree with `Chain.Node` (`hepoch`), as `StampLiftStep.epoch_eq` does, with `HashLaw`
+rooted at epoch zero's entry anchor.
 
 ### Spend lineage
 
@@ -304,10 +327,11 @@ included, and start epoch zero from the boundary digest of the zero anchor.
   profile is carried as its path, since `QrSideDescend`'s depth bound keeps `(depth, bits)`
   injective on paths.
 - **Same note.** Two spends of one note are two spends with one `cm` whose lineages start at one
-  publication of `cm`. A lineage starts at an epoch that published `cm`, and the tree pins nothing
-  more: consensus may publish `cm` again two epochs later, and that output pays for a second note
-  with the same nullifiers. `no_double_spend_of_covered_spends` therefore takes `cm` unpublished
-  after the first spend's publication up to the second spend's anchor epoch (`hfresh`).
+  publication of `cm`. `Chain.published` is untyped membership of the value `cm` among a stamp's
+  tachygrams. A lineage that starts after the first spend's publication starts at a later epoch in
+  which `cm` is `Chain.published`. `no_double_spend_of_covered_spends` takes `hfresh` to exclude
+  every such appearance after the first spend's publication up to the second spend's anchor epoch,
+  and says nothing about why the value would reappear.
 
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
 `a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
