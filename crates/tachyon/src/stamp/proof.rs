@@ -81,11 +81,25 @@
 //!   and the stamp's bridge hash $(x(B), y(B))$ under `Tachyon-AnchorSt`. A
 //!   boundary digest is `poseidon::anchor_next_epoch`, which hashes the
 //!   previous anchor and the epoch entered under `Tachyon-AnchorEp`. Each fold
-//!   binds its inputs and, by its tag, which fold it is. By induction an anchor
-//!   on the consensus chain binds the chain's history back to genesis. That
-//!   history is every stamp's bridge hash and every epoch crossing. Some steps
-//!   take an anchor as a free witness. Such an anchor stands for a pool state
-//!   only when consensus accepts it or an anchor folded from it.
+//!   binds its inputs and, by its tag, which fold it is. An anchor on the
+//!   consensus chain binds the chain's history back to genesis. That history is
+//!   every stamp's bridge hash and every epoch crossing. The argument is an
+//!   induction on the number of folds after genesis. The genesis anchor is
+//!   $\mathsf{Poseidon}_\texttt{Tachyon-AnchorEp}(0, 0)$. No fold on the chain
+//!   reproduces it. A stamp fold has another tag. A later boundary digest
+//!   enters an epoch of at least 1, since `Anchor::next_epoch` rejects epoch 0,
+//!   and its input differs from $(0, 0)$. Either equality is a Poseidon
+//!   collision. Suppose two histories reach the same anchor, and each has at
+//!   least one fold. Their last folds have equal outputs. Under the Poseidon
+//!   assumption the two folds have the same tag and the same inputs, including
+//!   the same previous anchor. Removing the last fold from each history gives
+//!   two shorter histories that reach the same anchor. Repeat this step.
+//!   Suppose one history runs out of folds before the other. Its anchor is then
+//!   genesis, and the other history reaches genesis by a fold, which the base
+//!   case excludes. The two histories therefore have the same length and the
+//!   same folds. Some steps take an anchor as a free witness. Such an anchor
+//!   stands for a pool state only when consensus accepts it or an anchor folded
+//!   from it.
 //! - A `TachygramSetBridge` is a bridge hash. It binds $O_1$, and $O_1$ binds
 //!   its polynomial. A monic polynomial $\prod_i (X - t_i)$ determines its
 //!   multiset of roots exactly, by unique factorization. A scaled polynomial
