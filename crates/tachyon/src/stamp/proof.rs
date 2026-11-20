@@ -28,108 +28,114 @@
 //! # Header injectivity
 //!
 //! Ragu requires every header's `encode` to be injective in its `Data`, since
-//! verifiers bind a proof's data by recomputing the encoding natively. Each
-//! `Data` component here takes elements of its own, in a fixed order and
-//! number. Integers (`EpochIndex`, a note's value, the `depth` and `bits` of
-//! `QrProfile`) lie below $2^{64}$ and embed in $\mathbb{F}_p$ exactly. A point
-//! encodes as its affine $(x, y)$. The identity has no affine coordinates, and
-//! `encode` rejects it.
+//! verifiers bind a PCD's data by recomputing the encoding natively. Each
+//! `Data` component here takes elements of its own in a fixed order and number.
+//! Integers (`EpochIndex`, a note's value, `QrProfile`'s `depth` and `bits`)
+//! lie below $2^{64}$ and embed in $\mathbb{F}_p$ exactly. A point encodes as
+//! its affine $(x, y)$; the identity has none, and `encode` rejects it.
 //!
-//! A header binds what its elements stand for. Most elements are derived
-//! values. Each derivation binds its inputs under one or two of the following
-//! assumptions.
+//! A header binds what its elements stand for when derived as their types
+//! describe. The producing steps establish those derivations; each `Header`
+//! implementation states what its encoding binds and under which assumptions.
+//!
+//! ## Assumptions
 //!
 //! - **Poseidon.** Each hash in `digest::poseidon` starts its sponge from its
-//!   own 16-byte tag in the capacity. Each absorbs a fixed number of elements,
-//!   the length of its array argument. The sponge absorbs no length. The fixed
-//!   width keeps the inputs of one tag apart, and the tags keep the hashes
-//!   apart. The assumption is that no one finds two distinct triples of tag,
-//!   input and squeeze position with equal outputs.
+//!   own 16-byte tag in the capacity and absorbs a fixed-length array of
+//!   elements, with no length absorbed. Fixed width separates inputs under one
+//!   tag; tags separate hashes. The assumption is that no one finds two
+//!   distinct triples of tag, input and squeeze position with equal outputs.
 //! - **Host discrete log.** A slot commitment is an unblinded Pedersen vector
-//!   commitment to a polynomial's coefficients over the Vesta host generators.
-//!   It binds the coefficients unless someone knows a discrete-log relation
+//!   commitment to a polynomial's coefficients over the Vesta host generators;
+//!   it binds the coefficients unless someone knows a discrete-log relation
 //!   among those generators.
 //! - **Nested discrete log.** A bridge hash $B$ commits to the coordinates of a
-//!   step's second slot commitment $O_1$ over the Pallas nested generators. The
-//!   honest prover computes $B = x(O_1) \cdot G_i + y(O_1) \cdot G_j$. Ragu
-//!   accepts other bridge hashes too. Every accepted bridge hash binds $O_1$
-//!   unless someone knows a discrete-log relation among the nested generators.
-//! - **Value discrete log.** A value commitment $[v]V + [\mathsf{rcv}]R$ binds
-//!   $v$ unless someone knows $\log_V R$. It hides $v$ perfectly.
+//!   step's second slot commitment $O_1$ over the Pallas nested generators
+//!   (honestly $x(O_1) \cdot G_i + y(O_1) \cdot G_j$; Ragu accepts other bridge
+//!   hashes too). Every accepted bridge hash binds $O_1$ unless someone knows a
+//!   discrete-log relation among the nested generators.
+//! - **Value discrete log.** Under the Orchard `z.cash:Orchard-cv` generators
+//!   $\mathcal{V}$ and $\mathcal{R}$, $\[v\]\mathcal{V} +
+//!   \[\mathsf{rcv}\]\mathcal{R}$ hides $v$ perfectly and binds $v$ unless
+//!   someone knows $\log_{\mathcal{V}} \mathcal{R}$.
 //!
-//! Each element type stands for the following.
+//! ## Element bindings
 //!
-//! - A `note::Commitment` is `poseidon::note_commitment`, which hashes the
-//!   note's opening $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ under
-//!   `Tachyon-CmDerive`. It binds the note. An output's padding tachygram is
-//!   `poseidon::pad_tachygram`, which hashes the same opening under
-//!   `Tachyon-CmOutPad`. It binds the note too, and its tag keeps every pad
-//!   apart from every note commitment.
-//! - A `PaymentKey` is `poseidon::payment_key`, which hashes the affine
-//!   coordinates of `ak` and `nk` under `Tachyon-PkDerive`. It binds the
-//!   owner's `(ak, nk)`. `NoteSeed` derives `pk` in-circuit. An output's `pk`
-//!   is the recipient's, and it binds the pair the recipient derived it from.
-//! - A `NoteMasterKey` is `poseidon::nf_master`, which hashes $\psi$ and `nk`
-//!   under `Tachyon-NfMaster`. It binds both.
-//! - The `Nullifier` of epoch $e$ is entry $e \bmod 4$ of
-//!   `poseidon::nullifier_group`. That hash squeezes four elements from `mk`
-//!   and the group start $e - (e \bmod 4)$ under `Tachyon-NfDerive`. The group
-//!   start and the entry together give $e$. A nullifier binds `mk` and its
-//!   epoch.
-//! - An `Anchor` is one of two folds. A stamp fold is
-//!   `poseidon::anchor_next_stamp`, which hashes the previous anchor, the epoch
-//!   and the stamp's bridge hash $(x(B), y(B))$ under `Tachyon-AnchorSt`. A
-//!   boundary digest is `poseidon::anchor_next_epoch`, which hashes the
-//!   previous anchor and the epoch entered under `Tachyon-AnchorEp`. Each fold
-//!   binds its inputs and, by its tag, which fold it is. An anchor on the
-//!   consensus chain binds the chain's history back to genesis. That history is
-//!   every stamp's bridge hash and every epoch crossing. The argument is an
-//!   induction on the number of folds after genesis. The genesis anchor is
-//!   $\mathsf{Poseidon}_\texttt{Tachyon-AnchorEp}(0, 0)$. No fold on the chain
-//!   reproduces it. A stamp fold has another tag. A later boundary digest
-//!   enters an epoch of at least 1, since `Anchor::next_epoch` rejects epoch 0,
-//!   and its input differs from $(0, 0)$. Either equality is a Poseidon
-//!   collision. Suppose two histories reach the same anchor, and each has at
-//!   least one fold. Their last folds have equal outputs. Under the Poseidon
-//!   assumption the two folds have the same tag and the same inputs, including
-//!   the same previous anchor. Removing the last fold from each history gives
-//!   two shorter histories that reach the same anchor. Repeat this step.
-//!   Suppose one history runs out of folds before the other. Its anchor is then
-//!   genesis, and the other history reaches genesis by a fold, which the base
-//!   case excludes. The two histories therefore have the same length and the
-//!   same folds. Some steps take an anchor as a free witness. Such an anchor
-//!   stands for a pool state only when consensus accepts it or an anchor folded
-//!   from it.
-//! - A `TachygramSetBridge` is a bridge hash. It binds $O_1$, and $O_1$ binds
-//!   its polynomial. A monic polynomial $\prod_i (X - t_i)$ determines its
-//!   multiset of roots exactly, by unique factorization. A scaled polynomial
-//!   determines the same roots. Equal bridge hashes give equal sets. Equal sets
-//!   can give different bridge hashes, because a step's in-circuit bridge hash
-//!   need not be the honest one and a QR bucket can hold a scaled polynomial
-//!   (the book's "Scaled splits"). `Anchor::next_stamp` folds the honest bridge
-//!   hash. An anchor folded in-circuit from another bridge hash lies off the
-//!   chain consensus accepts.
-//! - An `EvidenceTreeRoot` is a leaf or a node. A leaf is
-//!   `poseidon::evidence_tree_leaf`, which hashes eight elements under
-//!   `Tachyon-QrBucket`. They are a bucket's epoch, two anchors, discriminant,
-//!   profile and the two coordinates of its contents bridge hash. A node is
-//!   `poseidon::evidence_tree_node`, which hashes four subtree roots under
-//!   `Tachyon-EvidNode`. Leaves and nodes differ in tag and width. A root binds
-//!   its whole tree, including its shape and every bucket under it.
-//! - A `value::Commitment` is $[v]V + [\mathsf{rcv}]R$ at a spend and $[-v]V +
-//!   [\mathsf{rcv}]R$ at an output. $V$ and $R$ are the Orchard
-//!   `z.cash:Orchard-cv` generators. The commitment binds $v$. Values in
-//!   `0..=MAX_MONEY` are distinct in $\mathbb{F}_q$. The suffix of the header
-//!   that carries the commitment gives its sign.
-//! - A `QrProfile` stands for a path of `depth` sides. `QrProfile::descend`
-//!   shifts each new side into the low bit of `bits`. The pair `(depth, bits)`
-//!   is the path exactly.
-//! - A `QrDiscriminant` is the free $R_0$ a network classifies from. It stands
-//!   for itself.
+//! ### Plain values
 //!
-//! These bindings say what an element determines when it was derived as its
-//! type describes. The producing steps establish that it was. Each `Header`
-//! implementation states what its encoding binds and under which assumptions.
+//! - **`QrProfile`**: a path of `depth` sides. `QrProfile::descend` shifts each
+//!   new side into the low bit of `bits`, so `(depth, bits)` is the path
+//!   exactly.
+//! - **`QrDiscriminant`**: the free $R_0$ a network classifies from; stands for
+//!   itself.
+//!
+//! ### Notes, keys and nullifiers (Poseidon)
+//!
+//! - **`PaymentKey`**: `poseidon::payment_key` (`Tachyon-PkDerive`) on affine
+//!   `ak` and `nk` binds `(ak, nk)`. `NoteSeed` derives `pk` in-circuit; an
+//!   output's `pk` is the recipient's and binds the pair the recipient derived
+//!   it from.
+//! - **`NoteMasterKey`**: `poseidon::nf_master` (`Tachyon-NfMaster`) on $(\psi,
+//!   \mathsf{nk})$ binds both.
+//! - **`note::Commitment` and output `pad`**: `poseidon::note_commitment`
+//!   (`Tachyon-CmDerive`) and `poseidon::pad_tachygram` (`Tachyon-CmOutPad`) on
+//!   $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ each bind the note, and their tags
+//!   keep pads apart from note commitments.
+//! - **`Nullifier`**: for epoch $e$, entry $e \bmod 4$ of the four elements
+//!   `poseidon::nullifier_group` (`Tachyon-NfDerive`) squeezes from `mk` and $e
+//!   - (e \bmod 4)$. Group start and entry index determine $e$, binding `mk`
+//!   and $e$.
+//!
+//! ### Value commitments (value discrete log)
+//!
+//! - **`value::Commitment`**: $\[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$
+//!   at a spend and $\[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$ at an
+//!   output. Values in `0..=MAX_MONEY` are distinct in $\mathbb{F}_q$ and the
+//!   header's `SUFFIX` gives the sign, binding $v$.
+//!
+//! ### Sets, evidence trees and anchors (Poseidon, host and nested discrete log)
+//!
+//! - **`TachygramSetBridge`**: a bridge hash binding $O_1$, which binds its
+//!   polynomial. Unique factorization fixes the root multiset of $\prod_i (X -
+//!   t_i)$, and nonzero scaling leaves the roots unchanged, so equal bridge
+//!   hashes give equal sets. Equal sets can have different bridge hashes: an
+//!   in-circuit bridge hash need not be the honest one, and a QR bucket can
+//!   hold a scaled polynomial (the book's "Scaled splits").
+//! - **`EvidenceTreeRoot`**: a leaf (`poseidon::evidence_tree_leaf`, hashing a
+//!   bucket's epoch, two anchors, discriminant, profile and two contents
+//!   bridge-hash coordinates, eight elements under `Tachyon-QrBucket`) or a
+//!   node (`poseidon::evidence_tree_node`, hashing four subtree roots under
+//!   `Tachyon-EvidNode`). Tag and width separate leaves from nodes, so a root
+//!   binds the whole tree, its shape and every bucket under Poseidon, plus each
+//!   bucket's contents and the stamp sets in its anchors' histories under host
+//!   and nested discrete log.
+//!
+//! ### Anchor histories
+//!
+//! An `Anchor` is either a **stamp fold** (`poseidon::anchor_next_stamp`,
+//! hashing `(anchor_prev, epoch, x(B), y(B))` under `Tachyon-AnchorSt`) or a
+//! **boundary digest** (`poseidon::anchor_next_epoch`, hashing `(anchor_prev,
+//! epoch)` under `Tachyon-AnchorEp`). Under Poseidon, each fold binds its
+//! inputs and, by its tag, which fold it is. An anchor on the consensus chain
+//! binds the history of stamp bridge hashes and epoch crossings back to genesis
+//! (and, under host and nested discrete log, every stamp's set) by induction on
+//! the fold count:
+//!
+//! - **Base.** Genesis is $\mathsf{Poseidon}_{\texttt{Tachyon-AnchorEp}}(0,
+//!   0)$. Stamp folds have another tag; `Anchor::next_epoch` rejects epoch $0$,
+//!   so boundary digests enter an epoch $\ge 1$ with input $\ne (0, 0)$.
+//!   Reproducing genesis is a Poseidon collision.
+//! - **Step.** Two non-empty histories reaching the same anchor have equal
+//!   final outputs, hence under Poseidon the same tag, inputs and previous
+//!   anchor; dropping the final fold leaves shorter histories at that previous
+//!   anchor. Repeating this, neither history can hit genesis first, since the
+//!   other would reach genesis via a fold, contradicting the base case; thus
+//!   both have the same length and folds.
+//!
+//! `Anchor::next_stamp` folds the honest bridge hash; an anchor folded
+//! in-circuit from another bridge hash lies off the consensus chain. Some steps
+//! take an anchor as a free witness. Such an anchor stands for a pool state
+//! only when consensus accepts it or an anchor folded from it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
