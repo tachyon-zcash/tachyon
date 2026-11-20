@@ -3,18 +3,18 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::iter;
 
-use ragu::{Polynomial, ProductionRank, pasta::Pasta};
-use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
+use ragu::{
+    Polynomial, WalletRank,
+    pasta::Pasta,
+    udon::{curve::Affine as _, field::Field as _},
 };
+use rand_core::CryptoRng;
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetBridge,
     TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{EpAffine, Fp},
     stamp::proof::{App, evidence, pool, qr},
     witness,
 };
@@ -79,13 +79,13 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
 
 #[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrIntake>,
+    pub pcd: ragu::Pcd<Pasta, WalletRank, qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 #[derive(Clone)]
 pub(crate) struct QrBucketEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, qr::QrBucket>,
+    pub pcd: ragu::Pcd<Pasta, WalletRank, qr::QrBucket>,
     pub members: Vec<Tachygram>,
 }
 
@@ -127,7 +127,7 @@ impl QrIntakeEntry {
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
         key.extend_from_slice(&profile.bits.to_le_bytes());
-        key.extend_from_slice(&Eq::from(self.pcd.commitments()[1]).to_affine().to_bytes());
+        key.extend_from_slice(&self.pcd.commitments()[1].to_bytes());
         key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
         SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
     }
@@ -200,7 +200,7 @@ impl QrIntakeEntry {
             let sibling = &factors[usize::from(!side)];
             let (interpolant, quotient) =
                 witness::qr_side_select((*sides.data(), ()), &sibling.0, side);
-            let mut scaled_quotient: Polynomial<Fp, ProductionRank> = quotient.into();
+            let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
             scaled_quotient.scale(sibling.1.invert().unwrap());
             let (selection, ()) = app
                 .fuse(
@@ -228,7 +228,7 @@ impl QrIntakeEntry {
 
 pub(crate) fn scaled_qr_contents(members: &[Tachygram], scale: Fp) -> TachygramSetPoly {
     let monic: TachygramSetPoly = members.iter().copied().collect();
-    let mut poly: Polynomial<Fp, ProductionRank> = monic.into();
+    let mut poly: Polynomial<Fp, WalletRank> = monic.into();
     poly.scale(scale);
     TachygramSetPoly::arbitrary(poly)
 }
@@ -259,7 +259,7 @@ impl EvidenceLeaf {
 
 #[derive(Clone)]
 pub(crate) struct EvidenceTreeEntry {
-    pub pcd: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+    pub pcd: ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTree>,
     pub leaves: Vec<EvidenceLeaf>,
     pub real_leaves: usize,
 }
@@ -289,11 +289,8 @@ impl EvidenceTreeEntry {
             rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
-            pairs: &mut BTreeMap<
-                Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
-            >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+            pairs: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTreePair>>,
+        ) -> ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTreePair> {
             let [first, second] = <[_; 2]>::try_from(buckets).unwrap();
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
@@ -316,13 +313,10 @@ impl EvidenceTreeEntry {
             rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
-            left: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
-            right: ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
-            pairs: &mut BTreeMap<
-                Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
-            >,
-        ) -> ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair> {
+            left: ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTree>,
+            right: ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTree>,
+            pairs: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTreePair>>,
+        ) -> ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTreePair> {
             let key = EvidenceTreeEntry::node_key(buckets);
             if let Some(pcd) = pairs.get(&key) {
                 return pcd.clone();
@@ -338,13 +332,10 @@ impl EvidenceTreeEntry {
             rng: &mut RNG,
             app: &App<'_>,
             buckets: &[&QrBucketEntry],
-            pairs: &mut BTreeMap<
-                Vec<u8>,
-                ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTreePair>,
-            >,
-            trees: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>>,
+            pairs: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTreePair>>,
+            trees: &mut BTreeMap<Vec<u8>, ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTree>>,
         ) -> (
-            ragu::Pcd<Pasta, ProductionRank, evidence::EvidenceTree>,
+            ragu::Pcd<Pasta, WalletRank, evidence::EvidenceTree>,
             Vec<EvidenceLeaf>,
         ) {
             let (left, right, leaves) = if buckets.len() == EVIDENCE_TREE_ARITY {
@@ -532,7 +523,7 @@ impl QrBucketEntry {
         rng: &mut RNG,
         app: &App<'_>,
         nf: impl Fn(EpochIndex) -> Nullifier,
-    ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+    ) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
         let (epoch, ..) = *self.pcd.data();
         let witness = witness::qr_unspent_init((*self.pcd.data(), ()), nf(epoch).into());
         let (segment, ()) = app

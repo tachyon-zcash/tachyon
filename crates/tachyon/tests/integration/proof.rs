@@ -3,9 +3,8 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
     TachygramSetPoly, action,
@@ -15,7 +14,7 @@ use zcash_tachyon::{
     keys::private,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
     stamp::proof::{App, delegation, output, pool, spend, spendable, stamp},
     value, witness,
 };
@@ -37,7 +36,7 @@ fn detached_segment(
     app: &App<'_>,
     epoch: EpochIndex,
     nf: impl Fn(EpochIndex) -> Nullifier,
-) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
     let anchor_final_prev = Anchor::random(rng);
     let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = QrIntakeEntry::empty(
@@ -55,8 +54,8 @@ fn honest_spend_bind(
     app: &App<'_>,
     user: &WalletSim,
     note: &Note,
-    spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-) -> ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader> {
+    spendable: ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+) -> ragu::Pcd<Pasta, WalletRank, spend::SpendHeader> {
     let secret = user.note_secret(app, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = app
@@ -150,7 +149,7 @@ fn unspent_fuse_joins_only_adjacent_matching_segments() {
     );
     assert_eq!(
         fused.commitments()[0],
-        Eq::from(NfSeqPoly::new(EpochIndex::new(0), &nf).commit()).to_affine()
+        EqAffine::from(NfSeqPoly::new(EpochIndex::new(0), &nf).commit())
     );
     assert!(app.verify_uncompressed(&fused, rng).unwrap());
 }
@@ -170,7 +169,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
     assert_eq!(
         span.commitments()[0],
-        Eq::from(AnchorSetPoly::from_iter(members).commit()).to_affine()
+        EqAffine::from(AnchorSetPoly::from_iter(members).commit())
     );
     assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
 }
@@ -218,9 +217,7 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
         let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
-            app.bridge_hash(stamp.tachygram_set.as_ref().to_affine())
-                .unwrap()
-                .into(),
+            app.bridge_hash(stamp.tachygram_set.into()).unwrap().into(),
             stamp_anchor,
         ));
         let (lifted, ()) = app
@@ -473,25 +470,23 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let [action_commit, tachygram_commit] = pcd.commitments();
     assert_eq!(
         action_commit,
-        Eq::from(
+        EqAffine::from(
             ActionSetPoly::from_iter([plan.digest((
                 Tachygram::from(mk.derive_nullifier(spend_epoch)),
                 Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
             ))])
             .commit()
         )
-        .to_affine()
     );
     assert_eq!(
         tachygram_commit,
-        Eq::from(
+        EqAffine::from(
             TachygramSetPoly::from_iter([
                 Tachygram::from(mk.derive_nullifier(spend_epoch)),
                 Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap())),
             ])
             .commit()
         )
-        .to_affine()
     );
 }
 
@@ -978,11 +973,10 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     assert_eq!(
         pcd.commitments()[..2],
         [
-            Eq::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()).to_affine(),
-            Eq::from(
+            EqAffine::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()),
+            EqAffine::from(
                 TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
-            )
-            .to_affine(),
+            ),
         ]
     );
     let foreign_note = WalletSim::random(rng).random_note(200);
@@ -1038,7 +1032,7 @@ fn nullifier_fuse_concatenates_adjacent_windows() {
     );
     assert_eq!(
         merged.commitments()[0],
-        Eq::from(NfSeqPoly::new(EpochIndex::new(0), &members).commit()).to_affine()
+        EqAffine::from(NfSeqPoly::new(EpochIndex::new(0), &members).commit())
     );
     assert!(app.verify_uncompressed(&merged, rng).unwrap());
 }

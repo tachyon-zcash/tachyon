@@ -6,10 +6,9 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
+    udon::field::Field as _,
 };
-use udon::field::Field as _;
 
-use super::uint::Uint;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
@@ -64,10 +63,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// the new side.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
-        Uint::<_, { primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>::from_element(
-            dr,
-            &self.depth,
-        )?;
+        self.depth
+            .enforce_lt::<{ primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>(
+                dr,
+                &mut (),
+                Fp::from(primitives::QrProfile::MAX_DEPTH as u64),
+            )?;
         let one = Element::constant(dr, Fp::ONE);
         Ok(Self {
             depth: self.depth.add(dr, &one),

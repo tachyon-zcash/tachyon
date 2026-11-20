@@ -3,11 +3,11 @@
 use core::{cmp, ops, ops::Neg as _};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
-use rand_core::CryptoRng;
-use udon::{
+use ragu::udon::{
     curve::{Affine as _, Projective as _},
     field::Field as _,
 };
+use rand_core::CryptoRng;
 
 use crate::{
     constants::{

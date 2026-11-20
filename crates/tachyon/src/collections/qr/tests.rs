@@ -7,7 +7,7 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::collections::multiset;
 
-fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
+fn dense(poly: &Polynomial<Fp, WalletRank>) -> Vec<Fp> {
     let mut coeffs = poly.iter_coeffs().collect::<Vec<_>>();
     let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
     coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
@@ -18,8 +18,8 @@ fn verify_side(
     points: &[(Fp, Fp)],
     class: Fp,
     shift: Fp,
-    u: &Polynomial<Fp, ProductionRank>,
-    h: &Polynomial<Fp, ProductionRank>,
+    u: &Polynomial<Fp, WalletRank>,
+    h: &Polynomial<Fp, WalletRank>,
 ) {
     let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
     let [u_degree, q_degree, h_degree] = [u, &q, h].map(|poly| {

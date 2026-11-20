@@ -74,12 +74,14 @@ extern crate alloc;
 
 use alloc::vec;
 
-use ragu::{Polynomial, ProductionRank};
-use udon::{field::Field as _, polynomial::fold_weighted};
+use ragu::{
+    Polynomial, WalletRank,
+    udon::{field::Field as _, polynomial::fold_weighted},
+};
 
 use crate::pasta::Fp;
 
-pub(crate) const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
+pub(crate) const NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000002"
 ));
 
@@ -88,9 +90,7 @@ pub(crate) const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
     clippy::expect_used,
     reason = "the padding supplies all four shifts, each with a weight and room in the output"
 )]
-pub(crate) fn encode(
-    members: impl IntoIterator<Item = (u64, Fp)>,
-) -> Polynomial<Fp, ProductionRank> {
+pub(crate) fn encode(members: impl IntoIterator<Item = (u64, Fp)>) -> Polynomial<Fp, WalletRank> {
     Polynomial::from_coeffs(
         members
             .into_iter()

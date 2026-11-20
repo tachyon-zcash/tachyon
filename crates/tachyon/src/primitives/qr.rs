@@ -1,14 +1,18 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
+use ragu::{
+    Cycle as _, Polynomial, WalletRank,
+    pasta::Pasta,
+    udon::{curve::Projective as _, field::Field as _},
+};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
+use super::PolySlot;
 use crate::{
     collections::qr,
     pasta,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
 };
 
 /// A routing network's first discriminant $R_0$.
@@ -42,48 +46,50 @@ impl QrDiscriminant {
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
 /// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
+pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
 impl QrInterpolantPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the interpolant at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
+        QrInterpolantCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
 /// Pedersen commitment to a class interpolant.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrInterpolantCommit(Eq);
+pub struct QrInterpolantCommit(EqAffine);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c \cdot (X + s) = q \cdot h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
+pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
 impl QrQuotientPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the quotient at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
+        QrQuotientCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
 /// Pedersen commitment to a class-decomposition quotient.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrQuotientCommit(Eq);
+pub struct QrQuotientCommit(EqAffine);
 
 /// A QR profile: the number of splits taken and the side taken at each.
 ///

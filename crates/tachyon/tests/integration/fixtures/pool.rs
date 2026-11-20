@@ -4,9 +4,8 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{array, iter, ops::RangeInclusive};
 use std::sync::LazyLock;
 
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Note, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit, TachygramSetPoly, note,
@@ -247,7 +246,7 @@ impl PoolSim {
         rng: &mut RNG,
         app: &App<'_>,
         parent: &QrIntakeEntry,
-    ) -> ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides> {
+    ) -> ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides> {
         let witness = witness::qr_intake_split((*parent.pcd.data(), ()), &parent.members);
         let (pcd, ()) = app
             .fuse(
@@ -266,8 +265,8 @@ impl PoolSim {
         span: (Anchor, Anchor),
         discriminant: QrDiscriminant,
         parent: &QrIntakeEntry,
-    ) -> ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides> {
-        static SIDES: Proved<ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides>> =
+    ) -> ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides> {
+        static SIDES: Proved<ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides>> =
             Proved::new("qr_sides");
 
         let key = Self::qr_profile_key(span, discriminant, parent.pcd.data().4);
@@ -279,7 +278,7 @@ impl PoolSim {
         app: &App<'_>,
         parent: &QrIntakeEntry,
         side: bool,
-        sides: ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides>,
+        sides: ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides>,
     ) -> QrIntakeEntry {
         let witness = witness::qr_side_select((*sides.data(), ()), &parent.members, side);
         let (selection, ()) = app
@@ -387,7 +386,7 @@ impl PoolSim {
         discriminant: QrDiscriminant,
         value: Fp,
         depth: u32,
-    ) -> ragu::Pcd<Pasta, ProductionRank, qr::QrIntakeSides> {
+    ) -> ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides> {
         let intake = self.qr_intake(app, span, discriminant, value, depth);
         Self::qr_sides(app, span, discriminant, &intake)
     }
@@ -582,17 +581,17 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         range: RangeInclusive<BlockHeight>,
-    ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
-        static SEEDS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> =
+    ) -> ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan> {
+        static SEEDS: Proved<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>> =
             Proved::new("anchor_span_seed");
-        static SPANS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>> =
+        static SPANS: Proved<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>> =
             Proved::new("anchor_span");
 
         fn prove(
             app: &App<'_>,
             epoch: EpochIndex,
             stamps: &[&StampEntry],
-        ) -> ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan> {
+        ) -> ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan> {
             let (last, prefix) = stamps.split_last().unwrap();
             if prefix.is_empty() {
                 let key = [Fp::from(last.0).to_bytes(), Fp::from(last.3).to_bytes()].concat();
@@ -636,7 +635,7 @@ impl PoolSim {
         start: Anchor,
         epoch: EpochIndex,
         stamps: &[&StampEntry],
-    ) -> ragu::Pcd<Pasta, ProductionRank, summary::Summary> {
+    ) -> ragu::Pcd<Pasta, WalletRank, summary::Summary> {
         let (first, rest) = stamps.split_first().unwrap();
         let (mut pcd, ()) = app
             .seed(
@@ -667,8 +666,8 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         (start, end): (Anchor, Anchor),
-    ) -> ragu::Pcd<Pasta, ProductionRank, summary::Summary> {
-        static SUMMARIES: Proved<ragu::Pcd<Pasta, ProductionRank, summary::Summary>> =
+    ) -> ragu::Pcd<Pasta, WalletRank, summary::Summary> {
+        static SUMMARIES: Proved<ragu::Pcd<Pasta, WalletRank, summary::Summary>> =
             Proved::new("summary");
 
         let stamps = self.stamps_between(start, end);
@@ -775,10 +774,10 @@ impl PoolSim {
         app: &App<'_>,
         (epoch_start, epoch_next): (EpochIndex, EpochIndex),
         nf: impl Fn(EpochIndex) -> Nullifier,
-    ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
-        static SEGMENTS: Proved<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>> =
+    ) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
+        static SEGMENTS: Proved<ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent>> =
             Proved::new("unspent_segment");
-        static RANGES: Proved<ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent>> =
+        static RANGES: Proved<ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent>> =
             Proved::new("unspent_range");
 
         fn prove(
@@ -786,7 +785,7 @@ impl PoolSim {
             app: &App<'_>,
             (lo, hi): (EpochIndex, EpochIndex),
             members: &[Nullifier],
-        ) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+        ) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
             if let &[nf] = members {
                 let mut key = PoolSim::epoch_bucket_key(lo, pool.epoch_bucket_anchors(lo));
                 key.extend_from_slice(&Fp::from(nf).to_bytes());
