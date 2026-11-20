@@ -2,8 +2,8 @@
 
 This directory holds a Lean 4 model of the Tachyon stamp proof tree and of the consensus rules that
 publish stamps, with machine-checked proofs about that model. `just fv` builds it locally with
-`lake build --wfail`; no CI workflow runs the Lean build. Mathlib is the only dependency, pinned to
-the release ragu's `qa/fv` uses.
+`lake build --wfail` and re-runs `lake env lean Tachyon/Axioms.lean`; no CI workflow runs the Lean
+build. Mathlib is the only dependency, pinned to the release ragu's `qa/fv` uses.
 
 The theorems are about the model. Each step is modelled by hand from the Rust source, and no check
 compares a Lean step with the circuit it models. Read [Trust partition](#trust-partition) and
@@ -141,32 +141,25 @@ correspondence is:
 | `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable`, `groupNullifier` | `NullifierDerive` takes `epoch_start % 4 = 0` (`EpochIndex::from_group_start`) and keys four `group` reads on every fourth epoch across its 16-epoch window, agreeing with `groupNullifier` (`NoteNullifiersDerivable.seq_eq`); `epoch_start + 15 ≤ emax` and `cm` equality agree. `NullifierFuse` contiguity is dropped. |
 | `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleCovered`, `BundleVerified` | `BundleCovered` checks uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, `tachygrams_covered` (`coveredTachygrams` of carried pairs and fee changes) and `tachygram_set`. `BundleVerified` adds `StampDerivable` (which assumes lift epoch preservation). The covered-tachygram rank bound, signatures, wire bounds, value balance and adjunct pointers are not modelled. |
 
-Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
-`dca1ecb5`, the relevant changes are:
+Rust paths in the table are relative to `crates/tachyon/src/`. Cross-cutting Rust boundaries outside
+a single row:
 
-- **Real proofs (#272, #310).** Tachyon proves with real Ragu instead of the mock. Steps open typed
-  online slots through `Oracle::open` and check each polynomial identity inline at `zeta`. Proof
-  APIs take a caller-built `&App` from `new_application` in `stamp/proof.rs`, which registers the
-  fixed steps over the baked setup. Derivability assumes this Tachyon registry and setup; the `App`
-  type alias alone does not establish them for an arbitrary caller-supplied application.
-- **Tachygrams bound into digests (#280).** An action digest absorbs its tachygram pair's sum and
-  product, and a fee digest its fee change. The stamp omits a tachygram list and a coverage field;
-  each action carries its pair, and `verify_covered` rebuilds the tachygram set from the pairs and
-  fee changes. This binding is what `R` idealizes.
-- **Native bridge hash (#272, #310).** `bridge_hash.rs::bridge_hash` calls Ragu's
-  `bridge_hash::digest` on a commitment. `stamp.rs` uses it to reconstruct the `Stamp` header, and
-  `Anchor::next_stamp` uses it before the Poseidon fold. The model abstracts commitment, bridge
-  hashing and the fold as one composition; it proves neither the helper's equality with Ragu nor
-  its collision resistance. `bridge_hash/tests.rs` compares three commitments with the
-  application's bridge hash and tests the identity-input panic. These are finite Rust tests, not
-  Lean results. `Anchor::next_stamp` rejects identity and empty-set commitments before hashing.
-- **Typed slots and arithmetic (#309, #314).** Slot markers become `PolySlot<P>`, and native
-  polynomial arithmetic moves to Udon and Ragu. Neither changes a stamp equation.
-- **QR characterization (#278, #303).** The book retains the observed acceptance of scaled,
-  non-monic QR factors and oversized depth-32 buckets. The QR model admits both: a split may be any
-  factorization of the contents, and a descent has no depth bound. The bucket results below hold
-  for every such derivation, so neither case affects the no-double-spend results. Uses of a bucket
-  other than exclusion and `QrSpendableInit`'s inclusion are not modelled.
+- **Application registry.** Steps open typed `PolySlot<P>` online slots through `Oracle::open` and
+  check each polynomial identity inline at `zeta`. Proving and verifying take a caller-built `&App`
+  from `new_application` in `stamp/proof.rs`, which registers the fixed steps over the baked setup.
+  Derivability assumes this Tachyon registry and setup; the `App` type alias alone does not
+  establish them for an arbitrary caller-supplied application.
+- **Native bridge hash.** `bridge_hash.rs::bridge_hash` calls Ragu's `bridge_hash::digest` on a
+  commitment. `stamp.rs` uses it to reconstruct the `Stamp` header, and `Anchor::next_stamp` rejects
+  identity and empty-set commitments before calling it and running the Poseidon fold. The model
+  abstracts commitment, bridge hashing and the fold as one composition; it proves neither the
+  helper's equality with Ragu nor its collision resistance. `bridge_hash/tests.rs` compares three
+  commitments with the application's bridge hash and tests the identity-input panic; these are
+  finite Rust tests, not Lean results.
+- **QR splits and bucket depth.** The QR model admits scaled, non-monic splits and unbounded descent
+  depth: a split may be any factorization of the contents, and a descent has no depth bound. The
+  bucket results below hold for every such derivation, so neither case affects the no-double-spend
+  results. Uses of a bucket other than exclusion and `QrSpendableInit`'s inclusion are not modelled.
 
 ### Leaf provenance
 
@@ -255,25 +248,28 @@ leaf step's header and digest call.
   `coveredDigests`, and indexes an action of `actions` whose digest matches a `SpendAction` leaf of
   `tree` with `header.cm = cm`. Under `DigestLaw` on `Q`, that covered action's carried pair is the
   note's nullifier pair (`CoveredSpend.carried_pair`), and `BundleCovered` publishes it
-  (`CoveredSpend.pair_le`). Two spends of the same note are two spends with one `cm`: every header
-  from the spend to its lineage start threads `cm`, `SpendBind` ties the note secret to the lineage
-  by `cm`, and `NoteSeed` makes `cm` determine `mk` (`NoteSecretDerivable.master_eq`). The leaf may
-  sit in an unmerge divisor; coverage alone fixes what is published.
+  (`CoveredSpend.pair_le`); neither double-spend theorem takes a separate note-secret premise,
+  deriving `∃ master, Secret ⟨cm, master⟩` from `p₁` (`CoveredSpend.secret`). Two spends of the same
+  note are two spends with one `cm`: every header from the spend to its lineage start threads `cm`,
+  `SpendBind` ties the note secret to the lineage by `cm`, and `NoteSeed` makes `cm` determine `mk`
+  (`NoteSecretDerivable.master_eq`). The leaf may sit in an unmerge divisor; coverage alone fixes
+  what is published.
 - The tachygrams published in one epoch, and in two consecutive epochs, are duplicate-free
   (`Chain.Valid.nodup_epoch`, `Chain.Valid.nodup_two_epochs`).
 
 ### Concrete instance
 
 `Tachyon/Instances.lean` instantiates the model at `ZMod 37` with concrete hash functions and finite
-call sets holding the calls the chain and derivations make, on a two-epoch chain whose epoch 0 stamp
-publishes `[cm, 2]` and whose epoch 1 bundle covers one spend of that note and a fee change. The
-spend's lineage is a `QrSpendableInit` on a `NoteUnspent` segment over epoch 0, whose bucket comes
-from one descent and is replayed through an evidence tree and `EvidenceTreeOpen`.
+call sets holding the calls the chain and derivations make, on a three-stamp chain whose epoch 0
+stamp publishes `[cm, 2]`, whose first epoch 1 stamp is a bundle covering one spend of that note and
+a fee change, and whose second epoch 1 stamp publishes `[9]`. The spend's lineage is a
+`QrSpendableInit` on a `NoteUnspent` segment over epoch 0, whose bucket comes from one descent and
+is replayed through an evidence tree and `EvidenceTreeOpen`.
 
 - `Instances.headline_hypotheses` inhabits every hypothesis of `no_double_spend_of_covered_spends`
-  except the second spend (`p₂`, `hsplit`, `hs₂`, `hfresh`), and of `no_double_spend_in_stamp`
-  except the second spend and `hindex` (checked by two `example` applications), as well as
-  `CoveredSpend.pair_le`, `SpendDerivable.pair` and `SpendDerivable.lineage`.
+  except `p₂` (with `hsplit`, `hs₂` and `hfresh` taking the second epoch 1 stamp as `s₂`), and of
+  `no_double_spend_in_stamp` except `p₂` and `hindex` (checked by two `example` applications), as
+  well as `CoveredSpend.pair_le`, `SpendDerivable.pair` and `SpendDerivable.lineage`.
 - `Instances.lineage_hypotheses` inhabits `SpendDerivable.lineage` and `NoteUnspentDerivable.lineage`
   with a lineage covering epoch 0.
 - `Instances.bundle_verified` inhabits `BundleVerified` (via `StampTree.derivable` and
@@ -433,7 +429,10 @@ gives each `Node q` anchor a unique epoch under `HashLaw`); `CoveredSpend.pair_l
   `StampTrace` does; that a verified stamp proof has one is the PCD knowledge extraction assumption.
   It ties the `Chain.Stamp` directly to `BundleCovered` over the bundle's `actions`, `fee` and
   `adjunctFees`, matching `s.tachygrams` to `coveredTachygrams` and indexing the spend's action in
-  `actions`.
+  `actions`. The double-spend theorems constrain only covered actions matched by a `SpendAction`
+  leaf (`CoveredSpend.leaf`, `CoveredSpend.digest_eq`): output leaves are free digests, and
+  `OutputBind`, `cv` and value balance are unmodelled, so the model does not prove that a
+  value-consuming action must have a `SpendAction` leaf.
 - **Dropped and representation-built constraints.** Each step's table row names the constraints the
   model drops. Dropping a constraint that the model's types do not encode only adds derivable
   headers, so the results still hold. That argument does not apply where the representation relies
@@ -470,9 +469,11 @@ window finds no duplicate. Both spends pass.
 `Tachyon/Meta/AxiomBudget.lean` defines `#check_axiom_budget`, invoked from `Tachyon/Axioms.lean`.
 It checks every declaration of every imported `Tachyon` module (auxiliary declarations included) to
 confirm that none is an `axiom` and none depends on any axiom outside `propext`, `Classical.choice`
-and `Quot.sound` (ruling out `sorryAx` and `Lean.ofReduceBool`), verifies that all 31 pinned
+and `Quot.sound` (ruling out `sorryAx` and `native_decide`'s axioms), verifies that all 31 pinned
 headline theorems in `Axioms.lean` (`StampTree.fee_leaf`, `CoveredSpend.fee_leaf`, `cubicMember_law`,
 `Instances.rust_memberLaw`, and the 27 core stamp, bundle, QR, lineage, chain and double-spend
 theorems, each checked with `#print axioms` inside `#guard_msgs`) were visited, and checks that the
 imported `Tachyon` modules match the `.lean` files under `Tachyon/` plus `Tachyon.lean`. `just fv`
-runs `lake build --wfail`, failing on any warning, when run locally; no CI job runs it.
+runs `lake build --wfail`, failing on any warning, and then re-runs `lake env lean
+Tachyon/Axioms.lean` so the census and module-coverage check run on cached builds too; no CI job
+runs it.
