@@ -48,9 +48,11 @@
 //!   witness; the argument does not use them.
 //! - A curve point. `TachygramSetBridge` and `value::Commitment` encode as
 //!   affine coordinates $(x, y)$, two elements, and a point other than the
-//!   identity is determined by its coordinates. Both types can hold the
-//!   identity, which has no coordinates and no encoding: `encode` panics on an
-//!   identity `TachygramSetBridge` and returns an error on an identity
+//!   identity is determined by its coordinates. `value::Commitment` holds a
+//!   projective `Ep`, and `to_affine` keeps the group element, so its
+//!   coordinates determine it too. Both types can hold the identity, which has
+//!   no coordinates and no encoding: `encode` panics on an identity
+//!   `TachygramSetBridge` and returns an error on an identity
 //!   `value::Commitment`.
 //!
 //! Each `Header` implementation names the kind of every component it encodes.
