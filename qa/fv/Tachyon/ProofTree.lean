@@ -12,9 +12,10 @@ header is the output of a registered step on accepted inputs, which idealizes PC
 soundness. Ragu's internal rerandomization step carries its input's header data and both slots
 unchanged, so it adds no derivable state and has no constructor.
 
-`IsFee` is the fee-digest domain (`Tachyon-FeeDg`), separate from the action-digest domain
-(`Tachyon-ActionDg`). It is a parameter: every result holds for every `IsFee`, and nothing here
-ties it to a fee digest function. An `IsFee` that holds of nothing leaves no derivable `Stamp`
+`IsFee` is the predicate the steps use to tell fee leaves from action leaves. It stands in for the
+fee-digest domain (`Tachyon-FeeDg`), as against the action-digest domain (`Tachyon-ActionDg`), but it
+is a parameter: every result holds for every `IsFee`, and nothing here ties it to a fee digest
+function. An `IsFee` that holds of nothing leaves no derivable `Stamp`
 header, so results about `Stamp` headers say nothing for it. `Tachyon.Instances` exhibits a
 derivable `Stamp` header whose `IsFee` holds of its fee digest. `R e d` is the tachygram multiset digest `d` derives at epoch `e`: a spend's
 nullifier pair, an output's `cm` and pad, or a fee's change commitment. The digest's preimage holds
