@@ -80,7 +80,7 @@ variable {D W P Φ : Type*} {IsFee : F → Prop} {epoch : F → ℕ}
   {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F} {zero : F}
   {Bucket : QrBucket F F → Prop} {Unspent : NoteUnspent F → Prop}
   {n : NoteQueries F W P} {noteCommit : W → F → F → F} {paymentKey : P → F → F}
-  {nfMaster : F → F → F} {nullifier : F → ℕ → F} {qnr : F} {member : ℕ → F → F[X]} {emax : ℕ}
+  {nfMaster : F → F → F} {nullifier : F → ℕ → F} {group : F → ℕ → ℕ → F} {qnr : F} {member : ℕ → F → F[X]} {emax : ℕ}
   {Secret : NoteSecret F → Prop} {r : EvidenceQueries F F D} {leaf : QrBucket F F → D}
   {node : D → D → D → D → D} {chain : List (Chain.Stamp F F)} {N : ℕ} {feeDigest : Φ → F → F}
   {actions : List (Γ × F × F)} {fee : Φ × F} {adjunctFees : List (Φ × F)}
@@ -131,13 +131,13 @@ theorem SpendableDerivable.lineage (hlaw : Chain.HashLaw q genesis e₀ nextStam
     (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch)
     (hchain : ChainQueried q nextStamp nextEpoch zero chain N) {s : NoteSpendable F}
     (hs : SpendableDerivable q nextStamp Bucket
-      (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) s)
+      (NoteUnspentDerivable Bucket qnr member Secret group emax) s)
     {e : ℕ} (hN : e ≤ N) (hon : OnChain nextStamp nextEpoch zero chain e s.anchor) :
     s.epoch_current = e ∧ ∃ start, start ≤ e ∧ published chain start s.cm ∧
       ∀ k, Secret k → k.cm = s.cm →
-        ∀ x, start ≤ x → x < e → ¬ published chain x (nullifier k.master x) := by
+        ∀ x, start ≤ x → x < e → ¬ published chain x (groupNullifier group k.master x) := by
   have hentry : ∀ {e : ℕ} {u : NoteUnspent F},
-      NoteUnspentDerivable Bucket qnr member Secret nullifier emax u → e ≤ N →
+      NoteUnspentDerivable Bucket qnr member Secret group emax u → e ≤ N →
       OnChain nextStamp nextEpoch zero chain e u.anchor_next →
         u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next ∧ u.epoch_next = e :=
     fun hu he hon => by
@@ -180,11 +180,11 @@ theorem SpendDerivable.lineage (hlaw : Chain.HashLaw q genesis e₀ nextStamp ne
     (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch)
     (hchain : ChainQueried q nextStamp nextEpoch zero chain N) {h : SpendHeader F}
     (hspend : SpendDerivable q nextStamp Bucket
-      (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) Secret nullifier h)
+      (NoteUnspentDerivable Bucket qnr member Secret group emax) Secret nullifier h)
     {e : ℕ} (hN : e ≤ N) (hon : OnChain nextStamp nextEpoch zero chain e h.anchor) :
     ∃ start, start ≤ e ∧ published chain start h.cm ∧
       ∀ k, Secret k → k.cm = h.cm →
-        ∀ x, start ≤ x → x < e → ¬ published chain x (nullifier k.master x) := by
+        ∀ x, start ≤ x → x < e → ¬ published chain x (groupNullifier group k.master x) := by
   cases hspend with
   | bind hs _ _ => exact (hs.lineage hlaw hqnr hmember hmaster hbucket hchain hN hon).2
 
@@ -204,14 +204,14 @@ theorem no_double_spend_of_covered_spends
     (p₁ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
       (SpendDerivable q nextStamp (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node)
         (NoteUnspentDerivable (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node) qnr member
-          (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier emax)
-        (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier)
+          (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
+        (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions₁ fee₁ adjunctFees₁ s₁ cm)
     (p₂ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
       (SpendDerivable q nextStamp (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node)
         (NoteUnspentDerivable (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node) qnr member
-          (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier emax)
-        (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier)
+          (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
+        (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions₂ fee₂ adjunctFees₂ s₂ cm)
     (hsecret : NoteSecretDerivable n noteCommit paymentKey nfMaster ⟨cm, master⟩)
     (hfresh : ∀ e, s₁.epoch < e → e ≤ epoch s₂.anchor → ¬ Chain.published chain e cm) :
@@ -222,7 +222,7 @@ theorem no_double_spend_of_covered_spends
       NoteSecretDerivable n noteCommit paymentKey nfMaster k₂ → k₁.cm = k₂.cm →
         k₁.master = k₂.master := fun h₁ h₂ hcm => h₁.master_eq hnote h₂ hcm
   have hunspent := NoteUnspentDerivable.spec (qnr := qnr) (member := member)
-    (Secret := NoteSecretDerivable n noteCommit paymentKey nfMaster) (nullifier := nullifier)
+    (Secret := NoteSecretDerivable n noteCommit paymentKey nfMaster) (group := group)
     (emax := emax) hbucket
   have hne : ∀ s ∈ chain, s.tachygrams ≠ [] := fun s hs => (hchain.accepted s hs).tachygrams_ne_nil
   have hon : ∀ s ∈ chain, OnChain nextStamp nextEpoch zero chain (epoch s.anchor) s.anchor :=
@@ -241,7 +241,7 @@ theorem no_double_spend_of_covered_spends
   have hstart : start ≤ s₁.epoch := by
     by_contra hlt
     exact hfresh start (by omega) hle hpub
-  exact no_double_spend_of_valid (nf := nullifier master) hchain hsplit hs₂
+  exact no_double_spend_of_valid (nf := groupNullifier group master) hchain hsplit hs₂
     (p₁.pair_le hlaw hunspent hnote hdigest hsecret ((hon s₁ hs₁).toNode hne hqueried he₁))
     (p₂.pair_le hlaw hunspent hnote hdigest hsecret ((hon s₂ hs₂').toNode hne hqueried he₂))
     (hlineage _ hsecret rfl) hstart
@@ -258,8 +258,8 @@ theorem no_double_spend_in_stamp
     (p₁ p₂ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
       (SpendDerivable q nextStamp (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node)
         (NoteUnspentDerivable (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node) qnr member
-          (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier emax)
-        (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier)
+          (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
+        (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions fee adjunctFees s cm)
     (hsecret : NoteSecretDerivable n noteCommit paymentKey nfMaster ⟨cm, master⟩)
     (hindex : p₁.index ≠ p₂.index) :
@@ -267,7 +267,7 @@ theorem no_double_spend_in_stamp
   have hbucket : ∀ b, QrBucketDerivable q r nextStamp nextEpoch qnr leaf node b →
       b.Covers q nextStamp nextEpoch := fun _ hb => hb.covers hqnr hevidence
   have hunspent := NoteUnspentDerivable.spec (qnr := qnr) (member := member)
-    (Secret := NoteSecretDerivable n noteCommit paymentKey nfMaster) (nullifier := nullifier)
+    (Secret := NoteSecretDerivable n noteCommit paymentKey nfMaster) (group := group)
     (emax := emax) hbucket
   have hon : OnChain nextStamp nextEpoch zero chain (epoch s.anchor) s.anchor :=
     (hchain.accepted s hs).anchor_accepted
@@ -276,13 +276,13 @@ theorem no_double_spend_in_stamp
   have hmem : ∀ p : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
       (SpendDerivable q nextStamp (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node)
         (NoteUnspentDerivable (QrBucketDerivable q r nextStamp nextEpoch qnr leaf node) qnr member
-          (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier emax)
-        (NoteSecretDerivable n noteCommit paymentKey nfMaster) nullifier)
+          (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
+        (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions fee adjunctFees s cm,
-      nullifier master (epoch s.anchor) ∈ [actions[p.index].2.1, actions[p.index].2.2] := by
+      groupNullifier group master (epoch s.anchor) ∈ [actions[p.index].2.1, actions[p.index].2.2] := by
     intro p
     have h := p.carried_pair hlaw hunspent hnote hdigest hsecret hnode
-    have hnf : nullifier master (epoch s.anchor) ∈
+    have hnf : groupNullifier group master (epoch s.anchor) ∈
         ({actions[p.index].2.1, actions[p.index].2.2} : Multiset F) := by
       rw [h]
       simp

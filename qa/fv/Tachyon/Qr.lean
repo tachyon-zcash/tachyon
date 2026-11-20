@@ -29,9 +29,11 @@ them, matching every field of both headers. The model therefore folds `QrIntakeS
 read as the split's non-residue polynomial.
 
 The model omits constraints that the two properties don't use: the non-empty stamp and intake
-checks, `QrSideDescend`'s distinct-sides check and depth bound, the epoch range checks, and the
-evidence trees' network field equalities. Omitting a constraint admits more derivations, so the
-results cover every derivation the steps admit.
+checks, `QrSideDescend`'s distinct-sides check, and the evidence trees' network field equalities.
+Omitting a constraint admits more derivations, so the results cover every derivation the steps
+admit. Two constraints are built into the representation, not omitted: epochs are natural numbers,
+which relies on the `EpochIndex` range checks for `e + 1` not to wrap, and a profile is its path,
+which relies on `QrSideDescend`'s depth bound for `(depth, bits)` to determine the path.
 -/
 
 namespace Tachyon

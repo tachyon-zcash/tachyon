@@ -15,12 +15,18 @@ An `NfSeqPoly` holds the product of indexed members `member i m`, the encoding
 `(m + (i + 1) X) ^ 3 - c` in Rust. `MemberLaw` states the two facts the bind uses: a member at an
 epoch index is prime, and one member divides another only when their indices and values agree.
 
-`NullifierDerive` reads a `NoteSecret` from `NoteSeed` (`Spend.lean`) and derives
-`nullifier mk x` from its master key `mk`. A commitment fixes its master key
-(`NoteSecretDerivable.master_eq`), so every derivation for one `cm` holds the same nullifiers.
+`group mk g j` is entry `j` of the `nullifier_group` sponge of master key `mk` keyed on epoch `g`.
+`derive_nullifier` reads the nullifier at epoch `x` as entry `x % 4` of the group keyed on `x` with
+its two low bits cleared (`groupNullifier`), and `SpendBind` publishes those. `NullifierDerive`
+reads a `NoteSecret` from `NoteSeed` (`Spend.lean`) and, from an `epoch_start` with its two low bits
+zero (`EpochIndex::from_group_start`), keys one group on each fourth epoch of its window. The two
+reads agree only because of that alignment (`NoteNullifiersDerivable.seq_eq`). A commitment fixes
+its master key (`NoteSecretDerivable.master_eq`), so every derivation for one `cm` holds the same
+nullifiers.
 
-The model omits `NullifierFuse`'s contiguity check, `NullifierDerive`'s group alignment, the
-nonzero tested value and the empty-segment exclusion: no result here uses them.
+The model omits `NullifierFuse`'s contiguity check, the nonzero tested value and the empty-segment
+exclusion: no result here uses them. Epochs are natural numbers, so `e + 1` never wraps. That
+representation relies on the `EpochIndex` range checks.
 -/
 
 namespace Tachyon
@@ -99,51 +105,62 @@ structure NoteNullifiers (F : Type*) [Field F] where
   epoch_end : ℕ
   seq : F[X]
 
+/-- `derive_nullifier`: the nullifier of master key `mk` at epoch `x`. -/
+def groupNullifier (group : F → ℕ → ℕ → F) (mk : F) (x : ℕ) : F :=
+  group mk (x / 4 * 4) (x % 4)
+
 /-- `NullifierDerive` over a `NoteSecret` that `Secret` accepts, with its
-`NF_DERIVATION_WIDTH = 16` window, and `NullifierFuse`. `nullifier mk x` is the nullifier of
-master key `mk` at epoch `x`. -/
+`NF_DERIVATION_WIDTH = 16` window of four groups, and `NullifierFuse`. -/
 inductive NoteNullifiersDerivable (Secret : NoteSecret F → Prop) (member : ℕ → F → F[X])
-    (nullifier : F → ℕ → F) (emax : ℕ) : NoteNullifiers F → Prop
+    (group : F → ℕ → ℕ → F) (emax : ℕ) : NoteNullifiers F → Prop
   | derive {secret : NoteSecret F} (epoch_start : ℕ) :
-      Secret secret → epoch_start + 15 ≤ emax →
-        NoteNullifiersDerivable Secret member nullifier emax
+      Secret secret → epoch_start % 4 = 0 → epoch_start + 15 ≤ emax →
+        NoteNullifiersDerivable Secret member group emax
           ⟨secret.cm, epoch_start, epoch_start + 15,
             ((List.range 16).map fun k =>
-              member (epoch_start + k) (nullifier secret.master (epoch_start + k))).prod⟩
+              member (epoch_start + k)
+                (group secret.master (epoch_start + k / 4 * 4) (k % 4))).prod⟩
   | fuse {left right : NoteNullifiers F} :
-      NoteNullifiersDerivable Secret member nullifier emax left →
-      NoteNullifiersDerivable Secret member nullifier emax right → left.cm = right.cm →
-        NoteNullifiersDerivable Secret member nullifier emax
+      NoteNullifiersDerivable Secret member group emax left →
+      NoteNullifiersDerivable Secret member group emax right → left.cm = right.cm →
+        NoteNullifiersDerivable Secret member group emax
           ⟨left.cm, left.epoch_start, right.epoch_end, left.seq * right.seq⟩
 
 /-- `UnspentBind`: the derivation's sequence is `elapsed` times a witnessed complement. -/
 inductive NoteUnspentDerivable (Bucket : QrBucket F F → Prop) (qnr : F) (member : ℕ → F → F[X])
-    (Secret : NoteSecret F → Prop) (nullifier : F → ℕ → F) (emax : ℕ) : NoteUnspent F → Prop
+    (Secret : NoteSecret F → Prop) (group : F → ℕ → ℕ → F) (emax : ℕ) : NoteUnspent F → Prop
   | bind {unspent : ArbitraryUnspent F F} {nullifiers : NoteNullifiers F} (complement : F[X]) :
       ArbitraryUnspentDerivable Bucket qnr member emax unspent →
-      NoteNullifiersDerivable Secret member nullifier emax nullifiers →
+      NoteNullifiersDerivable Secret member group emax nullifiers →
       nullifiers.seq = unspent.elapsed * complement →
-        NoteUnspentDerivable Bucket qnr member Secret nullifier emax
+        NoteUnspentDerivable Bucket qnr member Secret group emax
           ⟨nullifiers.cm, unspent.anchor_start, unspent.epoch_start, unspent.epoch_next,
             unspent.anchor_next⟩
 
 variable {Bucket : QrBucket F A → Prop} {qnr : F} {member : ℕ → F → F[X]}
-  {Secret : NoteSecret F → Prop} {nullifier : F → ℕ → F}
+  {Secret : NoteSecret F → Prop} {group : F → ℕ → ℕ → F}
   {emax : ℕ} {q : AnchorQueries F A ℕ} {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A}
   {zero : A} {chain : List (Chain.Stamp F A)} {genesis : A} {e₀ : ℕ} {N : ℕ}
 
 /-- A derivation's sequence holds one note secret's nullifiers, given that a commitment fixes its
-master key (`NoteSecretDerivable.master_eq`). -/
+master key (`NoteSecretDerivable.master_eq`). An aligned window's groups read each epoch's
+nullifier as `derive_nullifier` does. -/
 theorem NoteNullifiersDerivable.seq_eq
     (hmaster : ∀ {k₁ k₂ : NoteSecret F}, Secret k₁ → Secret k₂ → k₁.cm = k₂.cm →
       k₁.master = k₂.master)
-    {n : NoteNullifiers F} (h : NoteNullifiersDerivable Secret member nullifier emax n) :
+    {n : NoteNullifiers F} (h : NoteNullifiersDerivable Secret member group emax n) :
     ∃ secret, Secret secret ∧ secret.cm = n.cm ∧ ∃ M : List ℕ, (∀ y ∈ M, y ≤ emax) ∧
-      n.seq = (M.map fun y => member y (nullifier secret.master y)).prod := by
+      n.seq = (M.map fun y => member y (groupNullifier group secret.master y)).prod := by
   induction h with
-  | @derive secret s hsecret hs =>
-    refine ⟨secret, hsecret, rfl, (List.range 16).map (s + ·), ?_,
-      by simp [List.map_map, Function.comp_def]⟩
+  | @derive secret s hsecret halign hs =>
+    refine ⟨secret, hsecret, rfl, (List.range 16).map (s + ·), ?_, ?_⟩
+    swap
+    · dsimp only
+      rw [List.map_map]
+      congr 1
+      refine List.map_congr_left fun k _ => ?_
+      simp only [Function.comp_apply, groupNullifier]
+      rw [show (s + k) / 4 * 4 = s + k / 4 * 4 by omega, show (s + k) % 4 = k % 4 by omega]
     intro y hy
     obtain ⟨k, hk, rfl⟩ := List.mem_map.mp hy
     have := List.mem_range.mp hk
@@ -178,7 +195,7 @@ theorem ArbitraryUnspentDerivable.epoch_lt {u : ArbitraryUnspent F A}
   | lift _ _ _ _ hepoch _ _ ih => exact (hepoch ▸ ih).trans (Nat.lt_succ_self _)
 
 theorem NoteUnspentDerivable.epoch_lt {Bucket : QrBucket F F → Prop} {u : NoteUnspent F}
-    (hu : NoteUnspentDerivable Bucket qnr member Secret nullifier emax u) :
+    (hu : NoteUnspentDerivable Bucket qnr member Secret group emax u) :
     u.epoch_start < u.epoch_next := by
   obtain ⟨_, hunspent, _, _⟩ := hu
   exact hunspent.epoch_lt
@@ -187,7 +204,7 @@ theorem NoteUnspentDerivable.epoch_lt {Bucket : QrBucket F F → Prop} {u : Note
 theorem NoteUnspentDerivable.spec {Bucket : QrBucket F F → Prop} {q : AnchorQueries F F ℕ}
     {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F}
     (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch) :
-    UnspentSpec q nextEpoch (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) where
+    UnspentSpec q nextEpoch (NoteUnspentDerivable Bucket qnr member Secret group emax) where
   anchor_next_entry := fun ⟨_, hunspent, _, _⟩ => hunspent.anchor_next_boundary hbucket
 
 /-- A derivable `ArbitraryUnspent` that ends on the published entry anchor of its `epoch_next`, up to
@@ -248,19 +265,19 @@ theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop} {q : Ancho
       k₁.master = k₂.master)
     (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch)
     (hchain : ChainQueried q nextStamp nextEpoch zero chain N)
-    {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member Secret nullifier emax u)
+    {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member Secret group emax u)
     (hN : u.epoch_next ≤ N)
     (hnext : u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next) :
     u.anchor_start = entry nextStamp nextEpoch zero chain u.epoch_start ∧
       ∀ k, Secret k → k.cm = u.cm →
-        ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (nullifier k.master x) := by
+        ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (groupNullifier group k.master x) := by
   obtain @⟨unspent, nullifiers, complement, hunspent, hnullifiers, hbind⟩ := hu
   obtain ⟨hstart, hlineage⟩ := hunspent.lineage hlaw hqnr hbucket hchain hN hnext
   obtain ⟨secret, hsecret, hcm, M, hM, hseq⟩ := hnullifiers.seq_eq hmaster
   refine ⟨hstart, fun k hk hkcm x hx hx' => ?_⟩
   rw [hmaster hk hsecret (hkcm.trans hcm.symm)]
   obtain ⟨v, hv, hdvd, hfresh⟩ := hlineage x hx hx'
-  have hdvd' : member x v ∣ (M.map fun y => member y (nullifier secret.master y)).prod := by
+  have hdvd' : member x v ∣ (M.map fun y => member y (groupNullifier group secret.master y)).prod := by
     rw [← hseq, hbind]
     exact hdvd.mul_right _
   obtain ⟨_, hmem, hfactor⟩ := (Prime.dvd_prod_iff (hmember.prime (m := v) hv)).mp hdvd'
