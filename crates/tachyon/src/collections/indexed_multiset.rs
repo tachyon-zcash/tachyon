@@ -74,12 +74,14 @@ extern crate alloc;
 
 use alloc::vec;
 
-use ragu::{Polynomial, ProductionRank};
-use udon::{field::Field as _, polynomial::fold_weighted};
+use ragu::{
+    Polynomial, ProductionRank,
+    udon::{field::Field as _, polynomial::fold_weighted},
+};
 
 use crate::pasta::Fp;
 
-pub(crate) const NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
+pub(crate) const NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000002"
 ));
 

@@ -14,8 +14,8 @@ use ragu::{
         vec::{ConstLen, FixedVec},
     },
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::{curve::Affine as _, field::Field as _},
 };
-use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
     output::OutputHeader,

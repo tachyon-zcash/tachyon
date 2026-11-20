@@ -3,8 +3,8 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem, slice};
 
+use ragu::udon::{curve::Projective as _, field::Field as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetBridge, TachygramSetPoly,

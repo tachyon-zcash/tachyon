@@ -4,7 +4,7 @@
 //! to the same types through `Cycle` projections, which derives on Tachyon's
 //! newtypes cannot see through.
 
-use udon::{
+use ragu::udon::{
     curve::{AffineAdapter, Pallas, ProjectiveAdapter, Vesta},
     field::{FieldAdapter, PallasBase, PallasScalar},
 };

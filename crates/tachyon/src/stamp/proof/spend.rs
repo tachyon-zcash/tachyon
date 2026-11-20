@@ -10,8 +10,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, Index, Oracles, Step},
+    udon::curve::EndomorphismAffine,
 };
-use udon::curve::EndomorphismAffine;
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
