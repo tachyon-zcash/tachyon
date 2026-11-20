@@ -173,7 +173,8 @@ theorem FoldQueried.append {e : E} {a : A} {L L' : List F[X]} :
       have := hL' M c S hM.symm
       simpa [foldBlock, List.foldl_append] using this
 
-/-- A one-stamp run is queried when its single call is in `q`. -/
+/-- Starts a run's queries from one call: how a summary seed and a stamp intake, each folding one
+stamp, enter `FoldQueried` (`SummaryDerivable.folds`, `QrIntakeDerivable.covers`). -/
 theorem FoldQueried.singleton {e : E} {a : A} {c : F[X]} (hq : q.stamp a e c) :
     FoldQueried q nextStamp e a [c] := by
   rintro (_ | ⟨x, P⟩) c' S h
@@ -351,7 +352,8 @@ variable {epoch : A → ℕ} {acceptedAnchor : ℕ → A → Prop} {chain : List
 def published (chain : List (Stamp F A)) (e : ℕ) (t : F) : Prop :=
   ∃ s ∈ chain, s.epoch = e ∧ t ∈ s.tachygrams
 
-/-- A chain stamp publishes its tachygrams in its own epoch. -/
+/-- How a tachygram found in a chain stamp enters `published`, the form `hfresh` and the double-spend
+results are stated in. `published_of_le` extends it to a leaf's part of the stamp. -/
 theorem mem_published {s : Stamp F A} {t : F} (hs : s ∈ chain) (ht : t ∈ s.tachygrams) :
     published chain s.epoch t :=
   ⟨s, hs, rfl, ht⟩

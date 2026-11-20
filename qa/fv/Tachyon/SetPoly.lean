@@ -34,7 +34,8 @@ theorem setPoly_injective : Function.Injective (setPoly (F := F)) := fun s t h =
 theorem setPoly_ne_zero (s : Multiset F) : setPoly s ≠ 0 :=
   (monic_multiset_prod_of_monic _ _ fun r _ => monic_X_sub_C r).ne_zero
 
-/-- The empty multiset's set polynomial is `1`, the unit of polynomial products. -/
+/-- An empty tachygram set has polynomial `1`, so `Chain.Node.stamp`'s and `SpanDerivable.seed`'s
+`c ≠ 1` premise is what excludes empty stamps. As a simp lemma it also clears empty factors. -/
 @[simp] theorem setPoly_zero : setPoly (0 : Multiset F) = 1 := by
   simp [setPoly]
 
