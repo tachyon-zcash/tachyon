@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn class_roots_attest_the_class() {
+fn classification_solves_the_class_equation() {
     let discriminant = QrDiscriminant::from(Fp::from(11));
     let exceptional = -Fp::from(discriminant);
     for (value, class) in [
@@ -9,15 +9,37 @@ fn class_roots_attest_the_class() {
         (Fp::ONE + exceptional, QrClass::Residue),
         (qr::QUADRATIC_NON_RESIDUE + exceptional, QrClass::NonResidue),
     ] {
-        assert_eq!(discriminant.class(value.into()), class);
-        assert_eq!(discriminant.class_root(value.into()).class(), class);
+        let classification = discriminant.classify(value.into());
+        assert_eq!(classification.value(), Tachygram::from(value));
+        assert_eq!(classification.discriminant(), discriminant);
+        assert_eq!(classification.class(), class);
+        assert_eq!(
+            classification.claim(),
+            QrClassClaim {
+                class,
+                root: classification.root()
+            }
+        );
+        assert_eq!(
+            classification.root().square(),
+            class.multiplier() * (value + Fp::from(discriminant))
+        );
     }
-    assert_eq!(
-        discriminant.class_root(exceptional.into()),
-        QrClassRoot::Residue(Fp::ZERO)
-    );
+    assert_eq!(discriminant.classify(exceptional.into()).root(), Fp::ZERO);
     assert_eq!(QrClass::Residue.sibling(), QrClass::NonResidue);
     assert_eq!(QrClass::NonResidue.sibling(), QrClass::Residue);
+}
+
+#[test]
+fn classification_recovers_the_class_from_a_known_root() {
+    let discriminant = QrDiscriminant::from(Fp::from(11));
+    let square = Fp::from(7).square();
+    for class in [QrClass::NonResidue, QrClass::Residue] {
+        let value = square * class.multiplier().invert().unwrap() - Fp::from(discriminant);
+        let classification = discriminant.classify(value.into());
+        assert_eq!(classification.class(), class);
+        assert_eq!(classification.root().square(), square);
+    }
 }
 
 #[test]
@@ -38,7 +60,7 @@ fn split_keeps_class_order_and_repeated_members() {
         (QrClass::Residue, residue),
     ] {
         for member in list {
-            assert_eq!(discriminant.class(member), class);
+            assert_eq!(discriminant.classify(member).class(), class);
         }
     }
 }
@@ -87,7 +109,7 @@ fn class_decomposition_requires_distinct_members_of_the_class() {
 fn profile_records_the_classes_from_the_first_discriminant() {
     let discriminant = QrDiscriminant::from(Fp::from(11));
     let value = Tachygram::from(Fp::from(3));
-    for depth in [0, 1, u32::try_from(QrProfile::MAX_DEPTH).unwrap()] {
+    for depth in [0, 1, 31, 32] {
         let first = Fp::from(value) + Fp::from(discriminant);
         let bits = (0..depth).fold(0, |bits, level| {
             let shifted = first + Fp::from(u64::from(level));
@@ -142,12 +164,14 @@ fn the_profile_reaches_the_maximum_depth() {
 }
 
 #[test]
-fn class_roots_square_to_the_shifted_value() {
+fn class_claims_attest_the_shifted_value() {
     let discriminant = QrDiscriminant::from(Fp::from(11));
     for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-        for (depth, class) in (0..).zip(discriminant.class_roots(value.into())) {
+        for (depth, QrClassClaim { class, root }) in
+            (0..).zip(discriminant.class_claims(value.into()))
+        {
             let shifted = value + Fp::from(discriminant.at(depth));
-            assert_eq!(class.root().square(), class.class().multiplier() * shifted);
+            assert_eq!(root.square(), class.multiplier() * shifted);
         }
     }
 }

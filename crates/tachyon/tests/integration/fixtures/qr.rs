@@ -37,8 +37,8 @@ pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 /// An exhaustive scan upward from 1, one Jacobi symbol per integer, found
 /// them.
 ///
-/// A change to `QrDiscriminant::at` or `QrDiscriminant::class` would invalidate
-/// the two constants, and the assertions here would fail.
+/// A change to `QrDiscriminant::at` or `QrDiscriminant::classify` would
+/// invalidate the two constants, and the assertions here would fail.
 pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
     let discriminant = shared_discriminant();
     let absent = Fp::from(1_915_239_271u64) - Fp::from(discriminant);

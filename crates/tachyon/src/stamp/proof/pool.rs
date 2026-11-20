@@ -37,7 +37,7 @@ use crate::{
     gadgets, note,
     pasta::Fp,
     primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassClaim, QrProfile, Tachygram,
         TachygramSetPoly,
     },
 };
@@ -560,10 +560,10 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, extended_seq)`
+    /// `(value, [QrClassClaim; MAX_DEPTH], mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
-        [QrClassRoot; QrProfile::MAX_DEPTH],
+        [QrClassClaim; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
     );

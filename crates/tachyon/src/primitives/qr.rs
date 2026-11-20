@@ -16,7 +16,8 @@ use crate::{
     pasta::{EqAffine, Fp},
 };
 
-/// The class of a value $x$ at a discriminant $R$.
+/// The choice of multiplier $m$ in the class equation
+/// $r^2 = m \cdot (x + R)$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub enum QrClass {
     /// $x + R$ has no square root.
@@ -37,7 +38,8 @@ impl QrClass {
 
     /// The class multiplier $m$: one for the residue class, the fixed
     /// non-residue $c$ for the non-residue class.
-    pub(crate) const fn multiplier(self) -> Fp {
+    #[must_use]
+    pub const fn multiplier(self) -> Fp {
         match self {
             Self::NonResidue => qr::QUADRATIC_NON_RESIDUE,
             Self::Residue => Fp::ONE,
@@ -73,33 +75,35 @@ impl QrDiscriminant {
         Self(self.0 + Fp::from(u64::from(depth)))
     }
 
-    /// The class of `value` at this discriminant.
-    #[must_use]
-    pub fn class(self, value: Tachygram) -> QrClass {
-        if (Fp::from(value) + self.0).sqrt().is_some() {
-            QrClass::Residue
-        } else {
-            QrClass::NonResidue
-        }
-    }
-
-    /// The class root of `value` at this discriminant.
+    /// Classify `value` at this discriminant by solving the class equation
+    /// for the multiplier $m$ and root $r$.
     ///
     /// # Panics
     ///
     /// Panics if neither branch has a root, which is impossible in this field.
     #[must_use]
-    pub fn class_root(self, value: Tachygram) -> QrClassRoot {
+    pub fn classify(self, value: Tachygram) -> QrClassification {
         let shifted = Fp::from(value) + self.0;
-        if let Some(root) = shifted.sqrt() {
-            return QrClassRoot::Residue(root);
+        let (class, root) = shifted.sqrt().map_or_else(
+            || {
+                let class = QrClass::NonResidue;
+                #[expect(
+                    clippy::expect_used,
+                    reason = "multiplying a non-square by the non-residue gives a square"
+                )]
+                let root = (class.multiplier() * shifted)
+                    .sqrt()
+                    .expect("non-residue branch has a root");
+                (class, root)
+            },
+            |root| (QrClass::Residue, root),
+        );
+        QrClassification {
+            value,
+            discriminant: self,
+            class,
+            root,
         }
-        let root = (qr::QUADRATIC_NON_RESIDUE * shifted).sqrt();
-        #[expect(
-            clippy::expect_used,
-            reason = "multiplying a non-square by the non-residue gives a square"
-        )]
-        QrClassRoot::NonResidue(root.expect("non-residue branch has a root"))
     }
 
     /// Split `members` at this discriminant into `(non_residue, residue)`.
@@ -109,7 +113,7 @@ impl QrDiscriminant {
         members
             .iter()
             .copied()
-            .partition(|&member| self.class(member) == QrClass::NonResidue)
+            .partition(|&member| self.classify(member).class() == QrClass::NonResidue)
     }
 
     /// The class decomposition $(u, h)$ of `members` at this discriminant.
@@ -134,14 +138,9 @@ impl QrDiscriminant {
         let points = members
             .iter()
             .map(|&member| {
-                let value = Fp::from(member);
-                let shifted = value + self.0;
-                let root = match class {
-                    QrClass::NonResidue if shifted == Fp::ZERO => return None,
-                    QrClass::NonResidue => (multiplier * shifted).sqrt(),
-                    QrClass::Residue => shifted.sqrt(),
-                }?;
-                Some((value, root))
+                let classification = self.classify(member);
+                (classification.class() == class)
+                    .then_some((Fp::from(member), classification.root()))
             })
             .collect::<Option<Vec<_>>>()?;
         qr::decomposition(points, multiplier, self.0).map(|(interpolant, quotient)| {
@@ -158,20 +157,19 @@ impl QrDiscriminant {
     #[must_use]
     pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
         (0..depth).fold(QrProfile::ROOT, |profile, level| {
-            profile.descend(self.at(level).class(value))
+            profile.descend(self.at(level).classify(value).class())
         })
     }
 
-    /// The class root of `value` at each depth, with this as the first
-    /// discriminant.
+    /// The claim for `value` at each profile depth.
     #[must_use]
     #[expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
         reason = "array indices are below QrProfile::MAX_DEPTH"
     )]
-    pub fn class_roots(self, value: Tachygram) -> [QrClassRoot; QrProfile::MAX_DEPTH] {
-        array::from_fn(|level| self.at(level as u32).class_root(value))
+    pub fn class_claims(self, value: Tachygram) -> [QrClassClaim; QrProfile::MAX_DEPTH] {
+        array::from_fn(|level| self.at(level as u32).classify(value).claim())
     }
 }
 
@@ -283,32 +281,59 @@ impl QrProfile {
     }
 }
 
-/// A class root of a value $x$ at a discriminant $R$.
+/// A value classified at a discriminant: a solution of the equation
+/// $r^2 = m \cdot (x + R)$, with $x + R \neq 0$ when $m = c$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub enum QrClassRoot {
-    /// $r$ with $r^2 = c \cdot (x + R)$ for $x + R \neq 0$.
-    NonResidue(Fp),
-    /// $r$ with $r^2 = x + R$.
-    Residue(Fp),
+pub struct QrClassification {
+    value: Tachygram,
+    discriminant: QrDiscriminant,
+    class: QrClass,
+    root: Fp,
 }
 
-impl QrClassRoot {
-    /// The class this root attests.
+impl QrClassification {
+    /// The classified value $x$.
     #[must_use]
-    pub const fn class(self) -> QrClass {
-        match self {
-            Self::NonResidue(_) => QrClass::NonResidue,
-            Self::Residue(_) => QrClass::Residue,
-        }
+    pub const fn value(&self) -> Tachygram {
+        self.value
+    }
+
+    /// The discriminant $R$.
+    #[must_use]
+    pub const fn discriminant(&self) -> QrDiscriminant {
+        self.discriminant
+    }
+
+    /// The class of the value at this discriminant.
+    #[must_use]
+    pub const fn class(&self) -> QrClass {
+        self.class
     }
 
     /// The root $r$.
     #[must_use]
-    pub const fn root(self) -> Fp {
-        match self {
-            Self::NonResidue(root) | Self::Residue(root) => root,
+    pub const fn root(&self) -> Fp {
+        self.root
+    }
+
+    /// The class and root a step is given for this classification.
+    #[must_use]
+    pub const fn claim(&self) -> QrClassClaim {
+        QrClassClaim {
+            class: self.class,
+            root: self.root,
         }
     }
+}
+
+/// A prover's unchecked claim of a value's class and root at a discriminant.
+/// The step supplies $x$ and $R$ and checks $r^2 = m \cdot (x + R)$.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct QrClassClaim {
+    /// The claimed class, which determines $m$.
+    pub class: QrClass,
+    /// The claimed root $r$.
+    pub root: Fp,
 }
 
 #[cfg(test)]

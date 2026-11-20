@@ -340,7 +340,7 @@ pub const fn qr_bucket_seal(
     (anchor_final_prev,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
+/// Prepare the witness for [`QrUnspentInit`]: `(value, claims, mask,
 /// sequence)`.
 ///
 /// # Panics
@@ -355,7 +355,7 @@ pub fn qr_unspent_init(
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = left;
     (
         value,
-        discriminant.class_roots(value),
+        discriminant.class_claims(value),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
@@ -387,7 +387,7 @@ pub const fn evidence_tree_open(
     (profile, contents)
 }
 
-/// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
+/// Prepare the witness for [`UnspentLift`]: `(value, claims, mask,
 /// extended_seq)`.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
@@ -403,7 +403,7 @@ pub fn unspent_lift(
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,
-        discriminant.class_roots(value),
+        discriminant.class_claims(value),
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )

@@ -185,10 +185,10 @@ impl PoolSim {
         if level == 5 || members.is_empty() {
             return 1;
         }
-        let (residue, non_residue): (Vec<_>, Vec<_>) = members
-            .iter()
-            .copied()
-            .partition(|&member| discriminant.at(level).class(member) == QrClass::Residue);
+        let (residue, non_residue): (Vec<_>, Vec<_>) =
+            members.iter().copied().partition(|&member| {
+                discriminant.at(level).classify(member).class() == QrClass::Residue
+            });
         Self::leaves(&residue, discriminant, level + 1)
             + Self::leaves(&non_residue, discriminant, level + 1)
     }
@@ -335,7 +335,7 @@ impl PoolSim {
     ) -> QrIntakeEntry {
         let mut intake = self.qr_root(app, span, discriminant);
         for level in 0..depth {
-            let side = discriminant.at(level).class(value.into());
+            let side = discriminant.at(level).classify(value.into()).class();
             intake = Self::qr_child(app, span, discriminant, &intake, side);
         }
         intake
@@ -362,7 +362,7 @@ impl PoolSim {
             let mut intake = self.qr_intake(app, span, discriminant, value, 2);
             let mut penultimate = None;
             for level in 2..u32::BITS {
-                let side = discriminant.at(level).class(value.into());
+                let side = discriminant.at(level).classify(value.into()).class();
                 let sides = Self::prove_qr_sides(rng, app, &intake);
                 intake = Self::prove_qr_child(rng, app, &intake, side, sides);
                 if level + 1 == QR_DEPTHS[2] {
