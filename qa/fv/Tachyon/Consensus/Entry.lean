@@ -52,6 +52,12 @@ theorem foldBlock_concat {e : ℕ} {a : A} {L : List F[X]} {c : F[X]} :
     foldBlock nextStamp e a (L ++ [c]) = nextStamp (foldBlock nextStamp e a L) e c := by
   simp [foldBlock]
 
+/-- The entry anchor of every epoch is a boundary digest, with no hash law or call set. -/
+theorem entry_boundary (e : ℕ) : ∃ p, entry nextStamp nextEpoch zero chain e = nextEpoch p e := by
+  cases e with
+  | zero => exact ⟨zero, rfl⟩
+  | succ e => exact ⟨_, rfl⟩
+
 /-- The entry anchor of an epoch up to `N` is a boundary digest from a call in `q`. -/
 theorem ChainQueried.entry_boundary (h : ChainQueried q nextStamp nextEpoch zero chain N) {e : ℕ}
     (he : e ≤ N) :
