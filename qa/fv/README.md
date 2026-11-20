@@ -1,11 +1,12 @@
 # Tachyon formal verification
 
 This directory holds a Lean 4 model of the Tachyon stamp proof tree and of the consensus rules that
-publish stamps, with machine-checked proofs about that model. `just fv` builds it. Mathlib is the
-only dependency, pinned to the release ragu's `qa/fv` uses.
+publish stamps, with machine-checked proofs about that model. `just fv` builds it locally with
+`lake build --wfail`; no CI workflow runs the Lean build. Mathlib is the only dependency, pinned to
+the release ragu's `qa/fv` uses.
 
 The theorems are about the model. Each step is modelled by hand from the Rust source, and no check
-compares a Lean step with the circuit it models. Read
+compares a Lean step with the circuit it models. Read [Trust partition](#trust-partition) and
 [Assumptions and open boundaries](#assumptions-and-open-boundaries) before quoting a result.
 
 ## The model
@@ -17,7 +18,11 @@ anchor. Each Pedersen commitment and its bridge binding is idealized by its poly
 Each product check opens its slots at the framework's shared `zeta` and compares openings; the
 model reads it as the identity it checks. An accepted state is one that a registered step derives
 from accepted inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
-Ragu's internal rerandomization step keeps its input's header data and slots, so it adds no state.
+Ragu's three internal steps (`Rerandomize`, `Bootstrap` and `Decompress`) have no constructors, as
+part of that idealization: `Rerandomize` keeps its input's header data and both slots, `Bootstrap`
+outputs the unit header, and `Decompress`'s circuit leaves its header data unconstrained (bound by
+the compressed PCD's claim) with slots padded to `1`, a `Stamp` state already derivable at any
+anchor by dividing one `FeeSeed` by itself.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
 stated on these root multisets. A product of set polynomials is the sum of their multisets.
@@ -25,21 +30,24 @@ stated on these root multisets. A product of set polynomials is the sum of their
 `R e d` is the tachygram multiset that a leaf with digest `d` derives at epoch `e`. Each action
 digest absorbs its tachygram pair's sum and product, and each fee digest absorbs its fee change, so
 under Poseidon collision resistance two leaf proofs with one digest derive the same tachygrams.
-Taking `R` as a function idealizes that collision resistance as exact.
+Taking `R` as a function idealizes that collision resistance as exact. `IsFee` is the fee-digest
+domain, kept as an uninterpreted parameter not tied to `feeDigest`.
 
-`Consensus/Bundle.lean` models `Bundle::verify`. `Consensus/Chain.lean` models the anchor chain and
-the publication rules that `Chain.Valid` collects.
+`Consensus/Bundle.lean` models `Bundle::verify_covered` (`BundleCovered`) and `Bundle::verify`
+together with `StampDerivable`'s lift-epoch premise (`BundleVerified`). `Consensus/Chain.lean`
+models the anchor chain and the publication rules that `Chain.Valid` collects.
 
 `Spend.lean` models the steps under a spend leaf: `NoteSeed`, `SpendableInit`, `QrSpendableInit`,
 `SpendableLift` and `SpendBind`. `SpendTree.lean` models stamp derivations as data (`ActionsTree`,
 `StampTree`) with `SpendAction` leaves over those headers and lifts over derivable anchor spans.
-`Consensus/Spends.lean` joins them to the chain.
+`Consensus/Spends.lean` joins them to `BundleCovered` and the chain.
 
 `Qr.lean` models the QR evidence: summaries, intakes, the split and descent, `QrBucketSeal`, and the
 evidence trees, whose `EvidenceTreeOpen` replays a bucket. `Unspent.lean` models `ArbitraryUnspent`
 (`QrUnspentInit`, `UnspentFuse`, `UnspentLift`), `NoteNullifiers` (`NullifierDerive`,
 `NullifierFuse`) and `UnspentBind`. `Consensus/Entry.lean` derives a published chain's entry anchors
-and the anchors it reaches (`OnChain`) from its stamps.
+and the anchors it reaches (`OnChain`) from its stamps. `Instances.lean` exhibits a concrete
+`ZMod 7` instance of the headline hypotheses.
 
 ## What is verified
 
@@ -79,49 +87,56 @@ the span relation, and [Double spends](#double-spends) discharges it under a cha
 
 ### Publication
 
-`BundleVerified` covers the action digests of the bundle's and its adjuncts' actions, followed by
-the fee digests of the bundle's and its adjuncts' fees (`coveredDigests`). The stamp carries no
-tachygram list: each covered action is a bare descriptor paired with its tachygram pair, each
-covered fee is a fee descriptor paired with its fee change, and the digests absorb them. Uniqueness
-is checked on the bare descriptors and fee descriptors alone (`descs_nodup`, `fees_nodup`). It
-requires the published tachygrams, the covered pairs and fee changes, to be non-empty and
-duplicate-free, with two per action and one per fee. The carried tachygram-set commitment is
-`setPoly` of the published tachygrams, and the header built from the covered digests, that
-commitment and the anchor is `StampDerivable`.
+`BundleCovered` models `Bundle::verify_covered` over the bundle's and its adjuncts' actions, the
+bundle's fee and its adjuncts' fees. The stamp carries no tachygram list: each covered action is a
+bare descriptor paired with its tachygram pair, each covered fee is a fee descriptor paired with its
+fee change, and the digests absorb them (`coveredDigests`). Uniqueness is checked on the bare
+descriptors and fee descriptors alone (`descs_nodup`, `fees_nodup`). The published tachygrams are
+duplicate-free (`tachygrams_nodup`) and equal to `coveredTachygrams`, the carried pairs and fee
+changes (`tachygrams_covered`), which fixes their non-emptiness and count. The carried tachygram-set
+commitment is `setPoly` of the published tachygrams (`tachygram_set`). `BundleVerified` extends
+`BundleCovered` with `StampDerivable` for the header built from `coveredDigests`, that commitment
+and the anchor (`BundleVerified.proof`).
 
 - A verified bundle publishes exactly its covered leaves' tachygrams, with multiplicity, at its
-  anchor's epoch (`StampDerivable.published`, `BundleVerified.tachygrams_eq`).
+  anchor's epoch (`StampDerivable.published`, `BundleVerified.tachygrams_eq`), cross-checking `R`
+  against the carried tachygrams.
 - No two covered leaf occurrences share a tachygram. A digest covered twice has no tachygrams
   (`BundleVerified.leaves_disjoint`).
 - The tachygrams paired with the bundle's own fee digest are published
-  (`BundleVerified.fee_published`), and under `FeeDigestLaw` the bundle's own fee change is among
-  the published tachygrams (`BundleVerified.fee_change_published`). Coverage supplies the fee
-  change, since unmerge can divide a fee leaf out of a derivable stamp.
+  (`BundleVerified.fee_published`), and the bundle's own fee change is among the published
+  tachygrams (`BundleVerified.fee_change_published`), direct from `tachygrams_covered` without any
+  digest law. Coverage supplies the fee change, since unmerge can divide a fee leaf out of a
+  derivable stamp.
 
 `BundleVerified` checks neither anchor membership nor anchor recency (`Bundle::verify` takes no
-publication epoch). The chain validator enforces those [consensus rules](#consensus-rules) when
-accepting a stamp.
+publication epoch), and its `StampDerivable` field folds in lift epoch preservation, which
+`Bundle::verify` has no chain context to check (discharged for chain-anchored derivations by
+`StampTree.derivable`). The chain validator enforces [consensus rules](#consensus-rules) when
+accepting a stamp, and the double-spend theorems take `BundleCovered` with a `StampTree` instead of
+`BundleVerified`.
 
 ### Source correspondence at pinned main
 
 The maintenance audit against main `26fcd5a1f246b83b727686547424446cd1c96552`, with Ragu pinned at
-`70fb72e8c71721a7cfc85384a15a6c4fc99024d2`, is a manual source comparison, not an extraction or
-equivalence proof. The relevant correspondence is:
+`70fb72e8c71721a7cfc85384a15a6c4fc99024d2`, is a one-time manual source comparison at those pinned
+commits, with no automated drift detection and not an extraction or equivalence proof. The relevant
+correspondence is:
 
 | Rust source | Lean interpretation | Boundary |
 | --- | --- | --- |
 | `stamp/proof/stamp.rs`: `ActionMerge`, `StampMerge`, `StampUnmerge` | `Stamp.lean`: `Merge`, `Unmerge`; `ProofTree.lean`: derivability | Equal anchors and both slot-product equations agree, conditional on binding and replacing random-point checks with identities. |
-| `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints are assumed, not verified. The digest-to-tachygram pairing `R` and fee/action digest separation idealize collision resistance of the `Tachyon-ActionDg` and `Tachyon-FeeDg` digests, whose preimages hold the leaf's tachygrams. |
-| `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep`; `SpendTree.lean`: `ActionsTree.lift`, `StampTree.lift` | The span argument and its propagation through a whole derivation are proved under `HashLaw` and chain membership of the root anchor. |
-| `stamp/proof/stamp.rs`: `SpendAction` | `SpendTree.lean`: `ActionsTree.spend` | The action set is the action digest of the header's pair, the tachygram set is the pair, and the anchor is the header's. The `pk` check and `rk` are not modelled; `DigestLaw` idealizes the digest. |
-| `stamp/proof/delegation.rs`: `NoteSeed`; `stamp/proof/spend.rs`: `SpendBind` | `Spend.lean`: `NoteSecretDerivable`, `SpendDerivable` | `cm` commits to `pk = paymentKey(ak, nk)` and `psi`, and `mk = nfMaster(psi, nk)`; `NoteLaw` idealizes binding. `SpendBind`'s `cm` equality and pair derivation at `e`, `e + 1` agree. Nullifier non-zero checks, `cv` and `pk` are not modelled. |
-| `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s epoch, `anchor_next` and successor equalities and its `cm` opening agree; its `anchor_start` equality is dropped. `SpendableLift`'s three equalities agree. |
-| `stamp/proof/summary.rs`: `SummarySeed`, `SummaryAdvance`; `stamp/proof/qr.rs`: `QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeMerge` | `Qr.lean`: `SummaryDerivable`, `QrIntakeDerivable` | Folds, epoch, discriminant and profile equalities, and slot products agree. Each fold absorbs the slot polynomial its bridge hash binds. Non-empty stamp and intake checks and epoch range checks are dropped. |
-| `stamp/proof/qr.rs`: `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend` | `Qr.lean`: `QrIntakeDerivable.descend` | One constructor: the split's product, the selection's exceptional-value opening on the split's non-residue polynomial, and the descent's class identity at `R₀ + depth`. The distinct-sides check and the depth bound are dropped. |
-| `stamp/proof/qr.rs`: `QrBucketSeal`; `stamp/proof/evidence.rs`: evidence steps | `Qr.lean`: `QrEvidenceDerivable` | The seal's two boundary digests and contents copy agree. The leaf and node digests are exact under `EvidenceLaw`; a multi-level descent is a chain of one-level descents; network field equalities are dropped. |
-| `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value is dropped. |
-| `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable` | The window's sixteen members over a `NoteSecret`'s master key, the window's range and the `cm` equality agree. Group alignment and contiguity are dropped. |
-| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleVerified` | Uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, count, reconstructed set and proof-slot checks are idealized; signatures, wire bounds and adjunct pointers are not modelled. |
+| `stamp/proof/output.rs`: `OutputBind`; `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `ActionsTree.output`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints are assumed, not verified. `OutputBind` is unmodelled and output leaves (`ActionsDerivable.action`, `ActionsTree.output`) are free non-fee digests `d` deriving `R (epoch a) d`. The digest-to-tachygram pairing `R` and fee/action digest separation idealize collision resistance of the `Tachyon-ActionDg` and `Tachyon-FeeDg` digests, whose preimages hold the leaf's tachygrams. |
+| `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep`; `SpendTree.lean`: `ActionsTree.lift`, `StampTree.lift` | The span argument and its propagation through a whole derivation are proved under `HashLaw` on `q` and chain membership of the root anchor. |
+| `stamp/proof/stamp.rs`: `SpendAction` | `SpendTree.lean`: `ActionsTree.spend` | The action set is the action digest of the header's pair (a call in `Q`), the tachygram set is the pair, and the anchor is the header's. The `pk` check and `rk` are not modelled; `DigestLaw` on `Q` idealizes the digest. |
+| `stamp/proof/delegation.rs`: `NoteSeed`; `stamp/proof/spend.rs`: `SpendBind` | `Spend.lean`: `NoteSecretDerivable`, `SpendDerivable` | `cm` commits to `pk = paymentKey(ak, nk)` and `psi`, and `mk = nfMaster(psi, nk)`; `NoteLaw` on `n` idealizes binding. `SpendBind`'s `cm` equality and pair derivation (`groupNullifier`) at `e`, `e + 1` agree. Nullifier non-zero checks, `cv` and `pk` are not modelled. |
+| `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold (in `q`) and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s epoch, `anchor_next` and successor equalities and its `cm` opening agree; its `anchor_start` equality is dropped. `SpendableLift`'s three equalities agree. |
+| `stamp/proof/summary.rs`: `SummarySeed`, `SummaryAdvance`; `stamp/proof/qr.rs`: `QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeMerge` | `Qr.lean`: `SummaryDerivable`, `QrIntakeDerivable` | Folds (in `q`), epoch, discriminant and profile equalities, and slot products agree. Each fold absorbs the slot polynomial its bridge hash binds. Non-empty stamp and intake checks are dropped; `EpochIndex` range checks are built into the `ℕ` epoch representation. |
+| `stamp/proof/qr.rs`: `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend` | `Qr.lean`: `QrIntakeDerivable.descend` | One constructor: the split's product, the selection's exceptional-value opening on the split's non-residue polynomial, and the descent's class identity at `R₀ + depth`. The distinct-sides check is dropped; the depth bound `< 32` is built into the `List Bool` path representation. |
+| `stamp/proof/qr.rs`: `QrBucketSeal`; `stamp/proof/evidence.rs`: evidence steps | `Qr.lean`: `QrEvidenceDerivable` | The seal's two boundary digests (in `q`) and contents copy agree. The leaf and node digests are exact on `r` under `EvidenceLaw`; a multi-level descent is a chain of one-level descents; network field equalities are dropped. |
+| `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, `emax` bounds, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value and empty-segment exclusion are dropped. |
+| `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable`, `groupNullifier` | `NullifierDerive` takes `epoch_start % 4 = 0` (`EpochIndex::from_group_start`) and keys four `group` reads on every fourth epoch across its 16-epoch window, agreeing with `groupNullifier` (`NoteNullifiersDerivable.seq_eq`); `epoch_start + 15 ≤ emax` and `cm` equality agree. `NullifierFuse` contiguity is dropped. |
+| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleCovered`, `BundleVerified` | `BundleCovered` checks uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, `tachygrams_covered` (`coveredTachygrams` of carried pairs and fee changes) and `tachygram_set`. `BundleVerified` adds `StampDerivable` (which assumes lift epoch preservation). Signatures, wire bounds, value balance and adjunct pointers are not modelled. |
 
 Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
 `dca1ecb5`, the relevant changes are:
@@ -132,9 +147,9 @@ Rust paths in the table are relative to `crates/tachyon/src/`. Since the precedi
   fixed steps over the baked setup. Derivability assumes this Tachyon registry and setup; the `App`
   type alias alone does not establish them for an arbitrary caller-supplied application.
 - **Tachygrams bound into digests (#280).** An action digest absorbs its tachygram pair's sum and
-  product, and a fee digest its fee change. The stamp no longer carries a tachygram list or a
-  coverage field; each action carries its pair, and `verify_covered` rebuilds the tachygram set from
-  the pairs and fee changes. This binding is what `R` idealizes.
+  product, and a fee digest its fee change. The stamp omits a tachygram list and a coverage field;
+  each action carries its pair, and `verify_covered` rebuilds the tachygram set from the pairs and
+  fee changes. This binding is what `R` idealizes.
 - **Native bridge hash (#272, #310).** `bridge_hash.rs::bridge_hash` calls Ragu's
   `bridge_hash::digest` on a commitment. `stamp.rs` uses it to reconstruct the `Stamp` header, and
   `Anchor::next_stamp` uses it before the Poseidon fold. The model abstracts commitment, bridge
@@ -176,62 +191,118 @@ carries or about the leaf step's constraints on it.
   `no_double_spend_of_valid` takes anchor recency and the two-epoch window from `Chain.Valid`, and
   each stamp's nullifier pair and the second spend's lineage and its start bound as hypotheses.
   `no_double_spend_of_covered_spends` proves the pairs and the lineage from the stamps' derivations,
-  taking `Chain.Valid` (including anchor recency) and `hfresh` (that `cm` is not `Chain.published`
-  after the first spend's publication up to the second spend's anchor epoch) for the start bound.
+  taking `Chain.Valid` (including anchor recency), `ChainQueried` up to `s₂.epoch`, and `hfresh`
+  (that `cm` is not `Chain.published` after the first spend's publication up to the second spend's
+  anchor epoch) for the start bound.
 - Within one stamp, `no_double_spend_in_stamp` rules out two covered spends `p₁`, `p₂` of one note
-  under `hoccurrences`, the hypothesis that both spends' action digests form a two-element
-  sub-multiset of `p₁.covered`. Both spends share the stamp's anchor epoch and publish the same
-  nullifier pair, contradicting `StampAccepted.tachygrams_nodup`. `CoveredSpend.digest_covered` is
-  membership, each `CoveredSpend` carries its own `covered` multiset without tying `p₁.covered` to
-  `p₂.covered`, and `CoveredSpend` is not linked to `BundleVerified`'s descriptor uniqueness, so two
-  covered occurrences in `p₁.covered` remain a hypothesis.
+  at distinct action indices (`hindex : p₁.index ≠ p₂.index`) of one bundle, under `Chain.Valid` and
+  `ChainQueried` up to `s.epoch`. Both spends share the stamp's anchor epoch, so both covered
+  actions carry the same nullifier pair (`CoveredSpend.carried_pair`), contradicting
+  `BundleCovered.tachygrams_nodup` on `coveredTachygrams`.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
   epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). The argument needs only an
   anchor set that holds the stamp-fold predecessors of its members (`StampClosed`). Chain nodes form
-  one, and so do the anchors a published chain reaches (`OnChain.stampClosed`). Merge, unmerge and
-  `FeeFuse` keep the anchor, so in a derivation anchored in such a set at epoch `e`, every leaf is
-  anchored in it at `e` (`StampTree.leaves_node`), and the derivation is `StampDerivable`
-  (`StampTree.derivable`). Consensus checks only the published anchor; this carries it to every
-  leaf.
+  one, and so do the anchors a published chain reaches up to the queried epoch bound
+  (`OnChain.stampClosed`). Merge, unmerge and `FeeFuse` keep the anchor, so in a derivation anchored
+  in such a set at epoch `e`, every leaf is anchored in it at `e` (`StampTree.leaves_node`), and the
+  derivation is `StampDerivable` when anchored on a chain node (`StampTree.derivable`). Consensus
+  checks only the published anchor; this carries it to every leaf.
 - A published chain has one entry anchor per epoch: the boundary digest of the previous epoch's
   final anchor, which folds the epoch's published stamps in chain order onto its entry anchor.
-  Folds from a boundary digest that end on one anchor fold the same stamps from the same start
-  (`foldBlock_inj`).
+  Folds in `q` from a boundary digest in `q` that end on one anchor fold the same stamps from the
+  same start (`foldBlock_inj`).
 - Every derivable bucket's range starts on a boundary digest into its epoch and ends on the
-  boundary digest of a run of stamp folds into the next. Its contents hold every root of those
-  stamps whose sides match its path, and divide their product (`QrBucketDerivable.covers`). A
-  descent leaves a root of the sibling only on the sibling's side, so a member of the child's class
-  stays in the child; a scaled or non-monic split changes no root. `EvidenceTreeOpen` replays a
-  bucket some step admitted, so it adds none. A bucket that ends on the published entry anchor of
-  the next epoch therefore holds every tachygram published in its epoch with a matching path, and
-  only tachygrams published in its epoch (`QrBucket.Covers.onChain`).
+  boundary digest of a run of stamp folds into the next, with all calls in `q`. Its contents hold
+  every root of those stamps whose sides match its path, and divide their product
+  (`QrBucketDerivable.covers`). A descent leaves a root of the sibling only on the sibling's side,
+  so a member of the child's class stays in the child; a scaled or non-monic split changes no root.
+  `EvidenceTreeOpen` replays a bucket some step admitted, so it adds none. Under `ChainQueried` up
+  to `N` with `b.epoch + 1 ≤ N`, a bucket that ends on the published entry anchor of the next epoch
+  therefore holds every tachygram published in its epoch with a matching path, and only tachygrams
+  published in its epoch (`QrBucket.Covers.onChain`).
 - `QrUnspentInit` and `UnspentLift` test a value whose sides match the bucket's path and at which
   the contents open nonzero, so the value is unpublished in the bucket's epoch. A segment joins
-  buckets on entry anchors, so one that ends on the published entry anchor of its `epoch_next`
-  holds, for each epoch it covers, a member whose value is unpublished there
-  (`ArbitraryUnspentDerivable.lineage`). `UnspentBind` divides that sequence into a derivation's,
-  and each member factor is prime, so each member is the note secret's nullifier at its epoch
+  buckets on entry anchors, so under `ChainQueried` up to `N` with `u.epoch_next ≤ N`, one that ends
+  on the published entry anchor of its `epoch_next` holds, for each epoch it covers, a member whose
+  value is unpublished there (`ArbitraryUnspentDerivable.lineage`). `UnspentBind` divides that
+  sequence into an aligned `NoteNullifiers` derivation's (`NoteNullifiersDerivable.seq_eq`), and each
+  member factor is prime, so each member is the note secret's nullifier at its epoch
   (`NoteUnspentDerivable.lineage`).
-- A spendable lineage whose anchor the chain reaches in epoch `e` starts at an epoch that published
-  its `cm`, and each of its nullifiers from there up to `e` is unpublished
+- A spendable lineage whose anchor the chain reaches in epoch `e ≤ N` starts at an epoch that
+  published its `cm`, and each of its nullifiers from there up to `e` is unpublished
   (`SpendDerivable.lineage`). A `SpendableInit` lineage starts at its creation stamp's epoch and
   covers no epoch. A `QrSpendableInit` lineage starts at its bucket's epoch, whose contents hold
   `cm`. Each `NoteUnspent` segment ends on the published entry anchor of the next segment's epoch,
-  because a boundary digest the chain reaches is an entry anchor (`OnChain.of_nextEpoch`).
+  because a boundary digest in `q` that the chain reaches is an entry anchor
+  (`OnChain.of_nextEpoch`).
 - A spend whose anchor is a chain node at epoch `e` carries its note secret's nullifiers at `e` and
   `e + 1` (`SpendDerivable.pair`). A `SpendableInit` lineage's anchor folds the creation stamp at
-  its witnessed epoch, and a stamp fold is a chain node only in its own epoch. Every other lineage
-  rests on a `NoteUnspent` segment's `anchor_next`, an entry anchor of `epoch_next`, which is a
-  chain node only at `epoch_next`.
-- A `CoveredSpend` of `cm` in a published stamp is a `SpendAction` leaf of the stamp's derivation
-  whose header carries `cm` and whose action digest the bundle covers. The stamp publishes that
-  leaf's tachygrams, which are the pair. Two spends of the same note are two spends with one `cm`:
-  every header from the spend to its lineage start threads `cm`, `SpendBind` ties the note secret
-  to the lineage by `cm`, and `NoteSeed` makes `cm` determine `mk`
-  (`NoteSecretDerivable.master_eq`). The leaf may sit in an unmerge divisor; coverage alone fixes
-  what is published.
+  its witnessed epoch, and a stamp fold in `q` is a chain node only in its own epoch. Every other
+  lineage rests on a `NoteUnspent` segment's `anchor_next`, an entry anchor of `epoch_next`, which is
+  a chain node only at `epoch_next`.
+- A `CoveredSpend` of `cm` in a published chain stamp `s` ties `s` to a bundle accepted by
+  `BundleCovered`: it carries `s`'s tachygrams as the bundle's published tachygrams, records the
+  bundle's action digests in `Q`, carries a `StampTree` of the verified header against
+  `coveredDigests`, and indexes an action of `actions` whose digest matches a `SpendAction` leaf of
+  `tree` with `header.cm = cm`. Under `DigestLaw` on `Q`, that covered action's carried pair is the
+  note's nullifier pair (`CoveredSpend.carried_pair`), and `BundleCovered` publishes it
+  (`CoveredSpend.pair_le`). Two spends of the same note are two spends with one `cm`: every header
+  from the spend to its lineage start threads `cm`, `SpendBind` ties the note secret to the lineage
+  by `cm`, and `NoteSeed` makes `cm` determine `mk` (`NoteSecretDerivable.master_eq`). The leaf may
+  sit in an unmerge divisor; coverage alone fixes what is published.
 - The tachygrams published in one epoch, and in two consecutive epochs, are duplicate-free
   (`Chain.Valid.nodup_epoch`, `Chain.Valid.nodup_two_epochs`).
+
+### Concrete instance
+
+`Tachyon/Instances.lean` instantiates the model at `ZMod 7` with concrete hash functions and finite
+call sets holding the calls the chain and derivations make, on a two-stamp chain in epoch 0 whose
+first stamp publishes a note commitment and whose second stamp covers one spend of that note (via
+`SpendableInit`) and a fee change.
+
+- `Instances.headline_hypotheses` inhabits every hypothesis of `no_double_spend_of_covered_spends`
+  except the second spend (`p₂`, `hsplit`, `hs₂`, `hfresh`), and of `no_double_spend_in_stamp`
+  except the second spend and `hindex` (checked by two `example` applications), as well as
+  `CoveredSpend.pair_le`, `SpendDerivable.pair` and `SpendDerivable.lineage`.
+- `Instances.bundle_verified` inhabits `BundleVerified` (via `StampTree.derivable` and
+  `Instances.hepoch`) with `IsFee` holding of the bundle's fee digest.
+- `Instances.bucket_onChain_hypotheses` inhabits a sealed QR bucket over epoch 0's two stamps for
+  `QrBucketDerivable.covers` and `QrBucket.Covers.onChain`, and `Instances.lift_hypotheses` inhabits
+  a span lift onto a chain node for `Chain.StampLiftStep.epoch_eq`.
+- Not covered: `NoteUnspentDerivable.lineage` (and the QR-lineage branch of `SpendDerivable.lineage`).
+  `NoteNullifiersDerivable` requires `epoch_start + 15 ≤ emax`, needing `MemberLaw` across 16 epoch
+  indices; linear polynomials over `ZMod 7` lack enough non-associate primes, and the production
+  cubic `(m + (i + 1) X) ^ 3 - c` needs a field with a non-cube `c` and no nontrivial cube root of
+  unity among the index ratios, such as the Pallas base field. Proving that cubic's `MemberLaw`,
+  that Rust's `NON_RESIDUE` is a non-square, and that `enforce_sides_of`'s bounded 32-term sums do
+  not wrap modulo `p` all require the Pallas field and are deferred to Phase 1 of the extraction
+  plan (`require Ragu`).
+
+## Trust partition
+
+- **Scope.** The theorems are about the Lean model. No theorem here is about the Rust
+  implementation or the circuits Ragu compiles from it.
+- **Trusted, inspected by hand against the Rust** (no fingerprint ties them to it): `setPoly`,
+  `Stamp`, `GeneratedBy`, `Merge`, `Unmerge`, `ActionsDerivable`, `StampDerivable`, `LeafRecord`,
+  `ActionsTrace`, `StampTrace`, `leafDigests`, `PublishedStamp`, `coveredDigests`,
+  `coveredTachygrams`, `BundleCovered`, `BundleVerified`, `Chain.AnchorQueries`, `Chain.HashLaw`,
+  `Chain.Node`, `Chain.foldBlock`, `Chain.FoldQueried`, `Chain.BlockAnchor`, `Chain.AnchorSpan`,
+  `Chain.SpanDerivable`, `Chain.StampLiftStep`, `Chain.StampClosed`, `Chain.Stamp`, `Chain.InWindow`,
+  `Chain.StampAccepted`, `Chain.Valid`, `Chain.published`, `Chain.tachygramsInEpochs`,
+  `Chain.epochStamps`, `Chain.entry`, `Chain.ChainQueried`, `Chain.OnChain`, `Matches`, `Summary`,
+  `SummaryDerivable`, `QrIntake`, `QrIntakeDerivable`, `QrBucket`, `QrEvidence`, `EvidenceQueries`,
+  `QrEvidenceDerivable`, `QrBucketDerivable`, `EvidenceLaw`, `EvidenceSound`, `QrEvidence.Sound`,
+  `QrIntake.Covers`, `QrBucket.Covers`, `MemberLaw`, `UnspentTest`, `ArbitraryUnspent`, `ArbitraryUnspentDerivable`, `NoteNullifiers`,
+  `groupNullifier`, `NoteNullifiersDerivable`, `NoteUnspentDerivable`, `SpendRecord`,
+  `SpendRecord.pair`, `SpendRecord.Recent`, `SpendRecord.Lineage`, `NoteSecret`, `NoteUnspent`,
+  `NoteSpendable`, `SpendHeader`, `NoteQueries`, `NoteLaw`, `NoteSecretDerivable`, `UnspentSpec`,
+  `SpendableDerivable`, `SpendDerivable`, `TreeLeaf`, `TreeLeaf.anchor`, `ActionsTree`, `StampTree`,
+  `ActionsTree.leaves`, `StampTree.leaves`, `DigestLaw`, `CoveredSpend`, and every standalone premise
+  of the headline theorems (`¬ IsSquare qnr`, `hepoch`, `hfresh`, `hindex`).
+- **Trusted foundations.** Lean's kernel and the three standard axioms (`propext`,
+  `Classical.choice`, `Quot.sound`, checked across every declaration by `#check_axiom_budget`), and
+  mathlib.
+- **Untrusted.** The Lean proofs. The kernel checks them.
 
 ## Assumptions and open boundaries
 
@@ -253,34 +324,53 @@ choices that no theorem here discharges.
   The QR steps rely on the same binding: each in-step anchor fold absorbs the slot polynomial its
   bridge hash covers, a bucket's `contents_hash` and the leaf digest bind its contents, and the
   selection's `non_residue_hash` binds the split's non-residue polynomial.
-- **Rust and circuit equivalence.** No fingerprint or extraction check ties a Lean step to its Rust
-  step. Hash inputs are assumed to use canonical encodings with no ignored fields.
+- **Rust and circuit equivalence.** No check ties the Lean model to the Rust. Each step, digest and
+  consensus predicate is transcribed by hand from the Rust source, and the transcriptions are
+  trusted (see [Trust partition](#trust-partition)). Ragu's FV ties its gadget models to the Rust by
+  extracting each circuit's constraints and comparing fingerprints. Tachyon does not do this. Doing
+  it requires a Ragu extraction library, a Lean dependency on Ragu (Phase 1, covering fingerprint-tied
+  Clean models of Tachyon's 14 in-circuit digests and core gadgets), a Tachyon refactor that
+  separates each step's body from its oracle openings with Clean models of the 39 step bodies
+  (Phase 2), connecting those step specs to the `*Derivable` constructors via Schwartz-Zippel bounds
+  (Phase 3), and a CI workflow checking extraction and fingerprints (Phase 4). Without that tie, a
+  mismatch between a Lean constructor and its step, such as a dropped or extra constraint, a wrong
+  absorption order, or an ignored hash input, is caught only by manual review. Dropping a constraint
+  that the model's representation does not rely on only adds derivable headers. An extra or wrong
+  constraint, or dropping one the representation relies on, can make a theorem say nothing about the
+  deployed circuit. Hash inputs are assumed to use canonical encodings with no ignored fields.
 
 ### Hashes and the pairing
+
+Each hash law is scoped to a call predicate recording the hash calls the chain and derivations under
+consideration make, and every derivation constructor that hashes takes its call as a premise. A
+finite call set without a collision satisfies each law over a finite field (`Instances.lean`).
 
 - **The pairing `R`.** Unmerge soundness depends on it. Each leaf step derives its digest from a
   preimage holding its tachygrams, so the pairing rests on Poseidon collision resistance, which the
   model takes as exact.
-- **`DigestLaw`.** A spend leaf's action digest pairs with its tachygram pair at every epoch, and
-  is not a fee digest. The digest absorbs the pair's sum and product, which fix the pair. With the
-  spend witness and epoch fixed, `DigestLaw.pair` assigns a distinct digest to each unordered pair
-  of field elements; a field of size `p` has `p(p + 1) / 2` such pairs and only `p` digests, so no
-  function on the production field satisfies it. No finite field admits the law once the witness
-  type is inhabited, so the theorems that assume `hdigest` hold vacuously at the production field
-  and are meaningful only for the symbolic model. Like `Chain.HashLaw`, it is a symbolic
-  idealization of collision resistance, not a property that a finite-field proof could discharge.
-- **`FeeDigestLaw`.** A fee digest pairs with the singleton of its fee change at every epoch
-  (`BundleVerified.fee_change_published`). A finite field admits the law on its own, for example
-  when the digest ignores the fee descriptor. Over a finite field, `R e (feeDigest φ c) = {c}` makes
-  `c ↦ feeDigest φ c` a bijection for each `φ`, forcing the digest not to vary with `φ`; no
-  function over a finite field combines the law with a digest that absorbs the fee descriptor, as
-  the production Poseidon digest over `(cv_feemax, v_fee, c)` does. It is a symbolic idealization
-  of collision resistance on `Tachyon-FeeDg`, not a property of the production digest.
-- **`NoteLaw`.** The note commitment binds `pk` and `psi`, and the payment key binds `nk`, so a
-  note commitment fixes its master key. Collision resistance is taken as exact.
-- **`EvidenceLaw`.** The `Tachyon-QrBucket` leaf digest is injective on a bucket's header fields
-  and contents, the `Tachyon-EvidNode` node digest is injective on its four children, and no leaf
-  digest is a node digest. Collision resistance and domain separation are taken as exact.
+- **`DigestLaw`.** Scoped to `Q : Γ → F → F → Prop`, the `actionDigest` calls of `ActionsTree.spend`
+  leaves and of `CoveredSpend.actions_queried`. For every call `Q g t₁ t₂`, `R e (actionDigest g t₁ t₂) = {t₁, t₂}`
+  at every epoch `e` (`pair`), and `¬ IsFee (actionDigest g t₁ t₂)` (`not_fee`). The digest absorbs
+  the pair's sum and product, which fix the pair, and separates `Tachyon-ActionDg` from
+  `Tachyon-FeeDg`. No fee-digest law is assumed; `BundleVerified.fee_change_published` follows from
+  `BundleCovered.tachygrams_covered` alone.
+- **`NoteLaw`.** Scoped to `NoteQueries` (`n.commit` for `noteCommit` calls and `n.key` for
+  `paymentKey` calls in `NoteSecretDerivable`). On `n.commit`, `noteCommit` binds `pk` and `psi`; on
+  `n.key`, `paymentKey` binds `nk`, so a note commitment fixes its master key.
+- **`EvidenceLaw`.** Scoped to `EvidenceQueries` (`r.leaf` for `Tachyon-QrBucket` leaf digests and
+  `r.node` for `Tachyon-EvidNode` four-input node digests in `QrEvidenceDerivable` and
+  `EvidenceSound`). On `r`, `leaf` is injective on a bucket's header fields and contents, `node` is
+  injective on its four inputs, and no `r.leaf` digest equals an `r.node` digest.
+- **`Chain.HashLaw` and `ChainQueried`.** `Chain.HashLaw` is scoped to `Chain.AnchorQueries`
+  (`q.stamp` for `nextStamp` calls and `q.boundary` for `nextEpoch` calls): `nextStamp` and
+  `nextEpoch` are injective on `q`, `nextStamp` and `nextEpoch` outputs on `q` never collide, and
+  neither collides with `genesis` (for `nextEpoch`, when `e ≠ e₀`). The stamp fold includes
+  commitment and bridge hashing before Poseidon absorbs the bridge point's affine coordinates; the
+  law abstracts that whole composition. Because `Chain.entry` is defined at every `ℕ` epoch,
+  `Chain.ChainQueried q nextStamp nextEpoch zero chain N` asks that `chain`'s genesis boundary call,
+  its boundary calls at `e < N`, and its stamp-fold calls (`FoldQueried`) at `e ≤ N` lie in `q`. The
+  chain lemmas hold at epochs `≤ N`; `no_double_spend_of_covered_spends` sets `N := s₂.epoch` and
+  `no_double_spend_in_stamp` sets `N := s.epoch` (covering every anchor read via recency).
 - **`MemberLaw`.** An indexed member `(m + (i + 1) X) ^ 3 - c` at an epoch index `i ≤ EPOCH_MAX` is
   prime, and one such member divides another only when their indices and values agree. This is the
   injectivity claim of `collections/indexed_multiset.rs` for indices below `⌊√(p/3)⌋`, taken as a
@@ -289,12 +379,6 @@ choices that no theorem here discharges.
   in the Pallas base field.
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
-- **`Chain.HashLaw`.** The anchor-chain results take the stamp and epoch folds as injective and
-  domain-separated (`Node.epoch_unique`, `SpanDerivable.node_epoch`). This is a global law over the
-  fold inputs. The stamp fold includes commitment and bridge hashing before Poseidon absorbs
-  the bridge point's affine coordinates; the law abstracts that whole composition. This exact,
-  global law is stronger than computational collision resistance, not a proved injectivity result
-  for the concrete finite-field implementation or a reduction to Pedersen binding alone.
 
 ### Consensus rules
 
@@ -311,31 +395,37 @@ choices that no theorem here discharges.
 
 The chain model folds each anchor with the epoch of the block that contains it. Consensus must
 compute the folds with the same epochs, apply the boundary digest once per epoch, empty epochs
-included, and start epoch zero from the boundary digest of the zero anchor.
-`no_double_spend_of_covered_spends` and `no_double_spend_in_stamp` take the anchors' `epoch`
-labelling to agree with `Chain.Node` (`hepoch`), as `StampLiftStep.epoch_eq` does, with `HashLaw`
-rooted at epoch zero's entry anchor.
+included, and start epoch zero from the boundary digest of the zero anchor. `StampLiftStep.epoch_eq`
+and `StampTree.derivable` take `hepoch` over `Chain.Node q` (satisfiable because `Node.epoch_unique`
+gives each `Node q` anchor a unique epoch under `HashLaw`); `CoveredSpend.pair_le`,
+`no_double_spend_of_covered_spends` and `no_double_spend_in_stamp` do not take `hepoch`.
 
 ### Spend lineage
 
-- **Covered spends as data.** `CoveredSpend` carries the stamp's derivation, as `StampTrace` does.
-  That a verified stamp proof has one is the PCD knowledge extraction assumption. It also
-  carries the rebuilt action set and the published tachygram set as the verified header's slots,
-  which `BundleVerified` checks; the link from a `BundleVerified` bundle to a `Chain.Stamp` is not
-  modelled.
-- **Dropped constraints.** Each step's table row names the constraints the model drops. Dropping a
-  constraint only adds derivable headers, so the results still hold.
+- **Covered spends as data.** `CoveredSpend` carries the stamp's `StampTree` derivation, as
+  `StampTrace` does; that a verified stamp proof has one is the PCD knowledge extraction assumption.
+  It ties the `Chain.Stamp` directly to `BundleCovered` over the bundle's `actions`, `fee` and
+  `adjunctFees`, matching `s.tachygrams` to `coveredTachygrams` and indexing the spend's action in
+  `actions`.
+- **Dropped and representation-built constraints.** Each step's table row names the constraints the
+  model drops. Dropping a constraint that the model's types do not encode only adds derivable
+  headers, so the results still hold. That argument does not apply where the representation builds a
+  circuit constraint in: `NullifierDerive`'s `epoch_start % 4 = 0` alignment is modelled explicitly
+  (`NoteNullifiersDerivable.derive`), while `EpochIndex` range checks (built into `ℕ` epochs so
+  `e + 1` never wraps) and `QrSideDescend`'s `< 32` depth bound (built into carrying a QR profile as
+  a `List Bool` path) are trusted in the representation.
 - **QR side tests.** `enforce_sides_of` is read through its per-position root equations on the
   bucket's path. Its mask sums and bit fold select exactly the first `depth` positions and compare
-  them with `bits`; that this arithmetic does not wrap in the field is assumed, not proved. A
-  profile is carried as its path, since `QrSideDescend`'s depth bound keeps `(depth, bits)`
-  injective on paths.
+  them with `bits`; that this arithmetic does not wrap in the field is assumed, not proved.
 - **Same note.** Two spends of one note are two spends with one `cm` whose lineages start at one
   publication of `cm`. `Chain.published` is untyped membership of the value `cm` among a stamp's
   tachygrams. A lineage that starts after the first spend's publication starts at a later epoch in
   which `cm` is `Chain.published`. `no_double_spend_of_covered_spends` takes `hfresh` to exclude
   every such appearance after the first spend's publication up to the second spend's anchor epoch,
-  and says nothing about why the value would reappear.
+  and says nothing about why the value would reappear. Proving that a later appearance of `cm` came
+  from a separately funded second note would need every chain stamp linked to a verified bundle and
+  trace, step models for `OutputBind`/`OutputAction` and fee changes, domain-separation laws between
+  commitments, output pads and nullifiers, and bundle value balance, none of which are in the model.
 
 Anchor recency is load-bearing. A spend anchored at epoch `a` publishes the note's nullifiers for
 `a` and `a + 1`. If it is published at an epoch `p ≥ a + 2`, both land in the bucket for `p`. A later
@@ -347,6 +437,11 @@ window finds no duplicate. Both spends pass.
 
 ## Axiom census
 
-`Tachyon/Axioms.lean` runs `#print axioms` on each headline theorem inside `#guard_msgs`. The build
-fails if a headline theorem gains an axiom. The headline theorems depend on `propext`,
-`Classical.choice` and `Quot.sound` only, with no `sorryAx`.
+`Tachyon/Meta/AxiomBudget.lean` defines `#check_axiom_budget`, invoked from `Tachyon/Axioms.lean`.
+It checks every declaration of every imported `Tachyon` module (auxiliary declarations included) to
+confirm that none is an `axiom` and none depends on any axiom outside `propext`, `Classical.choice`
+and `Quot.sound` (ruling out `sorryAx` and `Lean.ofReduceBool`), verifies that all 27 pinned
+headline theorems in `Axioms.lean` (checked with `#print axioms` inside `#guard_msgs`) were visited,
+and checks that the imported `Tachyon` modules match the `.lean` files under `Tachyon/` plus
+`Tachyon.lean`. `just fv` runs `lake build --wfail`, failing on any warning, when run locally; no CI
+job runs it.
