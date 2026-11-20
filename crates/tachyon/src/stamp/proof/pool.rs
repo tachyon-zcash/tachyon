@@ -560,7 +560,7 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, [QrClassClaim; MAX_DEPTH], mask, extended_seq)`
+    /// `(value, claims, mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
         [QrClassClaim; QrProfile::MAX_DEPTH],

@@ -294,14 +294,14 @@ impl Step<Pasta> for QrSummaryIntake {
                 .map(|&(discriminants,)| Fp::from(discriminants)),
         )?;
         let data = D::just(|| {
-            let (discriminant,) = witness.take();
+            let (discriminants,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             let () = right.take();
             (
                 summary_epoch,
                 summary_anchor_prev,
                 summary_anchor_end,
-                discriminant,
+                discriminants,
                 QrProfile::ROOT,
             )
         });
@@ -1253,7 +1253,7 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, [QrClassClaim; MAX_DEPTH], mask, sequence)`
+    /// `(value, claims, mask, sequence)`
     type Witness<'source> = (
         Tachygram,
         [QrClassClaim; QrProfile::MAX_DEPTH],
