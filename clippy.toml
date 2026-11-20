@@ -18,6 +18,10 @@ absolute-paths-allowed-crates = ["udon"]
 # These operators implement field, group, or polynomial arithmetic, not
 # unchecked machine-integer arithmetic.
 arithmetic-side-effects-allowed = [
+  # Clippy sees the re-export under the dependency's original name.
+  "ragu::zakura_udon::field::FieldAdapter",
+  "ragu::zakura_udon::curve::AffineAdapter",
+  "ragu::zakura_udon::curve::ProjectiveAdapter",
   "udon::field::FieldAdapter",
   "udon::curve::AffineAdapter",
   "udon::curve::ProjectiveAdapter",
