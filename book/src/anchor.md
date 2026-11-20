@@ -41,6 +41,7 @@ $H_\mathsf{ep}(x, e)$ is a boundary digest for any $x$. For $e \geq 1$, the entr
 Within a block, each stamp's absorption produces an intermediate hash value.
 
 Consensus actors should know about intermediate states, but may only acknowledge the anchor state at the end of a block.
+A stamp must anchor to an end-of-block anchor within the present epoch or the immediately previous epoch. The chain validator enforces both membership and recency when accepting a stamp.
 
 A proof such as `SpendableInit` may produce a header at an intra-block state: its anchor is the state right after the creation stamp, which is the end-of-block anchor only when that stamp is the block's last.
 A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#anchor-segments), which prove state continuity.

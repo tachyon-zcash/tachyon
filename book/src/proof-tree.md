@@ -500,14 +500,14 @@ Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand,
 The Lean results in `qa/fv` prove this multiset argument for a hand-written semantic model, not equivalence with the Rust steps or production PCD soundness.
 They take the digest-to-tachygram pairing above as exact rather than collision-resistant, and assume commitment/bridge binding, polynomial identities in place of random-point checks, and accepted derivations under the fixed Tachyon registry.
 Lift epoch preservation is proved through an entire derivation: when a published stamp's anchor is on the chain, every leaf's anchor is on the chain in the same epoch, under an idealized hash law.
-The algebraic unmerge relation can remove a fee leaf too: coverage of the published bundle's fee descriptor, not derivability alone, supplies its fee leaf.
-The no-double-spend result derives both spends' nullifier pairs and the second spend's exclusion lineage from modelled spend, unspent and QR steps, and the scaled-split and oversized-bucket cases above do not affect it. It assumes the note commitment is not published again between the first spend's publication and the second spend's anchor epoch; a second publication makes a second note. `qa/fv/README.md` records the source correspondence and remaining boundaries.
+The algebraic unmerge relation can remove a fee leaf too (`unmerge_strips_fee`): under `FeeDigestLaw`, coverage of the published bundle's fee descriptor places the bundle's own fee change among the published tachygrams (`BundleVerified.fee_change_published`).
+Two results rule out double spends, deriving each spend's nullifier pair and, across stamps, the second spend's exclusion lineage from modelled spend, unspent and QR steps; the scaled-split and oversized-bucket cases above do not affect them. Within one stamp, `no_double_spend_in_stamp` rules out two spends whose action digests are two covered occurrences; `CoveredSpend` is not linked to `BundleVerified`, so distinct occurrences remain a hypothesis. Across two stamps, `no_double_spend_of_covered_spends` takes the chain validator's [anchor-recency](./anchor.md#intra-block-state-vs-end-of-block-anchor) rule (`StampAccepted.recency` in `Chain.Valid`, distinct from `Bundle::verify` and the [two-epoch duplicate scan](./tachygrams.md#consensus-validation)) and assumes the value `cm` does not appear among any stamp's published tachygrams (`Chain.published`) after the first spend's publication up to the second spend's anchor epoch (`hfresh`), saying nothing about why it would reappear. `qa/fv/README.md` records the source correspondence and remaining boundaries.
 
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
 The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
-Consensus verifies the published anchor against the chain before accepting the stamp.
+Consensus verifies the published [anchor's end-of-block membership and recency](./anchor.md#intra-block-state-vs-end-of-block-anchor) against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
 
