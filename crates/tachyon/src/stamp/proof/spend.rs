@@ -61,6 +61,21 @@ impl Header<Fp> for SpendHeader {
 
     const SUFFIX: Suffix = Suffix::new(5);
 
+    /// # Injectivity
+    ///
+    /// Seven elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `nf_current` (`Nullifier`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `nf_next` (`Nullifier`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 3: `anchor` (`Anchor`, an `Fp` newtype), written as its inner element.
+    /// - 4: `pk` (`PaymentKey`, an `Fp` newtype), written as its inner element.
+    /// - 5..=6: `cv` (`value::Commitment`), written through `Point::alloc` as
+    ///   its affine coordinates $(x, y)$. The coordinates determine the point,
+    ///   and `Point::alloc` rejects the identity.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

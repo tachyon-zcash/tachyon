@@ -91,6 +91,18 @@ impl Header<Fp> for ArbitraryUnspent {
 
     const SUFFIX: Suffix = Suffix::new(1);
 
+    /// # Injectivity
+    ///
+    /// Four elements at disjoint indices:
+    ///
+    /// - 0: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `epoch_start` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 2: `epoch_next` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 3: `anchor_next` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -149,6 +161,20 @@ impl Header<Fp> for NoteUnspent {
 
     const SUFFIX: Suffix = Suffix::new(3);
 
+    /// # Injectivity
+    ///
+    /// Five elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `epoch_start` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 3: `epoch_next` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 4: `anchor_next` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -224,6 +250,14 @@ impl Header<Fp> for AnchorSpan {
 
     const SUFFIX: Suffix = Suffix::new(14);
 
+    /// # Injectivity
+    ///
+    /// Two elements at disjoint indices:
+    ///
+    /// - 0: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `anchor_end` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

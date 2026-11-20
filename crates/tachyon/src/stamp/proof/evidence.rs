@@ -69,6 +69,20 @@ impl Header<Fp> for EvidenceTree {
 
     const SUFFIX: Suffix = Suffix::new(12);
 
+    /// # Injectivity
+    ///
+    /// Five elements at disjoint indices:
+    ///
+    /// - 0: `epoch` (`EpochIndex`), written as its `u32`, which is less than
+    ///   $p$.
+    /// - 1: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `anchor_next` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 3: `discriminant` (`QrDiscriminant`, an `Fp` newtype), written as its
+    ///   inner element.
+    /// - 4: `root` (`EvidenceTreeRoot`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -145,6 +159,22 @@ impl Header<Fp> for EvidenceTreePair {
 
     const SUFFIX: Suffix = Suffix::new(13);
 
+    /// # Injectivity
+    ///
+    /// Six elements at disjoint indices:
+    ///
+    /// - 0: `epoch` (`EpochIndex`), written as its `u32`, which is less than
+    ///   $p$.
+    /// - 1: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `anchor_next` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 3: `discriminant` (`QrDiscriminant`, an `Fp` newtype), written as its
+    ///   inner element.
+    /// - 4: `first` (`EvidenceTreeRoot`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 5: `second` (`EvidenceTreeRoot`, an `Fp` newtype), written as its
+    ///   inner element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

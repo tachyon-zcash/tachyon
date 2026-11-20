@@ -49,6 +49,15 @@ impl Header<Fp> for NoteSpendable {
 
     const SUFFIX: Suffix = Suffix::new(2);
 
+    /// # Injectivity
+    ///
+    /// Three elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `epoch_current` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 2: `anchor` (`Anchor`, an `Fp` newtype), written as its inner element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

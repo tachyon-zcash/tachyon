@@ -67,6 +67,11 @@ impl Header<Fp> for Actions {
 
     const SUFFIX: Suffix = Suffix::new(15);
 
+    /// # Injectivity
+    ///
+    /// One element:
+    ///
+    /// - 0: `anchor` (`Anchor`, an `Fp` newtype), written as its inner element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -109,6 +114,15 @@ impl Header<Fp> for Stamp {
 
     const SUFFIX: Suffix = Suffix::new(6);
 
+    /// # Injectivity
+    ///
+    /// Three elements at disjoint indices, in `StampOutput` field order, which
+    /// differs from `Data` order:
+    ///
+    /// - 0: `anchor` (`Anchor`, an `Fp` newtype), written as its inner element.
+    /// - 1..=2: `tachygram_set_bridge` (`TachygramSetBridge`, a Pallas point),
+    ///   written as its affine coordinates $(x, y)$, which determine the point.
+    ///   `encode` panics on the identity.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

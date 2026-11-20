@@ -56,6 +56,19 @@ impl Header<Fp> for NoteSecret {
 
     const SUFFIX: Suffix = Suffix::new(8);
 
+    /// # Injectivity
+    ///
+    /// Six elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1..=4: `note`, through `gadgets::note::Note`, which writes `rcm`,
+    ///   `pk`, `value` and `psi` in that order. `rcm`, `pk` and `psi` are `Fp`
+    ///   newtypes, each written as its inner element. `value` is a
+    ///   `value::Positive`, written as its integer in `0..=MAX_MONEY`, which is
+    ///   less than $p$.
+    /// - 5: `mk` (`NoteMasterKey`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -118,6 +131,16 @@ impl Header<Fp> for NoteNullifiers {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
+    /// # Injectivity
+    ///
+    /// Three elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 1: `epoch_start` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
+    /// - 2: `epoch_end` (`EpochIndex`), written as its `u32`, which is less
+    ///   than $p$.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

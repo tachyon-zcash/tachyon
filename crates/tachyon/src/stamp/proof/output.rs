@@ -46,6 +46,15 @@ impl Header<Fp> for OutputHeader {
 
     const SUFFIX: Suffix = Suffix::new(7);
 
+    /// # Injectivity
+    ///
+    /// Four elements at disjoint indices:
+    ///
+    /// - 0: `cm` (`Tachygram`, an `Fp` newtype), written as its inner element.
+    /// - 1: `pad` (`Tachygram`, an `Fp` newtype), written as its inner element.
+    /// - 2..=3: `cv` (`value::Commitment`), written through `Point::alloc` as
+    ///   its affine coordinates $(x, y)$. The coordinates determine the point,
+    ///   and `Point::alloc` rejects the identity.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

@@ -68,6 +68,16 @@ impl Header<Fp> for Summary {
 
     const SUFFIX: Suffix = Suffix::new(9);
 
+    /// # Injectivity
+    ///
+    /// Three elements at disjoint indices:
+    ///
+    /// - 0: `epoch` (`EpochIndex`), written as its `u32`, which is less than
+    ///   $p$.
+    /// - 1: `anchor_prev` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `anchor_end` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

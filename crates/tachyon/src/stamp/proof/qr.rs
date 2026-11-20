@@ -79,6 +79,22 @@ impl Header<Fp> for QrIntake {
 
     const SUFFIX: Suffix = Suffix::new(4);
 
+    /// # Injectivity
+    ///
+    /// Six elements at disjoint indices:
+    ///
+    /// - 0: `epoch` (`EpochIndex`), written as its `u32`, which is less than
+    ///   $p$.
+    /// - 1: `anchor_prev` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `anchor_end` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 3: `discriminant` (`QrDiscriminant`, an `Fp` newtype), written as its
+    ///   inner element.
+    /// - 4..=5: `profile` (`QrProfile`), through `gadgets::qr::QrProfile`,
+    ///   which writes `depth` and then `bits`. Each is a `u32` written as its
+    ///   integer, which is less than $p$, in its own element. Distinct profiles
+    ///   write distinct pairs.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -172,6 +188,15 @@ impl Header<Fp> for QrIntakeSides {
 
     const SUFFIX: Suffix = Suffix::new(10);
 
+    /// # Injectivity
+    ///
+    /// Eight elements at disjoint indices:
+    ///
+    /// - 0..=5: the first five fields, through `QrIntake::encode`, whose
+    ///   argument covers each of them.
+    /// - 6..=7: `non_residue_hash` (`TachygramSetBridge`, a Pallas point),
+    ///   written as its affine coordinates $(x, y)$, which determine the point.
+    ///   `encode` panics on the identity.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -225,6 +250,12 @@ impl Header<Fp> for QrSideSelection {
 
     const SUFFIX: Suffix = Suffix::new(16);
 
+    /// # Injectivity
+    ///
+    /// `Data` is `QrIntakeSides::Data` and `encode` calls
+    /// `QrIntakeSides::encode`, so this header writes the same eight elements.
+    /// The argument on `QrIntakeSides::encode` covers each field. The suffixes,
+    /// 16 here and 10 on `QrIntakeSides`, separate the two header types.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -988,6 +1019,24 @@ impl Header<Fp> for QrBucket {
 
     const SUFFIX: Suffix = Suffix::new(11);
 
+    /// # Injectivity
+    ///
+    /// Eight elements at disjoint indices:
+    ///
+    /// - 0: `epoch` (`EpochIndex`), written as its `u32`, which is less than
+    ///   $p$.
+    /// - 1: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 2: `anchor_next` (`Anchor`, an `Fp` newtype), written as its inner
+    ///   element.
+    /// - 3: `discriminant` (`QrDiscriminant`, an `Fp` newtype), written as its
+    ///   inner element.
+    /// - 4..=5: `profile` (`QrProfile`), through `gadgets::qr::QrProfile`,
+    ///   which writes `depth` and then `bits`. Each is a `u32` written as its
+    ///   integer, which is less than $p$, in its own element.
+    /// - 6..=7: `contents_hash` (`TachygramSetBridge`, a Pallas point), written
+    ///   as its affine coordinates $(x, y)$, which determine the point.
+    ///   `encode` panics on the identity.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

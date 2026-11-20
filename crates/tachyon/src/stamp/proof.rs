@@ -25,17 +25,43 @@
 //! unchanged, binds nothing until a public input, a header or a consensus check
 //! fixes it.
 //!
-//! Verifiers bind a PCD's data to its header by recomputing `encode` natively,
-//! ignoring constraints and taking `Known` predictions in place of running
-//! routines, so no two `Data` values, even ones the circuit rejects, may encode
-//! to the same field elements. Each header here writes every field to its own
-//! fixed elements via one of three encodings injective over the field's whole
-//! type: an `Fp` newtype as itself; an epoch index, note amount, or QR
-//! profile's depth and bits as one element each, every value below $p$; or a
-//! non-identity Pallas point as its affine coordinates. Packing, hashing, or
-//! reducing a value needs its own injectivity argument. The suffix separates
-//! headers that share an encoding, such as `QrIntakeSides` and
-//! `QrSideSelection`.
+//! # Header injectivity
+//!
+//! Verifiers bind a PCD's data to its header by recomputing `encode` natively.
+//! They ignore its constraints and take a routine's `Known` prediction in place
+//! of running the routine. No two `Data` values, including values the circuit
+//! rejects, may encode to the same field elements. Each header's `encode`
+//! gives its injectivity argument field by field.
+//!
+//! A header consists of its `Output` gadget's elements, zero padding up to
+//! `HEADER_SIZE - 1` elements, and the suffix element. The derived `Write`
+//! writes each gadget field once in declaration order, and each array in index
+//! order. Every field has a fixed width, so a field occupies the same element
+//! indices in every header of its type. Each field's map is injective over its
+//! Rust type and the fields' indices are disjoint, so the elements determine
+//! the whole `Data`. `ApplicationBuilder` rejects two header types with one
+//! suffix, and the suffix element separates header types whose other elements
+//! match.
+//!
+//! The headers use four leaf encodings, each injective over its whole Rust
+//! type:
+//!
+//! - An `Fp` newtype, directly or through `Tachygram`, is written as its inner
+//!   element. The map is the identity.
+//! - An `EpochIndex` or a `QrProfile` field is a `u32` written as its integer.
+//!   Every `u32` is less than $p$.
+//! - A `value::Positive` holds an `i64` and is written as its `unsigned_abs`.
+//!   Every constructor holds the `i64` to `0..=MAX_MONEY`. On that range
+//!   `unsigned_abs` is the identity, and `MAX_MONEY` is less than $p$.
+//! - A Pallas point is written as its affine coordinates $(x, y)$, which
+//!   determine the point. The identity has no affine coordinates.
+//!   `Point::alloc` returns an error on the identity and the bridge hash fields
+//!   panic on it, so the identity has no encoding.
+//!
+//! The range checks in `EpochIndex::alloc` and `Positive::alloc` constrain the
+//! allocated element and keep that element as the header wire. No header wire
+//! is a routine output, so no `Known` prediction stands in for a header
+//! element.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
