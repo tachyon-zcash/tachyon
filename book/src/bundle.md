@@ -38,7 +38,7 @@ The action digest binds `cv`, `rk`, and the pair through its sum and product. Th
 
 ### Tachystamp
 
-The **tachystamp** carries a recursive stamp proof that all covered tachyactions and fees follow the protocol rules. Each released stamp proof is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries), though Ragu does not yet provide zero knowledge for either stamp proof form.
+The **tachystamp** carries a recursive stamp proof that all covered tachyactions and fees follow the protocol rules. Each released stamp proof is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries).
 
 It contains:
 
