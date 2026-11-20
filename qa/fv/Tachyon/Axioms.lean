@@ -19,7 +19,7 @@ particular on no `sorryAx` (`#check_axiom_budget`, which also checks that every 
   Tachyon.no_double_spend_in_stamp Tachyon.QrBucketDerivable.covers Tachyon.QrBucket.Covers.onChain
   Tachyon.NoteUnspentDerivable.lineage Tachyon.SpendDerivable.lineage Tachyon.Chain.Node.epoch_unique
   Tachyon.Chain.StampLiftStep.epoch_eq Tachyon.Chain.Valid.disjoint_of_window
-  Tachyon.Chain.Valid.nodup_two_epochs
+  Tachyon.Chain.Valid.nodup_two_epochs Tachyon.StampTree.fee_leaf Tachyon.CoveredSpend.fee_leaf
 
 /--
 info: 'Tachyon.ActionsDerivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -182,3 +182,15 @@ info: 'Tachyon.Chain.Valid.nodup_two_epochs' depends on axioms: [propext, Quot.s
 -/
 #guard_msgs in
 #print axioms Tachyon.Chain.Valid.nodup_two_epochs
+
+/--
+info: 'Tachyon.StampTree.fee_leaf' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTree.fee_leaf
+
+/--
+info: 'Tachyon.CoveredSpend.fee_leaf' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.CoveredSpend.fee_leaf

@@ -14,3 +14,4 @@ import Tachyon.Spend
 import Tachyon.SpendTree
 import Tachyon.Consensus.Spends
 import Tachyon.Instances
+import Tachyon.TreeTraces
