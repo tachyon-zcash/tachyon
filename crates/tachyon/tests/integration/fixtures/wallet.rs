@@ -6,10 +6,10 @@ use core::{cell::RefCell, ops::RangeInclusive};
 use ragu::{
     PoseidonPermutation as _, ProductionRank,
     pasta::{Pasta, PoseidonFp},
+    udon::field::Field as _,
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, action,
     bundle::{self, Bundle},

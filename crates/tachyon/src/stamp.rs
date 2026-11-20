@@ -30,12 +30,16 @@ use proof::{
         StampLift, StampMerge, StampUnmerge,
     },
 };
-use ragu::{ProductionRank, Rank as _, pasta::Pasta, pcd::wire};
-use rand_core::CryptoRng;
-use udon::{
-    curve::{Affine as _, Projective as _},
-    field::Field as _,
+use ragu::{
+    ProductionRank, Rank as _,
+    pasta::Pasta,
+    pcd::wire,
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
+use rand_core::CryptoRng;
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,

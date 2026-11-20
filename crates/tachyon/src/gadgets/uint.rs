@@ -11,8 +11,8 @@ use ragu::{
         Boolean, Element, decompose_n, multipack,
         vec::{ConstLen, FixedVec},
     },
+    udon::field::Field,
 };
-use udon::field::Field;
 
 use crate::pasta::Fp;
 

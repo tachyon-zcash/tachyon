@@ -1,5 +1,5 @@
+use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::field::Field as _;
 
 use super::*;
 use crate::{

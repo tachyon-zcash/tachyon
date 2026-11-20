@@ -1,8 +1,7 @@
 //! Prepared fixed bases for Tachyon commitments and authorization keys.
 
 use lazy_static::lazy_static;
-use ragu::primitives::FixedBase;
-use udon::curve::Projective as _;
+use ragu::{primitives::FixedBase, udon::curve::Projective as _};
 
 use crate::{
     constants::{

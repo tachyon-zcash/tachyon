@@ -6,8 +6,8 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
+    udon::field::Field as _,
 };
-use udon::field::Field as _;
 
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,

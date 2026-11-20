@@ -9,8 +9,8 @@ use ragu::{
     maybe::Maybe as _,
     pasta::PoseidonFp,
     primitives::{Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
+    udon::field::Field as _,
 };
-use udon::field::Field as _;
 
 use super::uint::Uint;
 use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};

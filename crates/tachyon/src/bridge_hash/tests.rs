@@ -1,4 +1,4 @@
-use udon::curve::Projective as _;
+use ragu::udon::curve::Projective as _;
 
 use super::bridge_hash;
 use crate::{

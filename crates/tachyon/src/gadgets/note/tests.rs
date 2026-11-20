@@ -1,5 +1,4 @@
-use ragu::primitives::Simulator;
-use udon::field::Field as _;
+use ragu::{primitives::Simulator, udon::field::Field as _};
 
 use super::*;
 

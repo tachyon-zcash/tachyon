@@ -74,10 +74,6 @@ ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2b9e50004841aaf3c
 ] }
 rand_core = { version = "0.10", default-features = false }
 reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
-udon = { package = "zakura-udon", version = "0.1.0", default-features = false, features = [
-    "traits",
-    "poseidon",
-] }
 
 [dev-dependencies]
 rand = { version = "0.10", default-features = false, features = [

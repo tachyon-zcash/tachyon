@@ -9,9 +9,11 @@ use alloc::{
 use core::{assert_matches, cmp::Reverse, mem};
 
 use corez::io;
-use ragu::{ProductionRank, Rank as _};
+use ragu::{
+    ProductionRank, Rank as _,
+    udon::{curve::Projective as _, field::Field as _},
+};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
     bundle::{Plan, PlanError, Signature},

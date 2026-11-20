@@ -16,8 +16,8 @@ use ragu::{
     pasta::{Pasta, PoseidonFp},
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::{curve::Affine as _, field::Field as _},
 };
-use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     digest::poseidon,

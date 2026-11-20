@@ -968,7 +968,6 @@ dependencies = [
  "rand_core 0.10.1",
  "zakura-pasta-curves",
  "zakura-reddsa",
- "zakura-udon",
  "zcash_tachyon",
 ]
 

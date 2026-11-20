@@ -8,8 +8,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::{curve::Affine as _, field::Field as _},
 };
-use udon::{curve::Affine as _, field::Field as _};
 
 use super::{
     output::OutputHeader,
