@@ -89,6 +89,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
 
     /// Splits this index into the first epoch of its nullifier group and the
     /// two low bits that select within the group.
+    ///
+    /// The bits are the index's only decomposition at the epoch width. The
+    /// first epoch is the index less its two low bits, a multiple of four.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn group(&self, dr: &mut D) -> Result<(Element<'dr, D>, [Boolean<'dr, D>; 2])> {
         let bits =

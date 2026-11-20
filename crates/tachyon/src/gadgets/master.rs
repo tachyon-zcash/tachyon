@@ -24,6 +24,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
     /// The nullifier for `epoch`: entry $b_0 + 2 b_1$ of the
     /// `PoseidonFp::RATE`-element group starting at `epoch` with its two low
     /// bits $b_0, b_1$ cleared.
+    ///
+    /// The group and the entry are the ones
+    /// [`nullifier_group`](poseidon::nullifier_group) assigns to `epoch`, so
+    /// the result is the one nullifier of this key at `epoch`.
     pub(crate) fn derive_nullifier(
         &self,
         dr: &mut D,

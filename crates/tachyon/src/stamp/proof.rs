@@ -14,16 +14,69 @@
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
 //!
-//! Steps relate polynomials through their openings at the challenge
-//! $\zeta$, which the framework derives after committing every polynomial a
-//! step opens. A product or root identity that holds at $\zeta$ therefore holds
-//! as a polynomial identity, except with probability about
-//! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
-//! polynomials it relates only through their commitments, so each step grounds
-//! its operands in an input or output header, and each root it checks is fixed
-//! before $\zeta$. A commitment that is only witnessed, or threaded onward
-//! unchanged, binds nothing until a public input, a header or a consensus check
-//! fixes it.
+//! # Soundness
+//!
+//! A header field or an online polynomial stands for something else. A note
+//! commitment stands for a note, an anchor for a pool history, an accumulator
+//! for a multiset. The argument for such a value says what it stands for, how
+//! it is built from that thing, which constraints force it to be built that
+//! way, and why nothing else builds to the same value.
+//!
+//! The arguments sit on the items they are about and cite downward.
+//!
+//! - A digest, an encoding or a gadget states what its output determines.
+//! - A header states, under **Injectivity**, what every verified PCD of that
+//!   header asserts, and why each field and polynomial determines what it
+//!   stands for.
+//! - A step states, under **Soundness**, why its constraints make the output
+//!   header's assertion follow from the input headers' assertions.
+//!
+//! An assertion is about the values in one header and the polynomials in its
+//! slots. It says nothing about the published chain. The Proof Tree chapter
+//! of the book joins the assertions to the consensus rules.
+//!
+//! ## Assumptions
+//!
+//! - **Recursion.** A PCD that verifies was built by a tree of registered
+//!   steps, and every circuit in the tree is satisfied. Each input a step reads
+//!   is a verified PCD of the header the step declares. A value a step opens is
+//!   the value of the polynomial that the step producing that slot committed.
+//!   An output slot a step does not open holds the constant one. A header
+//!   reaches a step or a verifier as [`HEADER_SIZE`] elements that end in its
+//!   suffix, and no two headers share a suffix.
+//! - **Poseidon.** No two distinct triples of tag, absorbed elements and
+//!   squeeze position are known that give the same element. No absorbed
+//!   elements are known that give zero, or that give an element drawn at
+//!   random.
+//! - **Commitments.** No discrete-log relation is known among the generators of
+//!   either curve. An accumulator is the sum $\sum_j c_j G_j$ of fixed host
+//!   generators weighted by a polynomial's coefficients, without a blinding
+//!   term, so an accumulator determines its polynomial among those of at most
+//!   $2^{13}$ coefficients. A bridge hash commits to the two coordinates of an
+//!   accumulator under the nested generators, so a bridge hash determines its
+//!   accumulator. One accumulator has many bridge hashes.
+//!   [`bridge_hash`](crate::bridge_hash) computes the one an honest prover
+//!   uses.
+//!
+//! ## Checks at the challenge
+//!
+//! Ragu draws a step's challenge $\zeta$ after it has committed the step's
+//! output polynomials and staged values, and after both input proofs are
+//! fixed. Input header fields, input polynomials, output polynomials, staged
+//! values and constants are fixed before $\zeta$. A digest computed in the
+//! circuit is fixed before $\zeta$ when every element it absorbs is. Any other
+//! wire is the prover's choice with $\zeta$ in hand, the bridge hash and the
+//! output header's fields included.
+//!
+//! A step that equates two expressions in openings at $\zeta$ equates two
+//! polynomials at a random point. When every polynomial and coefficient in
+//! them is fixed before $\zeta$, the two polynomials are equal, except with
+//! probability at most $2^{14}/p$ for the degrees a product of two slots
+//! reaches. Each step names the values its identities read and says why each
+//! is fixed.
+//!
+//! An opening at any other point is the committed polynomial's value at that
+//! point. A zero opening shows that the point is a root.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

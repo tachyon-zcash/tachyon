@@ -5,6 +5,25 @@
 //! A tagged hash starts from a zero rate and the capacity element
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
 //! absorbs only its data. Every Tachyon Poseidon hash is tagged this way.
+//!
+//! # Injectivity
+//!
+//! The permutation has width five and the sponge has rate four. The sponge
+//! adds each block of four absorbed elements into the rate and permutes, and
+//! a last block of fewer than four is added with zeros in the missing
+//! positions. The first squeeze reads rate element zero of the final state,
+//! and a later squeeze reads the next rate element of the same state.
+//!
+//! The sponge does not record how many elements it absorbed, so an input and
+//! the same input followed by zeros give one digest. Each tag here belongs to
+//! one function, and that function absorbs a fixed number of elements. Two
+//! inputs to one function therefore differ in an absorbed element, and two
+//! functions differ in the tag. A domain is below $2^{128}$, so distinct
+//! domains are distinct capacity elements.
+//!
+//! Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
+//! then determines its function and every element that function absorbed.
+//! Each function below says what its absorbed elements determine in turn.
 
 use core::array;
 
@@ -56,6 +75,10 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee}, \mathsf{cm}_\mathsf{chg})$.
 ///
+/// A point other than the identity is its two affine coordinates, and `fee`
+/// is an integer below $2^{64}$, so the digest determines the fee commitment,
+/// the fee and the fee change commitment.
+///
 /// # Panics
 ///
 /// Panics if `cv_feemax` is the identity.
@@ -77,6 +100,17 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from `cv`, `rk` and the unordered tachygram pair,
 /// absorbing the pair's sum and product.
+///
+/// $$
+///   d = \mathsf{Poseidon}_\texttt{Tachyon-ActionDg}(
+///     x(\mathsf{cv}),\ y(\mathsf{cv}),\ x(\mathsf{rk}),\ y(\mathsf{rk}),\
+///     t_1 + t_2,\ t_1 \cdot t_2
+///   )
+/// $$
+///
+/// The pair is the root multiset of $X^2 - (t_1 + t_2) X + t_1 t_2$. The sum
+/// and product therefore determine the two tachygrams and not their order.
+/// The digest determines `cv`, `rk` and the unordered pair.
 ///
 /// # Panics
 ///
@@ -105,6 +139,14 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 ///
+/// $$
+///   \mathsf{pk} = \mathsf{Poseidon}_\texttt{Tachyon-PkDerive}(
+///     x(\mathsf{ak}),\ y(\mathsf{ak}),\ \mathsf{nk}
+///   )
+/// $$
+///
+/// A payment key determines $\mathsf{ak}$ and $\mathsf{nk}$.
+///
 /// # Panics
 ///
 /// Panics if `ak` is the identity.
@@ -123,6 +165,16 @@ pub fn payment_key(ak: EpAffine, nk: Fp) -> Fp {
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 
 /// Derives a note commitment from note fields.
+///
+/// $$
+///   \mathsf{cm} = \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(
+///     \mathsf{rcm},\ \mathsf{pk},\ v,\ \psi
+///   )
+/// $$
+///
+/// `value` is an integer below $2^{64}$ and enters as that integer, so a note
+/// commitment determines all four fields of its note. The circuit function
+/// absorbs whatever element it is given for $v$. The caller bounds it.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -137,6 +189,10 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// The preimage is the note opening rather than the commitment: both values are
 /// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
 /// observer pair them off and recover the output count.
+///
+/// The pad absorbs the same four elements as [`note_commitment`] under its
+/// own tag. A pad determines the note's four fields, and an element that is
+/// both a pad and a note commitment is a collision between the two tags.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -188,6 +244,17 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
 /// Derives the group of consecutive epoch nullifiers starting at the
 /// group-aligned epoch `epoch_start` from the note's master key.
+///
+/// The group is the first `PoseidonFp::RATE` squeezes of
+/// $\mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ g)$, for $g$ =
+/// `epoch_start`. The nullifier of epoch $e$ is squeeze $e \bmod 4$ of the
+/// group with $g = e - (e \bmod 4)$. The pair $(g,\ e \bmod 4)$ determines
+/// $e$, and the Poseidon assumption covers every squeeze position. A
+/// nullifier therefore determines $\mathsf{mk}$ and $e$, and an element that
+/// is both a nullifier and another digest of this module is a collision.
+///
+/// The function absorbs whatever element it is given for $g$. The caller
+/// holds it to a multiple of four.
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     emulated(NULLIFIER_DOMAIN, [mk, epoch_start])

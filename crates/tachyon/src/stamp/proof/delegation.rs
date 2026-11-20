@@ -30,12 +30,44 @@ use crate::{
     value,
 };
 
-/// A note's certified record: its commitment, its opening, and its master key
-/// (wallet-only).
+/// A note's commitment, its opening and its master key (wallet-only).
 ///
-/// [`NoteSeed`] proves that `mk` belongs to the note, so [`NullifierDerive`]
-/// can use it without proving the note's opening again.
-/// [`SpendBind`](super::spend::SpendBind) reads it.
+/// [`NullifierDerive`] reads `mk` and [`SpendBind`](super::spend::SpendBind)
+/// reads `mk`, the value and `pk`.
+///
+/// # Injectivity
+///
+/// Only [`NoteSeed`] outputs this header. A verified `NoteSecret` asserts that
+/// its prover knows a point $\mathsf{ak}$ and an element $\mathsf{nk}$ for
+/// which
+///
+/// - `note.pk` is the [payment key](poseidon::payment_key) of $\mathsf{ak}$ and
+///   $\mathsf{nk}$,
+/// - `mk` is the [master key](poseidon::nf_master) of `note.psi` and
+///   $\mathsf{nk}$,
+/// - `cm` is the [note commitment](poseidon::note_commitment) of `note`,
+/// - `note.rcm` is nonzero and `note.value` is an integer in `0..=MAX_MONEY`.
+///
+/// Each field determines what it stands for.
+///
+/// - `cm` stands for the note. A note commitment determines its four fields, so
+///   the header's `note` is the only opening of its `cm`.
+/// - `note.pk` stands for the note's owner. A payment key determines
+///   $\mathsf{ak}$ and $\mathsf{nk}$.
+/// - `note.value` is an integer below the modulus, so the element is that
+///   integer and no other.
+/// - `mk` stands for the note's nullifiers at every epoch. It is the digest of
+///   the $\psi$ and the $\mathsf{nk}$ that `cm` determines. `cm` therefore
+///   determines `mk`, and every verified `NoteSecret` of one `cm` has the same
+///   `mk`.
+///
+/// `mk` does not determine `cm`. Two notes with one $\psi$ and one
+/// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their values
+/// and `rcm`. Steps that join two headers of a note compare `cm`.
+///
+/// `Data` encodes as the six elements `(cm, rcm, pk, value, psi, mk)`. The
+/// native `value` is an integer at most `MAX_MONEY` and the other five are
+/// field elements, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
@@ -83,21 +115,42 @@ impl Header<Fp> for NoteSecret {
     }
 }
 
-/// A proven contiguous range of derived nullifiers (wallet-only).
+/// A note's nullifiers over the epochs `epoch_start..=epoch_end`
+/// (wallet-only).
 ///
-/// Covers epochs `[epoch_start, epoch_end]`. The output polynomial is an
-/// [`NfSeqPoly`] with exactly one member per covered epoch. That
-/// invariant is established at [`NullifierDerive`], preserved by
-/// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
-/// lean on for per-epoch completeness. `cm` binds the range to the real
-/// note.
+/// # Injectivity
 ///
-/// No consumer reads the range. It serves [`NullifierFuse`]'s contiguity
-/// check, which keeps the product squarefree, and squarefreeness forces a
-/// tested sequence's members distinct at
-/// [`UnspentBind`](super::pool::UnspentBind).
+/// [`NullifierDerive`] and [`NullifierFuse`] output this header. A verified
+/// `NoteNullifiers` asserts that `epoch_start <= epoch_end <= EPOCH_MAX` as
+/// integers, that a verified [`NoteSecret`] carries this `cm` with a master
+/// key $\mathsf{mk}$, and that its [`NfSeqPoly`] is
 ///
-/// Masking is the consuming step's responsibility.
+/// $$
+///   S(X) = \prod_{e} F_{e,\ \mathsf{nf}_e}(X)
+/// $$
+///
+/// over the epochs $e$ of `epoch_start..=epoch_end`. $F_{i,m}$ is the
+/// [indexed multiset](crate::collections::indexed_multiset)'s encoding of
+/// member $m$ at index $i$, and $\mathsf{nf}_e$ is the
+/// [nullifier](poseidon::nullifier_group) of $\mathsf{mk}$ at epoch $e$.
+///
+/// - `cm` stands for the note whose nullifiers these are. `cm` determines
+///   $\mathsf{mk}$, and $\mathsf{mk}$ and $e$ determine $\mathsf{nf}_e$.
+/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Each
+///   producer range-checks them, so an equation between two epochs holds over
+///   the integers, and the range holds the epochs from the first to the second
+///   and no others.
+/// - The three fields determine $S$. $S$ has one factor for each epoch of the
+///   range and no other factor. An epoch is within the encoding's index bound,
+///   so the factors are irreducible and pairwise different, $S$ determines the
+///   tuples $(e, \mathsf{nf}_e)$, and a polynomial that divides $S$ is a scalar
+///   times the factors of some of those epochs.
+///
+/// The second slot is padding. No producer opens it.
+///
+/// `Data` encodes as the three elements `(cm, epoch_start, epoch_end)`. A
+/// native epoch is an integer at most `EPOCH_MAX`, so distinct `Data` encode
+/// differently.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
@@ -146,17 +199,26 @@ impl Header<Fp> for NoteNullifiers {
 /// Certify a note's commitment and master key.
 ///
 /// Seed step. Witnesses the note's value and trapdoors and its proof
-/// authorizing key. The note's payment key is derived from `pak`, which pins
-/// `nk`; `mk` is derived from `nk` and `psi`; and `cm` commits to the
-/// assembled note. `nk` never leaves the step; only `pk`, which
-/// preimage-hides it, enters `cm`.
+/// authorizing key. `nk` stays inside the step. The header carries `pk` and
+/// `mk`, which are digests of it.
 ///
 /// # Soundness
 ///
-/// A seed can invent a note, so `cm` closes downstream, at
+/// The step reads no input and no challenge. Its constraints relate wires of
+/// its own, and the output header is built from those wires.
+///
+/// - `value` is allocated with a range check to `0..=MAX_MONEY`.
+/// - `rcm` is held nonzero.
+/// - $\mathsf{ak}$ is allocated as a point, which enforces the curve equation.
+///   The identity has no assignment.
+/// - `pk`, `mk` and `cm` are the outputs of the three digest circuits on
+///   $(\mathsf{ak}, \mathsf{nk})$, on $(\psi, \mathsf{nk})$ and on the four
+///   note fields. One $\mathsf{nk}$ wire and one $\psi$ wire feed all of them.
+///
+/// These are the equations [`NoteSecret`] asserts. The step does not show that
+/// `cm` was ever published.
 /// [`SpendableInit`](super::spendable::SpendableInit) and
-/// [`SpendBind`](super::spend::SpendBind). What this step establishes is
-/// the pairing: `mk` is *this* `cm`'s master key.
+/// [`QrSpendableInit`](super::spendable::QrSpendableInit) show that.
 #[derive(Debug)]
 pub struct NoteSeed;
 
@@ -272,12 +334,25 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// # Soundness
 ///
-/// The input proof identifies the note's master key. The start epoch is fixed
-/// before the challenge; it must be a multiple of the sponge rate, and the
-/// final epoch must remain in range. The circuit derives every nullifier and
-/// index from those inputs. Opening the committed sequence at the random
-/// challenge checks the whole window, whose bounds are published on the output
-/// header.
+/// The left input is a verified [`NoteSecret`], so its `mk` is the master key
+/// of its `cm`, and both are fixed before the challenge. `epoch_start` is
+/// staged, so it is fixed before the challenge too.
+///
+/// The circuit packs `epoch_start` from the bits of the epoch width with the
+/// two lowest held to zero. It is a multiple of four and at most `EPOCH_MAX`.
+/// `epoch_end` is `epoch_start + 15` and is range-checked, so the sum does
+/// not wrap and all sixteen epochs are in range.
+///
+/// Each of the four sponges absorbs `mk` and the first epoch of one group,
+/// `epoch_start + 4k`. Its four squeezes are the nullifiers of `mk` at that
+/// group's epochs. The sixteen nullifiers are digests of values fixed before
+/// the challenge, and each is paired with its own epoch as index.
+///
+/// The circuit multiplies the sixteen factors $F_{e,\ \mathsf{nf}_e}(\zeta)$
+/// and equates the product with the output sequence's opening at $\zeta$. The
+/// output sequence is committed before $\zeta$. It therefore equals the
+/// product of the sixteen factors, which is what [`NoteNullifiers`] asserts
+/// of the window. `cm` is copied from the input.
 ///
 /// # Panics
 ///
@@ -413,11 +488,18 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// # Soundness
 ///
-/// All three operands are committed and absorbed into the challenge, so the
-/// product identity pins `merged`'s member multiset to the union of the
-/// halves'. The contiguity check preserves the header invariant established
-/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
-/// so the announced range labels the member multiset truthfully.
+/// Both inputs are verified [`NoteNullifiers`]. Their `cm` are held equal, so
+/// both sequences hold nullifiers of one master key. `left.epoch_end + 1` is
+/// held equal to `right.epoch_start`. Both epochs are integers at most
+/// `EPOCH_MAX`, so the equation holds over the integers and the right range
+/// starts on the epoch after the left range ends.
+///
+/// The two input sequences and the output sequence are committed before the
+/// challenge. The circuit equates the output's opening at $\zeta$ with the
+/// product of the inputs' openings, so the output sequence is the product of
+/// the input sequences. That product has one factor for each epoch of
+/// `left.epoch_start..=right.epoch_end`, which is the range on the output
+/// header.
 ///
 /// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]
