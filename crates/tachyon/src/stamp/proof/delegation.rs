@@ -60,13 +60,14 @@ impl Header<Fp> for NoteSecret {
     ///
     /// Six elements at disjoint indices:
     ///
-    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
-    ///   element.
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype through `Tachygram`),
+    ///   written as its inner element.
     /// - 1..=4: `note`, through `gadgets::note::Note`, which writes `rcm`,
     ///   `pk`, `value` and `psi` in that order. `rcm`, `pk` and `psi` are `Fp`
     ///   newtypes, each written as its inner element. `value` is a
-    ///   `value::Positive`, written as its integer in `0..=MAX_MONEY`, which is
-    ///   less than $p$.
+    ///   `value::Positive` holding an `i64`, written as its `unsigned_abs`.
+    ///   Every constructor holds the `i64` to `0..=MAX_MONEY`, where
+    ///   `unsigned_abs` is the identity, and `MAX_MONEY` is less than $p$.
     /// - 5: `mk` (`NoteMasterKey`, an `Fp` newtype), written as its inner
     ///   element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -135,8 +136,8 @@ impl Header<Fp> for NoteNullifiers {
     ///
     /// Three elements at disjoint indices:
     ///
-    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
-    ///   element.
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype through `Tachygram`),
+    ///   written as its inner element.
     /// - 1: `epoch_start` (`EpochIndex`), written as its `u32`, which is less
     ///   than $p$.
     /// - 2: `epoch_end` (`EpochIndex`), written as its `u32`, which is less

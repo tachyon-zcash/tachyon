@@ -53,8 +53,8 @@ impl Header<Fp> for NoteSpendable {
     ///
     /// Three elements at disjoint indices:
     ///
-    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
-    ///   element.
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype through `Tachygram`),
+    ///   written as its inner element.
     /// - 1: `epoch_current` (`EpochIndex`), written as its `u32`, which is less
     ///   than $p$.
     /// - 2: `anchor` (`Anchor`, an `Fp` newtype), written as its inner element.

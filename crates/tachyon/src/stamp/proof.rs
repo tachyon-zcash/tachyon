@@ -48,8 +48,8 @@
 //!
 //! - An `Fp` newtype, directly or through `Tachygram`, is written as its inner
 //!   element. The map is the identity.
-//! - An `EpochIndex` or a `QrProfile` field is a `u32` written as its integer.
-//!   Every `u32` is less than $p$.
+//! - An `EpochIndex`, and each of a `QrProfile`'s `depth` and `bits`, is a
+//!   `u32` written as its integer. Every `u32` is less than $p$.
 //! - A `value::Positive` holds an `i64` and is written as its `unsigned_abs`.
 //!   Every constructor holds the `i64` to `0..=MAX_MONEY`. On that range
 //!   `unsigned_abs` is the identity, and `MAX_MONEY` is less than $p$.
@@ -58,9 +58,7 @@
 //!   `Point::alloc` returns an error on the identity and the bridge hash fields
 //!   panic on it, so the identity has no encoding.
 //!
-//! The range checks in `EpochIndex::alloc` and `Positive::alloc` constrain the
-//! allocated element and keep that element as the header wire. No header wire
-//! is a routine output, so no `Known` prediction stands in for a header
+//! No `encode` calls a routine, so no `Known` prediction stands in for a header
 //! element.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]

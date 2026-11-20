@@ -93,8 +93,7 @@ impl Header<Fp> for QrIntake {
     ///   inner element.
     /// - 4..=5: `profile` (`QrProfile`), through `gadgets::qr::QrProfile`,
     ///   which writes `depth` and then `bits`. Each is a `u32` written as its
-    ///   integer, which is less than $p$, in its own element. Distinct profiles
-    ///   write distinct pairs.
+    ///   integer, which is less than $p$, in its own element.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -254,8 +253,8 @@ impl Header<Fp> for QrSideSelection {
     ///
     /// `Data` is `QrIntakeSides::Data` and `encode` calls
     /// `QrIntakeSides::encode`, so this header writes the same eight elements.
-    /// The argument on `QrIntakeSides::encode` covers each field. The suffixes,
-    /// 16 here and 10 on `QrIntakeSides`, separate the two header types.
+    /// The argument on `QrIntakeSides::encode` covers each field. The suffix
+    /// element separates the two header types.
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,

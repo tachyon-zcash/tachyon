@@ -165,8 +165,8 @@ impl Header<Fp> for NoteUnspent {
     ///
     /// Five elements at disjoint indices:
     ///
-    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype), written as its inner
-    ///   element.
+    /// - 0: `cm` (`note::Commitment`, an `Fp` newtype through `Tachygram`),
+    ///   written as its inner element.
     /// - 1: `anchor_start` (`Anchor`, an `Fp` newtype), written as its inner
     ///   element.
     /// - 2: `epoch_start` (`EpochIndex`), written as its `u32`, which is less
