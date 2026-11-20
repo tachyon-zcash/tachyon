@@ -2,10 +2,7 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta,
-    udon::curve::Projective as _,
-};
+use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta, udon::curve::Projective as _};
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
@@ -57,57 +54,9 @@ impl Default for TachygramSetCommit {
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionSetCommit(Eq);
 
-impl ActionSetCommit {
-    /// Read as an affine point from the consensus wire format.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading fails or the bytes are not a canonical
-    /// curve point.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let commit = serialization::read_eq_affine(&mut reader)?;
-        Ok(Self(commit.into()))
-    }
-
-    /// Write as an affine point to the consensus wire format.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing fails.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
-        Ok(())
-    }
-}
-
-impl Default for ActionSetCommit {
-    /// A commitment to an empty set.
-    fn default() -> Self {
-        iter::empty().collect::<ActionSetPoly>().commit()
-    }
-}
-
 /// Pedersen commitment to an anchor span's member set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct AnchorSetCommit(Eq);
-
-impl AnchorSetCommit {
-    /// Commitment to the one-member set $\\{\mathsf{anchor}\\}$, the
-    /// polynomial $X - \mathsf{anchor}$, computed from the fixed generators:
-    ///
-    /// $$
-    ///   G_1 - [\mathsf{anchor}]\,G_0
-    /// $$
-    #[must_use]
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "the generator table spans every coefficient of a production-rank polynomial"
-    )]
-    pub fn singleton(anchor: Anchor) -> Self {
-        let generators = Pasta::host_generators(pasta::baked()).g();
-        Self(Eq::from(generators[1]) - generators[0] * Fp::from(anchor))
-    }
-}
 
 /// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
@@ -131,12 +80,6 @@ impl AnchorSetPoly {
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
         AnchorSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
     }
 }
 
@@ -163,12 +106,6 @@ impl TachygramSetPoly {
     pub fn commit(&self) -> TachygramSetCommit {
         TachygramSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
 }
 
 impl ActionSetPoly {
@@ -179,12 +116,6 @@ impl ActionSetPoly {
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
         ActionSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
     }
 }
 

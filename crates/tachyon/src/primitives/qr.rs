@@ -53,12 +53,6 @@ impl QrInterpolantPoly {
     pub fn commit(&self) -> QrInterpolantCommit {
         QrInterpolantCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
     }
-
-    /// Evaluate the interpolant at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
-    }
 }
 
 /// Pedersen commitment to a class interpolant.
@@ -78,12 +72,6 @@ impl QrQuotientPoly {
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
         QrQuotientCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the quotient at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
     }
 }
 

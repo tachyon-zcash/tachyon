@@ -28,7 +28,7 @@ pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
-#[derive(AsRef, Clone, Debug, From, Into)]
+#[derive(AsRef, Clone, Debug, Into)]
 pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
 
 impl NfSeqPoly {
@@ -48,18 +48,6 @@ impl NfSeqPoly {
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
         NfSeqCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the sequence polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
-}
-
-impl Default for NfSeqPoly {
-    fn default() -> Self {
-        Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
     }
 }
 
