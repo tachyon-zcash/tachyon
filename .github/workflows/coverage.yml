@@ -17,9 +17,9 @@ on:
       - '.github/workflows/coverage.yml'
       - '.github/actions/**'
 
-# Cancel in-progress runs when a new commit is pushed to the same branch/PR
+# Cancel older runs for the same pull request or push ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
