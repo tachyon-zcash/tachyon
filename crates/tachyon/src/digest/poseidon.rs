@@ -13,7 +13,7 @@ use ragu::drivers::emulator::{Emulator, Wireless};
 use ragu::maybe::{Always, Maybe as _};
 use ragu::pasta::PoseidonFp;
 use ragu::primitives::Element;
-use udon::curve::Affine as _;
+use ragu::udon::curve::Affine as _;
 
 use crate::constants::EVIDENCE_TREE_ARITY;
 use crate::pasta::{EpAffine, Fp};
@@ -293,8 +293,8 @@ pub(crate) mod circuit {
     use ragu::primitives::poseidon::{Sponge, SpongeState};
     use ragu::primitives::vec::FixedVec;
     use ragu::primitives::{Element, GadgetExt as _, Point};
+    use ragu::udon::field::Field as _;
     use ragu::{Cycle as _, PoseidonPermutation as _, Result};
-    use udon::field::Field as _;
 
     use super::{
         ACTION_DIGEST_DOMAIN, ANCHOR_EPOCH_DOMAIN, ANCHOR_STAMP_DOMAIN, EVIDENCE_NODE_DOMAIN,

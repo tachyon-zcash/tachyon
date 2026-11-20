@@ -7,7 +7,7 @@ pub(crate) mod orchard {
     use lazy_static::lazy_static;
     use pasta_curves::arithmetic::CurveExt as _;
     use pasta_curves::pallas::Point;
-    use udon::curve::Affine as _;
+    use ragu::udon::curve::Affine as _;
 
     use crate::pasta::{Ep, EpAffine};
 

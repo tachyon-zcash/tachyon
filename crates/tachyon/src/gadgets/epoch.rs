@@ -10,8 +10,8 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::comparison::GadgetEquals;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Boolean, Element};
+use ragu::udon::field::Field as _;
 use ragu::{PoseidonPermutation as _, Result};
-use udon::field::Field as _;
 
 use super::uint::Uint;
 use crate::constants::EPOCH_MAX;

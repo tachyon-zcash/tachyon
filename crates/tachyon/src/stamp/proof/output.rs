@@ -11,7 +11,7 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Element, Point};
 use ragu::step::{Encoded, Index, Oracles, Step};
-use udon::curve::EndomorphismAffine;
+use ragu::udon::curve::EndomorphismAffine;
 
 use crate::gadgets::{self, fixed_base};
 use crate::note::Note;

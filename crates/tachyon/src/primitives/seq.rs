@@ -6,10 +6,10 @@ use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::pasta::Pasta;
+use ragu::udon::exec::{ExecutionOptions, SerialExecutor};
+use ragu::udon::fft::{Domain, Expansion, Transform};
+use ragu::udon::field::Field as _;
 use ragu::{Cycle as _, Polynomial, ProductionRank};
-use udon::exec::{ExecutionOptions, SerialExecutor};
-use udon::fft::{Domain, Expansion, Transform};
-use udon::field::Field as _;
 
 use crate::collections::indexed_multiset;
 use crate::nullifier::Nullifier;
@@ -59,7 +59,7 @@ impl NfSeqPoly {
 
 impl Default for NfSeqPoly {
     fn default() -> Self {
-        use udon::field::Field as _;
+        use ragu::udon::field::Field as _;
 
         Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
     }

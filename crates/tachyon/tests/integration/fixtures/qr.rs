@@ -6,10 +6,10 @@ use alloc::vec::Vec;
 use core::iter;
 
 use ragu::pasta::Pasta;
+use ragu::udon::curve::{Affine as _, Projective as _};
+use ragu::udon::field::Field as _;
 use ragu::{Polynomial, ProductionRank};
 use rand_core::CryptoRng;
-use udon::curve::{Affine as _, Projective as _};
-use udon::field::Field as _;
 use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
 use zcash_tachyon::nullifier::Nullifier;
 use zcash_tachyon::pasta::{EpAffine, Eq, Fp};

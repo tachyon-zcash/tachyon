@@ -10,7 +10,7 @@ use ragu::Result;
 use ragu::drivers::Driver;
 use ragu::gadgets::Gadget;
 use ragu::primitives::Element;
-use udon::field::Field as _;
+use ragu::udon::field::Field as _;
 
 use crate::collections::indexed_multiset::NON_RESIDUE;
 use crate::pasta::Fp;

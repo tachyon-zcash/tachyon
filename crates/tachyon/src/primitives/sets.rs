@@ -3,8 +3,8 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::pasta::Pasta;
+use ragu::udon::curve::Projective as _;
 use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank};
-use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::collections::multiset;

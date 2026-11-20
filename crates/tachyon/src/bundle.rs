@@ -111,10 +111,10 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use ragu::pasta::Pasta;
+use ragu::udon::curve::Affine as _;
+use ragu::udon::field::Field as _;
 use ragu::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
-use udon::curve::Affine as _;
-use udon::field::Field as _;
 
 use crate::digest::blake2b;
 use crate::keys::{private, public};

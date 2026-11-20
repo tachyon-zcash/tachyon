@@ -8,7 +8,7 @@ use ragu::gadgets::Gadget;
 use ragu::maybe::Maybe as _;
 use ragu::primitives::vec::{ConstLen, FixedVec};
 use ragu::primitives::{Boolean, Element, GadgetExt as _};
-use udon::field::Field;
+use ragu::udon::field::Field;
 
 use crate::pasta::Fp;
 

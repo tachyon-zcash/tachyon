@@ -1,7 +1,7 @@
 //! Proof-related keys: `ProofAuthorizingKey`.
 
 use derive_more::Debug;
-use udon::field::Field as _;
+use ragu::udon::field::Field as _;
 
 use super::note::{NullifierKey, PaymentKey};
 use super::public;

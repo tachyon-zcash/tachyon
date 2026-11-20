@@ -34,8 +34,8 @@ use ragu::drivers::{Coeff, Driver};
 use ragu::maybe::Maybe as _;
 use ragu::primitives::vec::{ConstLen, FixedVec};
 use ragu::primitives::{Boolean, Element, GadgetExt as _, Point, multiadd};
-use udon::curve::{Affine as _, Projective as _};
-use udon::field::Field as _;
+use ragu::udon::curve::{Affine as _, Projective as _};
+use ragu::udon::field::Field as _;
 
 use crate::constants::MAX_MONEY;
 use crate::constants::orchard::{self, ACTION_AUTH_GENERATOR};

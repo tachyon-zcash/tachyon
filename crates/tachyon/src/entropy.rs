@@ -8,8 +8,8 @@ use core::any;
 use core::marker::PhantomData;
 
 use derive_more::{Debug, Into};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use crate::note;
 use crate::pasta::{Fp, Fq};

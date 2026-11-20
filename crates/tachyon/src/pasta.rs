@@ -4,8 +4,8 @@
 //! to the same types through `Cycle` projections, which derives on Tachyon's
 //! newtypes cannot see through.
 
-use udon::curve::{AffineAdapter, Pallas, ProjectiveAdapter, Vesta};
-use udon::field::{FieldAdapter, PallasBase, PallasScalar};
+use ragu::udon::curve::{AffineAdapter, Pallas, ProjectiveAdapter, Vesta};
+use ragu::udon::field::{FieldAdapter, PallasBase, PallasScalar};
 
 /// The Pallas base field.
 pub type Fp = FieldAdapter<PallasBase>;

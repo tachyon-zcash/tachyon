@@ -11,7 +11,7 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Element, GadgetExt as _, Point};
 use ragu::step::{Encoded, Index, Oracles, Step};
-use udon::curve::EndomorphismAffine;
+use ragu::udon::curve::EndomorphismAffine;
 
 use super::delegation::NoteSecret;
 use super::spendable::NoteSpendable;

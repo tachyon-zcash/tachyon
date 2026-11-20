@@ -4,9 +4,9 @@ use core::cmp::Ordering;
 use core::ops::Neg;
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
+use ragu::udon::curve::Affine as _;
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::curve::Affine as _;
-use udon::field::Field as _;
 
 use crate::constants::MAX_MONEY;
 use crate::constants::orchard::{VALUE_COMMIT_R, VALUE_COMMIT_V};

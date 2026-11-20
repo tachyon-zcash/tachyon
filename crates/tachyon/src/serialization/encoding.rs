@@ -5,8 +5,8 @@
 //! (`Fq`), and Pallas affine curve points (`EpAffine`).
 
 use corez::io::{self, Read, Write};
-use udon::curve::Affine as _;
-use udon::field::Field as _;
+use ragu::udon::curve::Affine as _;
+use ragu::udon::field::Field as _;
 
 use crate::pasta::{EpAffine, EqAffine, Fp};
 use crate::serialization::compact_size::{CompactSize, CompactSizeError};

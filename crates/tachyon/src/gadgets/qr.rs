@@ -7,7 +7,7 @@ use ragu::maybe::Maybe as _;
 use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Boolean, Element, GadgetExt as _};
-use udon::field::Field as _;
+use ragu::udon::field::Field as _;
 
 use super::uint::Uint;
 use crate::collections::qr::QUADRATIC_NON_RESIDUE;

@@ -11,16 +11,16 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use ragu::pasta::Pasta;
 use ragu::pcd::wire;
+use ragu::udon::curve::{Affine as _, Projective as _};
+use ragu::udon::field::Field as _;
 use ragu::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
-use udon::curve::{Affine as _, Projective as _};
-use udon::field::Field as _;
 
 use super::proof::stamp::{
     ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
     StampLift, StampMerge, StampUnmerge,
 };
-use super::proof::{App, HEADER_SIZE, output};
+use super::proof::{App, output};
 use crate::bridge_hash::bridge_hash;
 use crate::bundle::StateByte;
 use crate::digest::{blake2b, poseidon};
@@ -138,7 +138,7 @@ pub trait Proof: sealed::Sealed {
 
 impl Proof for Uncompressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<HEADER_SIZE>()
+        Self::encoded_len()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
@@ -174,7 +174,7 @@ impl Proof for Uncompressed {
 
 impl Proof for Compressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<ProductionRank, HEADER_SIZE>()
+        Self::encoded_len::<ProductionRank>()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {

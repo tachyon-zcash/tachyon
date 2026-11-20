@@ -4,9 +4,9 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec;
 use core::assert_matches;
 
+use ragu::udon::curve::Projective as _;
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
-use udon::curve::Projective as _;
 use zcash_tachyon::stamp::proof::stamp::{Stamp, StampUnmerge};
 use zcash_tachyon::stamp::{self, ProofStamp};
 use zcash_tachyon::{

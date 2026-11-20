@@ -2,9 +2,9 @@ use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::pasta::Pasta;
+use ragu::udon::field::Field as _;
 use ragu::{Cycle as _, Polynomial, ProductionRank};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use super::PolySlot;
 use crate::collections::qr;
@@ -172,7 +172,7 @@ impl QrClassRoot {
     /// `discriminant`, in depth order.
     #[must_use]
     pub fn along(value: Fp, discriminant: QrDiscriminant) -> [Self; QrProfile::MAX_DEPTH] {
-        use udon::field::Field as _;
+        use ragu::udon::field::Field as _;
 
         let mut shifted = value + Fp::from(discriminant);
         array::from_fn(|_| {

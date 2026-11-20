@@ -6,8 +6,8 @@ use core::marker::PhantomData;
 use derive_more::Debug;
 use ragu::header::{Has, Header, OnlinePoly};
 use ragu::step::{HeaderInput, Prepared};
+use ragu::udon::field::Field as _;
 use ragu::{Polynomial, ProductionRank};
-use udon::field::Field as _;
 
 use crate::pasta::Fp;
 

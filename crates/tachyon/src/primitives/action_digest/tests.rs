@@ -1,6 +1,6 @@
+use ragu::udon::field::Field as _;
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
-use udon::field::Field as _;
 
 use super::*;
 use crate::entropy::ActionEntropy;

@@ -4,10 +4,10 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec;
 use core::assert_matches;
 
+use ragu::udon::curve::Projective as _;
+use ragu::udon::field::Field as _;
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
-use udon::curve::Projective as _;
-use udon::field::Field as _;
 use zcash_tachyon::constants::MAX_MONEY;
 use zcash_tachyon::pasta::Fp;
 use zcash_tachyon::stamp::proof::stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp};

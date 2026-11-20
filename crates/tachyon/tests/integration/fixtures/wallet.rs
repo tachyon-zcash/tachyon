@@ -7,11 +7,11 @@ use core::cell::RefCell;
 use core::ops::RangeInclusive;
 
 use ragu::pasta::{Pasta, PoseidonFp};
+use ragu::udon::field::Field as _;
 use ragu::{PoseidonPermutation as _, ProductionRank};
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 use zcash_tachyon::bundle::{self, Bundle};
 use zcash_tachyon::entropy::ActionEntropy;
 use zcash_tachyon::keys::{ProofAuthorizingKey, private};

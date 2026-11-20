@@ -6,10 +6,10 @@ use core::{array, iter};
 
 use ragu::ProductionRank;
 use ragu::pasta::Pasta;
+use ragu::udon::curve::Projective as _;
+use ragu::udon::field::Field as _;
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
-use udon::curve::Projective as _;
-use udon::field::Field as _;
 use zcash_tachyon::constants::EPOCH_MAX;
 use zcash_tachyon::digest::poseidon;
 use zcash_tachyon::entropy::ActionEntropy;

@@ -8,11 +8,11 @@ use core::cmp::Reverse;
 use core::{assert_matches, mem};
 
 use corez::io;
+use ragu::udon::curve::Projective as _;
+use ragu::udon::field::Field as _;
 use ragu::{ProductionRank, Rank as _};
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
-use udon::curve::Projective as _;
-use udon::field::Field as _;
 use zcash_tachyon::bundle::{Plan, PlanError, Signature};
 use zcash_tachyon::constants::MAX_MONEY;
 use zcash_tachyon::digest::blake2b;

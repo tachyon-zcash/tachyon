@@ -5,10 +5,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{array, assert_matches, iter, mem, slice};
 
+use ragu::udon::curve::Projective as _;
+use ragu::udon::field::Field as _;
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
-use udon::curve::Projective as _;
-use udon::field::Field as _;
 use zcash_tachyon::constants::EPOCH_MAX;
 use zcash_tachyon::nullifier::Nullifier;
 use zcash_tachyon::pasta::{Eq, Fp};

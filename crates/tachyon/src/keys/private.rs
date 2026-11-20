@@ -3,8 +3,8 @@
 use core::marker::PhantomData;
 
 use derive_more::{Debug, From};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use super::note::{NullifierKey, PaymentKey};
 use super::{proof, public};
@@ -287,7 +287,7 @@ impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
     fn from(trapdoors: I) -> Self {
-        use udon::field::Field as _;
+        use ragu::udon::field::Field as _;
 
         let sum: Fq = trapdoors
             .into_iter()

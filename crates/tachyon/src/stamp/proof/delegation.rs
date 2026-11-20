@@ -17,8 +17,8 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Element, GadgetExt as _, Point};
 use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
-use udon::curve::Affine as _;
-use udon::field::Field as _;
+use ragu::udon::curve::Affine as _;
+use ragu::udon::field::Field as _;
 
 use crate::digest::poseidon;
 use crate::keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey};

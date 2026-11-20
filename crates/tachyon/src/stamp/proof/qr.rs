@@ -29,8 +29,8 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Boolean, Element, GadgetExt as _};
 use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
-use udon::curve::Affine as _;
-use udon::field::Field as _;
+use ragu::udon::curve::Affine as _;
+use ragu::udon::field::Field as _;
 
 use super::pool::{ArbitraryUnspent, ArbitraryUnspentOutput};
 use super::summary::Summary;

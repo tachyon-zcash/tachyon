@@ -23,7 +23,7 @@ use ragu::primitives::allocator::Allocator;
 use ragu::primitives::io::Write;
 use ragu::primitives::{Boolean, Element, GadgetExt as _};
 use ragu::step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
-use udon::curve::Affine as _;
+use ragu::udon::curve::Affine as _;
 
 use super::qr::{QrBucket, QrBucketOutput};
 use crate::constants::EVIDENCE_TREE_ARITY;

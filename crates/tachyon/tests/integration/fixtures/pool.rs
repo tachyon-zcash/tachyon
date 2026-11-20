@@ -9,8 +9,8 @@ use std::sync::LazyLock;
 
 use ragu::ProductionRank;
 use ragu::pasta::Pasta;
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 use zcash_tachyon::nullifier::{self, Nullifier};
 use zcash_tachyon::pasta::Fp;
 use zcash_tachyon::stamp::proof::{App, pool, qr, summary};

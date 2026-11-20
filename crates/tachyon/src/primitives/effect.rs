@@ -6,7 +6,7 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use udon::field::Field as _;
+use ragu::udon::field::Field as _;
 
 use crate::digest::poseidon;
 use crate::entropy::ActionEntropy;
