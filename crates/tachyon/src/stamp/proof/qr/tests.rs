@@ -119,7 +119,7 @@ fn qr_bucket_seal_rejects_substituted_contents() {
         )
         .unwrap();
     let empty = app.bootstrap_proof().clone().carry::<()>(());
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let (intake, ()) = app
         .fuse(
             rng,
@@ -154,8 +154,8 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor, epoch, discriminant, linear)`
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, Fp);
+    /// `(anchor, epoch, discriminants, linear)`
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminants, Fp);
 
     const INDEX: Index = QrEmptyIntakeSeed::INDEX;
 
@@ -236,7 +236,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
 fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
     let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
 
     let [honest, forged] = [Fp::ZERO, Fp::ONE].map(|linear| {
         app.seed(

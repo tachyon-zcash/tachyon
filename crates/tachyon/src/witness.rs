@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
+        QrDiscriminants, QrProfile, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -217,43 +217,43 @@ pub fn summary_advance(
     )
 }
 
-/// Prepare the witness for [`QrSummaryIntake`]: `(discriminant)`.
+/// Prepare the witness for [`QrSummaryIntake`]: `(discriminants,)`.
 #[must_use]
 pub const fn qr_summary_intake(
     (_left, _right): (StepLeft<QrSummaryIntake>, StepRight<QrSummaryIntake>),
-    discriminant: QrDiscriminant,
+    discriminants: QrDiscriminants,
 ) -> StepWitness<'static, QrSummaryIntake> {
-    (discriminant,)
+    (discriminants,)
 }
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
-/// discriminant, stamp_set)`.
+/// discriminants, stamp_set)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
-    discriminant: QrDiscriminant,
+    discriminants: QrDiscriminants,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, QrStampIntakeSeed> {
     (
         anchor_prev,
         epoch,
-        discriminant,
+        discriminants,
         tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 
 /// Prepare the witness for [`QrEmptyIntakeSeed`]: `(anchor, epoch,
-/// discriminant)`.
+/// discriminants)`.
 #[must_use]
 pub const fn qr_empty_intake_seed(
     (_left, _right): (StepLeft<QrEmptyIntakeSeed>, StepRight<QrEmptyIntakeSeed>),
     anchor: Anchor,
     epoch: EpochIndex,
-    discriminant: QrDiscriminant,
+    discriminants: QrDiscriminants,
 ) -> StepWitness<'static, QrEmptyIntakeSeed> {
-    (anchor, epoch, discriminant)
+    (anchor, epoch, discriminants)
 }
 
 /// Prepare the witness for [`QrIntakeMerge`]: `(merged,)`.
@@ -276,8 +276,8 @@ pub fn qr_intake_split(
     (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
-    let (non_residue, residue) = discriminant.at(profile.depth).split(members);
+    let (_epoch, _anchor_prev, _anchor_end, discriminants, profile) = left;
+    let (non_residue, residue) = discriminants.at(profile.depth).split(members);
     (non_residue.set_poly(), residue.set_poly())
 }
 
@@ -285,7 +285,7 @@ pub fn qr_intake_split(
 ///
 /// `members` is the intake's members and `child` is the class descended into.
 /// The witness decomposes the members of class `child.sibling()` at
-/// `discriminant.at(profile.depth)`.
+/// `discriminants.at(profile.depth)`.
 ///
 /// A different list can still give a well-formed pair. [`QrSideSelect`]
 /// commits the pair it receives; [`QrSideDescend`] checks that the identity
@@ -300,8 +300,8 @@ pub fn qr_side_select(
     members: &[Tachygram],
     child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
-    let (non_residue, residue) = discriminant.at(profile.depth).split(members);
+    let (_epoch, _anchor_prev, _anchor_end, discriminants, profile, _non_residue_hash) = left;
+    let (non_residue, residue) = discriminants.at(profile.depth).split(members);
     let sibling = match child {
         QrClass::Residue => non_residue,
         QrClass::NonResidue => residue,
@@ -348,10 +348,10 @@ pub fn qr_unspent_init(
     (left, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = left;
+    let (epoch, _anchor_start, _anchor_next, discriminants, profile, _) = left;
     (
         value,
-        discriminant.class_claims(value),
+        discriminants.class_claims(value),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
@@ -395,11 +395,11 @@ pub fn unspent_lift(
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = left;
-    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = right;
+    let (epoch, _anchor_start, _anchor_next, discriminants, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
     (
         value,
-        discriminant.class_claims(value),
+        discriminants.class_claims(value),
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )

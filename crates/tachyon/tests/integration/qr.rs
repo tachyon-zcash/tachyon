@@ -6,7 +6,7 @@ use core::{array, assert_matches, iter, mem, slice};
 use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClass, QrClassClaim, QrDiscriminant, QrProfile,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClass, QrClassClaim, QrDiscriminants, QrProfile,
     Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EPOCH_MAX,
     nullifier::Nullifier,
@@ -54,7 +54,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor_prev = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     assert_matches!(
         app
             .seed(
@@ -191,7 +191,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let member = Tachygram::random(rng);
     let side = discriminant.at(0).classify(member).class();
 
@@ -249,7 +249,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(278);
     let zero = Anchor::from(Fp::ZERO);
-    let disc = QrDiscriminant::random(rng);
+    let disc = QrDiscriminants::random(rng);
     let member = Tachygram::random(rng);
     let side = disc.at(0).classify(member).class();
     let scale = Fp::from(7u64);
@@ -308,7 +308,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         .nk
         .derive_note_private(note.psi)
         .derive_nullifier(epoch);
-    let disc = iter::repeat_with(|| QrDiscriminant::random(rng))
+    let disc = iter::repeat_with(|| QrDiscriminants::random(rng))
         .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
         .unwrap();
     let side = disc.at(0).classify(cm).class();
@@ -458,7 +458,7 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         .nk
         .derive_note_private(note.psi)
         .derive_nullifier(EpochIndex::new(0));
-    let disc = iter::repeat_with(|| QrDiscriminant::random(rng))
+    let disc = iter::repeat_with(|| QrDiscriminants::random(rng))
         .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
         .unwrap();
     let side = disc.at(0).classify(cm).class();
@@ -573,7 +573,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
     let [root_case, child_case] = [0, 1].map(|depth| {
         let epoch = EpochIndex::new(3);
         let start = Anchor::random(rng);
-        let discriminant = QrDiscriminant::random(rng);
+        let discriminant = QrDiscriminants::random(rng);
         let value = -Fp::from(discriminant) - Fp::from(u64::from(depth));
         let exceptional = Tachygram::from(value);
         let members: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(rng))
@@ -665,7 +665,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     let rng = &mut StdRng::seed_from_u64(0);
     let exceptional_epoch = EpochIndex::new(3);
     let exceptional_start = Anchor::random(rng);
-    let exceptional_discriminant = QrDiscriminant::random(rng);
+    let exceptional_discriminant = QrDiscriminants::random(rng);
     let exceptional_members = vec![Tachygram::from(-Fp::from(exceptional_discriminant))];
     let (exceptional_root, ()) = app
         .seed(
@@ -802,7 +802,7 @@ fn qr_side_descend_matches_selection_metadata() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::random(rng);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
     let (root, ()) = app
         .seed(
@@ -821,7 +821,7 @@ fn qr_side_descend_matches_selection_metadata() {
         )
         .unwrap();
     let foreign_start = Anchor::random(rng);
-    let foreign_discriminant = QrDiscriminant::random(rng);
+    let foreign_discriminant = QrDiscriminants::random(rng);
     for (other_epoch, other_start, other_discriminant, other_members, expected) in [
         (
             epoch.next().unwrap(),
@@ -1079,7 +1079,7 @@ fn qr_intake_merge_joins_two_spans() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let start = Anchor::random(rng);
     let left_members: [Tachygram; 5] = array::from_fn(|_| Tachygram::random(rng));
     let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
@@ -1125,7 +1125,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let left_members: [Tachygram; 5] = array::from_fn(|_| Tachygram::random(rng));
     let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::random(rng));
     let start = Anchor::random(rng);
@@ -1154,7 +1154,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         (
             junction,
             epoch,
-            QrDiscriminant::random(rng),
+            QrDiscriminants::random(rng),
             "intakes under different discriminants",
         ),
     ] {
@@ -1730,7 +1730,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
 fn qr_bucket_seal_refuses_the_final_epoch() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let discriminant = QrDiscriminant::random(rng);
+    let discriminant = QrDiscriminants::random(rng);
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
     let intake = QrIntakeEntry::empty(

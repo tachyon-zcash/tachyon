@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use ragu::{WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Note, QrClass, QrDiscriminant, QrProfile, Tachygram,
+    Anchor, BlockHeight, EpochIndex, Note, QrClass, QrDiscriminants, QrProfile, Tachygram,
     TachygramSetCommit, TachygramSetPoly, note,
     nullifier::{self, Nullifier},
     pasta::Fp,
@@ -181,7 +181,7 @@ impl PoolSim {
         &SHARED
     }
 
-    fn leaves(members: &[Tachygram], discriminant: QrDiscriminant, level: u32) -> usize {
+    fn leaves(members: &[Tachygram], discriminant: QrDiscriminants, level: u32) -> usize {
         if level == 5 || members.is_empty() {
             return 1;
         }
@@ -193,7 +193,7 @@ impl PoolSim {
             + Self::leaves(&non_residue, discriminant, level + 1)
     }
 
-    fn qr_key((start, end): (Anchor, Anchor), discriminant: QrDiscriminant) -> Vec<u8> {
+    fn qr_key((start, end): (Anchor, Anchor), discriminant: QrDiscriminants) -> Vec<u8> {
         [
             Fp::from(start).to_bytes(),
             Fp::from(end).to_bytes(),
@@ -204,7 +204,7 @@ impl PoolSim {
 
     fn qr_profile_key(
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         profile: QrProfile,
     ) -> Vec<u8> {
         let mut key = Self::qr_key(span, discriminant);
@@ -217,7 +217,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
     ) -> QrIntakeEntry {
         static ROOTS: Proved<QrIntakeEntry> = Proved::new("qr_root");
 
@@ -263,7 +263,7 @@ impl PoolSim {
     fn qr_sides(
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         parent: &QrIntakeEntry,
     ) -> ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides> {
         static SIDES: Proved<ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides>> =
@@ -314,7 +314,7 @@ impl PoolSim {
     fn qr_child(
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         parent: &QrIntakeEntry,
         side: QrClass,
     ) -> QrIntakeEntry {
@@ -332,7 +332,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         value: Fp,
         depth: u32,
     ) -> QrIntakeEntry {
@@ -349,7 +349,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         value: Fp,
     ) -> [QrIntakeEntry; 4] {
         static DESCENTS: Proved<[QrIntakeEntry; 4]> = Proved::new("qr_descent");
@@ -383,7 +383,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         value: Fp,
         depth: u32,
     ) -> ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides> {
@@ -395,7 +395,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         depth: u32,
     ) -> Vec<QrIntakeEntry> {
         let mut layer = vec![self.qr_root(app, span, discriminant)];
@@ -489,7 +489,7 @@ impl PoolSim {
         &self,
         app: &App<'_>,
         span: (Anchor, Anchor),
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
         value: Fp,
         depth: u32,
         anchor_final_prev: Anchor,
@@ -725,13 +725,13 @@ impl PoolSim {
         )
     }
 
-    pub(crate) fn epoch_discriminant(&self, epoch: EpochIndex) -> QrDiscriminant {
+    pub(crate) fn epoch_discriminant(&self, epoch: EpochIndex) -> QrDiscriminants {
         if u32::from(epoch) == 0 {
             return shared_discriminant();
         }
         let mut key = u32::from(epoch).to_le_bytes().to_vec();
         key.extend_from_slice(&Fp::from(self.entry_anchor(epoch)).to_bytes());
-        QrDiscriminant::random(&mut keyed_rng("epoch discriminant", &key))
+        QrDiscriminants::random(&mut keyed_rng("epoch discriminant", &key))
     }
 
     fn epoch_bucket_anchors(&self, epoch: EpochIndex) -> [Anchor; 3] {

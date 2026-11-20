@@ -57,24 +57,53 @@ impl QrClass {
     }
 }
 
-/// A QR discriminant $R$. A value $x$ takes the residue side at $R$ iff
-/// $x + R$ is a square or zero. A network's headers carry its first
-/// discriminant $R_0$; depth $j$ classifies at `R_0.at(j)`.
+/// A network's discriminants $R_j = R_0 + j$, indexed by depth.
+/// The network's headers carry this collection as its first discriminant.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrDiscriminant(Fp);
+pub struct QrDiscriminants(Fp);
 
-impl QrDiscriminant {
+impl QrDiscriminants {
     /// Sample a uniformly random first discriminant.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// This discriminant plus `depth`: $R_j$ from $R_0$.
+    /// The discriminant $R_j$ at the given depth.
     #[must_use]
-    pub fn at(self, depth: u32) -> Self {
-        Self(self.0 + Fp::from(u64::from(depth)))
+    pub fn at(self, depth: u32) -> QrDiscriminant {
+        QrDiscriminant(self.0 + Fp::from(u64::from(depth)))
     }
 
+    /// The profile `value` takes through `depth` splits.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `depth` exceeds [`QrProfile::MAX_DEPTH`].
+    #[must_use]
+    pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
+        (0..depth).fold(QrProfile::ROOT, |profile, level| {
+            profile.descend(self.at(level).classify(value).class())
+        })
+    }
+
+    /// The claim for `value` at each of the [`QrProfile::MAX_DEPTH`] profile
+    /// depths, as given to a query step.
+    #[must_use]
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "array indices are below QrProfile::MAX_DEPTH"
+    )]
+    pub fn class_claims(self, value: Tachygram) -> [QrClassClaim; QrProfile::MAX_DEPTH] {
+        array::from_fn(|level| self.at(level as u32).classify(value).claim())
+    }
+}
+
+/// One discriminant $R$.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrDiscriminant(Fp);
+
+impl QrDiscriminant {
     /// Classify `value` at this discriminant by solving the class equation
     /// for the multiplier $m$ and root $r$.
     ///
@@ -130,30 +159,6 @@ impl QrDiscriminant {
                 .push((classification.value(), classification.root()));
         }
         (non_residue, residue)
-    }
-
-    /// The profile `value` takes through `depth` splits, with this as the
-    /// first discriminant.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `depth` exceeds [`QrProfile::MAX_DEPTH`].
-    #[must_use]
-    pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
-        (0..depth).fold(QrProfile::ROOT, |profile, level| {
-            profile.descend(self.at(level).classify(value).class())
-        })
-    }
-
-    /// The claim for `value` at each profile depth.
-    #[must_use]
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        reason = "array indices are below QrProfile::MAX_DEPTH"
-    )]
-    pub fn class_claims(self, value: Tachygram) -> [QrClassClaim; QrProfile::MAX_DEPTH] {
-        array::from_fn(|level| self.at(level as u32).classify(value).claim())
     }
 }
 

@@ -10,7 +10,7 @@ use ragu::{
 };
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrClass, QrDiscriminant, QrProfile, QrQuotientPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrClass, QrDiscriminants, QrProfile, QrQuotientPoly,
     Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
@@ -37,7 +37,7 @@ pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 /// An exhaustive scan upward from 1, one Jacobi symbol per integer, found
 /// them.
 ///
-/// A change to `QrDiscriminant::at` or `QrDiscriminant::classify` would
+/// A change to `QrDiscriminants::at` or `QrDiscriminant::classify` would
 /// invalidate the two constants, and the assertions here would fail.
 pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
     let discriminant = shared_discriminant();
@@ -61,7 +61,7 @@ pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
 /// The first keyed shared discriminant whose depth-two profiles differ for the
 /// shared 500-value note's commitment and epoch-zero nullifier under the shared
 /// key.
-pub(crate) fn shared_discriminant() -> QrDiscriminant {
+pub(crate) fn shared_discriminant() -> QrDiscriminants {
     let note = PoolSim::shared_note(500);
     let nf = shared_sk()
         .derive_proof_private()
@@ -69,7 +69,7 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
         .derive_note_private(note.psi)
         .derive_nullifier(EpochIndex::new(0));
     let mut rng = keyed_rng("shared discriminant", &[]);
-    iter::repeat_with(|| QrDiscriminant::random(&mut rng))
+    iter::repeat_with(|| QrDiscriminants::random(&mut rng))
         .find(|&discriminant| {
             discriminant.profile(note.commitment().into(), 2) != discriminant.profile(nf.into(), 2)
         })
@@ -93,7 +93,7 @@ impl QrIntakeEntry {
         app: &App<'_>,
         anchor: Anchor,
         epoch: EpochIndex,
-        discriminant: QrDiscriminant,
+        discriminant: QrDiscriminants,
     ) -> Self {
         static EMPTY: Proved<QrIntakeEntry> = Proved::new("qr_empty_intake");
 
@@ -256,7 +256,7 @@ pub(crate) struct EvidenceLeaf {
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminant,
+        QrDiscriminants,
         QrProfile,
         TachygramSetBridge,
     ),
@@ -525,7 +525,7 @@ impl EvidenceTreeEntry {
     }
 }
 
-pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
+pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminants, depth: u32) -> QrProfile {
     let first = value + Fp::from(discriminant);
     let bits = (0..depth).fold(0, |bits, level| {
         let shifted = first + Fp::from(u64::from(level));

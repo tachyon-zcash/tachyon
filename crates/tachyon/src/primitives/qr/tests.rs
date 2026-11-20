@@ -95,7 +95,7 @@ fn class_decomposition_requires_distinct_members() {
 
 #[test]
 fn profile_records_the_classes_from_the_first_discriminant() {
-    let discriminant = QrDiscriminant::from(Fp::from(11));
+    let discriminant = QrDiscriminants::from(Fp::from(11));
     let value = Tachygram::from(Fp::from(3));
     for depth in [0, 1, 31, 32] {
         let first = Fp::from(value) + Fp::from(discriminant);
@@ -113,8 +113,20 @@ fn profile_records_the_classes_from_the_first_discriminant() {
 #[test]
 #[should_panic(expected = "profile has no bit left for another side")]
 fn a_profile_past_the_maximum_depth_panics() {
-    let discriminant = QrDiscriminant::from(Fp::from(11));
+    let discriminant = QrDiscriminants::from(Fp::from(11));
     let _profile = discriminant.profile(Tachygram::from(Fp::from(3)), u32::BITS + 1);
+}
+
+#[test]
+fn discriminants_are_indexed_from_the_first() {
+    let first = Fp::from(11);
+    let discriminants = QrDiscriminants::from(first);
+    for depth in [0, 31, 32] {
+        assert_eq!(
+            Fp::from(discriminants.at(depth)),
+            first + Fp::from(u64::from(depth))
+        );
+    }
 }
 
 #[test]
@@ -153,7 +165,7 @@ fn the_profile_reaches_the_maximum_depth() {
 
 #[test]
 fn class_claims_attest_the_shifted_value() {
-    let discriminant = QrDiscriminant::from(Fp::from(11));
+    let discriminant = QrDiscriminants::from(Fp::from(11));
     for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
         for (depth, QrClassClaim { class, root }) in
             (0..).zip(discriminant.class_claims(value.into()))
