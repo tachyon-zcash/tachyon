@@ -59,7 +59,31 @@ $$
     \Bigr)
 $$
 
-In $\mathbb{F}_p$ ($p \equiv 1 \pmod{3}$), $2$ is a cubic non-residue. For $i \leq \mathsf{EPOCH\_MAX}$, $i + 1$ is nonzero in $\mathbb{F}_p$, so a root $x \in \mathbb{F}_p$ of $(\delta_i + (i+1)X)^3 - 2$ would make $\delta_i + (i+1)x$ a cube root of $2$; having no root, the cubic is irreducible over $\mathbb{F}_p$. Two factors $(\delta_i + (i+1)X)^3 - 2$ and $(\delta_j + (j+1)X)^3 - 2$ are scalar multiples only when $(\delta_i + (i+1)X) / (\delta_j + (j+1)X)$ is a cube root of unity in $\mathbb{F}_p$, which requires $((i+1)/(j+1))^3 = 1$. Bounding $i + 1 < \lfloor\sqrt{p/3}\rfloor$ rules out nontrivial cube-root-of-unity ratios, so distinct $(i, \delta_i)$ pairs produce non-associate irreducible factors.
+In $\mathbb{F}_p$ with
+
+$$
+  p \equiv 1 \pmod{3}
+$$
+
+the constant $2$ is a cubic non-residue. For $i$ in $0..\mathsf{EPOCH\_MAX}$ the index successor is nonzero in $\mathbb{F}_p$ and a root $x$ in $\mathbb{F}_p$ of the cubic for $(i, \delta_i)$ would satisfy
+
+$$
+  \bigl(\delta_i + (i+1)x\bigr)^3 = 2
+$$
+
+making that base a cube root of $2$ inside $\mathbb{F}_p$ itself. Having no root, the cubic is irreducible over $\mathbb{F}_p$ as well. Two such cubics at $i$ and $j$ are scalar multiples only when their linear bases have a cube-root-of-unity ratio in $\mathbb{F}_p$ and therefore
+
+$$
+  \left(\frac{i+1}{j+1}\right)^3 = 1
+$$
+
+Bounding
+
+$$
+  i + 1 < \lfloor\sqrt{p/3}\rfloor
+$$
+
+rules out nontrivial cube-root-of-unity ratios, so distinct pairs $(i, \delta_i)$ produce non-associate irreducible factors.
 
 In parallel, $\mathsf{mk}$ proves derivation of a nullifier sequence for a range at least covering the delegated sequence.
 
