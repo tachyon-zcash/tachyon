@@ -14,7 +14,8 @@
 //!
 //! where $c = 2$ is selected because it is the smallest cubic non-residue.
 //!
-//! Since $(m + (i+1)X)^3 \neq c$ the encoding is irreducible.
+//! Because $i + 1 \neq 0$ and $c$ is not a cube in $\mathbb{F}_p$, the cubic
+//! $F_{i,m}(X)$ has no root in $\mathbb{F}_p$ and is therefore irreducible.
 //!
 //! ## Product composition
 //!

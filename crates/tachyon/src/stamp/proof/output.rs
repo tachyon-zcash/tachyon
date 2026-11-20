@@ -132,8 +132,7 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
-        // Two zero tachygrams collide whatever they were meant to be, and a
-        // zero root leaves the set polynomial factor `(X - tg)` trivial.
+        // Both tachygrams are enforced nonzero.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their

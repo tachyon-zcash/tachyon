@@ -836,13 +836,18 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             .verify_proof(rng, app, action_digests.iter().copied())
     }
 
-    /// Verify everything about this bundle, returning the tachygram set
-    /// commitment that anchor advancement absorbs. Does not verify any
-    /// details about the provided adjuncts.
+    /// Verify this bundle's signatures, coverage and stamp proof, returning
+    /// the tachygram set commitment that anchor advancement absorbs. Does not
+    /// verify any details about the provided adjuncts.
     ///
     /// - Signatures are valid
     /// - The stamp covers this bundle and the adjuncts
-    /// - Proof is correct
+    /// - The stamp proof is valid
+    ///
+    /// Before accepting the stamp, the caller must also check that its anchor
+    /// is an acknowledged end-of-block anchor within the current or immediately
+    /// preceding epoch, and that no covered tachygram appears in an earlier
+    /// stamp of that two-epoch window.
     ///
     /// The adjuncts are the stripped bundles the stamp's
     /// [`adjuncts`](ProofStamp::adjuncts) lists, looked up by txid. This method

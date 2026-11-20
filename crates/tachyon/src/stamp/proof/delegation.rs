@@ -92,10 +92,10 @@ impl Header<Fp> for NoteSecret {
 /// lean on for per-epoch completeness. `cm` binds the range to the real
 /// note.
 ///
-/// No consumer reads the range. It serves [`NullifierFuse`]'s contiguity
-/// check, which keeps the product squarefree, and squarefreeness forces a
-/// tested sequence's members distinct at
-/// [`UnspentBind`](super::pool::UnspentBind).
+/// No consumer reads the range. [`NullifierFuse`]'s contiguity check keeps
+/// the announced `[epoch_start, epoch_end]` header invariant truthful;
+/// per-epoch exclusion at [`UnspentBind`](super::pool::UnspentBind) does not
+/// depend on it.
 ///
 /// Masking is the consuming step's responsibility.
 #[derive(Clone, Debug)]
