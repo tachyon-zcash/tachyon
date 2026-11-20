@@ -24,6 +24,18 @@
 //! before $\zeta$. A commitment that is only witnessed, or threaded onward
 //! unchanged, binds nothing until a public input, a header or a consensus check
 //! fixes it.
+//!
+//! Verifiers bind a PCD's data to its header by recomputing `encode` natively,
+//! ignoring constraints and taking `Known` predictions in place of running
+//! routines, so no two `Data` values, even ones the circuit rejects, may encode
+//! to the same field elements. Each header here writes every field to its own
+//! fixed elements via one of three encodings injective over the field's whole
+//! type: an `Fp` newtype as itself; an epoch index, note amount, or QR
+//! profile's depth and bits as one element each, every value below $p$; or a
+//! non-identity Pallas point as its affine coordinates. Packing, hashing, or
+//! reducing a value needs its own injectivity argument. The suffix separates
+//! headers that share an encoding, such as `QrIntakeSides` and
+//! `QrSideSelection`.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
