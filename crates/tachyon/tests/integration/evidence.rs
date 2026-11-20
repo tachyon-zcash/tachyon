@@ -3,7 +3,7 @@ use core::iter;
 use ragu::{Polynomial, udon::field::Field as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminants, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     pasta::Fp,
     stamp::proof::{evidence, qr},
@@ -129,7 +129,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     assert!(app.verify_uncompressed(&tree0, &mut *rng).unwrap());
 
-    let other_discriminant = QrDiscriminant::random(rng);
+    let other_discriminant = QrDiscriminants::random(rng);
     let foreign = pool.qr_bucket(
         app,
         span0,

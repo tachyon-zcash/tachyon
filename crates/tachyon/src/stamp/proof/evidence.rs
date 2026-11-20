@@ -32,7 +32,7 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
+        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminants, QrProfile, TachygramSetBridge,
         TachygramSetPoly,
     },
 };
@@ -40,7 +40,7 @@ use crate::{
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
 /// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
-/// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
+/// whose own `(epoch, anchor_start, anchor_next, discriminants)` are the four
 /// this header carries. A one-leaf tree's root is that leaf's digest, and
 /// [`EvidenceTreeDescend`] is what produces one.
 ///
@@ -62,8 +62,14 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for EvidenceTree {
-    /// `(epoch, anchor_start, anchor_next, discriminant, root)`
-    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
+    /// `(epoch, anchor_start, anchor_next, discriminants, root)`
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminants,
+        EvidenceTreeRoot,
+    );
     type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
@@ -99,7 +105,7 @@ impl Header<Fp> for EvidenceTree {
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(.., discriminant, _)| Fp::from(discriminant)),
+                    .map(|&(.., discriminants, _)| Fp::from(discriminants)),
             )?,
             root: Element::alloc(
                 dr,
@@ -131,12 +137,12 @@ pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for EvidenceTreePair {
-    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
+    /// `(epoch, anchor_start, anchor_next, discriminants, first, second)`
     type Data = (
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminant,
+        QrDiscriminants,
         EvidenceTreeRoot,
         EvidenceTreeRoot,
     );
@@ -175,7 +181,7 @@ impl Header<Fp> for EvidenceTreePair {
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(_, _, _, discriminant, ..)| Fp::from(discriminant)),
+                    .map(|&(_, _, _, discriminants, ..)| Fp::from(discriminants)),
             )?,
             first: Element::alloc(
                 dr,

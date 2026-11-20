@@ -12,7 +12,7 @@ use ragu::{
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, QrClassRoot},
+    primitives::{self, QrClassClaim},
 };
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
@@ -89,7 +89,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
         dr: &mut D,
         value: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
-        classes: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
+        claims: DriverValue<D, [QrClassClaim; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
         let mut shifted = value.add(dr, discriminant);
@@ -103,12 +103,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].0),
+                claims.as_ref().map(|values| values[position].class.bit()),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].1),
+                claims.as_ref().map(|values| values[position].root),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;

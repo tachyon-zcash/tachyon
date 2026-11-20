@@ -40,22 +40,22 @@ use super::{
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
     summary::Summary,
 };
-pub use crate::collections::qr::classify;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     digest::poseidon,
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
-        QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassClaim, QrDiscriminants,
+        QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge,
+        TachygramSetPoly,
     },
 };
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
 ///
 /// Covers stamp folds over `(anchor_prev, anchor_end]`.
-/// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
+/// A split classifies at `discriminants.at(profile.depth)`. A builder keeps its
 /// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
@@ -72,8 +72,8 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrIntake {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
-    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
+    /// `(epoch, anchor_prev, anchor_end, discriminants, profile)`
+    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminants, QrProfile);
     type OnlinePolyCommit = (Padding, PolySlot<TachygramSetPoly>);
     type Output = Kind![Fp; QrIntakeOutput<'_, _>];
 
@@ -109,7 +109,7 @@ impl Header<Fp> for QrIntake {
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(.., discriminant, _)| Fp::from(discriminant)),
+                    .map(|&(.., discriminants, _)| Fp::from(discriminants)),
             )?,
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
@@ -154,13 +154,13 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrIntakeSides {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
+    /// `(epoch, anchor_prev, anchor_end, discriminants, profile,
     /// non_residue_hash)`
     type Data = (
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminant,
+        QrDiscriminants,
         QrProfile,
         TachygramSetBridge,
     );
@@ -219,6 +219,8 @@ impl Header<Fp> for QrIntakeSides {
 pub struct QrSideSelection;
 
 impl Header<Fp> for QrSideSelection {
+    /// `(epoch, anchor_prev, anchor_end, discriminants, profile,
+    /// non_residue_hash)`
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type OnlinePolyCommit = (PolySlot<QrInterpolantPoly>, PolySlot<QrQuotientPoly>);
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
@@ -238,7 +240,7 @@ impl Header<Fp> for QrSideSelection {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`].
+/// `discriminants` is a free witness; see [`QrDiscriminants`].
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -247,8 +249,8 @@ impl Step<Pasta> for QrSummaryIntake {
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant)`
-    type Witness<'source> = (QrDiscriminant,);
+    /// `(discriminants,)`
+    type Witness<'source> = (QrDiscriminants,);
 
     const INDEX: Index = Index::new(15);
 
@@ -289,17 +291,17 @@ impl Step<Pasta> for QrSummaryIntake {
             &mut (),
             witness
                 .as_ref()
-                .map(|&(discriminant,)| Fp::from(discriminant)),
+                .map(|&(discriminants,)| Fp::from(discriminants)),
         )?;
         let data = D::just(|| {
-            let (discriminant,) = witness.take();
+            let (discriminants,) = witness.take();
             let (summary_epoch, summary_anchor_prev, summary_anchor_end) = left.take();
             let () = right.take();
             (
                 summary_epoch,
                 summary_anchor_prev,
                 summary_anchor_end,
-                discriminant,
+                discriminants,
                 QrProfile::ROOT,
             )
         });
@@ -327,7 +329,7 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`]. The contents are
+/// `discriminants` is a free witness; see [`QrDiscriminants`]. The contents are
 /// the stamp's tachygram set and open once; their bridge hash enters
 /// `anchor_end`.
 #[derive(Debug)]
@@ -338,8 +340,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor_prev, epoch, discriminant, stamp)`
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetPoly);
+    /// `(anchor_prev, epoch, discriminants, stamp)`
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminants, TachygramSetPoly);
 
     const INDEX: Index = Index::new(21);
 
@@ -380,7 +382,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
             &mut (),
             witness
                 .as_ref()
-                .map(|&(_, _, discriminant, _)| Fp::from(discriminant)),
+                .map(|&(_, _, discriminants, _)| Fp::from(discriminants)),
         )?;
         let previous = Element::alloc(
             dr,
@@ -447,7 +449,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
 /// digest of `anchor` into `epoch + 1`. The sealed bucket ends on the published
 /// entry anchor of `epoch + 1` only if `anchor` is both the entry anchor and
 /// the final anchor of `epoch`. That holds only when the epoch published no
-/// stamp. `discriminant` is a free witness. See [`QrDiscriminant`].
+/// stamp. `discriminants` is a free witness. See [`QrDiscriminants`].
 /// The contents open once at the challenge and are constrained to one.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
@@ -457,8 +459,8 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor, epoch, discriminant)`
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
+    /// `(anchor, epoch, discriminants)`
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminants);
 
     const INDEX: Index = Index::new(23);
 
@@ -498,7 +500,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
             &mut (),
             witness
                 .as_ref()
-                .map(|&(_, _, discriminant)| Fp::from(discriminant)),
+                .map(|&(_, _, discriminants)| Fp::from(discriminants)),
         )?;
         let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
@@ -826,8 +828,8 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit,)`
-    type Witness<'source> = (bool,);
+    /// `(class,)`
+    type Witness<'source> = (QrClass,);
 
     const INDEX: Index = Index::new(18);
     const NUM_STAGED: usize = 1;
@@ -838,13 +840,16 @@ impl Step<Pasta> for QrSideDescend {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let &(bit,) = witness;
-        let prepared = if bit {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
-        } else {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+        let &(class,) = witness;
+        let prepared = match class {
+            QrClass::NonResidue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+            },
+            QrClass::Residue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
+            },
         };
-        Ok(prepared.stage([Fp::from(u64::from(bit))]))
+        Ok(prepared.stage([Fp::from(u64::from(class.bit()))]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -887,7 +892,7 @@ impl Step<Pasta> for QrSideDescend {
         {
             source.enforce_equal(dr, selected)?;
         }
-        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
+        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(class,)| class.bit()))?;
         let discriminant_element = sides
             .intake
             .discriminant
@@ -937,7 +942,7 @@ impl Step<Pasta> for QrSideDescend {
                 anchor_prev,
                 anchor_end,
                 discriminant,
-                profile.descend(bit.value().take()),
+                profile.descend(QrClass::from_bit(bit.value().take())),
             )
         });
         Ok((
@@ -973,13 +978,13 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
 }
 
 impl Header<Fp> for QrBucket {
-    /// `(epoch, anchor_start, anchor_next, discriminant, profile,
+    /// `(epoch, anchor_start, anchor_next, discriminants, profile,
     /// contents_hash)`
     type Data = (
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminant,
+        QrDiscriminants,
         QrProfile,
         TachygramSetBridge,
     );
@@ -1027,7 +1032,7 @@ impl Header<Fp> for QrBucket {
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(_, _, _, discriminant, ..)| Fp::from(discriminant)),
+                    .map(|&(_, _, _, discriminants, ..)| Fp::from(discriminants)),
             )?,
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
@@ -1082,9 +1087,9 @@ impl Header<Fp> for QrBucket {
 /// accepts. Consensus acknowledges every end-of-block anchor. Membership of an
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
-/// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
-/// The left and output contents open once each to preserve the contents and
-/// certify their bridge hash.
+/// `discriminants` is prover-chosen and unchecked here. See
+/// [`QrDiscriminants`]. The left and output contents open once each to preserve
+/// the contents and certify their bridge hash.
 ///
 /// # Caller contract
 ///
@@ -1232,9 +1237,9 @@ impl Step<Pasta> for QrBucketSeal {
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
-/// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to. `value` is a free witness. The challenge absorbs
-/// it, so the sequence identity fixes the one member to it;
+/// the first of the bucket's `discriminants`, so the exclusion holds for the
+/// network the bucket belongs to. `value` is a free witness. The challenge
+/// absorbs it, so the sequence identity fixes the one member to it;
 /// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
 /// note's genuine derivation.
 ///
@@ -1248,10 +1253,10 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence)`
+    /// `(value, claims, mask, sequence)`
     type Witness<'source> = (
         Tachygram,
-        [QrClassRoot; QrProfile::MAX_DEPTH],
+        [QrClassClaim; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
     );
