@@ -9,7 +9,7 @@ use ragu::{
 };
 use rand_core::CryptoRng;
 
-use super::{PolySlot, Tachygram};
+use super::{PolySlot, Tachygram, TachygramSetPoly};
 use crate::{
     collections::qr,
     pasta,
@@ -109,43 +109,27 @@ impl QrDiscriminant {
     /// Split `members` at this discriminant into `(non_residue, residue)`.
     /// Each list retains its input order and any repeats.
     #[must_use]
-    pub fn split(self, members: &[Tachygram]) -> (Vec<Tachygram>, Vec<Tachygram>) {
-        members
-            .iter()
-            .copied()
-            .partition(|&member| self.classify(member).class() == QrClass::NonResidue)
-    }
-
-    /// The class decomposition $(u, h)$ of `members` at this discriminant.
-    /// With the set polynomial $q$ and class multiplier $m$,
-    ///
-    /// $$
-    /// u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
-    /// $$
-    ///
-    /// [`QrSideSelect`](crate::stamp::proof::qr::QrSideSelect) commits the
-    /// pair. [`QrSideDescend`](crate::stamp::proof::qr::QrSideDescend)
-    /// checks the identity against the sibling's slot.
-    ///
-    /// Returns `None` if a member is of the other class or is repeated.
-    #[must_use]
-    pub fn class_decomposition(
-        self,
-        class: QrClass,
-        members: &[Tachygram],
-    ) -> Option<(QrInterpolantPoly, QrQuotientPoly)> {
-        let multiplier = class.multiplier();
-        let points = members
-            .iter()
-            .map(|&member| {
-                let classification = self.classify(member);
-                (classification.class() == class)
-                    .then_some((Fp::from(member), classification.root()))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        qr::decomposition(points, multiplier, self.0).map(|(interpolant, quotient)| {
-            (QrInterpolantPoly(interpolant), QrQuotientPoly(quotient))
-        })
+    pub fn split(self, members: &[Tachygram]) -> (QrSide, QrSide) {
+        let mut non_residue = QrSide {
+            discriminant: self,
+            class: QrClass::NonResidue,
+            points: Vec::new(),
+        };
+        let mut residue = QrSide {
+            discriminant: self,
+            class: QrClass::Residue,
+            points: Vec::new(),
+        };
+        for &member in members {
+            let classification = self.classify(member);
+            let side = match classification.class() {
+                QrClass::NonResidue => &mut non_residue,
+                QrClass::Residue => &mut residue,
+            };
+            side.points
+                .push((classification.value(), classification.root()));
+        }
+        (non_residue, residue)
     }
 
     /// The profile `value` takes through `depth` splits, with this as the
@@ -170,6 +154,73 @@ impl QrDiscriminant {
     )]
     pub fn class_claims(self, value: Tachygram) -> [QrClassClaim; QrProfile::MAX_DEPTH] {
         array::from_fn(|level| self.at(level as u32).classify(value).claim())
+    }
+}
+
+/// One side of a split: the classifications that share a class at one
+/// discriminant.
+#[derive(Debug)]
+pub struct QrSide {
+    discriminant: QrDiscriminant,
+    class: QrClass,
+    points: Vec<(Tachygram, Fp)>,
+}
+
+impl QrSide {
+    /// The discriminant $R$ of this side.
+    #[must_use]
+    pub const fn discriminant(&self) -> QrDiscriminant {
+        self.discriminant
+    }
+
+    /// The class of this side.
+    #[must_use]
+    pub const fn class(&self) -> QrClass {
+        self.class
+    }
+
+    /// The side's classifications, in the order the members were given.
+    pub fn classifications(&self) -> impl ExactSizeIterator<Item = QrClassification> + '_ {
+        self.points.iter().map(|&(value, root)| QrClassification {
+            value,
+            discriminant: self.discriminant,
+            class: self.class,
+            root,
+        })
+    }
+
+    /// The side's members, in the order they were given.
+    pub fn members(&self) -> impl ExactSizeIterator<Item = Tachygram> + '_ {
+        self.points.iter().map(|&(value, _root)| value)
+    }
+
+    /// The side's set polynomial $q$.
+    #[must_use]
+    pub fn set_poly(&self) -> TachygramSetPoly {
+        self.members().collect()
+    }
+
+    /// The class decomposition $(u, h)$ of this side, with $u$ interpolating
+    /// its member and root pairs $(x, r)$.
+    ///
+    /// $$
+    /// u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
+    /// $$
+    ///
+    /// [`QrSideSelect`](crate::stamp::proof::qr::QrSideSelect) commits the
+    /// pair. [`QrSideDescend`](crate::stamp::proof::qr::QrSideDescend)
+    /// checks the identity against the sibling's slot.
+    ///
+    /// Returns `None` when a member repeats.
+    #[must_use]
+    pub fn class_decomposition(&self) -> Option<(QrInterpolantPoly, QrQuotientPoly)> {
+        let points = self
+            .points
+            .iter()
+            .map(|&(value, root)| (Fp::from(value), root));
+        qr::decomposition(points, self.class.multiplier(), self.discriminant.into()).map(
+            |(interpolant, quotient)| (QrInterpolantPoly(interpolant), QrQuotientPoly(quotient)),
+        )
     }
 }
 

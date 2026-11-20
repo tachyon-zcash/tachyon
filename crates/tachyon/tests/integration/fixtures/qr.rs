@@ -166,12 +166,19 @@ impl QrIntakeEntry {
             rng,
             app,
             kept,
-            &[(non_residue, Fp::ONE), (residue, Fp::ONE)],
+            &[
+                (non_residue.members().collect(), Fp::ONE),
+                (residue.members().collect(), Fp::ONE),
+            ],
         )
     }
 
     /// Explicit factors in non-residue/residue order, including their scalar
     /// factors.
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named components of each factor"
+    )]
     pub(crate) fn split_with_factors<RNG: CryptoRng, const N: usize>(
         self,
         rng: &mut RNG,
@@ -193,19 +200,23 @@ impl QrIntakeEntry {
             .unwrap();
 
         kept.map(|child| {
-            let [non_residue, residue] = factors.each_ref();
+            let [non_residue_factor, residue_factor] = factors.each_ref();
             let (sibling, child_factor) = match child {
-                QrClass::NonResidue => (residue, non_residue),
-                QrClass::Residue => (non_residue, residue),
+                QrClass::NonResidue => (residue_factor, non_residue_factor),
+                QrClass::Residue => (non_residue_factor, residue_factor),
             };
             let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) =
                 *sides.data();
-            let (interpolant, quotient) = discriminant
-                .at(profile.depth)
-                .class_decomposition(child.sibling(), &sibling.0)
-                .unwrap();
+            let (sibling_members, sibling_scale) = sibling;
+            let (non_residue, residue) = discriminant.at(profile.depth).split(sibling_members);
+            let (sibling_side, other_side) = match child.sibling() {
+                QrClass::NonResidue => (non_residue, residue),
+                QrClass::Residue => (residue, non_residue),
+            };
+            assert_eq!(other_side.members().len(), 0);
+            let (interpolant, quotient) = sibling_side.class_decomposition().unwrap();
             let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
-            scaled_quotient.scale(sibling.1.invert().unwrap());
+            scaled_quotient.scale(sibling_scale.invert().unwrap());
             let (selection, ()) = app
                 .fuse(
                     rng,
@@ -215,7 +226,8 @@ impl QrIntakeEntry {
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .unwrap();
-            let members = child_factor.0.clone();
+            let (child_members, _child_scale) = child_factor;
+            let members = child_members.clone();
             let (pcd, ()) = app
                 .fuse(
                     rng,

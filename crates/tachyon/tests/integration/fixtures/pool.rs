@@ -305,7 +305,10 @@ impl PoolSim {
             QrClass::NonResidue => non_residue,
             QrClass::Residue => residue,
         };
-        QrIntakeEntry { pcd, members }
+        QrIntakeEntry {
+            pcd,
+            members: members.members().collect(),
+        }
     }
 
     fn qr_child(

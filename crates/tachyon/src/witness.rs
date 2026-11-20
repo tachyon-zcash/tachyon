@@ -278,10 +278,7 @@ pub fn qr_intake_split(
 ) -> StepWitness<'static, QrIntakeSplit> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
     let (non_residue, residue) = discriminant.at(profile.depth).split(members);
-    (
-        non_residue.into_iter().collect(),
-        residue.into_iter().collect(),
-    )
+    (non_residue.set_poly(), residue.set_poly())
 }
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
@@ -304,8 +301,7 @@ pub fn qr_side_select(
     child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
-    let at_depth = discriminant.at(profile.depth);
-    let (non_residue, residue) = at_depth.split(members);
+    let (non_residue, residue) = discriminant.at(profile.depth).split(members);
     let sibling = match child {
         QrClass::Residue => non_residue,
         QrClass::NonResidue => residue,
@@ -314,9 +310,9 @@ pub fn qr_side_select(
         clippy::expect_used,
         reason = "repeated sibling members are invalid input"
     )]
-    at_depth
-        .class_decomposition(child.sibling(), &sibling)
-        .expect("the sibling class's members are distinct")
+    sibling
+        .class_decomposition()
+        .expect("distinct members of the sibling class")
 }
 
 /// Prepare the witness for [`QrSideDescend`]: `(class,)`.

@@ -53,56 +53,44 @@ fn split_keeps_class_order_and_repeated_members() {
     let members = [square, nonsquare, zero, other_nonsquare, nonsquare, square];
 
     let (non_residue, residue) = discriminant.split(&members);
-    assert_eq!(non_residue, [nonsquare, other_nonsquare, nonsquare]);
-    assert_eq!(residue, [square, zero, square]);
-    for (class, list) in [
+    assert_eq!(
+        non_residue.members().collect::<Vec<_>>(),
+        [nonsquare, other_nonsquare, nonsquare]
+    );
+    assert_eq!(
+        residue.members().collect::<Vec<_>>(),
+        [square, zero, square]
+    );
+    for (class, side) in [
         (QrClass::NonResidue, non_residue),
         (QrClass::Residue, residue),
     ] {
-        for member in list {
-            assert_eq!(discriminant.classify(member).class(), class);
+        assert_eq!(side.class(), class);
+        assert_eq!(side.discriminant(), discriminant);
+        for classification in side.classifications() {
+            assert_eq!(classification.class(), class);
+            let shifted = Fp::from(classification.value()) + Fp::from(discriminant);
+            assert_eq!(classification.root().square(), class.multiplier() * shifted);
+            if shifted == Fp::ZERO {
+                assert_eq!(class, QrClass::Residue);
+            }
         }
     }
 }
 
 #[test]
-fn class_decomposition_requires_distinct_members_of_the_class() {
+fn class_decomposition_requires_distinct_members() {
     let discriminant = QrDiscriminant::from(Fp::from(11));
     let exceptional = -Fp::from(discriminant);
     let zero = Tachygram::from(exceptional);
     let square = Tachygram::from(Fp::ONE + exceptional);
-    let nonsquare = Tachygram::from(qr::QUADRATIC_NON_RESIDUE + exceptional);
-
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::Residue, &[nonsquare])
-            .is_none()
-    );
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::NonResidue, &[square])
-            .is_none()
-    );
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::NonResidue, &[zero])
-            .is_none()
-    );
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::Residue, &[square, square])
-            .is_none()
-    );
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::NonResidue, &[])
-            .is_some()
-    );
-    assert!(
-        discriminant
-            .class_decomposition(QrClass::Residue, &[zero])
-            .is_some()
-    );
+    let (_, repeated) = discriminant.split(&[square, square]);
+    assert!(repeated.class_decomposition().is_none());
+    let (empty_non_residue, empty_residue) = discriminant.split(&[]);
+    assert!(empty_non_residue.class_decomposition().is_some());
+    assert!(empty_residue.class_decomposition().is_some());
+    let (_, exceptional_residue) = discriminant.split(&[zero]);
+    assert!(exceptional_residue.class_decomposition().is_some());
 }
 
 #[test]
