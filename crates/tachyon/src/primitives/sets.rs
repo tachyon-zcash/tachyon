@@ -8,13 +8,13 @@ use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
     collections::multiset,
     pasta,
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{EpAffine, EqAffine, Fp},
     serialization,
 };
 
 /// Pedersen commitment to a tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct TachygramSetCommit(Eq);
+pub struct TachygramSetCommit(EqAffine);
 
 /// Bridge hash of a tachygram-set commitment: a Pallas point.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -29,7 +29,7 @@ impl TachygramSetCommit {
     /// curve point.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let commit = serialization::read_eq_affine(&mut reader)?;
-        Ok(Self(commit.into()))
+        Ok(Self(commit))
     }
 
     /// Write as an affine point to the consensus wire format.
@@ -38,7 +38,7 @@ impl TachygramSetCommit {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
+        serialization::write_eq_affine(&mut writer, &self.0)?;
         Ok(())
     }
 }
@@ -52,11 +52,11 @@ impl Default for TachygramSetCommit {
 
 /// Pedersen commitment to a stamp's action-digest set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct ActionSetCommit(Eq);
+pub struct ActionSetCommit(EqAffine);
 
 /// Pedersen commitment to an anchor span's member set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct AnchorSetCommit(Eq);
+pub struct AnchorSetCommit(EqAffine);
 
 /// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
@@ -79,7 +79,11 @@ impl AnchorSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
-        AnchorSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
+        AnchorSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
@@ -104,7 +108,11 @@ impl TachygramSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> TachygramSetCommit {
-        TachygramSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
+        TachygramSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
@@ -115,7 +123,11 @@ impl ActionSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
-        ActionSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
+        ActionSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 

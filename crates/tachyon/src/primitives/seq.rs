@@ -8,6 +8,7 @@ use ragu::{
     Cycle as _, Polynomial, ProductionRank,
     pasta::Pasta,
     udon::{
+        curve::Projective as _,
         exec::{ExecutionOptions, SerialExecutor},
         fft::{Domain, Expansion, Transform},
         field::Field as _,
@@ -18,13 +19,13 @@ use crate::{
     collections::indexed_multiset,
     nullifier::Nullifier,
     pasta,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
     primitives::{EpochIndex, PolySlot},
 };
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct NfSeqCommit(Eq);
+pub struct NfSeqCommit(EqAffine);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
@@ -47,7 +48,11 @@ impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
+        NfSeqCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
