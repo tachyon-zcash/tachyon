@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{
-    Polynomial, ProductionRank,
+    Polynomial, WalletRank,
     udon::{field::Field as _, polynomial::vanishing_polynomial},
 };
 
@@ -14,7 +14,7 @@ use crate::pasta::Fp;
     clippy::expect_used,
     reason = "the buffer fits the roots and leading one"
 )]
-pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, ProductionRank> {
+pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, WalletRank> {
     let roots: Vec<Fp> = members.into_iter().collect();
     let mut coeffs = vec![Fp::ZERO; roots.len() + 1];
     vanishing_polynomial(Fp::as_slice(&roots), Fp::as_slice_mut(&mut coeffs))

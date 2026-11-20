@@ -31,7 +31,7 @@ use proof::{
     },
 };
 use ragu::{
-    ProductionRank, Rank as _,
+    Rank as _, WalletRank,
     pasta::Pasta,
     pcd::wire,
     udon::{
@@ -198,7 +198,7 @@ impl Proof for Uncompressed {
 
 impl Proof for Compressed {
     fn encoded_len() -> usize {
-        Self::encoded_len::<ProductionRank>()
+        Self::encoded_len::<WalletRank>()
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, wire::Error<'static>> {
@@ -288,7 +288,7 @@ impl<P: Proof> ProofStamp<P> {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
-            if n_adjuncts + 1 > ProductionRank::num_coeffs() - 1 {
+            if n_adjuncts + 1 > WalletRank::num_coeffs() - 1 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many adjuncts",
@@ -465,9 +465,9 @@ impl Plan {
         app: &App<'_>,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<
         (
@@ -662,7 +662,7 @@ pub enum ProveError {
 }
 
 /// An uncompressed Ragu proof.
-pub type Uncompressed = ragu::Proof<Pasta, ProductionRank>;
+pub type Uncompressed = ragu::Proof<Pasta, WalletRank>;
 
 /// A compressed Ragu proof.
 pub type Compressed = ragu::CompressedProof<Pasta>;
@@ -789,7 +789,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         theta: ActionEntropy,
-        bind_pcd: ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader>,
+        bind_pcd: ragu::Pcd<Pasta, WalletRank, spend::SpendHeader>,
         pak: ProofAuthorizingKey,
     ) -> Result<
         (
@@ -929,7 +929,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
@@ -976,7 +976,7 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);

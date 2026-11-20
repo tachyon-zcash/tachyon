@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use core::{array, iter};
 
 use ragu::{
-    ProductionRank,
+    WalletRank,
     pasta::Pasta,
     udon::{curve::Projective as _, field::Field as _},
 };
@@ -40,7 +40,7 @@ fn detached_segment(
     app: &App<'_>,
     epoch: EpochIndex,
     nf: impl Fn(EpochIndex) -> Nullifier,
-) -> ragu::Pcd<Pasta, ProductionRank, pool::ArbitraryUnspent> {
+) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
     let anchor_final_prev = Anchor::random(rng);
     let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = QrIntakeEntry::empty(
@@ -58,8 +58,8 @@ fn honest_spend_bind(
     app: &App<'_>,
     user: &WalletSim,
     note: &Note,
-    spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-) -> ragu::Pcd<Pasta, ProductionRank, spend::SpendHeader> {
+    spendable: ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+) -> ragu::Pcd<Pasta, WalletRank, spend::SpendHeader> {
     let secret = user.note_secret(app, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = app

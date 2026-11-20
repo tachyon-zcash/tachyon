@@ -1,7 +1,7 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta, udon::field::Field as _};
+use ragu::{Cycle as _, Polynomial, WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand_core::CryptoRng;
 
 use super::PolySlot;
@@ -42,7 +42,7 @@ impl QrDiscriminant {
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
 /// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
+pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
 impl QrInterpolantPoly {
     /// Names this polynomial in a header that carries one.
@@ -68,7 +68,7 @@ pub struct QrInterpolantCommit(Eq);
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c \cdot (X + s) = q \cdot h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
+pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
 impl QrQuotientPoly {
     /// Names this polynomial in a header that carries one.
