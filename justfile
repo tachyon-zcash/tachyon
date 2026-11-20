@@ -37,9 +37,9 @@ _book_setup: _install_binstall
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
 
-# build the Lean proofs in qa/fv
+# build the Lean proofs in qa/fv, failing on any warning
 fv:
-    cd qa/fv && lake build
+    cd qa/fv && lake build --wfail
 
 # the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
 ci_local:
