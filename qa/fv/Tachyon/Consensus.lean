@@ -22,8 +22,9 @@ and the window from `Chain.Valid`, leaving the lineage and the nullifier pairs a
 `no_double_spend_of_covered_spends` (`Consensus/Spends.lean`) proves the pairs, the lineage and,
 unless `cm` is published again, its start bound.
 
-The second spend's lineage must start no later than the first's publication. A lineage starting
-from a later publication of the same `cm` spends a second paid note, not the first one again.
+The second spend's lineage must start no later than the first's publication. The model does not
+say why a lineage would start from a later publication of the value `cm`, so the start bound is a
+hypothesis here.
 -/
 
 namespace Tachyon

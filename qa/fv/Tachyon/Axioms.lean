@@ -55,6 +55,12 @@ info: 'Tachyon.BundleVerified.fee_published' depends on axioms: [propext, Classi
 #print axioms Tachyon.BundleVerified.fee_published
 
 /--
+info: 'Tachyon.BundleVerified.fee_change_published' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.BundleVerified.fee_change_published
+
+/--
 info: 'Tachyon.unmerge_needs_pairing' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
@@ -107,6 +113,12 @@ info: 'Tachyon.no_double_spend_of_covered_spends' depends on axioms: [propext, C
 -/
 #guard_msgs in
 #print axioms Tachyon.no_double_spend_of_covered_spends
+
+/--
+info: 'Tachyon.no_double_spend_in_stamp' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_in_stamp
 
 /--
 info: 'Tachyon.QrBucketDerivable.covers' depends on axioms: [propext, Classical.choice, Quot.sound]

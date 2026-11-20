@@ -30,10 +30,16 @@ anchor of the next segment's epoch, so `NoteUnspentDerivable.lineage` covers it.
 "Same note" is equal `cm` and one creation. Every header from the spend back to its lineage start
 threads `cm`, `SpendBind` ties the note secret to the lineage by `cm`, and `NoteSeed` makes `cm`
 determine the master key (`NoteSecretDerivable.master_eq`), so the nullifier sequence is the
-note's. A lineage that starts after the first spend's publication starts at a later publication of
-`cm`: that is a second note with the same opening, paid for by its own output, not the first note
-spent again. `no_double_spend_of_covered_spends` therefore takes `cm` unpublished between the
-first spend's publication and the second spend's anchor.
+note's. A lineage that starts after the first spend's publication starts at a later epoch in which
+the value `cm` is published. `no_double_spend_of_covered_spends` takes `cm` unpublished, as any
+tachygram, between the first spend's publication and the second spend's anchor; it does not say why
+`cm` would be published again.
+
+`no_double_spend_of_covered_spends` covers spends in two stamps. Two spends in one stamp share its
+anchor epoch and so publish one nullifier pair twice, which the stamp's duplicate-free tachygram
+list rejects (`no_double_spend_in_stamp`). `CoveredSpend.digest_covered` is membership, so two
+covered spends can name one covered digest; that theorem takes their digests as two covered
+occurrences.
 -/
 
 namespace Tachyon
@@ -152,9 +158,9 @@ theorem SpendDerivable.lineage (hlaw : Chain.HashLaw genesis e₀ nextStamp next
   cases hspend with
   | bind hs _ _ => exact (hs.lineage hlaw hqnr hmember hmaster hbucket hon).2
 
-/-- **No double spend.** On a valid chain, two stamps that each cover a spend of note `cm`, the
-first earlier in chain order, contradict each other unless `cm` is published again after the
-first spend's publication and no later than the second spend's anchor epoch. -/
+/-- **No double spend across stamps.** On a valid chain, two stamps that each cover a spend of note
+`cm`, the first earlier in chain order, contradict each other unless `cm` is published again after
+the first spend's publication and no later than the second spend's anchor epoch. -/
 theorem no_double_spend_of_covered_spends [DecidableEq F]
     (hlaw : Chain.HashLaw (nextEpoch zero 0) 0 nextStamp nextEpoch)
     (hepoch : ∀ {e : ℕ} {a : F}, Chain.Node (nextEpoch zero 0) 0 nextStamp nextEpoch e a →
@@ -200,5 +206,58 @@ theorem no_double_spend_of_covered_spends [DecidableEq F]
     (p₁.pair_le hlaw hepoch hunspent hnote hdigest hsecret ((hon s₁ hs₁).toNode hne))
     (p₂.pair_le hlaw hepoch hunspent hnote hdigest hsecret ((hon s₂ hs₂').toNode hne))
     (hlineage _ hsecret rfl) hstart
+
+/-- **No double spend within a stamp.** On a valid chain, no stamp covers two spends of note `cm`
+whose action digests are two covered occurrences. -/
+theorem no_double_spend_in_stamp [DecidableEq F]
+    (hlaw : Chain.HashLaw (nextEpoch zero 0) 0 nextStamp nextEpoch)
+    (hepoch : ∀ {e : ℕ} {a : F}, Chain.Node (nextEpoch zero 0) 0 nextStamp nextEpoch e a →
+      epoch a = e)
+    (hqnr : ¬ IsSquare qnr) (hevidence : EvidenceLaw leaf node)
+    (hnote : NoteLaw noteCommit paymentKey) (hdigest : DigestLaw IsFee R actionDigest)
+    {s : Chain.Stamp F F} {cm master : F}
+    (hchain : Chain.Valid epoch (OnChain nextStamp nextEpoch zero chain) chain) (hs : s ∈ chain)
+    (p₁ p₂ : CoveredSpend IsFee epoch R nextStamp actionDigest
+      (SpendDerivable nextStamp (QrBucketDerivable nextStamp nextEpoch qnr leaf node)
+        (NoteUnspentDerivable (QrBucketDerivable nextStamp nextEpoch qnr leaf node) qnr member
+          (NoteSecretDerivable noteCommit paymentKey nfMaster) nullifier emax)
+        (NoteSecretDerivable noteCommit paymentKey nfMaster) nullifier) s cm)
+    (hsecret : NoteSecretDerivable noteCommit paymentKey nfMaster ⟨cm, master⟩)
+    (hoccurrences : ({actionDigest p₁.witness p₁.header.nf_current p₁.header.nf_next,
+      actionDigest p₂.witness p₂.header.nf_current p₂.header.nf_next} : Multiset F) ≤
+        p₁.covered) :
+    False := by
+  have hbucket : ∀ b, QrBucketDerivable nextStamp nextEpoch qnr leaf node b →
+      b.Covers nextStamp nextEpoch := fun _ hb => hb.covers hqnr hevidence
+  have hunspent := NoteUnspentDerivable.spec (qnr := qnr) (member := member)
+    (Secret := NoteSecretDerivable noteCommit paymentKey nfMaster) (nullifier := nullifier)
+    (emax := emax) hbucket
+  have hon : OnChain nextStamp nextEpoch zero chain (epoch s.anchor) s.anchor :=
+    (hchain.accepted s hs).anchor_accepted
+  have hnode := hon.toNode fun s hs => (hchain.accepted s hs).tachygrams_ne_nil
+  have hR : ∀ p : CoveredSpend IsFee epoch R nextStamp actionDigest
+      (SpendDerivable nextStamp (QrBucketDerivable nextStamp nextEpoch qnr leaf node)
+        (NoteUnspentDerivable (QrBucketDerivable nextStamp nextEpoch qnr leaf node) qnr member
+          (NoteSecretDerivable noteCommit paymentKey nfMaster) nullifier emax)
+        (NoteSecretDerivable noteCommit paymentKey nfMaster) nullifier) s cm,
+      R (epoch s.anchor) (actionDigest p.witness p.header.nf_current p.header.nf_next) =
+        {nullifier master (epoch s.anchor), nullifier master (epoch s.anchor + 1)} := by
+    intro p
+    obtain ⟨k, hk, hkcm, hcurrent, hnext⟩ :=
+      p.spend.pair hlaw hunspent (p.tree.leaves_node (Chain.Node.stampClosed hlaw) hnode _ p.leaf)
+    obtain rfl : k.master = master := hk.master_eq hnote hsecret (hkcm.trans p.cm_eq)
+    rw [hdigest.pair, hcurrent, hnext]
+  have htachygrams : (s.tachygrams : Multiset F) = p₁.covered.bind (R (epoch s.anchor)) :=
+    setPoly_injective ((p₁.tree.derivable hlaw hepoch hdigest hnode).published rfl)
+  obtain ⟨rest, hrest⟩ := Multiset.le_iff_exists_add.mp hoccurrences
+  have hnodup : (s.tachygrams : Multiset F).Nodup :=
+    Multiset.coe_nodup.mpr (hchain.accepted s hs).tachygrams_nodup
+  rw [htachygrams, hrest, Multiset.add_bind, Multiset.insert_eq_cons, Multiset.cons_bind,
+    Multiset.singleton_bind, hR p₁, hR p₂] at hnodup
+  have := (Multiset.nodup_add.mp (Multiset.nodup_add.mp hnodup).1).2.2
+  have hmem : nullifier master (epoch s.anchor) ∈
+      ({nullifier master (epoch s.anchor), nullifier master (epoch s.anchor + 1)} : Multiset F) := by
+    simp
+  exact Multiset.disjoint_left.mp this hmem hmem
 
 end Tachyon
