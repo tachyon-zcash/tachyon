@@ -37,9 +37,10 @@ tachygram, between the first spend's publication and the second spend's anchor; 
 
 `no_double_spend_of_covered_spends` covers spends in two stamps. Two spends in one stamp share its
 anchor epoch and so publish one nullifier pair twice, which the stamp's duplicate-free tachygram
-list rejects (`no_double_spend_in_stamp`). `CoveredSpend.digest_covered` is membership, so two
-covered spends can name one covered digest; that theorem takes their digests as two covered
-occurrences.
+list rejects (`no_double_spend_in_stamp`). Each `CoveredSpend` carries its own covered multiset,
+and the model does not tie two spends' covered multisets together. `CoveredSpend.digest_covered` is
+membership, so two covered spends can name one covered digest. That theorem takes both spends'
+digests as two occurrences in the first spend's covered multiset.
 -/
 
 namespace Tachyon
@@ -208,7 +209,7 @@ theorem no_double_spend_of_covered_spends [DecidableEq F]
     (hlineage _ hsecret rfl) hstart
 
 /-- **No double spend within a stamp.** On a valid chain, no stamp covers two spends of note `cm`
-whose action digests are two covered occurrences. -/
+whose action digests are two occurrences in the first spend's covered multiset. -/
 theorem no_double_spend_in_stamp [DecidableEq F]
     (hlaw : Chain.HashLaw (nextEpoch zero 0) 0 nextStamp nextEpoch)
     (hepoch : ∀ {e : ℕ} {a : F}, Chain.Node (nextEpoch zero 0) 0 nextStamp nextEpoch e a →
