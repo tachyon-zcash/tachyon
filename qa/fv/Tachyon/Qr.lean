@@ -23,10 +23,12 @@ path records one side per depth: depth `j` classifies at `R₀ + j` and `true` i
 The model carries a profile as its path. `QrSideDescend` checks the parent depth below 32, so
 `bits < 2 ^ 32` and the field pair `(depth, bits)` determines the path.
 
-`QrIntakeSides` and `QrSideSelection` have one producer each and only `QrSideDescend` consumes
-them, matching every field of both headers. The model therefore folds `QrIntakeSplit`,
-`QrSideSelect` and `QrSideDescend` into one constructor. The selection's non-residue bridge hash is
-read as the split's non-residue polynomial.
+The model folds `QrIntakeSplit`, `QrSideSelect` and `QrSideDescend` into one constructor.
+`QrSideSelect` and `QrSideDescend` both consume a `QrIntakeSides`, and the two may come from
+different splits. The fold is still sound: both share every header field and the
+`non_residue_hash`, so under bridge binding they share the non-residue polynomial, which is the only
+polynomial the selection checks, and no contents ride on either header. The selection's non-residue
+bridge hash is read as the split's non-residue polynomial.
 
 The model omits constraints that the two properties don't use: the non-empty stamp and intake
 checks, `QrSideDescend`'s distinct-sides check, and the evidence trees' network field equalities.

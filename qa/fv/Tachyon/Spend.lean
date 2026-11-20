@@ -20,8 +20,9 @@ pair does not depend on (the note opening, `pk`, `cv`, the online slots) are dro
 When the lineage's anchor is a chain node at epoch `e`, its epoch is `e`
 (`SpendableDerivable.epoch_eq`), so the spend publishes `mk`'s nullifiers at `e` and `e + 1`
 (`SpendDerivable.pair`). The `SpendableInit` case closes by `Node.of_nextStamp`. The other two close
-because a `NoteUnspent` segment's `anchor_next` is the entry anchor of its `epoch_next`
-(`UnspentSpec`), and an entry anchor is a chain node only at its own epoch (`Node.of_nextEpoch`).
+because a `NoteUnspent` segment's `anchor_next` is a boundary digest into its `epoch_next` from a
+call in `q` (`UnspentSpec`), and such a boundary digest is a chain node only at that epoch
+(`Node.of_nextEpoch`).
 -/
 
 namespace Tachyon

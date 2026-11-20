@@ -24,9 +24,11 @@ reads agree only because of that alignment (`NoteNullifiersDerivable.seq_eq`). A
 its master key (`NoteSecretDerivable.master_eq`), so every derivation for one `cm` holds the same
 nullifiers.
 
-The model omits `NullifierFuse`'s contiguity check, the nonzero tested value and the empty-segment
-exclusion: no result here uses them. Epochs are natural numbers, so `e + 1` never wraps. That
-representation relies on the `EpochIndex` range checks.
+The model omits `NullifierFuse`'s contiguity check and the nonzero tested value: no result here
+uses them. No step excludes an empty segment; every derivable segment covers at least one epoch
+(`ArbitraryUnspentDerivable.epoch_lt`, `NoteUnspentDerivable.epoch_lt`), and the spendable lineage
+uses that. Epochs are natural numbers, so `e + 1` never wraps. That representation relies on the
+`EpochIndex` range checks.
 -/
 
 namespace Tachyon

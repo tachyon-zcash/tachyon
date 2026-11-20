@@ -14,9 +14,11 @@ one enriched semantic state; it does not model application construction or bridg
 The stamp carries no tachygram list. Each covered action carries its tachygram pair and each covered
 bundle its fee change. A covered action is a descriptor `Δ` with its pair, and a covered fee a fee
 descriptor `Φ` with its fee change. An action digest absorbs its descriptor and pair, and a fee
-digest its fee descriptor and fee change. `BundleCovered` is `Bundle::verify_covered`: uniqueness on
-the descriptors alone, and the published tachygrams are exactly the carried pairs and fee changes,
-unique, with the carried commitment their set polynomial.
+digest its fee descriptor and fee change. `BundleCovered` is `Bundle::verify_covered` without its
+rank bound: uniqueness on the descriptors alone, and the published tachygrams are exactly the
+carried pairs and fee changes, unique, with the carried commitment their set polynomial. Rust also
+rejects more covered tachygrams than one set polynomial has roots (`2N + B ≤ num_coeffs − 1`); the
+model omits that bound, which only widens acceptance.
 
 `BundleVerified` adds the stamp proof as a `StampDerivable` header. `StampDerivable`'s lifts take
 `epoch a = epoch s.anchor`, which `Bundle::verify` has no chain context to check. A derivation

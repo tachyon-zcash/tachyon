@@ -19,8 +19,10 @@ This module models the chain-level consensus rules alongside the stamp proof tre
 
 2. **End-of-block anchors (`book/src/anchor.md`)**:
    Within a block at epoch `e`, each published stamp folds its tachygram set via `nextStamp`, and
-   the state after the block's final stamp is an acknowledged end-of-block anchor (`BlockAnchor`).
-   Epoch transitions fold via `nextEpoch`. Every end-of-block anchor is a reachable `Node`.
+   the state after the block's final stamp is an acknowledged end-of-block anchor. The model has
+   no blocks: `OnChain` (`Consensus/Entry.lean`) holds of the entry anchor of each epoch folded with
+   any prefix of the stamps published in it, so it holds of every end-of-block anchor however the
+   epoch's stamps split into blocks, and of the anchors between them too.
 
 3. **Anchor spans and `StampLift` (`crates/tachyon/src/stamp/proof/pool.rs`, `stamp.rs`)**:
    `AnchorSpanSeed` folds only with `nextStamp`, and `AnchorSpanFuse` concatenates adjacent spans.
@@ -176,32 +178,6 @@ theorem Node.foldBlock {e : E} {a : A} {stamps : List F[X]}
       exact hstamps c' (List.mem_cons_of_mem c hc')
     · intro P c' S hP
       simpa [foldBlock] using hq (c :: P) c' S (by rw [← hP]; rfl)
-
-/-- End-of-block anchors acknowledged by consensus (`book/src/anchor.md`), over the calls `q`.
-Each block folds zero or more non-empty stamps at the current epoch; entering a new epoch `e'`
-first applies the boundary digest `nextEpoch`. -/
-inductive BlockAnchor (q : AnchorQueries F A E) (genesis : A) (e₀ : E)
-    (nextStamp : A → E → F[X] → A) (nextEpoch : A → E → A) : E → A → Prop
-  | genesis : BlockAnchor q genesis e₀ nextStamp nextEpoch e₀ genesis
-  | block {e : E} {a : A} (stamps : List F[X]) :
-      BlockAnchor q genesis e₀ nextStamp nextEpoch e a →
-      (∀ c ∈ stamps, c ≠ 1) → FoldQueried q nextStamp e a stamps →
-      BlockAnchor q genesis e₀ nextStamp nextEpoch e (foldBlock nextStamp e a stamps)
-  | epochBlock {e e' : E} {a : A} (stamps : List F[X]) :
-      BlockAnchor q genesis e₀ nextStamp nextEpoch e a →
-      e' ≠ e₀ → q.boundary a e' →
-      (∀ c ∈ stamps, c ≠ 1) → FoldQueried q nextStamp e' (nextEpoch a e') stamps →
-      BlockAnchor q genesis e₀ nextStamp nextEpoch e'
-        (foldBlock nextStamp e' (nextEpoch a e') stamps)
-
-/-- Every acknowledged end-of-block anchor is a reachable chain `Node` at its block's epoch. -/
-theorem BlockAnchor.toNode {e : E} {a : A}
-    (h : BlockAnchor q genesis e₀ nextStamp nextEpoch e a) :
-    Node q genesis e₀ nextStamp nextEpoch e a := by
-  induction h with
-  | genesis => exact Node.genesis
-  | block stamps _ hne hq ih => exact ih.foldBlock hne hq
-  | epochBlock stamps _ he' hb hne hq ih => exact (ih.epoch he' hb).foldBlock hne hq
 
 /-! ## Anchor spans and `StampLift` epoch invariance -/
 

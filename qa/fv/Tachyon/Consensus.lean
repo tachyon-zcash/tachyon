@@ -8,8 +8,8 @@ A spend anchored at epoch `a` publishes the note's nullifier pair `{nf a, nf (a 
 rules and one proof-tree fact rule out a second spend of the same note:
 
 * **Anchor recency.** A stamp's anchor epoch is its publication epoch or the one before.
-* **Two-epoch window.** A published tachygram is absent from every earlier block of its publication
-  epoch and the one before.
+* **Two-epoch window.** A published tachygram is absent from every earlier stamp of its publication
+  epoch and the one before, including earlier stamps of its own block.
 * **Spendable lineage.** A spend anchored at epoch `a` proves, for each epoch `x` from its lineage
   start up to `a`, that `nf x` is absent from epoch `x`'s published tachygrams (`NoteUnspent`,
   checked per epoch by `QrUnspentInit` and `UnspentLift` against that epoch's `QrBucket`).
