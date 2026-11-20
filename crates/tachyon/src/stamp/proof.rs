@@ -82,8 +82,8 @@
 //!   $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ each bind the note, and their tags
 //!   keep pads apart from note commitments.
 //! - **`Nullifier`**: for epoch $e$, entry $e \bmod 4$ of the four elements
-//!   `poseidon::nullifier_group` (`Tachyon-NfDerive`) squeezes from `mk` and $e
-//!   - (e \bmod 4)$. Group start and entry index determine $e$, binding `mk`
+//!   `poseidon::nullifier_group` (`Tachyon-NfDerive`) squeezes from `mk` and
+//!   $e-(e \bmod 4)$. Group start and entry index determine $e$, binding `mk`
 //!   and $e$.
 //!
 //! ### Value commitments (value discrete log)
@@ -93,7 +93,7 @@
 //!   output. Values in `0..=MAX_MONEY` are distinct in $\mathbb{F}_q$ and the
 //!   header's `SUFFIX` gives the sign, binding $v$.
 //!
-//! ### Sets, evidence trees and anchors (Poseidon, host and nested discrete log)
+//! ### Sets and evidence trees (Poseidon, host and nested discrete log)
 //!
 //! - **`TachygramSetBridge`**: a bridge hash binding $O_1$, which binds its
 //!   polynomial. Unique factorization fixes the root multiset of $\prod_i (X -
@@ -107,8 +107,9 @@
 //!   node (`poseidon::evidence_tree_node`, hashing four subtree roots under
 //!   `Tachyon-EvidNode`). Tag and width separate leaves from nodes, so a root
 //!   binds the whole tree, its shape and every bucket under Poseidon, plus each
-//!   bucket's contents and the stamp sets in its anchors' histories under host
-//!   and nested discrete log.
+//!   bucket's contents under host and nested discrete log. Where a bucket's
+//!   anchors lie on the consensus chain, it binds the stamp sets in their
+//!   histories too.
 //!
 //! ### Anchor histories
 //!
