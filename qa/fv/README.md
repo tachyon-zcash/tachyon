@@ -313,7 +313,10 @@ evidence tree and `EvidenceTreeOpen`.
   `NoteLaw`, `NoteSecretDerivable`, `UnspentSpec`, `SpendableDerivable`, `SpendDerivable`,
   `TreeLeaf`, `TreeLeaf.anchor`, `TreeLeaf.digest`, `TreeLeaf.IsFeeLeaf`, `TreeProvenance`,
   `ActionsTree`, `StampTree`, `ActionsTree.leaves`, `StampTree.leaves`, `ActionsTree.toTrace`,
-  `StampTree.toTrace`, `DigestLaw`, `CoveredSpend`, every standalone premise of the headline
+  `StampTree.toTrace`, `DigestLaw`, `CoveredSpend`, `Pallas.p` (the Pallas base-field modulus), the
+  `5` in `Pallas.quadraticNonResidue` (`QUADRATIC_NON_RESIDUE` in `collections/qr.rs`), the `2` in
+  `Pallas.nonResidue_not_cube` and `Pallas.memberLaw` (`NON_RESIDUE` in
+  `collections/indexed_multiset.rs`), every standalone premise of the headline
   theorems (`¬ IsSquare qnr`, `hepoch`, `hfresh`, `hindex`), and the Rust checks that the
   representation relies on (`EpochIndex` range checks, `QrSideDescend`'s `< 32` depth bound, and
   descriptor/authorization pairing in `Bundle`).
