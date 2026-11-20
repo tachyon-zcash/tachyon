@@ -20,18 +20,26 @@ variable {F : Type*} [Field F]
 noncomputable def setPoly (s : Multiset F) : F[X] :=
   (s.map fun r => X - C r).prod
 
+/-- A set polynomial's roots give back its multiset, which is how a stamp's polynomial is read as
+the tachygrams it holds. -/
 @[simp] theorem roots_setPoly (s : Multiset F) : (setPoly s).roots = s :=
   roots_multiset_prod_X_sub_C s
 
+/-- Equal set polynomials have equal multisets, so equations between stamp polynomials are
+equations between multisets. -/
 theorem setPoly_injective : Function.Injective (setPoly (F := F)) := fun s t h => by
   rw [← roots_setPoly s, h, roots_setPoly]
 
+/-- Set polynomials are monic, so they can be cancelled and their roots are the whole multiset. -/
 theorem setPoly_ne_zero (s : Multiset F) : setPoly s ≠ 0 :=
   (monic_multiset_prod_of_monic _ _ fun r _ => monic_X_sub_C r).ne_zero
 
+/-- The empty multiset's set polynomial is `1`, the unit of polynomial products. -/
 @[simp] theorem setPoly_zero : setPoly (0 : Multiset F) = 1 := by
   simp [setPoly]
 
+/-- Multiset union is polynomial product, so a product of stamp polynomials, as `StampMerge`
+computes it, is the union of their multisets. -/
 theorem setPoly_add (s t : Multiset F) : setPoly (s + t) = setPoly s * setPoly t := by
   simp [setPoly, Multiset.map_add, Multiset.prod_add]
 

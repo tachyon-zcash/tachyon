@@ -21,12 +21,16 @@ variable {F : Type*} [Field F]
 noncomputable def cubicMember (c : F) (i : ℕ) (m : F) : F[X] :=
   (C m + C ((i : F) + 1) * X) ^ 3 - C c
 
+/-- The four coefficients Rust's `encode` computes, for comparing two members coefficient by
+coefficient. -/
 theorem cubicMember_eq (c : F) (i : ℕ) (m : F) :
     cubicMember c i m = C (((i : F) + 1) ^ 3) * X ^ 3 + C (3 * ((i : F) + 1) ^ 2 * m) * X ^ 2 +
       C (3 * ((i : F) + 1) * m ^ 2) * X + C (m ^ 3 - c) := by
   simp only [cubicMember, map_mul, map_pow, map_sub, map_add, map_ofNat, map_one, map_natCast]
   ring
 
+/-- A member has degree 3 when its `i + 1` is nonzero, which `cubicMember_law` needs for
+irreducibility and for comparing degrees. -/
 theorem cubicMember_natDegree {c : F} {i : ℕ} (hi : (i : F) + 1 ≠ 0) (m : F) :
     (cubicMember c i m).natDegree = 3 := by
   rw [cubicMember_eq]

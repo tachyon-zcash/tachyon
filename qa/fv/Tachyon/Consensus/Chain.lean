@@ -151,6 +151,8 @@ def FoldQueried (q : AnchorQueries F A E) (nextStamp : A → E → F[X] → A) (
     (stamps : List F[X]) : Prop :=
   ∀ P c S, P ++ c :: S = stamps → q.stamp (foldBlock nextStamp e a P) e c
 
+/-- A run's calls lie in `q` exactly when both halves' do, the second half folding from where the
+first ends. This is how a run is queried one stamp at a time. -/
 theorem FoldQueried.append {e : E} {a : A} {L L' : List F[X]} :
     FoldQueried q nextStamp e a (L ++ L') ↔
       FoldQueried q nextStamp e a L ∧ FoldQueried q nextStamp e (foldBlock nextStamp e a L) L' := by
@@ -171,6 +173,7 @@ theorem FoldQueried.append {e : E} {a : A} {L L' : List F[X]} :
       have := hL' M c S hM.symm
       simpa [foldBlock, List.foldl_append] using this
 
+/-- A one-stamp run is queried when its single call is in `q`. -/
 theorem FoldQueried.singleton {e : E} {a : A} {c : F[X]} (hq : q.stamp a e c) :
     FoldQueried q nextStamp e a [c] := by
   rintro (_ | ⟨x, P⟩) c' S h
@@ -178,6 +181,8 @@ theorem FoldQueried.singleton {e : E} {a : A} {c : F[X]} (hq : q.stamp a e c) :
     exact hq
   · simp at h
 
+/-- Folding a queried run of stamps, none of them `1`, onto a chain node gives a chain node of the
+same epoch. -/
 theorem Node.foldBlock {e : E} {a : A} {stamps : List F[X]}
     (ha : Node q genesis e₀ nextStamp nextEpoch e a)
     (hstamps : ∀ c ∈ stamps, c ≠ 1) (hq : FoldQueried q nextStamp e a stamps) :
@@ -234,6 +239,7 @@ def StampClosed (q : AnchorQueries F A E) (nextStamp : A → E → F[X] → A)
   ∀ {e e_s : E} {a : A} {c : F[X]}, q.stamp a e_s c → Good e (nextStamp a e_s c) →
     e_s = e ∧ Good e a
 
+/-- Under `HashLaw`, chain nodes are stamp-closed, so the span and lift results apply to them. -/
 theorem Node.stampClosed (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch) :
     StampClosed q nextStamp (Node q genesis e₀ nextStamp nextEpoch) :=
   fun hq h => Node.of_nextStamp hlaw hq h
@@ -345,10 +351,13 @@ variable {epoch : A → ℕ} {acceptedAnchor : ℕ → A → Prop} {chain : List
 def published (chain : List (Stamp F A)) (e : ℕ) (t : F) : Prop :=
   ∃ s ∈ chain, s.epoch = e ∧ t ∈ s.tachygrams
 
+/-- A chain stamp publishes its tachygrams in its own epoch. -/
 theorem mem_published {s : Stamp F A} {t : F} (hs : s ∈ chain) (ht : t ∈ s.tachygrams) :
     published chain s.epoch t :=
   ⟨s, hs, rfl, ht⟩
 
+/-- Every tachygram of a part of a chain stamp's tachygrams, such as one leaf's, is published in
+the stamp's epoch. -/
 theorem published_of_le {s : Stamp F A} {m : Multiset F}
     (hs : s ∈ chain) (hm : m ≤ (s.tachygrams : Multiset F)) :
     ∀ t ∈ m, published chain s.epoch t :=
@@ -405,6 +414,8 @@ def tachygramsInEpochs (P : ℕ → Prop) [DecidablePred P]
     (chain : List (Stamp F A)) : List F :=
   (chain.filter fun s => P s.epoch).flatMap Stamp.tachygrams
 
+/-- `tachygramsInEpochs P` lists exactly the tachygrams published in an epoch satisfying `P`, for
+reading `Valid.nodup_tachygramsInEpochs` as a statement about publication. -/
 theorem mem_tachygramsInEpochs_iff {P : ℕ → Prop} [DecidablePred P] {t : F} :
     t ∈ tachygramsInEpochs P chain ↔ ∃ e, P e ∧ published chain e t := by
   simp only [tachygramsInEpochs, List.mem_flatMap, List.mem_filter, decide_eq_true_eq, published]

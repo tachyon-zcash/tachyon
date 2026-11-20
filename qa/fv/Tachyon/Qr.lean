@@ -48,6 +48,8 @@ variable {F A D : Type*} [Field F]
 def Matches (R₀ : F) (path : List Bool) (t : F) : Prop :=
   ∀ j (hj : j < path.length), (path[j] = true ↔ IsSquare (t + (R₀ + j)))
 
+/-- A value matching a path with one more side matches the shorter path and takes that side at the
+next discriminant, for inducting over a bucket's descents. -/
 theorem Matches.of_concat {R₀ t : F} {path : List Bool} {b : Bool}
     (h : Matches R₀ (path ++ [b]) t) :
     Matches R₀ path t ∧ (b = true ↔ IsSquare (t + (R₀ + path.length))) := by

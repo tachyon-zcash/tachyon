@@ -116,15 +116,19 @@ non-square. `28` is `4⁻¹`. -/
 noncomputable def member (i : ℕ) (m : ZMod 37) : (ZMod 37)[X] :=
   C 1 * X ^ 2 + C m * X + C ((m ^ 2 - s i) * 28)
 
+/-- Each discriminant `s i` is a non-square, so `member i m` has no root. -/
 theorem s_nonsquare {i : ℕ} (hi : i ≤ 15) : ¬ IsSquare (s i) := by
   unfold IsSquare
   interval_cases i <;> decide
 
+/-- The sixteen discriminants are distinct, so members at different indices differ. -/
 theorem s_inj : ∀ i < 16, ∀ j < 16, s i = s j → i = j := by decide
 
+/-- Members are quadratics, for comparing two of them in `memberLaw`. -/
 theorem member_natDegree (i : ℕ) (m : ZMod 37) : (member i m).natDegree = 2 :=
   natDegree_quadratic one_ne_zero
 
+/-- Members are monic, for comparing two of them in `memberLaw`. -/
 theorem member_leadingCoeff (i : ℕ) (m : ZMod 37) : (member i m).leadingCoeff = 1 :=
   leadingCoeff_quadratic one_ne_zero
 
@@ -152,6 +156,7 @@ theorem memberLaw : MemberLaw member 15 where
       (m ^ 2 - s i) * 28 = (m ^ 2 - s j) * 28)
     linear_combination -this
 
+/-- The instance's `qnr`, `2`, is a non-square of `ZMod 37`. -/
 theorem qnr : ¬ IsSquare (2 : ZMod 37) := by
   unfold IsSquare
   decide
@@ -185,6 +190,8 @@ theorem evidenceLaw : EvidenceLaw r leaf node where
     exact ⟨rfl, rfl, rfl, rfl⟩
   leaf_ne_node _ _ := Bool.false_ne_true
 
+/-- The bucket's evidence: a summary of epoch 0's stamp, one descent putting `cm = 3` on the residue
+side and `2` on the other, and the seal at epoch 1's entry anchor. -/
 theorem sealed : QrEvidenceDerivable q r nextStamp nextEpoch 2 leaf node (.bucket bucket) :=
   .seal 0 (.descend (X - C 3) (X - C 2) (C 2) (C (-2)) true
       (.summary 0 (.seed 0 0 c₀ (Or.inl ⟨rfl, rfl, rfl⟩)))
@@ -201,6 +208,8 @@ theorem opened : QrBucketDerivable q r nextStamp nextEpoch 2 leaf node bucket :=
 /-- The tested value: the note's nullifier at epoch 0. -/
 def nf₀ : ZMod 37 := groupNullifier group (nfMaster 1 2) 0
 
+/-- `nf₀ = 4` passes `QrUnspentInit`'s test against the bucket: it takes the bucket's residue side
+(`2 ^ 2 = 4`) and isn't among its contents. -/
 theorem unspentTest : UnspentTest 2 bucket nf₀ := by
   refine ⟨fun j hj => ?_, by simp [bucket, nf₀, groupNullifier, group, nfMaster]; decide⟩
   obtain rfl : j = 0 := by simpa [bucket] using hj
@@ -236,48 +245,60 @@ theorem spend : Spend header :=
   SpendDerivable.bind (.qrInit unspent opened rfl rfl rfl
     (by simp [bucket, noteCommit, paymentKey]; decide)) secret rfl
 
+/-- The spend's current nullifier is `5`, the first tachygram of epoch 1's stamp. -/
 theorem header_nf_current : header.nf_current = 5 := by decide
 
+/-- The spend's next nullifier is `6`, the second tachygram of epoch 1's stamp. -/
 theorem header_nf_next : header.nf_next = 6 := by decide
 
+/-- The spend's anchor is `3`, epoch 1's entry anchor and the anchor of its stamp. -/
 theorem header_anchor : header.anchor = 3 := by decide
 
+/-- Epoch 0 publishes epoch 0's stamp alone. -/
 theorem epochStamps_zero : epochStamps chain 0 = [c₀] := by
   simp [epochStamps, chain, stamp₀, stamp₁, stamp₂, c₀]
 
+/-- Epoch 1 publishes the bundle's stamp alone. -/
 theorem epochStamps_one : epochStamps chain 1 = [c₁] := by
   simp [epochStamps, chain, stamp₀, stamp₁, stamp₂, c₁]
 
+/-- Epoch 2 publishes epoch 2's stamp alone. -/
 theorem epochStamps_two : epochStamps chain 2 = [c₂] := by
   simp [epochStamps, chain, stamp₀, stamp₁, stamp₂, c₂]
 
+/-- Epoch 0's entry anchor is `0`, its stamp's anchor. -/
 theorem entry_zero : entry nextStamp nextEpoch 0 chain 0 = 0 := by
   simp [entry, nextEpoch]
 
+/-- Epoch 0 ends on `2`, after its one stamp. -/
 theorem final_zero :
     foldBlock nextStamp 0 (entry nextStamp nextEpoch 0 chain 0) (epochStamps chain 0) = 2 := by
   rw [entry_zero, epochStamps_zero]
   simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
   decide
 
+/-- Epoch 1's entry anchor is `3`, the bundle's stamp's anchor. -/
 theorem entry_one : entry nextStamp nextEpoch 0 chain 1 = 3 := by
   show nextEpoch (foldBlock nextStamp 0 (entry nextStamp nextEpoch 0 chain 0)
     (epochStamps chain 0)) (0 + 1) = 3
   rw [final_zero]
   decide
 
+/-- Epoch 1 ends on `5`, after its one stamp. -/
 theorem final_one :
     foldBlock nextStamp 1 (entry nextStamp nextEpoch 0 chain 1) (epochStamps chain 1) = 5 := by
   rw [entry_one, epochStamps_one]
   simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
   decide
 
+/-- Epoch 2's entry anchor is `7`, its stamp's anchor. -/
 theorem entry_two : entry nextStamp nextEpoch 0 chain 2 = 7 := by
   show nextEpoch (foldBlock nextStamp 1 (entry nextStamp nextEpoch 0 chain 1)
     (epochStamps chain 1)) (1 + 1) = 7
   rw [final_one]
   decide
 
+/-- Epoch 0's stamp polynomial isn't `1`, as `SpanDerivable.seed` requires. -/
 theorem c₀_ne_one : c₀ ≠ 1 := by
   intro h
   have := congrArg Polynomial.roots h
@@ -335,18 +356,22 @@ theorem chainQueried {N : ℕ} (hN : N ≤ 2) : ChainQueried q nextStamp nextEpo
         exact Or.inr (Or.inr ⟨rfl, rfl, rfl⟩)
       · simp at h
 
+/-- The chain reaches epoch 0's stamp's anchor. -/
 theorem onChain_zero : OnChain nextStamp nextEpoch 0 chain 0 0 :=
   ⟨[], [c₀], epochStamps_zero.symm, entry_zero.symm⟩
 
+/-- The chain reaches `2` in epoch 0, after its stamp: the span lift's target. -/
 theorem onChain_two : OnChain nextStamp nextEpoch 0 chain 0 2 := by
   refine ⟨[c₀], [], by rw [epochStamps_zero]; rfl, ?_⟩
   rw [entry_zero]
   simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
   decide
 
+/-- The chain reaches the bundle's stamp's anchor in epoch 1. -/
 theorem onChain_three : OnChain nextStamp nextEpoch 0 chain 1 3 :=
   ⟨[], [c₁], epochStamps_one.symm, entry_one.symm⟩
 
+/-- The chain reaches epoch 2's stamp's anchor. -/
 theorem onChain_seven : OnChain nextStamp nextEpoch 0 chain 2 7 :=
   ⟨[], [c₂], epochStamps_two.symm, entry_two.symm⟩
 
@@ -412,10 +437,13 @@ theorem digestLaw : DigestLaw IsFee R actionDigest Q where
     simp [IsFee, actionDigest]
     decide
 
+/-- The note hashes are collision-free on `n`, which holds one commit call and one key call. -/
 theorem noteLaw : NoteLaw n noteCommit paymentKey where
   commit_binds h₁ h₂ _ := ⟨h₁.1.trans h₂.1.symm, h₁.2.trans h₂.2.symm⟩
   paymentKey_binds h₁ h₂ _ := h₁.trans h₂.symm
 
+/-- `Bundle::verify_covered` accepts epoch 1's stamp: its tachygrams are the action's two
+nullifiers and the fee change `8`. -/
 theorem bundleCovered : BundleCovered actions fee []
     (⟨stamp₁.tachygrams, setPoly (stamp₁.tachygrams : Multiset (ZMod 37)), stamp₁.anchor⟩ :
       PublishedStamp (ZMod 37) (ZMod 37)) where
@@ -425,6 +453,8 @@ theorem bundleCovered : BundleCovered actions fee []
   tachygrams_covered := by simp [stamp₁, coveredTachygrams, actions, fee]
   tachygram_set := rfl
 
+/-- The `FeeFuse` header over the spend's leaf is the bundle's stamp header, so `tree` can prove the
+bundle's stamp. -/
 theorem stamp_eq :
     (⟨setPoly {actionDigest 0 header.nf_current header.nf_next} * setPoly {8},
       setPoly ({header.nf_current, header.nf_next} : Multiset (ZMod 37)) *
@@ -443,6 +473,7 @@ noncomputable def tree : StampTree IsFee epoch R q nextStamp actionDigest Q Spen
   stamp_eq ▸ StampTree.feeFuse 8 (.spend header spend 0 ⟨rfl, header_nf_current, header_nf_next⟩)
     rfl
 
+/-- Casting a stamp tree along a header equation keeps its leaves, for `coveredSpend.leaf`. -/
 theorem leaves_cast {X Y : Tachyon.Stamp (ZMod 37) (ZMod 37)} (h : X = Y)
     (t : StampTree IsFee epoch R q nextStamp actionDigest Q Spend X) : (h ▸ t).leaves = t.leaves := by
   subst h

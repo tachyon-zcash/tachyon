@@ -57,12 +57,16 @@ inductive StampTrace (IsFee : F → Prop) (epoch : A → E) (R : E → F → Mul
       StampTrace IsFee epoch R Leaf s → epoch a = epoch s.anchor →
         StampTrace IsFee epoch R Leaf { s with anchor := a }
 
+/-- Without its provenance a trace is an `ActionsDerivable` derivation, so a trace never proves a
+header that the derivations can't. -/
 theorem ActionsTrace.forget {s : Stamp F A} :
     ActionsTrace IsFee epoch R Leaf s → ActionsDerivable IsFee epoch R s
   | .action d a _ hd => .action d a hd
   | .merge left right hm => .merge left.forget right.forget hm
   | .lift a t hepoch => .lift a t.forget hepoch
 
+/-- Without its provenance a trace is a `StampDerivable` derivation, so a trace never proves a header
+that the derivations can't. -/
 theorem StampTrace.forget {s : Stamp F A} :
     StampTrace IsFee epoch R Leaf s → StampDerivable IsFee epoch R s
   | .feeFuse f _ left hf => .feeFuse f left.forget hf
@@ -105,6 +109,7 @@ def leafDigests (leaves : List (LeafRecord Leaf)) : Multiset F :=
   (leaves.map LeafRecord.digest : List F)
 
 omit [Field F] in
+/-- The leaf digests of joined occurrence lists add, for the merge cases of the trace specs. -/
 theorem leafDigests_append (l₁ l₂ : List (LeafRecord Leaf)) :
     leafDigests (l₁ ++ l₂) = leafDigests l₁ + leafDigests l₂ := by
   simp [leafDigests]

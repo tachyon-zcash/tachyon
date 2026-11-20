@@ -48,6 +48,8 @@ structure ChainQueried (q : AnchorQueries F A ℕ) (nextStamp : A → ℕ → F[
 variable {q : AnchorQueries F A ℕ} {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A}
   {zero : A} {chain : List (Stamp F A)} {N : ℕ}
 
+/-- Folding one more stamp onto a run is one `nextStamp` call on the run's anchor, for inducting
+over an epoch's stamps from the last. -/
 theorem foldBlock_concat {e : ℕ} {a : A} {L : List F[X]} {c : F[X]} :
     foldBlock nextStamp e a (L ++ [c]) = nextStamp (foldBlock nextStamp e a L) e c := by
   simp [foldBlock]
@@ -138,6 +140,8 @@ def OnChain (nextStamp : A → ℕ → F[X] → A) (nextEpoch : A → ℕ → A)
   ∃ P S : List F[X], P ++ S = epochStamps chain e ∧
     a = foldBlock nextStamp e (entry nextStamp nextEpoch zero chain e) P
 
+/-- The chain reaches every epoch's entry anchor, through the empty prefix of its stamps, including
+an epoch that published none. -/
 theorem entry_onChain (e : ℕ) :
     OnChain nextStamp nextEpoch zero chain e (entry nextStamp nextEpoch zero chain e) :=
   ⟨[], _, rfl, rfl⟩
