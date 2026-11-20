@@ -33,10 +33,7 @@ use ragu::{
     pasta::Pasta,
     primitives::{Boolean, Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-    udon::{
-        curve::{Affine as _, EndomorphismAffine},
-        field::Field as _,
-    },
+    udon::{curve::EndomorphismAffine, field::Field as _},
 };
 
 use super::{
