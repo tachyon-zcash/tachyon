@@ -10,10 +10,9 @@ use alloc::{
 use core::assert_matches;
 
 use corez::io;
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{WalletRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
-use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
     action, bundle,
@@ -47,15 +46,15 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
         &ProofStamp<stamp::Uncompressed>,
     ),
     (digests, tachygrams): (&[ActionDigest], &[Tachygram]),
-) -> ragu::Pcd<Pasta, ProductionRank, Stamp> {
+) -> ragu::Pcd<Pasta, WalletRank, Stamp> {
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
-        app.bridge_hash(stamp_a.tachygram_set.as_ref().to_affine())
+        app.bridge_hash(stamp_a.tachygram_set.into())
             .unwrap()
             .into(),
         stamp_a.anchor,
     ));
     let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
-        app.bridge_hash(stamp_b.tachygram_set.as_ref().to_affine())
+        app.bridge_hash(stamp_b.tachygram_set.into())
             .unwrap()
             .into(),
         stamp_b.anchor,

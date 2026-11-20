@@ -8,11 +8,11 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{
-        Boolean, Element, GadgetExt as _, multipack,
+        Boolean, Element, decompose_n, multipack,
         vec::{ConstLen, FixedVec},
     },
+    udon::field::Field,
 };
-use udon::field::Field;
 
 use crate::pasta::Fp;
 
@@ -44,9 +44,9 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
-        let uint = Self::alloc(dr, element.value().map(Clone::clone))?;
-        uint.pack(dr)?.enforce_equal(dr, element)?;
-        Ok(uint)
+        Ok(Self {
+            bits: decompose_n(dr, &mut (), element)?,
+        })
     }
 
     /// The value the bits encode.
@@ -56,14 +56,6 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     pub(crate) const fn bits(&self) -> &FixedVec<Boolean<'dr, D>, ConstLen<BITS>> {
         &self.bits
-    }
-
-    /// Bounds the value to `0..=maximum` and returns `maximum - value`, which
-    /// fits the same width: the two sum to `maximum`, so neither wraps.
-    pub(crate) fn enforce_max(&self, dr: &mut D, maximum: u64) -> Result<Self> {
-        let packed = self.pack(dr)?;
-        let slack = Element::constant(dr, Fp::from(maximum)).sub(dr, &packed);
-        Self::from_element(dr, &slack)
     }
 }
 

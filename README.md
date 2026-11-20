@@ -1,68 +1,77 @@
 # Tachyon
 
-The Tachyon shielded transaction protocol for Zcash.
+Tachyon is a shielded transaction protocol for Zcash. It aims to reduce the
+cost of shielded transactions to the chain.
 
-## Architecture
+This repository holds the reference implementation, in the `zcash_tachyon`
+crate, and [The Tachyon Book](book), which describes the protocol. Both are
+work in progress, and the crate's API changes without notice.
 
-### Transaction Structure
+## Transaction structure
 
-A **bundle** contains actions, a value balance, and a binding signature.
-Each **action** carries a value commitment (`cv`), a randomized verification
-key (`rk`), and a spend authorization signature (`sig`).
+A bundle holds actions and a stamp. Each action has a signature and a pair of
+tachygrams. A tachygram stands for a nullifier or a note commitment, and
+consensus treats both alike.
 
-**Tachygrams** (nullifiers and note commitments) live in the **stamp**, not
-in the action. This separation enables stamp stripping during proof
-aggregation while actions retain their authorization.
+The stamp carries a [Ragu](https://github.com/tachyon-zcash/ragu) proof that
+the bundle's actions follow the rules. Stamps can be merged into one stamp that
+covers several bundles, and the other bundles are stripped of their stamps.
 
 ```mermaid
 classDiagram
-    class Bundle["Bundle&lt;Stamp&gt;"] {
-        actions: Action[]
-        value_balance: i64
-        binding_sig: BindingSignature
-        stamp: Stamp
+    direction LR
+    class Bundle {
+        value_balance: value::Balance
+        fee: fee::Descriptor
+        binding_sig: Signature
+        verify()
+        strip()
     }
     class Action {
         cv: value::Commitment
-        rk: RandomizedVerificationKey
-        sig: SpendAuthSignature
+        rk: ActionVerificationKey
+        sig: action::Signature
+        tachygrams: Tachygram[2]
     }
-    class Stamp {
-        tachygrams: Tachygram[]
+    class ProofStamp {
         anchor: Anchor
-        proof: Proof
+        tachygram_set: TachygramSetCommit
+        proof: stamp::Proof
+        merge()
+        unmerge()
+        compress()
     }
-    Bundle *-- Action
-    Bundle *-- Stamp
+    Bundle "1" *-- "0..*" Action : actions
+    Bundle "1" *-- "0..1" ProofStamp : stamp
+    ProofStamp --> "0..*" Bundle : adjuncts
 ```
 
-## Status
+A stamp's adjuncts are the other bundles it covers, listed by transaction id.
+`merge` combines two stamps into one, and `unmerge` divides one back out.
+`strip` removes the stamp from a bundle that another stamp covers.
 
-Core cryptographic plumbing is implemented and tested:
-
-- Key derivation (PRF^expand with sign normalization)
-- Value commitments (Pedersen over Pallas, shared generators with Orchard)
-- Spend authorization signatures (RedPallas, randomized keys)
-- Binding signatures (value balance enforcement via homomorphic commitments)
-- Bundle construction and signature verification
-
-Stubbed (pending Ragu PCD and Poseidon integration):
-
-- Note commitments
-- Nullifier derivation (GGM tree PRF)
-- Proof creation, merge, and verification
-- Stamp compression/decompression
+In the crate, an action's `cv` and `rk` form an `action::Descriptor`, and its
+signature and tachygrams sit beside it in `Bundle::action_auth`. The book's
+[Bundles](book/src/bundle.md) chapter explains every field.
 
 ## Development
 
-Requires Rust stable (1.85+) and nightly for formatting/linting.
+Requires stable Rust 1.97 or later and [`just`](https://github.com/casey/just).
+Formatting uses the pinned toolchain `nightly-2026-05-23`.
 
 ```sh
-just test    # unit and doc tests, then integration tests with --release
-just lint    # cargo +nightly clippy --workspace --all-targets --features test-epoch-size
-just fmt     # cargo +nightly fmt --all
-just doc     # cargo doc --workspace --no-deps
+just test          # unit tests, then integration tests and doctests with --release
+just lint          # build the docs, then clippy for no_std and for all targets
+just fmt           # format with the pinned nightly
+just check         # cargo check for no_std and for all targets
+just doc --open    # build and open the crate's rustdoc
+just book serve    # serve the book, after installing mdbook and its plugins
+just ci_local      # the Rust CI gates, without the OS matrix
 ```
+
+Unit and integration tests build with the `test-epoch-size` feature, which shortens an epoch from
+4096 blocks to 64. Only `tests/epoch.rs` runs at the shipped epoch size, and
+only `just ci_local` runs it.
 
 ## License
 

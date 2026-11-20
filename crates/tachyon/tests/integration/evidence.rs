@@ -1,8 +1,7 @@
 use core::iter;
 
-use ragu::Polynomial;
+use ragu::{Polynomial, udon::field::Field as _};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
@@ -36,10 +35,7 @@ fn evidence_tree_admission_rejects_substituted_contents() {
     assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
     let replacement: TachygramSetPoly = iter::once(Tachygram::random(rng)).collect();
     let mut forged_header = *bucket.pcd.data();
-    forged_header.5 = app
-        .bridge_hash(replacement.commit().as_ref().to_affine())
-        .unwrap()
-        .into();
+    forged_header.5 = app.bridge_hash(replacement.commit().into()).unwrap().into();
     let forged = bucket
         .pcd
         .proof()

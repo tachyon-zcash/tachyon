@@ -7,7 +7,6 @@ use alloc::{
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::curve::Projective as _;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, bundle,
@@ -554,13 +553,13 @@ fn unmerge_binds_its_sets() {
     let bob_actions: ActionSetPoly = bob.verify_covered(&[]).unwrap().0.into_iter().collect();
     let bob_tachygrams: TachygramSetPoly = bob_members.clone().collect();
     let dividend_header = (
-        app.bridge_hash(alice_bob_tachygrams.commit().as_ref().to_affine())
+        app.bridge_hash(alice_bob_tachygrams.commit().into())
             .unwrap()
             .into(),
         alice_bob.anchor,
     );
     let divisor_header = (
-        app.bridge_hash(bob_tachygrams.commit().as_ref().to_affine())
+        app.bridge_hash(bob_tachygrams.commit().into())
             .unwrap()
             .into(),
         bob.stamp.anchor,

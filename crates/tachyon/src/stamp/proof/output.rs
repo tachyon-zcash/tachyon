@@ -10,8 +10,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, Point, allocator::Allocator, io::Write},
     step::{Encoded, Index, Oracles, Step},
+    udon::curve::EndomorphismAffine,
 };
-use udon::curve::EndomorphismAffine;
 
 use crate::{
     Tachygram,

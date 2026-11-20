@@ -16,8 +16,8 @@ use ragu::{
     pasta::{Pasta, PoseidonFp},
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::{curve::Affine as _, field::Field as _},
 };
-use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     digest::poseidon,
@@ -389,8 +389,7 @@ impl Step<Pasta> for NullifierDerive {
         let fields = NoteNullifiersOutput {
             cm: secret.cm.clone(),
             epoch_start,
-            epoch_end: gadgets::uint::Uint::from_element(dr, &epoch_end)
-                .and_then(|bits| gadgets::epoch::EpochIndex::from_bits(dr, &bits))?,
+            epoch_end: gadgets::epoch::EpochIndex::from_element(dr, epoch_end)?,
         };
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(fields)),

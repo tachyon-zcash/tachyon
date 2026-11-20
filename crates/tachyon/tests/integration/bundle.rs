@@ -9,9 +9,14 @@ use alloc::{
 use core::{assert_matches, cmp::Reverse, mem};
 
 use corez::io;
-use ragu::{ProductionRank, Rank as _};
+use ragu::{
+    Rank as _, WalletRank,
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
+};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
     bundle::{Plan, PlanError, Signature},
@@ -21,7 +26,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     fee,
     keys::private,
-    pasta::{Ep, Eq, Fp},
+    pasta::{Ep, EqAffine, Fp},
     stamp::{self, ProofStamp, StrippedStamp},
     value, *,
 };
@@ -834,7 +839,7 @@ fn bundles_round_trip_at_action_count_limits() {
         )
         .unwrap();
     let (descriptor, signature) = random_action(rng);
-    assert_eq!((ProductionRank::num_coeffs() - 2) / 2, 4095);
+    assert_eq!((WalletRank::num_coeffs() - 2) / 2, 4095);
     for n in [0, 4095] {
         // Read enforces wire shape and uniqueness, not signature validity or
         // descriptor multiplicity; those belong to later verification.
@@ -1027,7 +1032,7 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
 
 #[test]
 fn read_bounds_the_action_count() {
-    let most = (ProductionRank::num_coeffs() - 2) / 2;
+    let most = (WalletRank::num_coeffs() - 2) / 2;
     for (n_actions, kind) in [
         (most, io::ErrorKind::UnexpectedEof),
         (most + 1, io::ErrorKind::InvalidData),
@@ -1089,7 +1094,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
 
     let count_at = empty.len() - proof_len - proof_prefix.len() - 1;
     assert_eq!(empty[count_at], 0);
-    let most = ProductionRank::num_coeffs() - 2 - 2 * alice.actions.len();
+    let most = WalletRank::num_coeffs() - 2 - 2 * alice.actions.len();
     for n_adjuncts in [most, most + 1] {
         let mut bytes = empty[..count_at].to_vec();
         CompactSize::try_from(n_adjuncts)
@@ -1139,7 +1144,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let mut trailer = Vec::new();
     alice.stamp.write(&mut trailer).unwrap();
     trailer.truncate(64);
-    CompactSize::try_from(ProductionRank::num_coeffs() - 1)
+    CompactSize::try_from(WalletRank::num_coeffs() - 1)
         .unwrap()
         .write(&mut trailer)
         .unwrap();
@@ -1161,7 +1166,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
 fn read_rejects_an_identity_tachygram_set() {
     let app = &application();
     let (_, mut bundle) = spend(app);
-    bundle.stamp.tachygram_set = TachygramSetCommit::from(Eq::identity());
+    bundle.stamp.tachygram_set = TachygramSetCommit::from(EqAffine::identity());
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     for err in [
@@ -1179,7 +1184,7 @@ fn verify_covered_bounds_the_covered_tachygrams() {
     let (_, bundle) = alice(app);
     let adjunct = bundle.clone().strip();
     // Two bundles' fee changes leave room for this many actions' pairs.
-    let most = (ProductionRank::num_coeffs() - 3) / 2;
+    let most = (WalletRank::num_coeffs() - 3) / 2;
     for (n_actions, expected) in [
         (most, VerifyCoverageError::DuplicateActions),
         (most + 1, VerifyCoverageError::WrongTachygramSet),

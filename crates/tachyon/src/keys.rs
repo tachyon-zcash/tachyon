@@ -89,11 +89,11 @@ mod note {
     //! Note-related keys: NullifierKey, PaymentKey.
 
     use derive_more::{AsRef, Debug, From, Into};
+    use ragu::udon::curve::Affine as _;
+    #[cfg(test)]
+    use ragu::udon::field::Field as _;
     #[cfg(test)]
     use rand_core::CryptoRng;
-    use udon::curve::Affine as _;
-    #[cfg(test)]
-    use udon::field::Field as _;
 
     use super::{master::NoteMasterKey, proof::SpendValidatingKey};
     use crate::{

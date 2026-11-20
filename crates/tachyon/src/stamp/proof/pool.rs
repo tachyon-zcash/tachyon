@@ -27,8 +27,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::field::Field as _,
 };
-use udon::{curve::Projective as _, field::Field as _};
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{
@@ -280,7 +280,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
             witness.0.into(),
             witness.1.into(),
-            bridge_hash(witness.2.commit().as_ref().to_affine()),
+            bridge_hash(witness.2.commit().into()),
         ));
         let stamp = &witness.2;
         let prepared =
