@@ -47,10 +47,12 @@ models the anchor chain and the publication rules that `Chain.Valid` collects.
 evidence trees, whose `EvidenceTreeOpen` replays a bucket. `Unspent.lean` models `ArbitraryUnspent`
 (`QrUnspentInit`, `UnspentFuse`, `UnspentLift`), `NoteNullifiers` (`NullifierDerive`,
 `NullifierFuse`) and `UnspentBind`. `CubicMember.lean` defines Rust's cubic indexed-member encoding
-and proves `MemberLaw` for it. `Consensus/Entry.lean` derives a published chain's entry anchors and
-the anchors it reaches (`OnChain`) from its stamps. `TreeTraces.lean` maps chain-anchored
-derivations into `StampTrace`. `Instances.lean` exhibits a concrete `ZMod 37` instance of the
-headline hypotheses and a `ZMod 307` instance of Rust's cubic.
+and proves `MemberLaw` for it. `Pallas.lean` proves the Pallas modulus prime (`Pallas.prime`) and
+checks Rust's `QUADRATIC_NON_RESIDUE` and `cubicMember` constants at Pallas
+(`Pallas.quadraticNonResidue`, `Pallas.memberLaw`). `Consensus/Entry.lean` derives a published
+chain's entry anchors and the anchors it reaches (`OnChain`) from its stamps. `TreeTraces.lean` maps
+chain-anchored derivations into `StampTrace`. `Instances.lean` exhibits a concrete `ZMod 37`
+instance of the headline hypotheses and a `ZMod 307` instance of Rust's cubic.
 
 ## What is verified
 
@@ -179,7 +181,8 @@ keeps the inputs' signs, and unmerge keeps the dividend's signs and reverses the
   agrees with `IsFee` of its `TreeLeaf.digest`. Every covered digest in `IsFee` comes from a
   `FeeSeed` or `FeeFuse` leaf among the positive occurrences (`StampTree.fee_leaf`), and a covered
   spend's stamp derivation supplies the bundle's own fee digest by such a leaf when `IsFee` holds of
-  `feeDigest fee.1 fee.2` (`CoveredSpend.fee_leaf`).
+  `feeDigest fee.1 fee.2` (`CoveredSpend.fee_leaf`), both exhibited at `ZMod 37` in
+  `Instances.lean`.
 
 These results take the trace or `StampTree` as an input. `StampDerivable` is a proposition, so
 nothing produces a trace from it. That a verified stamp proof has a trace or `StampTree` is the
@@ -261,30 +264,32 @@ leaf step's header and digest call.
 
 `Tachyon/Instances.lean` instantiates the model at `ZMod 37` with concrete hash functions and finite
 call sets holding the calls the chain and derivations make, on a three-stamp chain whose epoch 0
-stamp publishes `[cm, 2]`, whose first epoch 1 stamp is a bundle covering one spend of that note and
-a fee change, and whose second epoch 1 stamp publishes `[9]`. The spend's lineage is a
-`QrSpendableInit` on a `NoteUnspent` segment over epoch 0, whose bucket comes from one descent and
-is replayed through an evidence tree and `EvidenceTreeOpen`.
+stamp publishes `[cm, 2]`, whose epoch 1 stamp is a bundle covering one spend of that note and a fee
+change, and whose epoch 2 stamp publishes `[9]`. The spend's lineage is a `QrSpendableInit` on a
+`NoteUnspent` segment over epoch 0, whose bucket comes from one descent and is replayed through an
+evidence tree and `EvidenceTreeOpen`.
 
 - `Instances.headline_hypotheses` inhabits every hypothesis of `no_double_spend_of_covered_spends`
-  except `p₂` (with `hsplit`, `hs₂` and `hfresh` taking the second epoch 1 stamp as `s₂`), and of
-  `no_double_spend_in_stamp` except `p₂` and `hindex` (checked by two `example` applications), as
-  well as `CoveredSpend.pair_le`, `SpendDerivable.pair` and `SpendDerivable.lineage`.
+  except `p₂` (with `hsplit`, `hs₂` and `Instances.hfresh` taking epoch 2's stamp as `s₂`, so
+  `hfresh`'s range is `{2}`), and of `no_double_spend_in_stamp` except `p₂` and `hindex` (checked by
+  two `example` applications), as well as `CoveredSpend.pair_le`, `SpendDerivable.pair` and
+  `SpendDerivable.lineage`.
 - `Instances.lineage_hypotheses` inhabits `SpendDerivable.lineage` and `NoteUnspentDerivable.lineage`
   with a lineage covering epoch 0.
 - `Instances.bundle_verified` inhabits `BundleVerified` (via `StampTree.derivable` and
-  `Instances.hepoch`) with `IsFee` holding of the bundle's fee digest.
+  `Instances.hepoch`) with `IsFee` holding of the bundle's fee digest, and two `example`
+  applications inhabit `StampTree.fee_leaf` and `CoveredSpend.fee_leaf` on its stamp derivation.
 - `Instances.bucket_onChain_hypotheses` inhabits a sealed QR bucket over epoch 0's stamp, with one
   descent, for `QrBucketDerivable.covers` and `QrBucket.Covers.onChain`, and
   `Instances.lift_hypotheses` inhabits a span lift onto a chain node for
   `Chain.StampLiftStep.epoch_eq`.
 - `Instances.rust_memberLaw` inhabits `MemberLaw` at 16 epoch indices for Rust's `cubicMember` with
-  `c = 5` over `ZMod 307` (via `cubicMember_law`). The `ZMod 37` chain instance uses a family of
-  monic irreducible quadratics for its 16-index `MemberLaw` and `2` as `qnr`.
-- Not checked in Lean: the Pallas-specific facts that `cubicMember_law`'s hypotheses hold at Pallas
-  with `c = 2` and `emax = 2 ^ 20 - 1` and that Rust's `NON_RESIDUE = 5` is a non-square at Pallas
-  (needing the Pallas prime, Phase 1 of the extraction plan), and no field wrap in `enforce_sides_of`'s
-  mask sums and bit fold (needing a model of the mask fold, which the model lacks).
+  `c = 5` over `ZMod 307` (via `cubicMember_law`), and `Pallas.memberLaw` checks `c = 2` up to
+  `2 ^ 20 - 1` at the Pallas base field. The `ZMod 37` chain instance uses a family of monic
+  irreducible quadratics for its 16-index `MemberLaw` and `2` as `qnr` (Rust's
+  `QUADRATIC_NON_RESIDUE = 5` is checked at Pallas by `Pallas.quadraticNonResidue`).
+- Not checked in Lean: no field wrap in `enforce_sides_of`'s mask sums and bit fold (needing a model
+  of the mask fold, which the model lacks).
 
 ## Trust partition
 
@@ -390,11 +395,11 @@ finite call set without a collision satisfies each law over a finite field (`Ins
   encoding `(m + (i + 1) X) ^ 3 - c`, `cubicMember_law` proves `MemberLaw (cubicMember c) emax` over
   any field where `c` is a non-cube, `3 ≠ 0`, each `i + 1 ≠ 0` for `i ≤ emax`, and the cubes of
   `i + 1` for `i ≤ emax` are distinct, and `Instances.rust_memberLaw` instantiates it at `ZMod 307`
-  with `c = 5` and `emax = 15`. At the Pallas base field (`c = 2`, `emax = EPOCH_MAX = 2 ^ 20 - 1`),
-  `p ≡ 1 (mod 3)`, `2` is a non-cube, and `2 ^ 20 ≪ √(p / 3)` (checked by computation outside Lean,
-  not in Lean).
-- **The quadratic non-residue.** The QR results take `qnr` to be a non-square. Rust fixes it to `5`
-  in the Pallas base field (`5` is a non-square modulo `p`, checked by computation outside Lean).
+  with `c = 5` and `emax = 15`. At the Pallas base field (`Pallas.prime`), `Pallas.memberLaw` proves
+  `MemberLaw (cubicMember (2 : ZMod Pallas.p)) (2 ^ 20 - 1)` from `Pallas.nonResidue_not_cube` and
+  `(2 ^ 20) ^ 3 < Pallas.p`.
+- **The quadratic non-residue.** The QR results take `qnr` to be a non-square. Rust fixes
+  `QUADRATIC_NON_RESIDUE = 5` in the Pallas base field, checked by `Pallas.quadraticNonResidue`.
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
 
@@ -469,11 +474,11 @@ window finds no duplicate. Both spends pass.
 `Tachyon/Meta/AxiomBudget.lean` defines `#check_axiom_budget`, invoked from `Tachyon/Axioms.lean`.
 It checks every declaration of every imported `Tachyon` module (auxiliary declarations included) to
 confirm that none is an `axiom` and none depends on any axiom outside `propext`, `Classical.choice`
-and `Quot.sound` (ruling out `sorryAx` and `native_decide`'s axioms), verifies that all 31 pinned
+and `Quot.sound` (ruling out `sorryAx` and `native_decide`'s axioms), verifies that all 34 pinned
 headline theorems in `Axioms.lean` (`StampTree.fee_leaf`, `CoveredSpend.fee_leaf`, `cubicMember_law`,
-`Instances.rust_memberLaw`, and the 27 core stamp, bundle, QR, lineage, chain and double-spend
-theorems, each checked with `#print axioms` inside `#guard_msgs`) were visited, and checks that the
-imported `Tachyon` modules match the `.lean` files under `Tachyon/` plus `Tachyon.lean`. `just fv`
-runs `lake build --wfail`, failing on any warning, and then re-runs `lake env lean
-Tachyon/Axioms.lean` so the census and module-coverage check run on cached builds too; no CI job
-runs it.
+`Instances.rust_memberLaw`, `Pallas.prime`, `Pallas.quadraticNonResidue`, `Pallas.memberLaw`, and
+the 27 core stamp, bundle, QR, lineage, chain and double-spend theorems, each checked with
+`#print axioms` inside `#guard_msgs`) were visited, and checks that the imported `Tachyon` modules
+match the `.lean` files under `Tachyon/` plus `Tachyon.lean`. `just fv` runs `lake build --wfail`,
+failing on any warning, and then re-runs `lake env lean Tachyon/Axioms.lean` so the census and
+module-coverage check run on cached builds too; no CI job runs it.
