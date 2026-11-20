@@ -13,7 +13,10 @@ soundness. Ragu's internal rerandomization step carries its input's header data 
 unchanged, so it adds no derivable state and has no constructor.
 
 `IsFee` is the fee-digest domain (`Tachyon-FeeDg`), separate from the action-digest domain
-(`Tachyon-ActionDg`). `R e d` is the tachygram multiset digest `d` derives at epoch `e`: a spend's
+(`Tachyon-ActionDg`). It is a parameter: every result holds for every `IsFee`, and nothing here
+ties it to a fee digest function. An `IsFee` that holds of nothing leaves no derivable `Stamp`
+header, so results about `Stamp` headers say nothing for it. `Tachyon.Instances` exhibits a
+derivable `Stamp` header whose `IsFee` holds of its fee digest. `R e d` is the tachygram multiset digest `d` derives at epoch `e`: a spend's
 nullifier pair, an output's `cm` and pad, or a fee's change commitment. The digest's preimage holds
 those tachygrams.
 
