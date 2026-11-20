@@ -14,18 +14,14 @@ fn classification_solves_the_class_equation() {
         assert_eq!(classification.discriminant(), discriminant);
         assert_eq!(classification.class(), class);
         assert_eq!(
-            classification.claim(),
-            QrClassClaim {
-                class,
-                root: classification.root()
-            }
-        );
-        assert_eq!(
-            classification.root().square(),
+            Fp::from(classification.root()).square(),
             class.multiplier() * (value + Fp::from(discriminant))
         );
     }
-    assert_eq!(discriminant.classify(exceptional.into()).root(), Fp::ZERO);
+    assert_eq!(
+        Fp::from(discriminant.classify(exceptional.into()).root()),
+        Fp::ZERO
+    );
     assert_eq!(QrClass::Residue.sibling(), QrClass::NonResidue);
     assert_eq!(QrClass::NonResidue.sibling(), QrClass::Residue);
 }
@@ -38,7 +34,7 @@ fn classification_recovers_the_class_from_a_known_root() {
         let value = square * class.multiplier().invert().unwrap() - Fp::from(discriminant);
         let classification = discriminant.classify(value.into());
         assert_eq!(classification.class(), class);
-        assert_eq!(classification.root().square(), square);
+        assert_eq!(Fp::from(classification.root()).square(), square);
     }
 }
 
@@ -70,7 +66,10 @@ fn split_keeps_class_order_and_repeated_members() {
         for classification in side.classifications() {
             assert_eq!(classification.class(), class);
             let shifted = Fp::from(classification.value()) + Fp::from(discriminant);
-            assert_eq!(classification.root().square(), class.multiplier() * shifted);
+            assert_eq!(
+                Fp::from(classification.root()).square(),
+                class.multiplier() * shifted
+            );
             if shifted == Fp::ZERO {
                 assert_eq!(class, QrClass::Residue);
             }
@@ -97,16 +96,23 @@ fn class_decomposition_requires_distinct_members() {
 fn profile_records_the_classes_from_the_first_discriminant() {
     let discriminant = QrDiscriminants::from(Fp::from(11));
     let value = Tachygram::from(Fp::from(3));
+    let path = discriminant
+        .classify(value)
+        .each_ref()
+        .map(QrClassification::class);
     for depth in [0, 1, 31, 32] {
         let first = Fp::from(value) + Fp::from(discriminant);
         let bits = (0..depth).fold(0, |bits, level| {
             let shifted = first + Fp::from(u64::from(level));
             (bits << 1) | u32::from(shifted.sqrt().is_some())
         });
-        assert_eq!(
-            discriminant.profile(value, depth),
-            QrProfile { depth, bits }
-        );
+        let expected = QrProfile { depth, bits };
+        let prefix = path[..usize::try_from(depth).unwrap()]
+            .iter()
+            .copied()
+            .collect::<QrProfile>();
+        assert_eq!(prefix, expected);
+        assert_eq!(discriminant.profile(value, depth), prefix);
     }
 }
 
@@ -145,6 +151,31 @@ fn the_bits_record_the_splits_outermost_first() {
 }
 
 #[test]
+fn collecting_classes_packs_the_path_and_its_prefixes() {
+    let path = [QrClass::NonResidue, QrClass::NonResidue, QrClass::Residue];
+    for (length, expected) in [
+        (0, QrProfile::ROOT),
+        (1, QrProfile { depth: 1, bits: 0 }),
+        (2, QrProfile { depth: 2, bits: 0 }),
+        (3, QrProfile { depth: 3, bits: 1 }),
+    ] {
+        assert_eq!(
+            path[..length].iter().copied().collect::<QrProfile>(),
+            expected
+        );
+    }
+    assert_eq!(
+        [QrClass::Residue; QrProfile::MAX_DEPTH]
+            .into_iter()
+            .collect::<QrProfile>(),
+        QrProfile {
+            depth: u32::BITS,
+            bits: u32::MAX
+        },
+    );
+}
+
+#[test]
 #[should_panic(expected = "profile has no bit left for another side")]
 fn descending_past_the_maximum_depth_panics() {
     let mut profile = QrProfile::ROOT;
@@ -164,14 +195,22 @@ fn the_profile_reaches_the_maximum_depth() {
 }
 
 #[test]
-fn class_claims_attest_the_shifted_value() {
+fn classifications_at_each_depth_solve_the_class_equation() {
     let discriminant = QrDiscriminants::from(Fp::from(11));
-    for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-        for (depth, QrClassClaim { class, root }) in
-            (0..).zip(discriminant.class_claims(value.into()))
-        {
-            let shifted = value + Fp::from(discriminant.at(depth));
-            assert_eq!(root.square(), class.multiplier() * shifted);
+    let exceptional = -Fp::from(discriminant.at(1));
+    for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9), exceptional] {
+        for (depth, classification) in (0..).zip(discriminant.classify(value.into())) {
+            let at_depth = discriminant.at(depth);
+            assert_eq!(classification, at_depth.classify(value.into()));
+            let shifted = value + Fp::from(at_depth);
+            assert_eq!(
+                Fp::from(classification.root()).square(),
+                classification.class().multiplier() * shifted
+            );
+            if value == exceptional && depth == 1 {
+                assert_eq!(classification.class(), QrClass::Residue);
+                assert_eq!(Fp::from(classification.root()), Fp::ZERO);
+            }
         }
     }
 }

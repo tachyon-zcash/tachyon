@@ -46,7 +46,7 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassClaim, QrDiscriminants,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassRoot, QrDiscriminants,
         QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge,
         TachygramSetPoly,
     },
@@ -1193,9 +1193,10 @@ impl Step<Pasta> for QrBucketSeal {
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// The step fixes the value's side at every discriminant of the epoch, matches
-/// the bucket's profile against the first `depth` of them, and opens the
-/// bucket at the value for nonzero. The `MAX_DEPTH` positions
+/// `path` gives the value's class at each of the 32 depths, its QR path. Its
+/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
+/// root witnessing class `j`, including positions past that prefix. The step
+/// also opens the bucket at the value for nonzero. The `MAX_DEPTH` positions
 /// $j = 0, 1, \dots$ index the progression, so position $j$
 /// classifies at $R_j = R_0 + j$. With $x$ the value and $s_j = x +
 /// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
@@ -1253,10 +1254,11 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, claims, mask, sequence)`
+    /// `(value, path, roots, mask, sequence)`
     type Witness<'source> = (
         Tachygram,
-        [QrClassClaim; QrProfile::MAX_DEPTH],
+        [QrClass; QrProfile::MAX_DEPTH],
+        [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
     );
@@ -1264,16 +1266,20 @@ impl Step<Pasta> for QrUnspentInit {
     const INDEX: Index = Index::new(19);
     const NUM_STAGED: usize = 1;
 
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named witness operands"
+    )]
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let sequence = &witness.3;
+        let (value, _path, _roots, _mask, sequence) = witness;
         Ok(NfSeqPoly::SLOT
             .poly(Prepared::new(), sequence)
-            .stage([Fp::from(witness.0)]))
+            .stage([Fp::from(*value)]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1308,8 +1314,9 @@ impl Step<Pasta> for QrUnspentInit {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|&(_, classes, ..)| classes),
-            witness.as_ref().map(|&(_, _, mask, _)| mask),
+            witness.as_ref().map(|&(_, path, ..)| path),
+            witness.as_ref().map(|&(_, _, roots, ..)| roots),
+            witness.as_ref().map(|&(_, _, _, mask, _)| mask),
         )?;
         let epoch_next_element = bucket.epoch.next(dr)?;
         #[expect(

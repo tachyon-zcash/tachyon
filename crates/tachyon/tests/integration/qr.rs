@@ -6,8 +6,8 @@ use core::{array, assert_matches, iter, mem, slice};
 use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClass, QrClassClaim, QrDiscriminants, QrProfile,
-    Tachygram, TachygramSetBridge, TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClass, QrClassRoot, QrClassification,
+    QrDiscriminants, QrProfile, Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EPOCH_MAX,
     nullifier::Nullifier,
     pasta::{EqAffine, Fp},
@@ -1565,8 +1565,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                let (_, ref mut claims, ..) = forged;
-                claims[0].root += Fp::ONE;
+                let (_, _, ref mut roots, ..) = forged;
+                roots[0] = QrClassRoot::from(Fp::from(roots[0]) + Fp::ONE);
                 forged
             },
             "a root shifted by one",
@@ -1575,8 +1575,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                let (_, ref mut claims, ..) = forged;
-                claims[5].class = claims[5].class.sibling();
+                let (_, ref mut path, ..) = forged;
+                path[5] = path[5].sibling();
                 forged
             },
             "a root with a flipped side",
@@ -1585,7 +1585,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.2 = array::from_fn(|position| position == 0 || position == 2);
+                let (_, _, _, ref mut mask, _) = forged;
+                *mask = array::from_fn(|position| position == 0 || position == 2);
                 forged
             },
             "a depth mask that is not a prefix",
@@ -1594,7 +1595,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.2 = QrProfile { depth: 3, bits: 0 }.depth_mask();
+                let (_, _, _, ref mut mask, _) = forged;
+                *mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
                 forged
             },
             "a depth mask deeper than the bucket",
@@ -1603,7 +1605,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness;
-                forged.3 = NfSeqPoly::new(
+                let (_, _, _, _, ref mut sequence) = forged;
+                *sequence = NfSeqPoly::new(
                     epoch,
                     &[Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes)))],
                 );
@@ -1687,14 +1690,10 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
             .any(|&member| Fp::from(member) == value)
     );
     let mut witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into());
-    let (_, honest_roots, ..) = witness;
-    assert_eq!(
-        honest_roots[usize::try_from(position).unwrap()],
-        QrClassClaim {
-            class: QrClass::Residue,
-            root: Fp::ZERO
-        }
-    );
+    let (_, honest_path, honest_roots, ..) = witness;
+    let index = usize::try_from(position).unwrap();
+    assert_eq!(honest_path[index], QrClass::Residue);
+    assert_eq!(honest_roots[index], QrClassRoot::from(Fp::ZERO));
     let (accepted, ()) = app
         .fuse(
             rng,
@@ -1706,11 +1705,8 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         .unwrap();
     assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
 
-    let (_, ref mut roots, ..) = witness;
-    roots[usize::try_from(position).unwrap()] = QrClassClaim {
-        class: QrClass::NonResidue,
-        root: Fp::ZERO,
-    };
+    let (_, ref mut path, ..) = witness;
+    path[index] = QrClass::NonResidue;
     assert_matches!(
         app
             .fuse(
@@ -1852,7 +1848,8 @@ fn unspent_lift_rejects_invalid_extensions() {
             &bucket,
             {
                 let mut forged = honest.clone();
-                forged.3 = NfSeqPoly::new(
+                let (_, _, _, _, ref mut extended_seq) = forged;
+                *extended_seq = NfSeqPoly::new(
                     epoch0,
                     &[
                         nf0,
@@ -1867,8 +1864,11 @@ fn unspent_lift_rejects_invalid_extensions() {
             &bucket,
             {
                 let mut forged = honest;
-                forged.1 =
-                    discriminant.class_claims(Fp::random(|bytes| rng.fill_bytes(bytes)).into());
+                let (_, ref mut path, ref mut roots, ..) = forged;
+                let classifications =
+                    discriminant.classify(Fp::random(|bytes| rng.fill_bytes(bytes)).into());
+                *path = classifications.each_ref().map(QrClassification::class);
+                *roots = classifications.each_ref().map(QrClassification::root);
                 forged
             },
             "a root for another value",

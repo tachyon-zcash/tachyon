@@ -12,7 +12,7 @@ use ragu::{
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, QrClassClaim},
+    primitives::{self, QrClass, QrClassRoot},
 };
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
@@ -78,6 +78,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
+    /// `path` is the value's class at each of the 32 depths, its path.
+    /// `roots` gives the class root witnessing each step of the path.
+    ///
     /// At each discriminant $d_i$ of the progression from `discriminant`, the
     /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
     /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
@@ -89,7 +92,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
         dr: &mut D,
         value: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
-        claims: DriverValue<D, [QrClassClaim; primitives::QrProfile::MAX_DEPTH]>,
+        path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
+        roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
         let mut shifted = value.add(dr, discriminant);
@@ -103,12 +107,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                claims.as_ref().map(|values| values[position].class.bit()),
+                path.as_ref().map(|classes| classes[position].bit()),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                claims.as_ref().map(|values| values[position].root),
+                roots.as_ref().map(|values| Fp::from(values[position])),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;

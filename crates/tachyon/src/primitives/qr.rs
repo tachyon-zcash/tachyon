@@ -81,21 +81,21 @@ impl QrDiscriminants {
     /// Panics if `depth` exceeds [`QrProfile::MAX_DEPTH`].
     #[must_use]
     pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
-        (0..depth).fold(QrProfile::ROOT, |profile, level| {
-            profile.descend(self.at(level).classify(value).class())
-        })
+        (0..depth)
+            .map(|level| self.at(level).classify(value).class())
+            .collect()
     }
 
-    /// The claim for `value` at each of the [`QrProfile::MAX_DEPTH`] profile
-    /// depths, as given to a query step.
+    /// `value` classified at each of the [`QrProfile::MAX_DEPTH`] profile
+    /// depths.
     #[must_use]
     #[expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
         reason = "array indices are below QrProfile::MAX_DEPTH"
     )]
-    pub fn class_claims(self, value: Tachygram) -> [QrClassClaim; QrProfile::MAX_DEPTH] {
-        array::from_fn(|level| self.at(level as u32).classify(value).claim())
+    pub fn classify(self, value: Tachygram) -> [QrClassification; QrProfile::MAX_DEPTH] {
+        array::from_fn(|level| self.at(level as u32).classify(value))
     }
 }
 
@@ -131,7 +131,7 @@ impl QrDiscriminant {
             value,
             discriminant: self,
             class,
-            root,
+            root: QrClassRoot(root),
         }
     }
 
@@ -168,7 +168,7 @@ impl QrDiscriminant {
 pub struct QrSide {
     discriminant: QrDiscriminant,
     class: QrClass,
-    points: Vec<(Tachygram, Fp)>,
+    points: Vec<(Tachygram, QrClassRoot)>,
 }
 
 impl QrSide {
@@ -222,7 +222,7 @@ impl QrSide {
         let points = self
             .points
             .iter()
-            .map(|&(value, root)| (Fp::from(value), root));
+            .map(|&(value, root)| (Fp::from(value), Fp::from(root)));
         qr::decomposition(points, self.class.multiplier(), self.discriminant.into()).map(
             |(interpolant, quotient)| (QrInterpolantPoly(interpolant), QrQuotientPoly(quotient)),
         )
@@ -337,6 +337,17 @@ impl QrProfile {
     }
 }
 
+/// The profile of a sequence of classes: [`Self::ROOT`] descended through each.
+impl FromIterator<QrClass> for QrProfile {
+    #[expect(
+        clippy::renamed_function_params,
+        reason = "name the classes in the profile"
+    )]
+    fn from_iter<I: IntoIterator<Item = QrClass>>(classes: I) -> Self {
+        classes.into_iter().fold(Self::ROOT, Self::descend)
+    }
+}
+
 /// A value classified at a discriminant: a solution of the equation
 /// $r^2 = m \cdot (x + R)$, with $x + R \neq 0$ when $m = c$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
@@ -344,7 +355,7 @@ pub struct QrClassification {
     value: Tachygram,
     discriminant: QrDiscriminant,
     class: QrClass,
-    root: Fp,
+    root: QrClassRoot,
 }
 
 impl QrClassification {
@@ -368,29 +379,14 @@ impl QrClassification {
 
     /// The root $r$.
     #[must_use]
-    pub const fn root(&self) -> Fp {
+    pub const fn root(&self) -> QrClassRoot {
         self.root
     }
-
-    /// The class and root a step is given for this classification.
-    #[must_use]
-    pub const fn claim(&self) -> QrClassClaim {
-        QrClassClaim {
-            class: self.class,
-            root: self.root,
-        }
-    }
 }
 
-/// A prover's unchecked claim of a value's class and root at a discriminant.
-/// The step supplies $x$ and $R$ and checks $r^2 = m \cdot (x + R)$.
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct QrClassClaim {
-    /// The claimed class, which determines $m$.
-    pub class: QrClass,
-    /// The claimed root $r$.
-    pub root: Fp,
-}
+/// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrClassRoot(Fp);
 
 #[cfg(test)]
 mod tests;

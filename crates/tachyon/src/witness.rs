@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrDiscriminants, QrProfile, Tachygram, TachygramSetPoly, effect,
+        QrClassification, QrDiscriminants, QrProfile, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -336,8 +336,11 @@ pub const fn qr_bucket_seal(
     (anchor_final_prev,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(value, claims, mask,
+/// Prepare the witness for [`QrUnspentInit`]: `(value, path, roots, mask,
 /// sequence)`.
+///
+/// `path` gives the value's class at each of the 32 depths, its QR path.
+/// `roots` gives the class root witnessing each step of the path.
 ///
 /// # Panics
 ///
@@ -349,9 +352,11 @@ pub fn qr_unspent_init(
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_start, _anchor_next, discriminants, profile, _) = left;
+    let classifications = discriminants.classify(value);
     (
         value,
-        discriminants.class_claims(value),
+        classifications.each_ref().map(QrClassification::class),
+        classifications.each_ref().map(QrClassification::root),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
@@ -383,8 +388,11 @@ pub const fn evidence_tree_open(
     (profile, contents)
 }
 
-/// Prepare the witness for [`UnspentLift`]: `(value, claims, mask,
+/// Prepare the witness for [`UnspentLift`]: `(value, path, roots, mask,
 /// extended_seq)`.
+///
+/// `path` gives the value's class at each of the 32 depths, its QR path.
+/// `roots` gives the class root witnessing each step of the path.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
@@ -397,9 +405,11 @@ pub fn unspent_lift(
     let (_, epoch_start, ..) = left;
     let (epoch, _anchor_start, _anchor_next, discriminants, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
+    let classifications = discriminants.classify(value);
     (
         value,
-        discriminants.class_claims(value),
+        classifications.each_ref().map(QrClassification::class),
+        classifications.each_ref().map(QrClassification::root),
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
