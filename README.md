@@ -1,33 +1,32 @@
 # Tachyon
 
-Tachyon is a shielded transaction protocol for Zcash, designed to reduce what
-shielded transactions cost the chain.
+Tachyon is a shielded transaction protocol for Zcash. It aims to reduce the
+cost of shielded transactions to the chain.
 
-A Tachyon bundle carries a stamp: a recursive zero-knowledge proof that the
-bundle's actions follow the rules. Stamps can be merged, so one stamp covers
-many transactions instead of each being verified individually. Notes are
-simpler than Orchard's, and viewing keys, diversified addresses and on-chain
-note ciphertexts leave the core protocol: wallets exchange payment details out
-of band.
+A Tachyon bundle carries a stamp, a recursive zero-knowledge proof that the
+bundle's actions follow the rules. Stamps can be merged, so a single stamp can
+cover many transactions.
 
-This repository holds the reference implementation, the `zcash_tachyon` crate
-in [`crates/tachyon`](crates/tachyon), and The Tachyon Book in [`book`](book).
-Both are work in progress. The crate is version `0.0.0`, unpublished, and its
-API changes without notice.
+Tachyon notes are simpler than Orchard notes. Viewing keys, diversified
+addresses and on-chain note ciphertexts are no longer part of the core
+protocol. Wallets exchange payment details out of band instead.
+
+This repository holds two things: the reference implementation, which is the
+`zcash_tachyon` crate in [`crates/tachyon`](crates/tachyon), and The Tachyon
+Book in [`book`](book). Both are work in progress. The crate is unpublished at
+version `0.0.0`, and its API changes without notice.
 
 ## Where to go next
 
-- **The protocol:** read the book with `just book serve`, or in place starting
-  from [Bundles](book/src/bundle.md), [Proof Tree](book/src/proof-tree.md) and
+- **The protocol:** run `just book serve` to read the book. Its sources start
+  with [Bundles](book/src/bundle.md), [Proof Tree](book/src/proof-tree.md) and
   [Aggregation](book/src/aggregation.md).
 - **The design rationale:** Sean Bowe's
   [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/).
 - **The API:** `just doc --open` builds the crate's rustdoc.
-- **The proof system:** [Ragu](https://github.com/tachyon-zcash/ragu) and its
-  [book](https://tachyon.z.cash/ragu/). The crate proves, merges and verifies
-  stamps with Ragu proof-carrying data.
-- **The ZIPs:** [Tachyon ZIPs](book/src/zips/tachyon-zips.md) maps the
-  specification work.
+- **The proof system:** the crate proves, merges and verifies stamps with
+  [Ragu](https://github.com/tachyon-zcash/ragu) proof-carrying data. Ragu has
+  its own [book](https://tachyon.z.cash/ragu/).
 
 ## Development
 
@@ -43,15 +42,14 @@ just check       # cargo check for no_std and for all targets
 just ci_local    # the Rust CI gates, without the OS matrix
 ```
 
-`just test` passes its arguments to libtest. `just book` installs pinned
-versions of `mdbook`, `mdbook-katex` and `mdbook-mermaid` with `cargo-binstall`
-before it runs.
+`just test` passes its arguments to libtest. `just book` first installs pinned
+versions of `mdbook`, `mdbook-katex` and `mdbook-mermaid` with `cargo-binstall`.
 
-Unit and integration tests build with the `test-epoch-size` feature, which
+Unit and integration tests build with the `test-epoch-size` feature. It
 shortens an epoch from 4096 blocks to 64. Only `tests/epoch.rs` runs at the
-shipped epoch size. `just ci_local` includes it and `just test` does not.
+shipped epoch size, and only `just ci_local` runs it.
 
-The crate is `no_std`; `std` is a default feature.
+The crate is `no_std`, with `std` as a default feature.
 
 ## License
 
