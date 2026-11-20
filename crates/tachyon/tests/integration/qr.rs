@@ -6,8 +6,8 @@ use core::{array, assert_matches, iter, mem, slice};
 use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetBridge, TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClass, QrClassRoot, QrDiscriminant, QrProfile,
+    Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EPOCH_MAX,
     nullifier::Nullifier,
     pasta::{EqAffine, Fp},
@@ -87,7 +87,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
     let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
         .iter()
         .copied()
-        .partition(|&member| qr::classify(Fp::from(member), Fp::from(disc)).0);
+        .partition(|&member| disc.at(0).class(member) == QrClass::Residue);
     assert!(!residue.is_empty() && !non_residue.is_empty());
 
     let split = pool.qr_split(app, span0, disc, Fp::ZERO, 0);
@@ -193,7 +193,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
     let start = Anchor::random(rng);
     let discriminant = QrDiscriminant::random(rng);
     let member = Tachygram::random(rng);
-    let side = qr::classify(Fp::from(member), discriminant.at(0)).0;
+    let side = discriminant.at(0).class(member);
 
     let (root, ()) = app
         .seed(
@@ -251,29 +251,29 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     let zero = Anchor::from(Fp::ZERO);
     let disc = QrDiscriminant::random(rng);
     let member = Tachygram::random(rng);
-    let side = qr::classify(Fp::from(member), disc.at(0)).0;
+    let side = disc.at(0).class(member);
     let scale = Fp::from(7u64);
     let inverse = scale.invert().unwrap();
     let duplicate = PoolSim::genesis_with(vec![vec![member, member]]);
     let span = (Anchor::default(), duplicate.anchor());
     let root = duplicate.qr_intakes(app, span, disc, 0).pop().unwrap();
     let factors = [(vec![member], scale), (vec![member], inverse)];
-    let [child] = root.split_with_factors(rng, app, [!side], &factors);
+    let [child] = root.split_with_factors(rng, app, [side.sibling()], &factors);
     assert!(app.verify_differential(&child.pcd, &mut *rng).unwrap());
     assert_eq!(child.members, [member]);
-    assert_eq!(child.pcd.data().4, QrProfile::ROOT.descend(!side));
+    assert_eq!(child.pcd.data().4, QrProfile::ROOT.descend(side.sibling()));
 
     let single = PoolSim::genesis_with(vec![vec![member]]);
     let single_span = (Anchor::default(), single.anchor());
     let root_single = single.qr_intakes(app, single_span, disc, 0).pop().unwrap();
     let occupied = (vec![member], scale);
     let empty = (Vec::new(), inverse);
-    let split = if side {
+    let split = if side == QrClass::Residue {
         [empty, occupied]
     } else {
         [occupied, empty]
     };
-    let [rootless] = root_single.split_with_factors(rng, app, [!side], &split);
+    let [rootless] = root_single.split_with_factors(rng, app, [side.sibling()], &split);
     assert!(app.verify_differential(&rootless.pcd, &mut *rng).unwrap());
     assert_ne!(
         rootless.pcd.commitments()[1],
@@ -284,12 +284,14 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
         (Vec::new(), deep),
         (Vec::new(), (scale * deep).invert().unwrap()),
     ];
-    let [deeper] = rootless.split_with_factors(rng, app, [false], &factors_deep);
+    let [deeper] = rootless.split_with_factors(rng, app, [QrClass::NonResidue], &factors_deep);
     let sealed = deeper.seal(rng, app, zero);
     assert!(app.verify_differential(&sealed.pcd, &mut *rng).unwrap());
     assert_eq!(
         sealed.pcd.data().4,
-        QrProfile::ROOT.descend(!side).descend(false)
+        QrProfile::ROOT
+            .descend(side.sibling())
+            .descend(QrClass::NonResidue)
     );
 }
 
@@ -307,11 +309,9 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         .derive_note_private(note.psi)
         .derive_nullifier(epoch);
     let disc = iter::repeat_with(|| QrDiscriminant::random(rng))
-        .find(|&candidate| {
-            qr_profile_of(Fp::from(cm), candidate, 1) == qr_profile_of(Fp::from(nf), candidate, 1)
-        })
+        .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
         .unwrap();
-    let side = qr::classify(Fp::from(cm), disc.at(0)).0;
+    let side = disc.at(0).class(cm);
     let other = iter::repeat_with(|| user.random_note(400))
         .find(|candidate| {
             let value = user
@@ -319,7 +319,7 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
                 .nk
                 .derive_note_private(candidate.psi)
                 .derive_nullifier(epoch);
-            qr::classify(Fp::from(value), disc.at(0)).0 != side
+            disc.at(0).class(value.into()) != side
         })
         .unwrap();
     let other_nf = user
@@ -327,30 +327,32 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         .nk
         .derive_note_private(other.psi)
         .derive_nullifier(epoch);
-    let deep_bit = qr::classify(Fp::from(other_nf), disc.at(1)).0;
+    let deep_class = disc.at(1).class(other_nf.into());
     let zero = Anchor::from(Fp::ZERO);
     let scale = Fp::from(7u64);
     let inverse = scale.invert().unwrap();
     let pool = PoolSim::genesis_with(vec![vec![cm]]);
     let span = (Anchor::default(), pool.anchor());
     let root = pool.qr_intakes(app, span, disc, 0).pop().unwrap();
-    let [honest_non_residue, honest_residue] = root.clone().split(rng, app, [false, true]);
-    let honest = if side {
+    let [honest_non_residue, honest_residue] =
+        root.clone()
+            .split(rng, app, [QrClass::NonResidue, QrClass::Residue]);
+    let honest = if side == QrClass::Residue {
         [honest_residue, honest_non_residue]
     } else {
         [honest_non_residue, honest_residue]
     };
-    let factors = if side {
+    let factors = if side == QrClass::Residue {
         [(vec![], inverse), (vec![cm], scale)]
     } else {
         [(vec![cm], scale), (vec![], inverse)]
     };
-    let scaled = root.split_with_factors(rng, app, [side, !side], &factors);
+    let scaled = root.split_with_factors(rng, app, [side, side.sibling()], &factors);
     let deep = Fp::from(11u64);
     let factors_deep = [(vec![], deep), (vec![], (scale * deep).invert().unwrap())];
     let [deep_intake] = scaled[1]
         .clone()
-        .split_with_factors(rng, app, [deep_bit], &factors_deep);
+        .split_with_factors(rng, app, [deep_class], &factors_deep);
     let deep_bucket = deep_intake.seal(rng, app, zero);
     let [honest_held, honest_empty] = honest.map(|entry| entry.seal(rng, app, zero));
     let [scaled_held, scaled_empty] = scaled.map(|entry| entry.seal(rng, app, zero));
@@ -457,16 +459,14 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         .derive_note_private(note.psi)
         .derive_nullifier(EpochIndex::new(0));
     let disc = iter::repeat_with(|| QrDiscriminant::random(rng))
-        .find(|&candidate| {
-            qr_profile_of(Fp::from(cm), candidate, 1) == qr_profile_of(Fp::from(nf), candidate, 1)
-        })
+        .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
         .unwrap();
-    let side = qr::classify(Fp::from(cm), disc.at(0)).0;
+    let side = disc.at(0).class(cm);
     let absent = iter::repeat_with(|| Tachygram::random(rng))
-        .find(|&value| qr::classify(Fp::from(value), disc.at(0)).0 != side)
+        .find(|&value| disc.at(0).class(value) != side)
         .unwrap();
     let companion = iter::repeat_with(|| Tachygram::random(rng))
-        .find(|&value| qr::classify(Fp::from(value), disc.at(0)).0 == side)
+        .find(|&value| disc.at(0).class(value) == side)
         .unwrap();
     for (sibling, scale) in [(cm, Fp::from(7u64)), (companion, Fp::ONE)] {
         let pool = PoolSim::genesis_with(vec![vec![cm, sibling]]);
@@ -474,17 +474,28 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         let root = pool.qr_intakes(app, span, disc, 0).pop().unwrap();
         let held = (root.members.clone(), Fp::ONE);
         let empty = (vec![], Fp::ONE);
-        let honest_factors = if side { [empty, held] } else { [held, empty] };
+        let honest_factors = if side == QrClass::Residue {
+            [empty, held]
+        } else {
+            [held, empty]
+        };
         let [held_intake] = root
             .clone()
             .split_with_factors(rng, app, [side], &honest_factors);
         let child = (vec![cm], scale);
         let other = (vec![sibling], scale.invert().unwrap());
-        let factors = if side { [child, other] } else { [other, child] };
-        let [stray] = root.split_with_factors(rng, app, [!side], &factors);
+        let factors = if side == QrClass::Residue {
+            [child, other]
+        } else {
+            [other, child]
+        };
+        let [stray] = root.split_with_factors(rng, app, [side.sibling()], &factors);
         let [held_bucket, stray_bucket] =
             [held_intake, stray].map(|entry| entry.seal(rng, app, Anchor::from(Fp::ZERO)));
-        assert_eq!(stray_bucket.pcd.data().4, QrProfile::ROOT.descend(!side));
+        assert_eq!(
+            stray_bucket.pcd.data().4,
+            QrProfile::ROOT.descend(side.sibling())
+        );
         let unspent = user.bucket_unspent(rng, app, &held_bucket, &note);
         for bucket in [&held_bucket, &stray_bucket] {
             let (included, ()) = app
@@ -580,7 +591,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
 
         let mut intake = QrIntakeEntry { pcd: root, members };
         for level in 0..depth {
-            let side = qr::classify(value, discriminant.at(level)).0;
+            let side = discriminant.at(level).class(value.into());
             let [next] = intake.split(rng, app, [side]);
             intake = next;
         }
@@ -604,7 +615,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        for side in [false, true] {
+        for side in [QrClass::NonResidue, QrClass::Residue] {
             let (selection, ()) = app
                 .fuse(
                     rng,
@@ -619,7 +630,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
 
         let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) =
             intake.members.iter().copied().partition(|member| {
-                *member != exceptional && qr::classify(Fp::from(*member), discriminant.at(depth)).0
+                *member != exceptional && discriminant.at(depth).class(*member) == QrClass::Residue
             });
         let mut split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
         split_witness.0 = non_residue.iter().copied().collect();
@@ -637,7 +648,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             app.fuse(
                 rng,
                 qr::QrSideSelect,
-                witness::qr_side_select((*sides.data(), ()), &intake.members, false),
+                witness::qr_side_select((*sides.data(), ()), &intake.members, QrClass::NonResidue),
                 sides,
                 app.bootstrap_proof().clone().carry::<()>(()),
             ).err(),
@@ -690,13 +701,13 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     ] {
         let (epoch, start, anchor_end, discriminant, _) = data;
 
-        for side in [true, false] {
+        for class in [QrClass::Residue, QrClass::NonResidue] {
             let side_members: Vec<Tachygram> = members
                 .iter()
                 .copied()
-                .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0 == side)
+                .filter(|&member| discriminant.at(0).class(member) == class)
                 .collect();
-            let select_witness = witness::qr_side_select((*split.data(), ()), &members, side);
+            let select_witness = witness::qr_side_select((*split.data(), ()), &members, class);
             let expected_selection = *split.data();
             let expected_hints = [
                 EqAffine::from(select_witness.0.commit()),
@@ -717,7 +728,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 .fuse(
                     rng,
                     qr::QrSideDescend,
-                    witness::qr_side_descend((*split.data(), *selection.data()), side),
+                    witness::qr_side_descend((*split.data(), *selection.data()), class),
                     split.clone(),
                     selection,
                 )
@@ -729,7 +740,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                     start,
                     anchor_end,
                     discriminant,
-                    QrProfile::ROOT.descend(side),
+                    QrProfile::ROOT.descend(class),
                 )
             );
             assert_eq!(
@@ -759,8 +770,9 @@ fn qr_side_select_defers_hint_validation_to_descent() {
     let sides = pool.qr_split(app, span0, disc, Fp::ZERO, 0);
     let members = root.members;
 
-    for side in [false, true] {
-        let selection_witness = witness::qr_side_select((*sides.data(), ()), &members, !side);
+    for side in [QrClass::NonResidue, QrClass::Residue] {
+        let selection_witness =
+            witness::qr_side_select((*sides.data(), ()), &members, side.sibling());
         let (selection, ()) = app
             .fuse(
                 rng,
@@ -861,8 +873,11 @@ fn qr_side_descend_matches_selection_metadata() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let selection_witness =
-            witness::qr_side_select((*foreign_sides.data(), ()), other_members, false);
+        let selection_witness = witness::qr_side_select(
+            (*foreign_sides.data(), ()),
+            other_members,
+            QrClass::NonResidue,
+        );
         let (selection, ()) = app
             .fuse(
                 rng,
@@ -876,7 +891,7 @@ fn qr_side_descend_matches_selection_metadata() {
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                witness::qr_side_descend((*sides.data(), *selection.data()), false),
+                witness::qr_side_descend((*sides.data(), *selection.data()), QrClass::NonResidue),
                 sides.clone(),
                 selection,
             )
@@ -902,7 +917,7 @@ fn qr_side_descend_matches_selection_metadata() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*foreign_sides.data(), ()), &members, false),
+            witness::qr_side_select((*foreign_sides.data(), ()), &members, QrClass::NonResidue),
             foreign_sides,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -911,7 +926,7 @@ fn qr_side_descend_matches_selection_metadata() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            witness::qr_side_descend((*sides.data(), *selection.data()), false),
+            witness::qr_side_descend((*sides.data(), *selection.data()), QrClass::NonResidue),
             sides,
             selection,
         )
@@ -933,7 +948,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let (mut short_residue, mut padded_non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
         .iter()
         .copied()
-        .partition(|&member| qr::classify(Fp::from(member), Fp::from(disc)).0);
+        .partition(|&member| disc.at(0).class(member) == QrClass::Residue);
     let smuggled = short_residue.pop().unwrap();
     padded_non_residue.push(smuggled);
     let mut split_witness = witness::qr_intake_split((*root.pcd.data(), ()), &members);
@@ -954,7 +969,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             .fuse(
                 rng,
                 qr::QrSideSelect,
-                witness::qr_side_select((*sides.data(), ()), &members, true),
+                witness::qr_side_select((*sides.data(), ()), &members, QrClass::Residue),
                 sides.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -963,7 +978,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             .fuse(
                 rng,
                 qr::QrSideDescend,
-                witness::qr_side_descend((*sides.data(), *selection.data()), true),
+                witness::qr_side_descend((*sides.data(), *selection.data()), QrClass::Residue),
                 sides.clone(),
                 selection,
             )
@@ -980,7 +995,11 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*sides.data(), ()), &members_without_smuggled, false),
+            witness::qr_side_select(
+                (*sides.data(), ()),
+                &members_without_smuggled,
+                QrClass::NonResidue,
+            ),
             sides.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -989,14 +1008,14 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            witness::qr_side_descend((*sides.data(), *selection.data()), false),
+            witness::qr_side_descend((*sides.data(), *selection.data()), QrClass::NonResidue),
             sides,
             selection,
         )
         .unwrap();
     assert!(app.verify_uncompressed(&child, &mut *rng).unwrap());
     let (.., child_profile) = *child.data();
-    assert_eq!(child_profile, QrProfile::ROOT.descend(false));
+    assert_eq!(child_profile, QrProfile::ROOT.descend(QrClass::NonResidue));
     assert_eq!(
         child.commitments()[1],
         EqAffine::from(
@@ -1037,7 +1056,7 @@ fn qr_side_descend_refuses_a_full_register() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*sides.data(), ()), &intake.members, true),
+            witness::qr_side_select((*sides.data(), ()), &intake.members, QrClass::Residue),
             sides.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1047,7 +1066,7 @@ fn qr_side_descend_refuses_a_full_register() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            witness::qr_side_descend((*sides.data(), *selection.data()), true),
+            witness::qr_side_descend((*sides.data(), *selection.data()), QrClass::Residue),
             sides,
             selection,
         )
@@ -1190,7 +1209,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*split.data(), ()), &left_members, true),
+            witness::qr_side_select((*split.data(), ()), &left_members, QrClass::Residue),
             split.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1199,7 +1218,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .fuse(
             rng,
             qr::QrSideDescend,
-            witness::qr_side_descend((*split.data(), *selection.data()), true),
+            witness::qr_side_descend((*split.data(), *selection.data()), QrClass::Residue),
             split,
             selection,
         )
@@ -1207,7 +1226,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
     let deeper_members: Vec<Tachygram> = left_members
         .iter()
         .copied()
-        .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0)
+        .filter(|&member| discriminant.at(0).class(member) == QrClass::Residue)
         .collect();
     let (forged, ()) = app
         .fuse(
@@ -1534,9 +1553,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let disc = shared_discriminant();
     let cm = Tachygram::from(PoolSim::shared_note(500).commitment());
     let nf = iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
-        .find(|&candidate| {
-            qr_profile_of(Fp::from(candidate), disc, 2) == qr_profile_of(Fp::from(cm), disc, 2)
-        })
+        .find(|&candidate| disc.profile(candidate.into(), 2) == disc.profile(cm, 2))
         .unwrap();
     let bucket = pool.qr_bucket(app, span0, disc, Fp::from(nf), 2, Anchor::from(Fp::ZERO));
     let (epoch, ..) = *bucket.pcd.data();
@@ -1547,7 +1564,10 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.1[0].1 += Fp::ONE;
+                forged.1[0] = match forged.1[0] {
+                    QrClassRoot::NonResidue(root) => QrClassRoot::NonResidue(root + Fp::ONE),
+                    QrClassRoot::Residue(root) => QrClassRoot::Residue(root + Fp::ONE),
+                };
                 forged
             },
             "a root shifted by one",
@@ -1556,7 +1576,10 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
             bucket.pcd.clone(),
             {
                 let mut forged = witness.clone();
-                forged.1[5].0 = !forged.1[5].0;
+                forged.1[5] = match forged.1[5] {
+                    QrClassRoot::NonResidue(root) => QrClassRoot::Residue(root),
+                    QrClassRoot::Residue(root) => QrClassRoot::NonResidue(root),
+                };
                 forged
             },
             "a root with a flipped side",
@@ -1597,7 +1620,7 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 (*bucket.pcd.data(), ()),
                 Tachygram::from(
                     iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
-                        .find(|&value| qr_profile_of(value, disc, 2) != bucket.pcd.data().4)
+                        .find(|&value| disc.profile(value.into(), 2) != bucket.pcd.data().4)
                         .unwrap(),
                 ),
             ),
@@ -1655,7 +1678,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let span0 = pool.epoch_span(epoch0);
     let disc = shared_discriminant();
     let position = 1;
-    let value = -disc.at(position);
+    let value = -Fp::from(disc.at(position));
     assert_ne!(value, Fp::ZERO);
     let nf = Nullifier::from(value);
 
@@ -1670,7 +1693,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let (_, honest_roots, ..) = witness;
     assert_eq!(
         honest_roots[usize::try_from(position).unwrap()],
-        QrClassRoot(true, Fp::ZERO)
+        QrClassRoot::Residue(Fp::ZERO)
     );
     let (accepted, ()) = app
         .fuse(
@@ -1684,8 +1707,7 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
-    *side = false;
+    roots[usize::try_from(position).unwrap()] = QrClassRoot::NonResidue(Fp::ZERO);
     assert_matches!(
         app
             .fuse(
@@ -1843,7 +1865,7 @@ fn unspent_lift_rejects_invalid_extensions() {
             {
                 let mut forged = honest;
                 forged.1 =
-                    QrClassRoot::along(Fp::random(|bytes| rng.fill_bytes(bytes)), discriminant);
+                    discriminant.class_roots(Fp::random(|bytes| rng.fill_bytes(bytes)).into());
                 forged
             },
             "a root for another value",

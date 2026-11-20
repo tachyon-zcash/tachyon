@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use ragu::{WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Note, QrDiscriminant, QrProfile, Tachygram,
+    Anchor, BlockHeight, EpochIndex, Note, QrClass, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit, TachygramSetPoly, note,
     nullifier::{self, Nullifier},
     pasta::Fp,
@@ -18,8 +18,8 @@ use zcash_tachyon::{
 use super::{
     Proved, keyed_rng,
     qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of,
-        qr_profile_triplet, shared_discriminant,
+        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_triplet,
+        shared_discriminant,
     },
     wallet::shared_sk,
 };
@@ -188,7 +188,7 @@ impl PoolSim {
         let (residue, non_residue): (Vec<_>, Vec<_>) = members
             .iter()
             .copied()
-            .partition(|&member| qr::classify(Fp::from(member), discriminant.at(level)).0);
+            .partition(|&member| discriminant.at(level).class(member) == QrClass::Residue);
         Self::leaves(&residue, discriminant, level + 1)
             + Self::leaves(&non_residue, discriminant, level + 1)
     }
@@ -277,7 +277,7 @@ impl PoolSim {
         rng: &mut RNG,
         app: &App<'_>,
         parent: &QrIntakeEntry,
-        side: bool,
+        side: QrClass,
         sides: ragu::Pcd<Pasta, WalletRank, qr::QrIntakeSides>,
     ) -> QrIntakeEntry {
         let witness = witness::qr_side_select((*sides.data(), ()), &parent.members, side);
@@ -300,14 +300,11 @@ impl PoolSim {
             )
             .unwrap();
         let (_, _, _, discriminant, profile) = *parent.pcd.data();
-        let members = parent
-            .members
-            .iter()
-            .copied()
-            .filter(|member| {
-                qr::classify(Fp::from(*member), discriminant.at(profile.depth)).0 == side
-            })
-            .collect();
+        let (non_residue, residue) = discriminant.at(profile.depth).split(&parent.members);
+        let members = match side {
+            QrClass::NonResidue => non_residue,
+            QrClass::Residue => residue,
+        };
         QrIntakeEntry { pcd, members }
     }
 
@@ -316,7 +313,7 @@ impl PoolSim {
         span: (Anchor, Anchor),
         discriminant: QrDiscriminant,
         parent: &QrIntakeEntry,
-        side: bool,
+        side: QrClass,
     ) -> QrIntakeEntry {
         static CHILDREN: Proved<QrIntakeEntry> = Proved::new("qr_child");
 
@@ -338,7 +335,7 @@ impl PoolSim {
     ) -> QrIntakeEntry {
         let mut intake = self.qr_root(app, span, discriminant);
         for level in 0..depth {
-            let side = qr::classify(value, discriminant.at(level)).0;
+            let side = discriminant.at(level).class(value.into());
             intake = Self::qr_child(app, span, discriminant, &intake, side);
         }
         intake
@@ -357,7 +354,7 @@ impl PoolSim {
         let key = Self::qr_profile_key(
             span,
             discriminant,
-            qr_profile_of(value, discriminant, u32::BITS),
+            discriminant.profile(value.into(), u32::BITS),
         );
         DESCENTS.get(&key, |rng| {
             let root = self.qr_intake(app, span, discriminant, value, QR_DEPTHS[0]);
@@ -365,7 +362,7 @@ impl PoolSim {
             let mut intake = self.qr_intake(app, span, discriminant, value, 2);
             let mut penultimate = None;
             for level in 2..u32::BITS {
-                let side = qr::classify(value, discriminant.at(level)).0;
+                let side = discriminant.at(level).class(value.into());
                 let sides = Self::prove_qr_sides(rng, app, &intake);
                 intake = Self::prove_qr_child(rng, app, &intake, side, sides);
                 if level + 1 == QR_DEPTHS[2] {
@@ -408,8 +405,20 @@ impl PoolSim {
                     carried.push(intake);
                     continue;
                 }
-                residue.push(Self::qr_child(app, span, discriminant, &intake, true));
-                non_residue.push(Self::qr_child(app, span, discriminant, &intake, false));
+                residue.push(Self::qr_child(
+                    app,
+                    span,
+                    discriminant,
+                    &intake,
+                    QrClass::Residue,
+                ));
+                non_residue.push(Self::qr_child(
+                    app,
+                    span,
+                    discriminant,
+                    &intake,
+                    QrClass::NonResidue,
+                ));
             }
             layer = residue;
             layer.extend(non_residue);
@@ -441,8 +450,20 @@ impl PoolSim {
                         continue;
                     }
                     let sides = Self::prove_qr_sides(rng, app, &intake);
-                    residue.push(Self::prove_qr_child(rng, app, &intake, true, sides.clone()));
-                    non_residue.push(Self::prove_qr_child(rng, app, &intake, false, sides));
+                    residue.push(Self::prove_qr_child(
+                        rng,
+                        app,
+                        &intake,
+                        QrClass::Residue,
+                        sides.clone(),
+                    ));
+                    non_residue.push(Self::prove_qr_child(
+                        rng,
+                        app,
+                        &intake,
+                        QrClass::NonResidue,
+                        sides,
+                    ));
                 }
                 layer = residue;
                 layer.extend(non_residue);

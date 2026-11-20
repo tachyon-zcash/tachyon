@@ -17,7 +17,7 @@ pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochIndex};
 pub use evidence::EvidenceTreeRoot;
 pub use qr::{
-    QrClassRoot, QrDiscriminant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
+    QrClass, QrClassRoot, QrDiscriminant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
     QrQuotientCommit, QrQuotientPoly,
 };
 pub use seq::{NfSeqCommit, NfSeqPoly};

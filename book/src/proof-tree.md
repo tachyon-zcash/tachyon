@@ -680,7 +680,7 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | QrIntakeMerge | QrIntake | QrIntake | merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | non_residue, residue | QrIntakeSides |
 | QrSideSelect | QrIntakeSides | — | interpolant, quotient | QrSideSelection |
-| QrSideDescend | QrIntakeSides | QrSideSelection | bit | QrIntake |
+| QrSideDescend | QrIntakeSides | QrSideSelection | class | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence | ArbitraryUnspent |
 | EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |

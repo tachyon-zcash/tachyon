@@ -40,15 +40,15 @@ use super::{
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
     summary::Summary,
 };
-pub use crate::collections::qr::classify;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     digest::poseidon,
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
-        QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassRoot, QrDiscriminant,
+        QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge,
+        TachygramSetPoly,
     },
 };
 
@@ -826,8 +826,8 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit,)`
-    type Witness<'source> = (bool,);
+    /// `(class,)`
+    type Witness<'source> = (QrClass,);
 
     const INDEX: Index = Index::new(18);
     const NUM_STAGED: usize = 1;
@@ -838,13 +838,16 @@ impl Step<Pasta> for QrSideDescend {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let &(bit,) = witness;
-        let prepared = if bit {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
-        } else {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+        let &(class,) = witness;
+        let prepared = match class {
+            QrClass::NonResidue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+            },
+            QrClass::Residue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
+            },
         };
-        Ok(prepared.stage([Fp::from(u64::from(bit))]))
+        Ok(prepared.stage([Fp::from(u64::from(class.bit()))]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -887,7 +890,7 @@ impl Step<Pasta> for QrSideDescend {
         {
             source.enforce_equal(dr, selected)?;
         }
-        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
+        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(class,)| class.bit()))?;
         let discriminant_element = sides
             .intake
             .discriminant
@@ -937,7 +940,7 @@ impl Step<Pasta> for QrSideDescend {
                 anchor_prev,
                 anchor_end,
                 discriminant,
-                profile.descend(bit.value().take()),
+                profile.descend(QrClass::from_bit(bit.value().take())),
             )
         });
         Ok((
