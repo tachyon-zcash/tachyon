@@ -14,8 +14,14 @@ one enriched semantic state; it does not model application construction or bridg
 The stamp carries no tachygram list. Each covered action carries its tachygram pair and each covered
 bundle its fee change. A covered action is a descriptor `Δ` with its pair, and a covered fee a fee
 descriptor `Φ` with its fee change. An action digest absorbs its descriptor and pair, and a fee
-digest its fee descriptor and fee change. Uniqueness is checked on the descriptors alone, as
-`Bundle::verify_covered` checks it. `tachygrams` lists the covered pairs and fee changes.
+digest its fee descriptor and fee change. `BundleCovered` is `Bundle::verify_covered`: uniqueness on
+the descriptors alone, and the published tachygrams are exactly the carried pairs and fee changes,
+unique, with the carried commitment their set polynomial.
+
+`BundleVerified` adds the stamp proof as a `StampDerivable` header. `StampDerivable`'s lifts take
+`epoch a = epoch s.anchor`, which `Bundle::verify` has no chain context to check. A derivation
+anchored on a chain node satisfies it (`StampTree.derivable`), so `BundleVerified` is
+`Bundle::verify` together with that lift premise.
 
 Signatures, the value balance and adjunct pointers are out of scope.
 -/
@@ -39,31 +45,48 @@ def coveredDigests (actionDigest : Δ → F → F → F) (feeDigest : Φ → F �
   (actions.map (fun a => actionDigest a.1 a.2.1 a.2.2) ++ fees.map (fun f => feeDigest f.1 f.2) :
     List F)
 
-/-- `Bundle::verify` accepts. `actions` is the bundle's own actions followed by its adjuncts'. `fee`
-is the bundle's own fee and `adjunctFees` its adjuncts'. -/
-structure BundleVerified (IsFee : F → Prop) (epoch : A → E) (R : E → F → Multiset F)
-    (actionDigest : Δ → F → F → F) (feeDigest : Φ → F → F) (actions : List (Δ × F × F))
-    (fee : Φ × F) (adjunctFees : List (Φ × F)) (stamp : PublishedStamp F A) : Prop where
+/-- The tachygrams a bundle's stamp covers: each action's carried pair, then each fee change
+(`covered_tachygrams` in `Bundle::verify_covered`). -/
+def coveredTachygrams (actions : List (Δ × F × F)) (fees : List (Φ × F)) : List F :=
+  actions.flatMap (fun a => [a.2.1, a.2.2]) ++ fees.map Prod.snd
+
+/-- `Bundle::verify_covered` accepts. `actions` is the bundle's own actions followed by its
+adjuncts'. `fee` is the bundle's own fee and `adjunctFees` its adjuncts'. -/
+structure BundleCovered (actions : List (Δ × F × F)) (fee : Φ × F) (adjunctFees : List (Φ × F))
+    (stamp : PublishedStamp F A) : Prop where
   descs_nodup : (actions.map Prod.fst).Nodup
   fees_nodup : ((fee :: adjunctFees).map Prod.fst).Nodup
-  tachygrams_ne_nil : stamp.tachygrams ≠ []
   tachygrams_nodup : stamp.tachygrams.Nodup
-  arity : stamp.tachygrams.length = 2 * actions.length + (adjunctFees.length + 1)
+  tachygrams_covered :
+    (stamp.tachygrams : Multiset F) = coveredTachygrams actions (fee :: adjunctFees)
   tachygram_set : stamp.tachygramSet = setPoly stamp.tachygrams
+
+/-- `Bundle::verify` accepts, with the lift premise of `StampDerivable` (see the module doc). -/
+structure BundleVerified (IsFee : F → Prop) (epoch : A → E) (R : E → F → Multiset F)
+    (actionDigest : Δ → F → F → F) (feeDigest : Φ → F → F) (actions : List (Δ × F × F))
+    (fee : Φ × F) (adjunctFees : List (Φ × F)) (stamp : PublishedStamp F A) : Prop
+    extends BundleCovered actions fee adjunctFees stamp where
   proof : StampDerivable IsFee epoch R
     ⟨setPoly (coveredDigests actionDigest feeDigest actions (fee :: adjunctFees)),
       stamp.tachygramSet, stamp.anchor⟩
 
-/-- A fee digest absorbs its fee change, so its leaf derives exactly that change. Idealizes
-`Tachyon-FeeDg` collision resistance on the calls `Q`; a finite `Q` without a collision satisfies
-it. -/
-structure FeeDigestLaw (R : E → F → Multiset F) (feeDigest : Φ → F → F) (Q : Φ → F → Prop) :
-    Prop where
-  change : ∀ e {φ c}, Q φ c → R e (feeDigest φ c) = {c}
-
 variable {IsFee : F → Prop} {epoch : A → E} {R : E → F → Multiset F}
   {actionDigest : Δ → F → F → F} {feeDigest : Φ → F → F} {actions : List (Δ × F × F)}
   {fee : Φ × F} {adjunctFees : List (Φ × F)} {stamp : PublishedStamp F A}
+
+omit [Field F] [DecidableEq F] in
+/-- A covered action's carried pair is among the covered tachygrams. -/
+theorem pair_le_coveredTachygrams {a : Δ × F × F} (ha : a ∈ actions) (fees : List (Φ × F)) :
+    ({a.2.1, a.2.2} : Multiset F) ≤ (coveredTachygrams actions fees : Multiset F) := by
+  have hsub : List.Sublist [a.2.1, a.2.2] (actions.flatMap fun a => [a.2.1, a.2.2]) := by
+    induction actions with
+    | nil => cases ha
+    | cons b l ih =>
+      rw [List.flatMap_cons]
+      rcases List.mem_cons.mp ha with rfl | h
+      · exact List.sublist_append_left _ _
+      · exact (ih h).trans (List.sublist_append_right _ _)
+  exact Multiset.coe_le.mpr (hsub.trans (List.sublist_append_left _ _)).subperm
 
 /-- A verified bundle publishes exactly its covered leaves' tachygrams at its anchor's epoch. -/
 theorem BundleVerified.tachygrams_eq
@@ -91,13 +114,14 @@ theorem BundleVerified.fee_published
   rw [h.tachygrams_eq]
   exact Multiset.le_bind _ (by simp [coveredDigests])
 
+omit [DecidableEq F] in
 /-- A verified bundle publishes its own fee change. -/
-theorem BundleVerified.fee_change_published {Q : Φ → F → Prop} (hfee : FeeDigestLaw R feeDigest Q)
-    (hq : Q fee.1 fee.2)
+theorem BundleVerified.fee_change_published
     (h : BundleVerified IsFee epoch R actionDigest feeDigest actions fee adjunctFees stamp) :
     fee.2 ∈ stamp.tachygrams := by
-  have hle := h.fee_published
-  rw [hfee.change _ hq] at hle
-  exact Multiset.mem_coe.mp (Multiset.singleton_le.mp hle)
+  have hmem : fee.2 ∈ (coveredTachygrams actions (fee :: adjunctFees) : Multiset F) := by
+    simp [coveredTachygrams]
+  rw [← h.tachygrams_covered] at hmem
+  exact Multiset.mem_coe.mp hmem
 
 end Tachyon
