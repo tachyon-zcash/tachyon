@@ -17,8 +17,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::field::Field as _,
 };
-use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,

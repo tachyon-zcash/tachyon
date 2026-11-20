@@ -6,7 +6,7 @@ pub(crate) mod orchard {
     use group::GroupEncoding as _;
     use lazy_static::lazy_static;
     use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
-    use udon::curve::Affine as _;
+    use ragu::udon::curve::Affine as _;
 
     use crate::pasta::{Ep, EpAffine};
 

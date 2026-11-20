@@ -2,8 +2,10 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta};
-use udon::curve::Projective as _;
+use ragu::{
+    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta,
+    udon::curve::Projective as _,
+};
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{

@@ -5,7 +5,7 @@
 //! (`Fq`), and Pallas affine curve points (`EpAffine`).
 
 use corez::io::{self, Read, Write};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu::udon::{curve::Affine as _, field::Field as _};
 
 use crate::pasta::{EpAffine, EqAffine, Fp};
 

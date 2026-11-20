@@ -14,10 +14,10 @@ use ragu::{
         vec::{ConstLen, FixedVec},
     },
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-};
-use udon::{
-    curve::{Affine as _, EndomorphismAffine},
-    field::Field as _,
+    udon::{
+        curve::{Affine as _, EndomorphismAffine},
+        field::Field as _,
+    },
 };
 
 use super::{

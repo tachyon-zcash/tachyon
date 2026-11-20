@@ -4,9 +4,8 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{array, iter, ops::RangeInclusive};
 use std::sync::LazyLock;
 
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{ProductionRank, pasta::Pasta, udon::field::Field as _};
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Note, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetCommit, TachygramSetPoly, note,

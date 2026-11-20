@@ -3,9 +3,12 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 use core::{array, iter};
 
-use ragu::{ProductionRank, pasta::Pasta};
+use ragu::{
+    ProductionRank,
+    pasta::Pasta,
+    udon::{curve::Projective as _, field::Field as _},
+};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
     TachygramSetPoly, action,

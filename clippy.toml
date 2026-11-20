@@ -18,6 +18,10 @@ disallowed-macros = [
   { path = "core::cmp::Eq", reason = "please use `derive_more` instead" },
 ]
 enforced-import-renames = [{ path = "derive_more::Eq", rename = "TotalEq" }]
+# absolute_paths: `udon` is reached as `ragu::udon`, so rustfmt nests its
+# imports in `use ragu::{..}`, where clippy reads `udon::curve::Affine` as an
+# absolute path into the `udon` crate.
+absolute-paths-allowed-crates = ["udon"]
 
 # error handling
 disallowed-methods = [

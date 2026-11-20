@@ -111,9 +111,12 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use ragu::{ProductionRank, Rank as _, pasta::Pasta};
+use ragu::{
+    ProductionRank, Rank as _,
+    pasta::Pasta,
+    udon::{curve::Affine as _, field::Field as _},
+};
 use rand_core::CryptoRng;
-use udon::{curve::Affine as _, field::Field as _};
 
 use crate::{
     ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,

@@ -25,11 +25,13 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ragu::{Polynomial, ProductionRank, fft, ifft};
-use udon::{
-    field::Field as _,
-    polynomial::{
-        InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
+use ragu::{
+    Polynomial, ProductionRank, fft, ifft,
+    udon::{
+        field::Field as _,
+        polynomial::{
+            InterpolationError, InterpolationPlan, divide_monic_in_place, vanishing_polynomial,
+        },
     },
 };
 
@@ -37,7 +39,7 @@ use crate::pasta::Fp;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
-pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(udon::fp_hex!(
+pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000005"
 ));
 

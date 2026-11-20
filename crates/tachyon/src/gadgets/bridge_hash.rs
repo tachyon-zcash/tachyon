@@ -8,8 +8,8 @@ use ragu::{
     maybe::Maybe as _,
     primitives::{Element, GadgetExt as _, Point},
     step::BridgeHash,
+    udon::curve::Affine as _,
 };
-use udon::curve::Affine as _;
 
 use crate::pasta::{EpAffine, Fp};
 
