@@ -171,15 +171,9 @@ impl Step<Pasta> for SummarySeed {
         // polynomial opens to one at zeta has no tachygrams.
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
+        let stamp_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_hash)?;
         let output = D::just(|| {
             let (anchor_prev, epoch, _) = witness.take();
             (epoch, anchor_prev, Anchor::from(*anchor.value().take()))
@@ -265,15 +259,8 @@ impl Step<Pasta> for SummaryAdvance {
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
         // The epoch is in range: `SummarySeed` range-checks it and every
         // `SummaryAdvance` carries it unchanged.
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &anchor_end,
-            &epoch,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
+        let stamp_hash = gadgets::bridge_hash::point(dr, oracles.bridge_hash())?;
+        let anchor = poseidon::circuit::anchor_next_stamp(dr, &anchor_end, &epoch, &stamp_hash)?;
         let output = D::just(|| {
             let (summary_epoch, summary_anchor_prev, ..) = left.take();
             (
