@@ -73,8 +73,11 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Six elements: `epoch` is an integer, `anchor_prev`, `anchor_end` and
-/// `discriminant` field elements, `profile` two integers. See
+/// `epoch` is an integer, `discriminant` is the network's $R_0$, and `profile`
+/// is the path of sides. `anchor_prev` and `anchor_end` bind their histories.
+/// The header binds the epoch, discriminant and profile exactly and the anchors
+/// under Poseidon. It binds the stamp sets in the anchors' histories under host
+/// and nested discrete log as well. See
 /// [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrIntake {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
@@ -160,9 +163,10 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Eight elements: the six of [`QrIntake`], encoded by it from the first five
-/// components, then `non_residue_hash`, a curve point. See
-/// [header injectivity](super#header-injectivity).
+/// The first six elements are [`QrIntake`]'s encoding and bind what that
+/// header's bind. `non_residue_hash` binds the non-residue side's polynomial
+/// under host and nested discrete log. Its roots are the members the split
+/// files on that side. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrIntakeSides {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
     /// non_residue_hash)`
@@ -230,8 +234,9 @@ pub struct QrSideSelection;
 
 /// # Injectivity
 ///
-/// The `Data` and encoding of [`QrIntakeSides`], whose `encode` this calls, so
-/// that header's argument carries over. `SUFFIX` tells the two headers apart.
+/// `encode` calls [`QrIntakeSides`]'s, and the elements bind what that
+/// header's bind. The slots hold the interpolant and quotient. `SUFFIX` tells
+/// the two headers apart.
 impl Header<Fp> for QrSideSelection {
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type OnlinePolyCommit = (PolySlot<QrInterpolantPoly>, PolySlot<QrQuotientPoly>);
@@ -988,9 +993,13 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Eight elements: `epoch` is an integer, `anchor_start`, `anchor_next` and
-/// `discriminant` field elements, `profile` two integers, `contents_hash` a
-/// curve point. See [header injectivity](super#header-injectivity).
+/// `epoch` is an integer, `discriminant` is the network's $R_0$, and `profile`
+/// is the bucket's path. `anchor_start` and `anchor_next` bind boundary digests
+/// and their histories. `contents_hash` binds the contents polynomial, whose
+/// roots are the bucket's members. The header binds the epoch, discriminant and
+/// profile exactly and the anchors under Poseidon. It binds the contents and
+/// the stamp sets in the anchors' histories under host and nested discrete log.
+/// See [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrBucket {
     /// `(epoch, anchor_start, anchor_next, discriminant, profile,
     /// contents_hash)`

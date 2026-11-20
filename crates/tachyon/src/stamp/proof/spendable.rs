@@ -43,8 +43,10 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Three elements: `cm` and `anchor` are field elements, `epoch_current` an
-/// integer. See [header injectivity](super#header-injectivity).
+/// `cm` binds the note, and `epoch_current` is an integer. `anchor` binds its
+/// history. The header binds the note and the anchor under Poseidon and the
+/// stamp sets in the anchor's history under host and nested discrete log. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);

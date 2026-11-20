@@ -48,8 +48,12 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
 
 /// # Injectivity
 ///
-/// Seven elements: `cm`, `nf_current`, `nf_next`, `anchor` and `pk` are field
-/// elements, `cv` a curve point. See
+/// `cm` binds the spent note. `nf_current` and `nf_next` bind the note's `mk`
+/// and their two epochs. `anchor` binds its history. `pk` binds the owner's
+/// `(ak, nk)`. `cv` binds the note's value. The header binds the note, its
+/// owner's key pair, the nullifiers' epochs and the anchor under Poseidon. It
+/// binds the value under value discrete log, and the stamp sets in the
+/// anchor's history under host and nested discrete log. See
 /// [header injectivity](super#header-injectivity).
 impl Header<Fp> for SpendHeader {
     /// `(cm, nf_current, nf_next, anchor, pk, cv)`

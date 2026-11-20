@@ -59,8 +59,10 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Three elements: `epoch` is an integer, `anchor_prev` and `anchor_end` field
-/// elements. See [header injectivity](super#header-injectivity).
+/// `epoch` is an integer. `anchor_prev` and `anchor_end` bind their histories.
+/// The header binds the anchors under Poseidon and the stamp sets in their
+/// histories under host and nested discrete log. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for Summary {
     /// `(epoch, anchor_prev, anchor_end)`
     type Data = (EpochIndex, Anchor, Anchor);

@@ -85,8 +85,11 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Four elements: `anchor_start` and `anchor_next` are field elements,
-/// `epoch_start` and `epoch_next` integers. See
+/// `epoch_start` and `epoch_next` are integers. `anchor_start` and
+/// `anchor_next` bind the boundary digests into those epochs and their
+/// histories. The header binds the epochs exactly and the anchors under
+/// Poseidon. It binds the stamp sets in the anchors' histories under host and
+/// nested discrete log as well. See
 /// [header injectivity](super#header-injectivity).
 impl Header<Fp> for ArbitraryUnspent {
     /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
@@ -148,8 +151,10 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Five elements: `cm`, `anchor_start` and `anchor_next` are field elements,
-/// `epoch_start` and `epoch_next` integers. See
+/// `cm` binds the note. The other four elements bind what
+/// [`ArbitraryUnspent`]'s bind. The header binds the note and the anchors
+/// under Poseidon and the epochs exactly. It binds the stamp sets in the
+/// anchors' histories under host and nested discrete log as well. See
 /// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteUnspent {
     /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
@@ -228,8 +233,9 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Two elements: `anchor_start` and `anchor_end` are field elements. See
-/// [header injectivity](super#header-injectivity).
+/// `anchor_start` and `anchor_end` each bind their history. The header binds
+/// both anchors under Poseidon and the stamp sets in their histories under host
+/// and nested discrete log. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for AnchorSpan {
     /// `(anchor_start, anchor_end)`
     type Data = (Anchor, Anchor);

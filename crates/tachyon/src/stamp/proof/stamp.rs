@@ -61,7 +61,10 @@ pub struct ActionsOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// One element: `anchor` is a field element. See
+/// `anchor` binds its history. [`OutputAction`] takes it as a free witness, and
+/// it stands for a pool state only when consensus accepts it or an anchor
+/// moved on from it. The header binds the anchor under Poseidon and the stamp
+/// sets in its history under host and nested discrete log. See
 /// [header injectivity](super#header-injectivity).
 impl Header<Fp> for Actions {
     /// `anchor`
@@ -107,8 +110,11 @@ pub struct StampOutput<'dr, D: Driver<'dr>> {
 
 /// # Injectivity
 ///
-/// Three elements: `anchor` is a field element, `tachygram_set_bridge` a curve
-/// point. See [header injectivity](super#header-injectivity).
+/// `tachygram_set_bridge` binds the stamp's tachygram set. Each tachygram in it
+/// is a note commitment, a padding tachygram or a nullifier, and it binds its
+/// own preimage. `anchor` binds its history. The header binds the set under
+/// host and nested discrete log, and its tachygrams and the anchor under
+/// Poseidon. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for Stamp {
     /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);
