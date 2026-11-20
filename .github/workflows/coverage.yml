@@ -15,6 +15,7 @@ on:
       - 'crates/tachyon/katex-header.html'
       - 'justfile'
       - '.github/workflows/coverage.yml'
+      - '.github/workflows/rust.yml'
       - '.github/actions/**'
 
 # Cancel older runs for the same pull request or push ref.
