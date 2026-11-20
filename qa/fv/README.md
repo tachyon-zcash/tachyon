@@ -178,12 +178,13 @@ carries or about the leaf step's constraints on it.
   `no_double_spend_of_covered_spends` proves the pairs and the lineage from the stamps' derivations,
   taking `Chain.Valid` (including anchor recency) and `hfresh` (that `cm` is not `Chain.published`
   after the first spend's publication up to the second spend's anchor epoch) for the start bound.
-- Within one stamp, `no_double_spend_in_stamp` rules out two covered spends of one note under
-  `hoccurrences`, the hypothesis that the two spends' action digests form a sub-multiset of the
-  covered digests. Both spends share the stamp's anchor epoch and publish the same nullifier pair,
-  contradicting `StampAccepted.tachygrams_nodup`. `CoveredSpend.digest_covered` is membership, and
-  `CoveredSpend` is not linked to `BundleVerified`'s descriptor uniqueness, so two covered
-  occurrences remain a hypothesis.
+- Within one stamp, `no_double_spend_in_stamp` rules out two covered spends `p₁`, `p₂` of one note
+  under `hoccurrences`, the hypothesis that both spends' action digests form a two-element
+  sub-multiset of `p₁.covered`. Both spends share the stamp's anchor epoch and publish the same
+  nullifier pair, contradicting `StampAccepted.tachygrams_nodup`. `CoveredSpend.digest_covered` is
+  membership, each `CoveredSpend` carries its own `covered` multiset without tying `p₁.covered` to
+  `p₂.covered`, and `CoveredSpend` is not linked to `BundleVerified`'s descriptor uniqueness, so two
+  covered occurrences in `p₁.covered` remain a hypothesis.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
   epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). The argument needs only an
   anchor set that holds the stamp-fold predecessors of its members (`StampClosed`). Chain nodes form
@@ -264,14 +265,17 @@ choices that no theorem here discharges.
   is not a fee digest. The digest absorbs the pair's sum and product, which fix the pair. With the
   spend witness and epoch fixed, `DigestLaw.pair` assigns a distinct digest to each unordered pair
   of field elements; a field of size `p` has `p(p + 1) / 2` such pairs and only `p` digests, so no
-  function on the production field satisfies it. Like `Chain.HashLaw`, it is a symbolic
+  function on the production field satisfies it. No finite field admits the law once the witness
+  type is inhabited, so the theorems that assume `hdigest` hold vacuously at the production field
+  and are meaningful only for the symbolic model. Like `Chain.HashLaw`, it is a symbolic
   idealization of collision resistance, not a property that a finite-field proof could discharge.
 - **`FeeDigestLaw`.** A fee digest pairs with the singleton of its fee change at every epoch
-  (`BundleVerified.fee_change_published`). The digest absorbs the fee descriptor and fee change. It
-  makes the fee change a function of `feeDigest φ c` across every fee descriptor `φ`, whereas a
-  Poseidon digest over `(cv_feemax, v_fee, c)` has collisions across `φ`, so no production function
-  satisfies it over all inputs. Like `DigestLaw`, it is a symbolic idealization of collision
-  resistance, not a property that a finite-field proof could discharge.
+  (`BundleVerified.fee_change_published`). A finite field admits the law on its own, for example
+  when the digest ignores the fee descriptor. Over a finite field, `R e (feeDigest φ c) = {c}` makes
+  `c ↦ feeDigest φ c` a bijection for each `φ`, forcing the digest not to vary with `φ`; no
+  function over a finite field combines the law with a digest that absorbs the fee descriptor, as
+  the production Poseidon digest over `(cv_feemax, v_fee, c)` does. It is a symbolic idealization
+  of collision resistance on `Tachyon-FeeDg`, not a property of the production digest.
 - **`NoteLaw`.** The note commitment binds `pk` and `psi`, and the payment key binds `nk`, so a
   note commitment fixes its master key. Collision resistance is taken as exact.
 - **`EvidenceLaw`.** The `Tachyon-QrBucket` leaf digest is injective on a bucket's header fields
