@@ -4,8 +4,8 @@ use core::marker::PhantomData;
 
 use derive_more::{Debug, From};
 use ff::PrimeField as _;
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use super::{
     note::{NullifierKey, PaymentKey},

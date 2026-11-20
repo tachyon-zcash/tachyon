@@ -4,11 +4,14 @@ use alloc::{vec, vec::Vec};
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta};
-use udon::{
-    exec::{ExecutionOptions, SerialExecutor},
-    fft::{Domain, Expansion, Transform},
-    field::Field as _,
+use ragu::{
+    Cycle as _, Polynomial, ProductionRank,
+    pasta::Pasta,
+    udon::{
+        exec::{ExecutionOptions, SerialExecutor},
+        fft::{Domain, Expansion, Transform},
+        field::Field as _,
+    },
 };
 
 use crate::{

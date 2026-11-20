@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use super::{ActionWitness, Bundle, NoteField, OpeningCheckError, OpeningDataField};
 use crate::{

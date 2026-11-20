@@ -27,8 +27,8 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    udon::{curve::Projective as _, field::Field as _},
 };
-use udon::{curve::Projective as _, field::Field as _};
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
 use crate::{

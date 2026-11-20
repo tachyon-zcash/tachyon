@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::error;
 
-use udon::field::Field as _;
+use ragu::udon::field::Field as _;
 
 use super::{
     ActionDigest, ActionEntropy, ActionLift, ActionMerge, Actions, Anchor, App, Box, CryptoRng,

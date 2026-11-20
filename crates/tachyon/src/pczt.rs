@@ -18,12 +18,15 @@ pub use prover::{
     ApplyFeeError, ApplyFeeField, LiftActionsProofError, ProveActionField, ProveActionsError,
     ProveField,
 };
-use ragu::{Pcd, ProductionRank, Rank as _, pasta::Pasta};
+use ragu::{
+    Pcd, ProductionRank, Rank as _,
+    pasta::Pasta,
+    udon::{curve::Affine as _, field::Field as _},
+};
 pub use signing::{
     ApplySignatureError, IoFinalizerError, IoFinalizerField, MaxFeeOpeningReason, OpeningReason,
     SignError, SignField, SignOpeningError,
 };
-use udon::{curve::Affine as _, field::Field as _};
 pub use updater::{InvalidIndex, SetPakError, Updater, WitnessAccessError, WitnessUpdateError};
 
 use crate::{

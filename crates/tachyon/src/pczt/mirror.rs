@@ -9,7 +9,7 @@ use alloc::{
 
 use corez::io;
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
-use udon::{curve::Affine as _, field::Field as _};
+use ragu::udon::{curve::Affine as _, field::Field as _};
 
 use super::{DescriptorError, NoteField, OpeningField, Zip32Derivation};
 use crate::{
@@ -844,7 +844,7 @@ fn encode_proof(proof: &stamp::Uncompressed) -> Vec<u8> {
 }
 
 fn parse_proof(bytes: &[u8], field: Field) -> Result<stamp::Uncompressed, ParseError> {
-    let expected_len = stamp::Uncompressed::encoded_len::<{ stamp::proof::HEADER_SIZE }>();
+    let expected_len = stamp::Uncompressed::encoded_len();
     if bytes.len() != expected_len {
         return Err(ParseError::InvalidEncoding(
             field,
@@ -855,13 +855,7 @@ fn parse_proof(bytes: &[u8], field: Field) -> Result<stamp::Uncompressed, ParseE
         ));
     }
     stamp::Uncompressed::from_bytes(bytes).map_err(|cause| {
-        use ragu::pcd::wire;
-        let diagnostic = if let wire::Error::Length { expected, actual } = cause {
-            EncodingCause::ProofLength { expected, actual }
-        } else {
-            EncodingCause::ProofInvalid(cause.to_string())
-        };
-        ParseError::InvalidEncoding(field, diagnostic)
+        ParseError::InvalidEncoding(field, EncodingCause::ProofInvalid(cause.to_string()))
     })
 }
 

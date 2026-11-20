@@ -8,8 +8,8 @@ use ragu::{
     Polynomial, ProductionRank,
     header::{Has, Header, OnlinePoly},
     step::{HeaderInput, Prepared},
+    udon::field::Field as _,
 };
-use udon::field::Field as _;
 
 use crate::pasta::Fp;
 

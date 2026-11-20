@@ -3,7 +3,7 @@
 use core::cmp;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use udon::curve::Affine as _;
+use ragu::udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,

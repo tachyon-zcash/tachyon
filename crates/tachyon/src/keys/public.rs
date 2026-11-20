@@ -3,7 +3,7 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use udon::curve::Affine as _;
+use ragu::udon::curve::Affine as _;
 
 use crate::{action, bundle, pasta::EpAffine, reddsa, value};
 

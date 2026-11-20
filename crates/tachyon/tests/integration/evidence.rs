@@ -1,8 +1,10 @@
 use core::iter;
 
-use ragu::Polynomial;
+use ragu::{
+    Polynomial,
+    udon::{curve::Projective as _, field::Field as _},
+};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::{curve::Projective as _, field::Field as _};
 use zcash_tachyon::{
     Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
