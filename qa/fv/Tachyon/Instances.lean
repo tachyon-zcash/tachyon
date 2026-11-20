@@ -8,10 +8,11 @@ import Tachyon.CubicMember
 /-!
 # A concrete instance
 
-ragu's fv-preflight §4 asks for a concrete input satisfying every hypothesis, so that no theorem
-holds for nothing. This module gives one at `ZMod 37`. It is a chain of two stamps. Epoch 0's stamp
-publishes a note commitment `cm` and one other tachygram. Epoch 1's stamp is a bundle with one spend
-of that note and its fee change, proven by a `FeeFuse` over a `SpendAction` leaf. The spend's
+This module shows the headline hypotheses are jointly satisfiable, so no headline theorem holds for
+nothing, with a concrete instance at `ZMod 37`. It is a chain of three stamps. Epoch 0's stamp
+publishes a note commitment `cm` and one other tachygram. Epoch 1's first stamp is a bundle with one
+spend of that note and its fee change, proven by a `FeeFuse` over a `SpendAction` leaf, and a later
+stamp of epoch 1 publishes one more tachygram. The spend's
 lineage is a `QrSpendableInit` on a `NoteUnspent` segment over epoch 0. That segment is a
 `NullifierDerive` window of sixteen members bound to a `QrUnspentInit` test against a QR bucket of
 epoch 0. The bucket's intake descends once, splitting epoch 0's tachygrams into both sides, and the
@@ -20,9 +21,10 @@ concrete, and each call set holds exactly the calls the chain and the derivation
 scoped law holds on them.
 
 * `headline_hypotheses` discharges every hypothesis of `no_double_spend_of_covered_spends` except
-  the second spend (`p₂`, `hsplit`, `hs₂`, `hfresh`), which is what it rules out, and of
-  `no_double_spend_in_stamp` except the second spend and `hindex`. Two examples apply both theorems
-  to the instance with only the second spend left open.
+  the second spend `p₂`, which is what it rules out: `hsplit`, `hs₂` and `hfresh` hold with the
+  later stamp as `s₂`. It also discharges every hypothesis of `no_double_spend_in_stamp` except the
+  second spend and `hindex`. Two examples apply both theorems to the instance with only the second
+  spend left open.
 * `lineage_hypotheses` inhabits `SpendDerivable.lineage` and `NoteUnspentDerivable.lineage` with a
   lineage that covers an epoch.
 * `bundle_verified` is a `BundleVerified` bundle. Its proof field is a `StampDerivable` header whose
@@ -70,18 +72,23 @@ def stamp₀ : Chain.Stamp (ZMod 37) (ZMod 37) := ⟨0, [3, 2], 0⟩
 
 def stamp₁ : Chain.Stamp (ZMod 37) (ZMod 37) := ⟨3, [5, 6, 8], 1⟩
 
-def chain : List (Chain.Stamp (ZMod 37) (ZMod 37)) := [stamp₀, stamp₁]
+def stamp₂ : Chain.Stamp (ZMod 37) (ZMod 37) := ⟨5, [9], 1⟩
+
+def chain : List (Chain.Stamp (ZMod 37) (ZMod 37)) := [stamp₀, stamp₁, stamp₂]
 
 noncomputable def c₀ : (ZMod 37)[X] := setPoly (stamp₀.tachygrams : Multiset (ZMod 37))
 
 noncomputable def c₁ : (ZMod 37)[X] := setPoly (stamp₁.tachygrams : Multiset (ZMod 37))
 
+noncomputable def c₂ : (ZMod 37)[X] := setPoly (stamp₂.tachygrams : Multiset (ZMod 37))
+
 /-- The anchor-fold calls of the chain up to epoch 2 and of the QR bucket's summary and seal. -/
 noncomputable def q : AnchorQueries (ZMod 37) (ZMod 37) ℕ where
-  stamp a e c := (a = 0 ∧ e = 0 ∧ c = c₀) ∨ (a = 3 ∧ e = 1 ∧ c = c₁)
-  boundary a e := (a = 0 ∧ e = 0) ∨ (a = 2 ∧ e = 1) ∨ (a = 5 ∧ e = 2)
+  stamp a e c := (a = 0 ∧ e = 0 ∧ c = c₀) ∨ (a = 3 ∧ e = 1 ∧ c = c₁) ∨ (a = 5 ∧ e = 1 ∧ c = c₂)
+  boundary a e := (a = 0 ∧ e = 0) ∨ (a = 2 ∧ e = 1) ∨ (a = 7 ∧ e = 2)
 
-def epoch (a : ZMod 37) : ℕ := if a = 3 ∨ a = 5 then 1 else if a = 7 then 2 else 0
+/-- The epoch of each chain node. -/
+def epoch (a : ZMod 37) : ℕ := if a = 3 ∨ a = 5 ∨ a = 7 then 1 else if a = 9 then 2 else 0
 
 def actions : List (ZMod 37 × ZMod 37 × ZMod 37) := [(0, 5, 6)]
 
@@ -120,6 +127,7 @@ theorem member_natDegree (i : ℕ) (m : ZMod 37) : (member i m).natDegree = 2 :=
 theorem member_leadingCoeff (i : ℕ) (m : ZMod 37) : (member i m).leadingCoeff = 1 :=
   leadingCoeff_quadratic one_ne_zero
 
+/-- `MemberLaw` at sixteen epoch indices for the quadratic `member`. -/
 theorem memberLaw : MemberLaw member 15 where
   prime {i m} hi := by
     refine (irreducible_of_degree_le_three_of_not_isRoot (by simp [member_natDegree])
@@ -167,6 +175,7 @@ noncomputable def r : EvidenceQueries (ZMod 37) (ZMod 37) Bool where
   leaf b := b = bucket
   node a₀ a₁ a₂ a₃ := a₀ = false ∧ a₁ = false ∧ a₂ = false ∧ a₃ = false
 
+/-- The evidence digests are collision-free on `r`: its leaf call and its node call. -/
 theorem evidenceLaw : EvidenceLaw r leaf node where
   leaf_inj h₁ h₂ _ := h₁.trans h₂.symm
   node_inj h₁ h₂ _ := by
@@ -183,6 +192,7 @@ theorem sealed : QrEvidenceDerivable q r nextStamp nextEpoch 2 leaf node (.bucke
       (by simp; ring))
     (by simp [nextEpoch]) (Or.inl ⟨rfl, rfl⟩) (Or.inr (Or.inl ⟨by decide, rfl⟩))
 
+/-- The bucket replayed through `leafPair`, `fuse`, `descend` and `EvidenceTreeOpen`. -/
 theorem opened : QrBucketDerivable q r nextStamp nextEpoch 2 leaf node bucket :=
   have hpair := QrEvidenceDerivable.leafPair sealed sealed rfl rfl
   .open (.descend 0 (.fuse hpair hpair ⟨rfl, rfl, rfl, rfl⟩) ⟨rfl, rfl, rfl, rfl⟩) rfl
@@ -220,6 +230,7 @@ noncomputable def header : SpendHeader (ZMod 37) :=
   ⟨noteCommit () (paymentKey () 2) 1, groupNullifier group (nfMaster 1 2) (bucket.epoch + 1),
     groupNullifier group (nfMaster 1 2) (bucket.epoch + 1 + 1), bucket.anchor_next⟩
 
+/-- `SpendBind` over a `QrSpendableInit` lineage on the `NoteUnspent` segment. -/
 theorem spend : Spend header :=
   SpendDerivable.bind (.qrInit unspent opened rfl rfl rfl
     (by simp [bucket, noteCommit, paymentKey]; decide)) secret rfl
@@ -231,13 +242,13 @@ theorem header_nf_next : header.nf_next = 6 := by decide
 theorem header_anchor : header.anchor = 3 := by decide
 
 theorem epochStamps_zero : epochStamps chain 0 = [c₀] := by
-  simp [epochStamps, chain, stamp₀, stamp₁, c₀]
+  simp [epochStamps, chain, stamp₀, stamp₁, stamp₂, c₀]
 
-theorem epochStamps_one : epochStamps chain 1 = [c₁] := by
-  simp [epochStamps, chain, stamp₀, stamp₁, c₁]
+theorem epochStamps_one : epochStamps chain 1 = [c₁, c₂] := by
+  simp [epochStamps, chain, stamp₀, stamp₁, stamp₂, c₁, c₂]
 
 theorem epochStamps_two : epochStamps chain 2 = [] := by
-  simp [epochStamps, chain, stamp₀, stamp₁]
+  simp [epochStamps, chain, stamp₀, stamp₁, stamp₂]
 
 theorem entry_zero : entry nextStamp nextEpoch 0 chain 0 = 0 := by
   simp [entry, nextEpoch]
@@ -255,7 +266,7 @@ theorem entry_one : entry nextStamp nextEpoch 0 chain 1 = 3 := by
   decide
 
 theorem final_one :
-    foldBlock nextStamp 1 (entry nextStamp nextEpoch 0 chain 1) (epochStamps chain 1) = 5 := by
+    foldBlock nextStamp 1 (entry nextStamp nextEpoch 0 chain 1) (epochStamps chain 1) = 7 := by
   rw [entry_one, epochStamps_one]
   simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
   decide
@@ -265,11 +276,13 @@ theorem c₀_ne_one : c₀ ≠ 1 := by
   have := congrArg Polynomial.roots h
   simp [c₀, stamp₀] at this
 
+/-- The anchor folds are collision-free on `q`: stamp calls land on `2, 5, 7`, boundary calls on
+`0, 3, 9`. -/
 theorem hashLaw : HashLaw q (nextEpoch 0 0) 0 nextStamp nextEpoch where
   nextStamp_inj h₁ h₂ h := by
     simp only [nextStamp] at h
-    rcases h₁ with ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ <;>
-      rcases h₂ with ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ <;>
+    rcases h₁ with ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ <;>
+      rcases h₂ with ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩ <;>
       first | exact ⟨rfl, rfl, rfl⟩ | exact absurd h (by decide)
   nextEpoch_inj h₁ h₂ h := by
     simp only [nextEpoch] at h
@@ -278,11 +291,11 @@ theorem hashLaw : HashLaw q (nextEpoch 0 0) 0 nextStamp nextEpoch where
       first | exact ⟨rfl, rfl⟩ | exact absurd h (by decide)
   stamp_ne_epoch h₁ h₂ := by
     simp only [nextStamp, nextEpoch]
-    rcases h₁ with ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ <;>
+    rcases h₁ with ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ <;>
       rcases h₂ with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> decide
   stamp_ne_genesis h := by
     simp only [nextStamp, nextEpoch]
-    rcases h with ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ <;> decide
+    rcases h with ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ | ⟨rfl, -, -⟩ <;> decide
   epoch_ne_genesis h he := by
     simp only [nextEpoch]
     rcases h with ⟨-, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
@@ -290,6 +303,7 @@ theorem hashLaw : HashLaw q (nextEpoch 0 0) 0 nextStamp nextEpoch where
     · decide
     · decide
 
+/-- The chain's calls up to epoch 2 lie in `q`. -/
 theorem chainQueried {N : ℕ} (hN : N ≤ 2) : ChainQueried q nextStamp nextEpoch 0 chain N where
   genesis := Or.inl ⟨rfl, rfl⟩
   boundary e he := by
@@ -304,9 +318,14 @@ theorem chainQueried {N : ℕ} (hN : N ≤ 2) : ChainQueried q nextStamp nextEpo
         exact Or.inl ⟨rfl, rfl, rfl⟩
       · simp at h
     · rw [epochStamps_one, entry_one]
-      rintro (_ | ⟨x, P⟩) c S h
+      rintro (_ | ⟨x, _ | ⟨y, P⟩⟩) c S h
       · obtain ⟨rfl, -⟩ := List.cons.inj h
-        exact Or.inr ⟨rfl, rfl, rfl⟩
+        exact Or.inr (Or.inl ⟨rfl, rfl, rfl⟩)
+      · obtain ⟨-, h⟩ := List.cons.inj h
+        obtain ⟨rfl, -⟩ := List.cons.inj h
+        refine Or.inr (Or.inr ⟨?_, rfl, rfl⟩)
+        simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
+        decide
       · simp at h
     · rw [epochStamps_two]
       intro P c S h
@@ -322,46 +341,66 @@ theorem onChain_two : OnChain nextStamp nextEpoch 0 chain 0 2 := by
   decide
 
 theorem onChain_three : OnChain nextStamp nextEpoch 0 chain 1 3 :=
-  ⟨[], [c₁], epochStamps_one.symm, entry_one.symm⟩
+  ⟨[], [c₁, c₂], epochStamps_one.symm, entry_one.symm⟩
 
+theorem onChain_five : OnChain nextStamp nextEpoch 0 chain 1 5 := by
+  refine ⟨[c₁], [c₂], by rw [epochStamps_one]; rfl, ?_⟩
+  rw [entry_one]
+  simp only [foldBlock, List.foldl_cons, List.foldl_nil, nextStamp]
+  decide
+
+/-- The chain satisfies every consensus rule `Chain.Valid` states. -/
 theorem valid : Chain.Valid epoch (OnChain nextStamp nextEpoch 0 chain) chain where
   accepted s hs := by
     simp only [chain, List.mem_cons, List.not_mem_nil, or_false] at hs
-    rcases hs with rfl | rfl
-    · have h : epoch stamp₀.anchor = 0 := by simp [epoch, stamp₀]; decide
+    rcases hs with rfl | rfl | rfl
+    · have h : epoch stamp₀.anchor = 0 := by decide
       refine ⟨by simp [stamp₀], by simp [stamp₀]; decide, ?_, ?_⟩
       · rw [h]
         exact onChain_zero
       · rw [h]
         exact ⟨le_rfl, Nat.zero_le 1⟩
-    · have h : epoch stamp₁.anchor = 1 := by simp [epoch, stamp₁]
+    · have h : epoch stamp₁.anchor = 1 := by decide
       refine ⟨by simp [stamp₁], by simp [stamp₁]; decide, ?_, ?_⟩
       · rw [h]
         exact onChain_three
       · rw [h]
         exact ⟨le_rfl, Nat.le_succ 1⟩
-  ordered := by simp [chain, stamp₀, stamp₁]
+    · have h : epoch stamp₂.anchor = 1 := by decide
+      refine ⟨by simp [stamp₂], by simp [stamp₂], ?_, ?_⟩
+      · rw [h]
+        exact onChain_five
+      · rw [h]
+        exact ⟨le_rfl, Nat.le_succ 1⟩
+  ordered := by simp [chain, stamp₀, stamp₁, stamp₂]
   window_disjoint := by
-    refine List.Pairwise.cons ?_ (List.Pairwise.cons (by simp) List.Pairwise.nil)
-    intro s hs _ a ha hb
-    simp only [List.mem_singleton] at hs
-    subst hs
-    simp only [stamp₀, stamp₁] at ha hb
-    revert a
-    decide
+    refine List.Pairwise.cons ?_ (List.Pairwise.cons ?_ (List.Pairwise.cons (by simp)
+      List.Pairwise.nil))
+    · intro s hs _ a ha hb
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+      rcases hs with rfl | rfl <;> simp only [stamp₀, stamp₁, stamp₂] at ha hb <;> revert a <;>
+        decide
+    · intro s hs _ a ha hb
+      simp only [List.mem_singleton] at hs
+      subst hs
+      simp only [stamp₁, stamp₂] at ha hb
+      revert a
+      decide
 
+/-- `epoch` labels every chain node over `q` with its epoch. -/
 theorem hepoch {e : ℕ} {a : ZMod 37} (h : Node q (nextEpoch 0 0) 0 nextStamp nextEpoch e a) :
     epoch a = e := by
   induction h with
-  | genesis => simp [epoch, nextEpoch]; decide
+  | genesis => decide
   | stamp c hprev _ hq ih =>
-    rcases hq with ⟨rfl, rfl, -⟩ | ⟨rfl, rfl, -⟩ <;> simp only [nextStamp] <;> decide
+    rcases hq with ⟨rfl, rfl, -⟩ | ⟨rfl, rfl, -⟩ | ⟨rfl, rfl, -⟩ <;> simp only [nextStamp] <;> decide
   | epoch hprev he hq ih =>
     rcases hq with ⟨-, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
     · exact absurd rfl he
-    · simp [epoch, nextEpoch]; decide
-    · simp [epoch, nextEpoch]; decide
+    · decide
+    · decide
 
+/-- `R` pairs the one action-digest call with its tachygrams, and that digest is not a fee digest. -/
 theorem digestLaw : DigestLaw IsFee R actionDigest Q where
   pair e g t₁ t₂ h := by
     obtain ⟨rfl, rfl, rfl⟩ := h
@@ -428,10 +467,10 @@ noncomputable def coveredSpend : CoveredSpend IsFee epoch R q nextStamp actionDi
 
 theorem hne : ∀ s ∈ chain, s.tachygrams ≠ [] := fun s hs => (valid.accepted s hs).tachygrams_ne_nil
 
-/-- Every hypothesis of `no_double_spend_of_covered_spends` except the second spend (`p₂`, `hsplit`,
-`hs₂`, `hfresh`), and of `no_double_spend_in_stamp` except the second spend and `hindex`: the laws,
-a valid chain whose calls up to epoch 2 lie in `q`, a covered spend in one of its stamps, and the
-note's secret. -/
+/-- Every hypothesis of `no_double_spend_of_covered_spends` except the second spend `p₂`, and of
+`no_double_spend_in_stamp` except the second spend and `hindex`: the laws, a valid chain whose
+calls up to epoch 2 lie in `q`, a covered spend in its second stamp, and `hsplit`, `hs₂` and
+`hfresh` with the third stamp as `s₂`. -/
 theorem headline_hypotheses :
     HashLaw q (nextEpoch 0 0) 0 nextStamp nextEpoch ∧ ¬ IsSquare (2 : ZMod 37) ∧
       MemberLaw member 15 ∧ EvidenceLaw r leaf node ∧ NoteLaw n noteCommit paymentKey ∧
@@ -439,29 +478,30 @@ theorem headline_hypotheses :
       (∀ N ≤ 2, ChainQueried q nextStamp nextEpoch 0 chain N) ∧ stamp₁ ∈ chain ∧
       Nonempty (CoveredSpend IsFee epoch R q nextStamp actionDigest Q Spend feeDigest actions fee []
         stamp₁ (noteCommit () (paymentKey () 2) 1)) ∧
-      NoteSecretDerivable n noteCommit paymentKey nfMaster
-        ⟨noteCommit () (paymentKey () 2) 1, nfMaster 1 2⟩ :=
+      chain = [stamp₀] ++ stamp₁ :: [stamp₂] ∧ stamp₂ ∈ [stamp₂] ∧
+      (∀ e, stamp₁.epoch < e → e ≤ epoch stamp₂.anchor →
+        ¬ Chain.published chain e (noteCommit () (paymentKey () 2) 1)) :=
   ⟨hashLaw, qnr, memberLaw, evidenceLaw, noteLaw, digestLaw, valid, fun _ hN => chainQueried hN,
-    by simp [chain], ⟨coveredSpend⟩, secret⟩
+    by simp [chain], ⟨coveredSpend⟩, rfl, List.mem_singleton_self _,
+    fun _ h₁ h₂ => absurd (lt_of_lt_of_le h₁ h₂) (by decide)⟩
 
-/-- The instance fits `no_double_spend_of_covered_spends`: only the second spend is left open. -/
-example {l₁ l₂ : List (Chain.Stamp (ZMod 37) (ZMod 37))} {s₂ : Chain.Stamp (ZMod 37) (ZMod 37)}
-    {actions₂ : List (ZMod 37 × ZMod 37 × ZMod 37)} {fee₂ : ZMod 37 × ZMod 37}
-    {adjunctFees₂ : List (ZMod 37 × ZMod 37)} (hsplit : chain = l₁ ++ stamp₁ :: l₂) (hs₂ : s₂ ∈ l₂)
-    (hN : s₂.epoch ≤ 2)
+/-- The instance fits `no_double_spend_of_covered_spends` with the later stamp as `s₂`: only the
+second spend is left open. -/
+example {actions₂ : List (ZMod 37 × ZMod 37 × ZMod 37)} {fee₂ : ZMod 37 × ZMod 37}
+    {adjunctFees₂ : List (ZMod 37 × ZMod 37)}
     (p₂ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q Spend feeDigest actions₂ fee₂
-      adjunctFees₂ s₂ (noteCommit () (paymentKey () 2) 1))
-    (hfresh : ∀ e, stamp₁.epoch < e → e ≤ epoch s₂.anchor →
-      ¬ Chain.published chain e (noteCommit () (paymentKey () 2) 1)) : False :=
+      adjunctFees₂ stamp₂ (noteCommit () (paymentKey () 2) 1)) : False :=
+  have h := headline_hypotheses
   no_double_spend_of_covered_spends hashLaw qnr memberLaw evidenceLaw noteLaw digestLaw valid
-    (chainQueried hN) hsplit hs₂ coveredSpend p₂ secret hfresh
+    (chainQueried (by decide)) h.2.2.2.2.2.2.2.2.2.2.1 h.2.2.2.2.2.2.2.2.2.2.2.1 coveredSpend p₂
+    h.2.2.2.2.2.2.2.2.2.2.2.2
 
 /-- The instance fits `no_double_spend_in_stamp`: only the second spend is left open. -/
 example (p₂ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q Spend feeDigest actions fee []
       stamp₁ (noteCommit () (paymentKey () 2) 1))
     (hindex : coveredSpend.index ≠ p₂.index) : False :=
   no_double_spend_in_stamp hashLaw qnr evidenceLaw noteLaw digestLaw valid (by simp [chain])
-    (chainQueried (by simp [stamp₁])) coveredSpend p₂ secret hindex
+    (chainQueried (by decide)) coveredSpend p₂ hindex
 
 /-- The spend's lineage covers epoch 0: the spend's anchor is reached in epoch 1, and its
 `NoteUnspent` segment ends on the entry anchor of epoch 1. -/

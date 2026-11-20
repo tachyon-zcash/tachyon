@@ -52,6 +52,7 @@ def UnspentTest (qnr : F) (b : QrBucket F A) (value : F) : Prop :=
       (b.path[j] = false → value + (b.discriminant + j) ≠ 0)) ∧
   b.contents.eval value ≠ 0
 
+/-- A value that passes the test takes the bucket path's sides. -/
 theorem UnspentTest.matches {qnr : F} (hqnr : ¬ IsSquare qnr) {b : QrBucket F A} {value : F}
     (h : UnspentTest qnr b value) : Matches b.discriminant b.path value := by
   intro j hj
@@ -196,6 +197,7 @@ theorem ArbitraryUnspentDerivable.epoch_lt {u : ArbitraryUnspent F A}
   | fuse _ _ _ hepoch ihl ihr => exact ihl.trans (hepoch ▸ ihr)
   | lift _ _ _ _ hepoch _ _ ih => exact (hepoch ▸ ih).trans (Nat.lt_succ_self _)
 
+/-- Every derivable `NoteUnspent` covers at least one epoch. -/
 theorem NoteUnspentDerivable.epoch_lt {Bucket : QrBucket F F → Prop} {u : NoteUnspent F}
     (hu : NoteUnspentDerivable Bucket qnr member Secret group emax u) :
     u.epoch_start < u.epoch_next := by

@@ -85,6 +85,22 @@ variable {D W P Φ : Type*} {IsFee : F → Prop} {epoch : F → ℕ}
   {node : D → D → D → D → D} {chain : List (Chain.Stamp F F)} {N : ℕ} {feeDigest : Φ → F → F}
   {actions : List (Γ × F × F)} {fee : Φ × F} {adjunctFees : List (Φ × F)}
 
+/-- A covered spend of note `cm` carries a note secret of `cm`: `SpendBind` takes one. -/
+theorem CoveredSpend.secret {s : Chain.Stamp F F} {cm : F}
+    (p : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
+      (SpendDerivable q nextStamp Bucket Unspent Secret nullifier) feeDigest actions fee adjunctFees
+      s cm) :
+    ∃ master, Secret ⟨cm, master⟩ := by
+  have h := p.spend
+  have hcm := p.cm_eq
+  generalize p.header = hd at h hcm
+  cases h with
+  | @bind _ k _ hk hkcm =>
+    refine ⟨k.master, ?_⟩
+    obtain ⟨kcm, kmaster⟩ := k
+    obtain rfl : kcm = cm := hkcm.symm.trans hcm
+    exact hk
+
 /-- A covered spend of note `cm`, in a stamp anchored on a chain node, is at a covered action whose
 carried pair is the note's nullifiers at the anchor's epoch and the next. -/
 theorem CoveredSpend.carried_pair (hlaw : Chain.HashLaw q genesis e₀ nextStamp nextEpoch)
@@ -196,7 +212,7 @@ theorem no_double_spend_of_covered_spends
     (hlaw : Chain.HashLaw q (nextEpoch zero 0) 0 nextStamp nextEpoch)
     (hqnr : ¬ IsSquare qnr) (hmember : MemberLaw member emax) (hevidence : EvidenceLaw r leaf node)
     (hnote : NoteLaw n noteCommit paymentKey) (hdigest : DigestLaw IsFee R actionDigest Q)
-    {l₁ l₂ : List (Chain.Stamp F F)} {s₁ s₂ : Chain.Stamp F F} {cm master : F}
+    {l₁ l₂ : List (Chain.Stamp F F)} {s₁ s₂ : Chain.Stamp F F} {cm : F}
     {actions₁ actions₂ : List (Γ × F × F)} {fee₁ fee₂ : Φ × F} {adjunctFees₁ adjunctFees₂ : List (Φ × F)}
     (hchain : Chain.Valid epoch (OnChain nextStamp nextEpoch zero chain) chain)
     (hqueried : ChainQueried q nextStamp nextEpoch zero chain s₂.epoch)
@@ -213,9 +229,9 @@ theorem no_double_spend_of_covered_spends
           (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
         (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions₂ fee₂ adjunctFees₂ s₂ cm)
-    (hsecret : NoteSecretDerivable n noteCommit paymentKey nfMaster ⟨cm, master⟩)
     (hfresh : ∀ e, s₁.epoch < e → e ≤ epoch s₂.anchor → ¬ Chain.published chain e cm) :
     False := by
+  obtain ⟨master, hsecret⟩ := p₁.secret
   have hbucket : ∀ b, QrBucketDerivable q r nextStamp nextEpoch qnr leaf node b →
       b.Covers q nextStamp nextEpoch := fun _ hb => hb.covers hqnr hevidence
   have hmaster : ∀ {k₁ k₂ : NoteSecret F}, NoteSecretDerivable n noteCommit paymentKey nfMaster k₁ →
@@ -252,7 +268,7 @@ theorem no_double_spend_in_stamp
     (hlaw : Chain.HashLaw q (nextEpoch zero 0) 0 nextStamp nextEpoch)
     (hqnr : ¬ IsSquare qnr) (hevidence : EvidenceLaw r leaf node)
     (hnote : NoteLaw n noteCommit paymentKey) (hdigest : DigestLaw IsFee R actionDigest Q)
-    {s : Chain.Stamp F F} {cm master : F}
+    {s : Chain.Stamp F F} {cm : F}
     (hchain : Chain.Valid epoch (OnChain nextStamp nextEpoch zero chain) chain) (hs : s ∈ chain)
     (hqueried : ChainQueried q nextStamp nextEpoch zero chain s.epoch)
     (p₁ p₂ : CoveredSpend IsFee epoch R q nextStamp actionDigest Q
@@ -261,9 +277,9 @@ theorem no_double_spend_in_stamp
           (NoteSecretDerivable n noteCommit paymentKey nfMaster) group emax)
         (NoteSecretDerivable n noteCommit paymentKey nfMaster) (groupNullifier group))
       feeDigest actions fee adjunctFees s cm)
-    (hsecret : NoteSecretDerivable n noteCommit paymentKey nfMaster ⟨cm, master⟩)
     (hindex : p₁.index ≠ p₂.index) :
     False := by
+  obtain ⟨master, hsecret⟩ := p₁.secret
   have hbucket : ∀ b, QrBucketDerivable q r nextStamp nextEpoch qnr leaf node b →
       b.Covers q nextStamp nextEpoch := fun _ hb => hb.covers hqnr hevidence
   have hunspent := NoteUnspentDerivable.spec (qnr := qnr) (member := member)

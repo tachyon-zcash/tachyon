@@ -37,9 +37,11 @@ _book_setup: _install_binstall
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
 
-# build the Lean proofs in qa/fv, failing on any warning
+# build the Lean proofs in qa/fv, failing on any warning, then re-run the axiom census, which a
+# cached build skips when only an unimported module changed
 fv:
     cd qa/fv && lake build --wfail
+    cd qa/fv && lake env lean Tachyon/Axioms.lean
 
 # the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
 ci_local:

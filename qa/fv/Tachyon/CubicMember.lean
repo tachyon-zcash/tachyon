@@ -32,6 +32,10 @@ theorem cubicMember_natDegree {c : F} {i : ℕ} (hi : (i : F) + 1 ≠ 0) (m : F)
   rw [cubicMember_eq]
   exact natDegree_cubic (pow_ne_zero 3 hi)
 
+/-- Rust's encoding satisfies `MemberLaw` up to `emax` when `c` is not a cube (so no member has a
+root and each is irreducible), `3 ≠ 0` and each `i + 1 ≠ 0` (so each member has degree 3 and its
+coefficients can be compared), and the cubes of `i + 1` are distinct (so two members that divide
+each other have equal index). -/
 theorem cubicMember_law {c : F} {emax : ℕ} (hc : ∀ y : F, y ^ 3 ≠ c) (h3 : (3 : F) ≠ 0)
     (hnz : ∀ i ≤ emax, (i : F) + 1 ≠ 0)
     (hidx : ∀ i ≤ emax, ∀ j ≤ emax, ((i : F) + 1) ^ 3 = ((j : F) + 1) ^ 3 → i = j) :

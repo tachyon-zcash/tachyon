@@ -8,10 +8,14 @@ import Lean.Elab.Command
 
 * it declares no axiom;
 * it depends on no axiom other than `propext`, `Classical.choice` and `Quot.sound`, which rules out
-  `sorryAx` and `Lean.ofReduceBool` (`native_decide`);
+  `sorryAx` and `native_decide`'s axioms;
 * each of `n₁ … nₖ` was among the declarations checked, so the module filter is not empty;
 * the imported `Tachyon` modules are the `.lean` files under `Tachyon/` together with `Tachyon`,
   less the module running the check, so a file the root module doesn't import is reported.
+
+Lake re-elaborates the module that runs the check only when one of its imports changes, so `just fv`
+also re-runs `Tachyon/Axioms.lean` directly after the build. That catches a new file nothing
+imports on a cached build.
 
 It follows ragu's `Ragu.Meta.EndpointCensus` and its axiom check (ragu `origin/main` 5d225645), but
 tachyon's budget is Lean's standard three for every declaration, and tachyon has no executables
@@ -40,6 +44,7 @@ partial def moduleNamesUnder (dir : System.FilePath) (pre : Name) : IO (Array Na
 
 syntax (name := checkAxiomBudget) "#check_axiom_budget" (ppSpace ident)* : command
 
+/-- Runs `#check_axiom_budget`'s checks over the environment, failing on the first violation. -/
 @[command_elab checkAxiomBudget]
 def elabCheckAxiomBudget : CommandElab := fun stx => do
   let pins := stx[1].getArgs.map (·.getId)

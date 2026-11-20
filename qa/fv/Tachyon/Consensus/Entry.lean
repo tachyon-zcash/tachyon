@@ -52,6 +52,7 @@ theorem foldBlock_concat {e : ℕ} {a : A} {L : List F[X]} {c : F[X]} :
     foldBlock nextStamp e a (L ++ [c]) = nextStamp (foldBlock nextStamp e a L) e c := by
   simp [foldBlock]
 
+/-- The entry anchor of an epoch up to `N` is a boundary digest from a call in `q`. -/
 theorem ChainQueried.entry_boundary (h : ChainQueried q nextStamp nextEpoch zero chain N) {e : ℕ}
     (he : e ≤ N) :
     ∃ p, entry nextStamp nextEpoch zero chain e = nextEpoch p e ∧ q.boundary p e := by
@@ -154,6 +155,7 @@ theorem OnChain.of_nextStamp {genesis : A} {e₀ : ℕ}
     rw [← hPS]
     simp
 
+/-- The anchors the chain reaches by epoch `N` are stamp-closed over the calls `q`. -/
 theorem OnChain.stampClosed {genesis : A} {e₀ : ℕ} (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
     (hchain : ChainQueried q nextStamp nextEpoch zero chain N) :
     StampClosed q nextStamp fun e a => e ≤ N ∧ OnChain nextStamp nextEpoch zero chain e a :=

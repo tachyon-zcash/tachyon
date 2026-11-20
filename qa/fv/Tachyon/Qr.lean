@@ -221,6 +221,7 @@ def QrBucket.Covers (q : AnchorQueries F A ℕ) (nextStamp : A → ℕ → F[X] 
 variable {q : AnchorQueries F A ℕ} {r : EvidenceQueries F A D} {nextStamp : A → ℕ → F[X] → A}
   {nextEpoch : A → ℕ → A} {qnr : F} {leaf : QrBucket F A → D} {node : D → D → D → D → D}
 
+/-- A summary's anchors fold a run of stamp calls in `q`, and it accumulates their product. -/
 theorem SummaryDerivable.folds {s : Summary F A} (h : SummaryDerivable q nextStamp s) :
     ∃ stamps : List F[X], s.anchor_end = foldBlock nextStamp s.epoch s.anchor_prev stamps ∧
       FoldQueried q nextStamp s.epoch s.anchor_prev stamps ∧ s.accumulated = stamps.prod := by
@@ -298,6 +299,7 @@ inductive EvidenceSound (P : QrBucket F A → Prop) (r : EvidenceQueries F A D)
       EvidenceSound P r leaf node c₂ → EvidenceSound P r leaf node c₃ → r.node c₀ c₁ c₂ c₃ →
         EvidenceSound P r leaf node (node c₀ c₁ c₂ c₃)
 
+/-- Sound evidence at a leaf call is the digest of a bucket satisfying `P`. -/
 theorem EvidenceSound.of_leaf (hlaw : EvidenceLaw r leaf node) {P : QrBucket F A → Prop}
     {b : QrBucket F A} (hq : r.leaf b) (h : EvidenceSound P r leaf node (leaf b)) : P b := by
   generalize hd : leaf b = d at h
@@ -305,6 +307,7 @@ theorem EvidenceSound.of_leaf (hlaw : EvidenceLaw r leaf node) {P : QrBucket F A
   | leaf hP hq' => exact hlaw.leaf_inj hq' hq hd.symm ▸ hP
   | node _ _ _ _ hq' => exact absurd hd (hlaw.leaf_ne_node hq hq')
 
+/-- Sound evidence at a node call has sound children. -/
 theorem EvidenceSound.of_node (hlaw : EvidenceLaw r leaf node) {P : QrBucket F A → Prop}
     {c₀ c₁ c₂ c₃ : D} (hq : r.node c₀ c₁ c₂ c₃) (h : EvidenceSound P r leaf node (node c₀ c₁ c₂ c₃))
     (k : Fin 4) : EvidenceSound P r leaf node (![c₀, c₁, c₂, c₃] k) := by

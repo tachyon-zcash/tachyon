@@ -129,6 +129,18 @@ theorem Node.of_nextStamp (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
     exact ⟨rfl, hprev⟩
   | epoch _ _ hq' => exact absurd htarget (hlaw.stamp_ne_epoch hq hq')
 
+/-- If the call `nextEpoch a e'` is a chain node at epoch `e`, then `e' = e`. -/
+theorem Node.of_nextEpoch (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
+    {e e' : E} {a : A} (hq : q.boundary a e')
+    (h : Node q genesis e₀ nextStamp nextEpoch e (nextEpoch a e')) : e' = e := by
+  generalize htarget : nextEpoch a e' = target at h
+  cases h with
+  | genesis =>
+    by_contra hne
+    exact hlaw.epoch_ne_genesis hq hne htarget
+  | stamp _ _ _ hq' => exact absurd htarget.symm (hlaw.stamp_ne_epoch hq' hq)
+  | epoch _ _ hq' => exact (hlaw.nextEpoch_inj hq hq' htarget).2
+
 /-- Fold a block's list of stamp tachygram-set polynomials into an anchor at epoch `e`.
 A block that publishes no stamp leaves the anchor unchanged (`book/src/anchor.md`). -/
 def foldBlock (nextStamp : A → E → F[X] → A) (e : E) (a : A) (stamps : List F[X]) : A :=

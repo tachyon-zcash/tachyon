@@ -29,25 +29,6 @@ namespace Tachyon
 
 open Polynomial
 
-section Chain
-
-variable {F A E : Type*} [Field F] {q : Chain.AnchorQueries F A E} {genesis : A} {e₀ : E}
-  {nextStamp : A → E → F[X] → A} {nextEpoch : A → E → A}
-
-/-- If the call `nextEpoch a e'` is a chain node at epoch `e`, then `e' = e`. -/
-theorem Chain.Node.of_nextEpoch (hlaw : Chain.HashLaw q genesis e₀ nextStamp nextEpoch)
-    {e e' : E} {a : A} (hq : q.boundary a e')
-    (h : Chain.Node q genesis e₀ nextStamp nextEpoch e (nextEpoch a e')) : e' = e := by
-  generalize htarget : nextEpoch a e' = target at h
-  cases h with
-  | genesis =>
-    by_contra hne
-    exact hlaw.epoch_ne_genesis hq hne htarget
-  | stamp _ _ _ hq' => exact absurd htarget.symm (hlaw.stamp_ne_epoch hq' hq)
-  | epoch _ _ hq' => exact (hlaw.nextEpoch_inj hq hq' htarget).2
-
-end Chain
-
 /-- `NoteSecret` header data `(cm, mk)`, with `mk` as `master`. The note opening it also carries is
 not modelled. -/
 structure NoteSecret (F : Type*) where
