@@ -38,6 +38,12 @@ pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = 
     pub cv: Point<'dr, D, C>,
 }
 
+/// # Injectivity
+///
+/// `cm` and `pad` each bind the output note, and their tags keep them apart.
+/// The note's `pk` is the recipient's. `cv` binds the note's value, negated.
+/// The header binds the note under Poseidon and its value under value discrete
+/// log. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);

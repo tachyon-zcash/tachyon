@@ -48,6 +48,13 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// The note's opening `(rcm, pk, value, psi)` is in the clear, and `cm` binds
+/// the note again. `pk` binds the owner's `(ak, nk)`, which [`NoteSeed`]
+/// derives it from. `mk` binds `psi` and `nk`. The header binds the note and
+/// its owner's key pair under Poseidon. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
@@ -110,6 +117,13 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub epoch_end: gadgets::epoch::EpochIndex<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// `cm` binds the note. Through the note's `pk` and `psi` it binds `nk` and
+/// `mk`, and with them every nullifier of the range. `epoch_start` and
+/// `epoch_end` are the range's bounds as integers. The header binds the note
+/// and its range under Poseidon. The first slot holds the range's nullifiers.
+/// See [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteNullifiers {
     /// `(cm, epoch_start, epoch_end)`
     type Data = (note::Commitment, EpochIndex, EpochIndex);

@@ -61,6 +61,16 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     pub root: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// `epoch` is an integer, and `discriminant` is the network's $R_0$.
+/// `anchor_start` and `anchor_next` bind the network's two boundary digests and
+/// their histories. `root` binds the whole tree and every bucket under it. Each
+/// bucket's leaf binds its epoch, anchors, discriminant, profile and contents
+/// bridge hash. The header binds the tree, its buckets and the anchors under
+/// Poseidon. It binds the buckets' contents and the stamp sets in the anchors'
+/// histories under host and nested discrete log as well. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for EvidenceTree {
     /// `(epoch, anchor_start, anchor_next, discriminant, root)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
@@ -130,6 +140,14 @@ pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     pub second: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// The network fields bind what [`EvidenceTree`]'s bind. `first` and `second`
+/// each bind a whole subtree and every bucket under it. The header binds the
+/// two subtrees, their buckets and the anchors under Poseidon. It binds the
+/// buckets' contents and the stamp sets in the anchors' histories under host
+/// and nested discrete log as well. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for EvidenceTreePair {
     /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
     type Data = (
