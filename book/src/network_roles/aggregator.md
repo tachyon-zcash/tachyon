@@ -41,7 +41,7 @@ Two things make aggregates transparent in practice.
 - Cache recent mempool autonomes and aggregates.
 
 Hold both until the end of the epoch after the working aggregate's anchor epoch.
-After that the aggregate can no longer be published.
+After that its [anchor is outside the two-epoch consensus window](../anchor.md#intra-block-state-vs-end-of-block-anchor), and lifts cannot cross an [epoch boundary](../anchor.md#epoch-boundary), so the aggregate can no longer be published.
 
 Keep quotients and partial merges to yourself.
 Publish only complete autonomes and aggregates.
