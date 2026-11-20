@@ -3,53 +3,72 @@
 Tachyon is a shielded transaction protocol for Zcash. It aims to reduce the
 cost of shielded transactions to the chain.
 
-A Tachyon bundle carries a stamp, a recursive zero-knowledge proof that the
-bundle's actions follow the rules. Stamps can be merged, so a single stamp can
-cover many transactions.
+This repository holds the reference implementation, in the `zcash_tachyon`
+crate, and [The Tachyon Book](book), which describes the protocol. Both are
+work in progress, and the crate's API changes without notice.
 
-Tachyon notes are simpler than Orchard notes. Viewing keys, diversified
-addresses and on-chain note ciphertexts are no longer part of the core
-protocol. Wallets exchange payment details out of band instead.
+## Transaction structure
 
-This repository holds two things: the reference implementation, which is the
-`zcash_tachyon` crate in [`crates/tachyon`](crates/tachyon), and The Tachyon
-Book in [`book`](book). Both are work in progress. The crate is unpublished at
-version `0.0.0`, and its API changes without notice.
+A bundle holds actions and a stamp. Each action has a signature and a pair of
+tachygrams. A tachygram stands for a nullifier or a note commitment, and
+consensus treats both alike.
 
-## Where to go next
+The stamp carries a [Ragu](https://github.com/tachyon-zcash/ragu) proof that
+the bundle's actions follow the rules. Stamps can be merged into one stamp that
+covers several bundles, and the other bundles are stripped of their stamps.
 
-- **The protocol:** run `just book serve` to read the book. Its sources start
-  with [Bundles](book/src/bundle.md), [Proof Tree](book/src/proof-tree.md) and
-  [Aggregation](book/src/aggregation.md).
-- **The design rationale:** Sean Bowe's
-  [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/).
-- **The API:** `just doc --open` builds the crate's rustdoc.
-- **The proof system:** the crate proves, merges and verifies stamps with
-  [Ragu](https://github.com/tachyon-zcash/ragu) proof-carrying data. Ragu has
-  its own [book](https://tachyon.z.cash/ragu/).
+```mermaid
+classDiagram
+    class Bundle["Bundle&lt;S: StampState&gt;"] {
+        value_balance: value::Balance
+        actions: Vec~action::Descriptor~
+        action_auth: one signature and tachygram pair per action
+        fee: fee::Descriptor
+        fee_auth: Tachygram
+        binding_sig: Signature
+        memo: Vec~u8~
+        stamp: S
+    }
+    class Descriptor["action::Descriptor"] {
+        cv: value::Commitment
+        rk: ActionVerificationKey
+    }
+    class StampState {
+        <<trait>>
+    }
+    class ProofStamp["ProofStamp&lt;P: Proof&gt;"] {
+        anchor: Anchor
+        tachygram_set: TachygramSetCommit
+        adjuncts: txids of the other covered transactions
+        proof: Box~P~
+    }
+    class StrippedStamp
+    Bundle *-- Descriptor
+    Bundle *-- StampState
+    StampState <|.. ProofStamp
+    StampState <|.. StrippedStamp
+```
+
+The book's [Bundles](book/src/bundle.md) chapter explains each field.
 
 ## Development
 
 Requires stable Rust 1.97 or later and [`just`](https://github.com/casey/just).
-Formatting uses the pinned toolchain `nightly-2026-05-23`. Ragu is a git
-dependency pinned to a revision, so the first build fetches it from GitHub.
+Formatting uses the pinned toolchain `nightly-2026-05-23`.
 
 ```sh
-just test        # unit tests, then integration tests and doctests with --release
-just lint        # build the docs, then clippy for no_std and for all targets
-just fmt         # format with the pinned nightly
-just check       # cargo check for no_std and for all targets
-just ci_local    # the Rust CI gates, without the OS matrix
+just test          # unit tests, then integration tests and doctests with --release
+just lint          # build the docs, then clippy for no_std and for all targets
+just fmt           # format with the pinned nightly
+just check         # cargo check for no_std and for all targets
+just doc --open    # build and open the crate's rustdoc
+just book serve    # serve the book, after installing mdbook and its plugins
+just ci_local      # the Rust CI gates, without the OS matrix
 ```
 
-`just test` passes its arguments to libtest. `just book` first installs pinned
-versions of `mdbook`, `mdbook-katex` and `mdbook-mermaid` with `cargo-binstall`.
-
-Unit and integration tests build with the `test-epoch-size` feature. It
-shortens an epoch from 4096 blocks to 64. Only `tests/epoch.rs` runs at the
-shipped epoch size, and only `just ci_local` runs it.
-
-The crate is `no_std`, with `std` as a default feature.
+Unit and integration tests build with the `test-epoch-size` feature, which shortens an epoch from
+4096 blocks to 64. Only `tests/epoch.rs` runs at the shipped epoch size, and
+only `just ci_local` runs it.
 
 ## License
 
