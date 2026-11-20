@@ -133,9 +133,8 @@ regardless of the fee change commitment, as it rejects a repeated action.
 The action set holds the action digests and the fee digests.
 The tachygram set is derived from the covered actions' pairs and each covered
 bundle's fee change commitment, with repeated members rejected.
-Consensus rebuilds $d_\fee$ from the published bundles. An accepted proof therefore covers the signed $\cv_\feemax$
-at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
-cannot be applied twice to the same lineage. Merging and lifting carry fee
+Consensus rebuilds $d_\fee$ from the published bundles. An accepted stamp proof therefore covers the signed $\cv_\feemax$
+at the published fee. While $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, $\mathsf{StampUnmerge}$ can strip a fee leaf from a $\mathtt{Stamp}$ or isolate a fee leaf, so a derivable $\mathtt{Stamp}$ may carry zero or multiple fee leaves for one action lineage. That each covered bundle carries exactly one fee rests on coverage: consensus rebuilds the action set from the covered action descriptors and one unique fee descriptor per covered bundle. Merging and lifting carry fee
 digests and fee change note commitments like any other set members. Merging,
 unmerging, lifting, and stripping change only the stamp, leaving the bundle
 body's fee and fee change unchanged. Re-proving at another fee updates the

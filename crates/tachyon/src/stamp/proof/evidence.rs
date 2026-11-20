@@ -300,11 +300,11 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 ///
 /// # Soundness
 ///
-/// Both roots are threaded, and the network equality makes the emitted header's
-/// network fields true of every leaf beneath either input. The fields are
-/// checked equal because a consumer reads the extent off the tree, so a tree
-/// spanning more than its leaves do would let a bucket's exclusion cover folds
-/// the bucket never held.
+/// Both roots are threaded, and the network equality keeps the emitted header
+/// consistent with its subtrees. Soundness of a replayed bucket comes from
+/// [`EvidenceTreeOpen`], which hashes the tree header's `epoch`,
+/// `anchor_start`, `anchor_next` and `discriminant` into the leaf digest and
+/// checks that digest against `root`.
 ///
 /// Nothing is hashed here. The pair asserts only that two subtrees belong to
 /// one network; [`EvidenceTreeFuse`] is what turns four of them into a node.

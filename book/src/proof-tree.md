@@ -101,6 +101,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 `Actions` and `Stamp` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
 `Actions` carries only its anchor. `Stamp` carries `(tachygram_set_bridge, anchor)`, where `tachygram_set_bridge` is the bridge hash of the tachygram set.
 Both hold the action set as an `ActionSetPoly` and the tachygram set as a `TachygramSetPoly`.
+For each polynomial type, merge checks $L \cdot R = O$ at the framework's shared challenge $\zeta$; unmerge checks $R \cdot O = L$.
 Verification always rebuilds `Pcd<Stamp>`.
 
 ## Roles
@@ -209,6 +210,7 @@ for the witnessed `combined` $C$, left $L$, and right $R$. The halves hold disjo
 `UnspentLift` appends one epoch in one step. Its bucket starts on the segment's excluded bound (`unspent.anchor_next == bucket.anchor_start`, `unspent.epoch_next == bucket.epoch`), it tests a value against the bucket exactly as `QrUnspentInit` does, and it confirms
 $$E(X) = P(X) \cdot F_{(\mathsf{epoch\_next},\, x)}(X)$$
 for the witnessed `extended` $E$, the input's `elapsed` $P$ in its `NfSeqPoly`, and the one factor of the tested pair, at $\zeta$, after both sequences are committed and the value is staged. The new factor's epoch is `epoch_next`, which the step advances by one, so both properties hold.
+The step checks the tested value against its staged value.
 
 ### Summaries
 
@@ -287,7 +289,7 @@ Its bucket cannot support a spend that consensus accepts.
 A final anchor could not carry this guarantee: consensus acknowledges every end-of-block anchor, so a bucket ending on one could stop short. That is why both bucket bounds are entry anchors, and why the end bound is excluded.
 The seal admits every bucket; `EvidenceTreeOpen` only replays one a tree already holds.
 
-`QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, the sequence naming $x$, and the bucket's contents.
+`QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, and the sequence naming $x$.
 With $s_j = x + R_0 + j$ and $c$ the non-residue,
 
 $$r_j^2 = \bigl(c - (c - 1)\, b_j\bigr)\, s_j, \qquad b_j = 0 \implies s_j \neq 0,$$
@@ -300,7 +302,8 @@ $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m
 since among boolean vectors of weight $d$ only the leading positions attain the minimum index sum; positions past $d$ are tested but compared to nothing.
 A bucket matching $x$'s profile contains every occurrence of $x$ in its span, so opening its contents nonzero at $x$ proves absence over that span.
 The emitted segment takes the bucket's extent, with epochs $[\mathsf{epoch}, \mathsf{epoch} + 1)$, and its one member is $(\mathsf{epoch}, x)$. Consecutive epochs' segments meet on the entry anchor of $\mathsf{epoch} + 1$ and `UnspentFuse` composes them directly.
-The sequence's one member is checked at $\zeta$, with $x$ staged; the sequence and the contents are the step's two oracles.
+The value $x$ is staged before the framework's $\zeta$ and checked against that staged value in the step. The emitted `NfSeqPoly` is checked at $\zeta$ against the indexed factor of $(\mathsf{epoch}, x)$; the input bucket's `TachygramSetPoly` opens nonzero at $x$.
+The sequence and the contents are the step's two oracles.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable on the segment's `(epoch_next, anchor_next)`, the next epoch's entry anchor.
@@ -373,7 +376,7 @@ Four children reach one hash through two steps, since a step takes at most two p
 $$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
 
 Both, like `EvidenceTreeLeafPair`, require their inputs to agree on `epoch`, `anchor_start`, `anchor_next` and `discriminant`, and emit those inputs' values.
-Those four are checked equal because a consumer reads the extent off the tree: a tree spanning further than its leaves do would let a bucket's exclusion cover folds the bucket never held.
+Those four equalities keep the tree header consistent with its leaves; soundness of a replayed bucket comes from `EvidenceTreeOpen`, which hashes the tree header's four fields into the leaf digest and checks that digest against the root.
 Every bucket of one network shares all four.
 `EvidenceTreeCap` raises a root by repeating it into all four slots. A builder runs it until the depth is a multiple of the levels one descent covers.
 The builder keeps the buckets' polynomials, the tree, and one proof for the root, and drops the per-bucket proofs.
@@ -408,6 +411,7 @@ Two builders, or one builder at two times, may therefore publish different trees
 $$g(\zeta) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(\zeta)$$
 
 for $K$ the window width. The sequence is committed before $\zeta$ exists, and every factor's scalars are pinned in-circuit: each epoch index is `epoch_start` plus a constant, and each nullifier is a sponge output of the threaded `mk`. `epoch_start` is a free witness required group-aligned in-step and staged before $\zeta$, and it is pinned by the header it produces because it is emitted on the header directly.
+The circuit checks `epoch_start` against its staged value and evaluates each factor as $F_{i,m}(\zeta) = (m + (i+1)\zeta)^3 - c$ using the indexed encoding's non-residue $c$, then multiplies those evaluations. `QrUnspentInit` and `UnspentLift` use the same circuit member evaluator for their bucket epoch and staged tested value; none of these steps accepts a freely witnessed expected evaluation.
 `NullifierFuse` checks at $\zeta$ that its output `NfSeqPoly` is the product of its inputs', $M(X) = L(X) \cdot R(X)$, requiring the same `cm` and contiguity, which keeps the product squarefree.
 
 ### Binding unspent to derivation
@@ -420,6 +424,7 @@ $$g(X) = \texttt{elapsed}(X) \cdot \texttt{complement}(X)$$
 where the witnessed complement holds the derivation's factors outside the lineage. Every factor is irreducible, so divisibility is multiset containment: each `elapsed` factor, its epoch included, is a genuine derived pair, and an epoch the derivation lacks has no factor to divide out.
 With the provenance properties above, every epoch of the span was therefore tested with its own genuine nullifier.
 The derivation's `cm` is stamped onto the `NoteUnspent`.
+There is no separate native nonempty-span recheck: `QrUnspentInit` establishes a segment ending at its range-checked epoch's successor, `UnspentLift` extends to another such successor, and `UnspentFuse` joins segments at equal epochs.
 
 ### Spendable lineage
 
@@ -443,6 +448,7 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
 `SpendBind` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
 It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
+The circuit range-checks $e$ and its successor. For each epoch it constrains the two low bits, clears them to obtain the group start, runs the master-key sponge, and selects the group's corresponding nullifier with those bits.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
 `SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
 It rejects a value above `MAX_MONEY` and a spend in the final epoch, which has no next epoch for the second nullifier.
@@ -491,11 +497,17 @@ Unique factorization makes the division exact: the divisor's digests are a sub-m
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
 `FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note). Its fee digest absorbs the same fee change commitment that it adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
 
+The Lean results in `qa/fv` prove this multiset argument for a hand-written semantic model. No extraction or fingerprint check ties the Lean steps or digests to the Rust circuits, and production PCD soundness is not proved; a mismatch between a Lean constructor and its step is caught only by manual review.
+They take the digest-to-tachygram pairing above as exact, specify collision-resistance and binding laws scoped to the finite sets of hash calls the chain and derivations make (instantiated over a small prime field), prove the Pallas modulus prime (`Pallas.prime`), prove `5` a quadratic non-residue (`Pallas.quadraticNonResidue`) and the cubic indexed-member encoding's primality and injectivity up to the full epoch range (`Pallas.memberLaw`), rely on representation-built circuit checks (`EpochIndex` range checks, `QrSideDescend`'s depth bound, and no field wrap in `enforce_sides_of`'s mask sums and bit fold), and assume commitment/bridge binding, polynomial identities in place of random-point checks, and accepted derivations under the fixed Tachyon registry.
+Lift epoch preservation is proved through an entire derivation: when a published stamp's anchor is on the chain, every leaf's anchor is on the chain in the same epoch, under the scoped anchor hash law.
+The algebraic unmerge relation can remove a fee leaf too (`unmerge_strips_fee`): coverage of the published bundle's fee descriptor places the bundle's own fee change among the published tachygrams (`BundleVerified.fee_change_published`) directly from the reconstructed tachygram set.
+Two results rule out double spends under the consensus rules and the hash calls the chain and derivations make, deriving each spend's nullifier pair and, across stamps, the second spend's exclusion lineage from modelled spend, unspent and QR steps, tying each spend to bundle coverage and the published stamp; the scaled-split and oversized-bucket cases above do not affect them. Within one stamp, `no_double_spend_in_stamp` takes the consensus rules and those hash calls and rules out two spends at distinct covered action indices of one bundle, whose carried pairs share the anchor-epoch nullifier and fail tachygram uniqueness. Across two stamps, `no_double_spend_of_covered_spends` takes the consensus rules (anchor membership, [anchor recency](./anchor.md#intra-block-state-vs-end-of-block-anchor), the [two-epoch duplicate scan](./tachygrams.md#consensus-validation), and non-empty duplicate-free stamps) and those hash calls, distinct from bundle verification, and assumes the note commitment's field value does not appear among any stamp's published tachygrams after the first spend's publication up to the second spend's anchor epoch, saying nothing about why it would reappear. `qa/fv/README.md` records the trust partition, source correspondence and remaining boundaries.
+
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
 The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
-Consensus verifies the published anchor against the chain before accepting the stamp.
+Consensus verifies the published [anchor's end-of-block membership and recency](./anchor.md#intra-block-state-vs-end-of-block-anchor) against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
 

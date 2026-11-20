@@ -2,7 +2,7 @@
 
 An anchor is an $\mathbb{F}_p$ element produced by a Poseidon hash chain, representing a running commitment to the Tachyon pool state.
 
-Each stamp and each epoch transition produces a new pool state, but consensus may <!-- should? must? --> only acknowledge pool states that represent the end of a block.
+Each stamp and each epoch transition produces a new pool state, but consensus must only acknowledge pool states that represent the end of a block.
 
 These end-of-block states are anchors.
 
@@ -15,10 +15,10 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ x(\mathsf{tg}_\mathsf{bridge}),\ y(\mathsf{tg}_\mathsf{bridge}))
 $$
 
-where $e$ is the containing block's epoch and $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
+where $e$ is the containing block's epoch and $\mathsf{tg}_\mathsf{bridge}$ is the Pallas bridge hash of the stamp's Vesta tachygram-set commitment[^tachygrams]. Poseidon absorbs the bridge point's two affine coordinates, not limbs of the compressed commitment encoding.
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
 
@@ -41,6 +41,7 @@ $H_\mathsf{ep}(x, e)$ is a boundary digest for any $x$. For $e \geq 1$, the entr
 Within a block, each stamp's absorption produces an intermediate hash value.
 
 Consensus actors should know about intermediate states, but may only acknowledge the anchor state at the end of a block.
+A stamp must anchor to an end-of-block anchor within the present epoch or the immediately previous epoch. The chain validator enforces both membership and recency when accepting a stamp.
 
 A proof such as `SpendableInit` may produce a header at an intra-block state: its anchor is the state right after the creation stamp, which is the end-of-block anchor only when that stamp is the block's last.
 A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#anchor-segments), which prove state continuity.
