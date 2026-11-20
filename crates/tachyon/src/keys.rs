@@ -131,6 +131,10 @@ mod note {
     pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
     impl NullifierKey {
+        pub(crate) const fn from_field(field: Fp) -> Self {
+            Self(field)
+        }
+
         #[cfg(test)]
         pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
             Self(Fp::random(|bytes| rng.fill_bytes(bytes)))

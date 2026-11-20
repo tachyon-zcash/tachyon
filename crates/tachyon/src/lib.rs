@@ -21,6 +21,7 @@ pub mod keys;
 pub mod note;
 pub mod nullifier;
 pub mod pasta;
+pub mod pczt;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;

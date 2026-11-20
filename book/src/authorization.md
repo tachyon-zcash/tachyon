@@ -275,6 +275,8 @@ flowchart LR
     pczt ~~~ sighash
 ```
 
+In a Tachyon PCZT, the IO Finalizer signs output actions and the Prover proves its actions. The Combiner merges compatible partial sections. The Fee applier merges the pre-fee Actions PCDs, applies $\mathsf{FeeFuse}$ (or $\mathsf{FeeSeed}$ when there are no actions), and keeps the merged Actions PCD for later fee changes. The Extractor's result is then bound with `bsk`.
+
 Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via its action-set output commitment). The Stamp header contains the bridge hash of `cTachygrams` and the anchor; the action- and tachygram-set commitments are checked separately against the proof's output commitments.
 
 A modified descriptor breaks both checks. Changing a pair's members breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md). Swapping the two members changes the authorization digest but leaves the order-independent action digest unchanged.

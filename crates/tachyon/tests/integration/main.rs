@@ -26,11 +26,21 @@ mod fee;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod pczt_delegated;
+#[cfg(test)]
+mod pczt_plan_review;
+#[cfg(test)]
+mod pczt_roles;
+#[cfg(test)]
+mod pczt_section;
+#[cfg(test)]
 mod proof;
 #[cfg(test)]
 mod qr;
 #[cfg(test)]
 mod stamp;
+#[cfg(test)]
+mod stamp_pre_fee;
 #[cfg(test)]
 mod summary;
 #[cfg(test)]
