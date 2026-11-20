@@ -33,8 +33,9 @@ classDiagram
         cv: value::Commitment
         rk: ActionVerificationKey
     }
-    class StampState {
-        <<trait>>
+    class FeeDescriptor["fee::Descriptor"] {
+        cv_feemax: value::Commitment
+        v_fee: value::Positive
     }
     class ProofStamp["ProofStamp&lt;P: Proof&gt;"] {
         anchor: Anchor
@@ -42,14 +43,14 @@ classDiagram
         adjuncts: txids of the other covered transactions
         proof: Box~P~
     }
-    class StrippedStamp
-    Bundle *-- Descriptor
-    Bundle *-- StampState
-    StampState <|.. ProofStamp
-    StampState <|.. StrippedStamp
+    Bundle *-- Descriptor : actions
+    Bundle *-- FeeDescriptor : fee
+    Bundle *-- ProofStamp : stamp, unless stripped
 ```
 
-The book's [Bundles](book/src/bundle.md) chapter explains each field.
+A bundle's stamp state `S` is either `ProofStamp` or `StrippedStamp`, which
+has no fields. The book's [Bundles](book/src/bundle.md) chapter explains each
+field.
 
 ## Development
 
