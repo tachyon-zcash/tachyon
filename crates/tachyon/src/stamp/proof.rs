@@ -24,6 +24,36 @@
 //! before $\zeta$. A commitment that is only witnessed, or threaded onward
 //! unchanged, binds nothing until a public input, a header or a consensus check
 //! fixes it.
+//!
+//! # Header injectivity
+//!
+//! Ragu requires every header's `encode` to be injective in its `Data` and
+//! cannot check it. Each header here has a tuple for `Data`, or the one
+//! `Anchor` of `Actions`. `encode` allocates every component into elements of
+//! its own, and the derived `Write` of the output gadget emits them in
+//! declaration order. No element packs, sums or hashes two components, and the
+//! element count is fixed. Two encodings are therefore equal only when they
+//! agree component by component, and a header's encoding is injective when
+//! each component's is. A component is one of three kinds:
+//!
+//! - A field element. `Anchor`, `Tachygram`, `note::Commitment`, `Nullifier`,
+//!   `PaymentKey`, `NoteMasterKey`, `QrDiscriminant`, `EvidenceTreeRoot` and
+//!   the two note trapdoors hold one `Fp` and nothing else. Each encodes as
+//!   that element.
+//! - An integer. `EpochIndex` wraps a `u32`, `value::Positive` wraps an `i64`
+//!   that its constructors keep in `0..=MAX_MONEY`, and `QrProfile` is two
+//!   `u32`s, `depth` and `bits`, each in its own element. Each integer widens
+//!   to `u64` without loss, and distinct integers below $2^{64}$ are distinct
+//!   in $\mathbb{F}_p$. The range checks `encode` emits constrain a prover's
+//!   witness; the argument does not use them.
+//! - A curve point. `TachygramSetBridge` and `value::Commitment` encode as
+//!   affine coordinates $(x, y)$, two elements, and a point other than the
+//!   identity is determined by its coordinates. Both types can hold the
+//!   identity, which has no coordinates and no encoding: `encode` panics on an
+//!   identity `TachygramSetBridge` and returns an error on an identity
+//!   `value::Commitment`.
+//!
+//! Each `Header` implementation names the kind of every component it encodes.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

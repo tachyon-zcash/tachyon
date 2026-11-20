@@ -41,6 +41,10 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Three elements: `cm` and `anchor` are field elements, `epoch_current` an
+/// integer. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);

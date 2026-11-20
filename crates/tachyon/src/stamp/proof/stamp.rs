@@ -59,6 +59,10 @@ pub struct ActionsOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// One element: `anchor` is a field element. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for Actions {
     /// `anchor`
     type Data = Anchor;
@@ -101,6 +105,10 @@ pub struct StampOutput<'dr, D: Driver<'dr>> {
     pub tachygram_set_bridge: [Element<'dr, D>; 2],
 }
 
+/// # Injectivity
+///
+/// Three elements: `anchor` is a field element, `tachygram_set_bridge` a curve
+/// point. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for Stamp {
     /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);

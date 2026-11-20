@@ -46,6 +46,11 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
     pub cv: Point<'dr, D, C>,
 }
 
+/// # Injectivity
+///
+/// Seven elements: `cm`, `nf_current`, `nf_next`, `anchor` and `pk` are field
+/// elements, `cv` a curve point. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for SpendHeader {
     /// `(cm, nf_current, nf_next, anchor, pk, cv)`
     type Data = (

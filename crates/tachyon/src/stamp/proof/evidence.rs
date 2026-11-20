@@ -61,6 +61,11 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     pub root: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Five elements: `epoch` is an integer, `anchor_start`, `anchor_next`,
+/// `discriminant` and `root` field elements. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for EvidenceTree {
     /// `(epoch, anchor_start, anchor_next, discriminant, root)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
@@ -130,6 +135,11 @@ pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     pub second: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Six elements: `epoch` is an integer, `anchor_start`, `anchor_next`,
+/// `discriminant`, `first` and `second` field elements. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for EvidenceTreePair {
     /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
     type Data = (

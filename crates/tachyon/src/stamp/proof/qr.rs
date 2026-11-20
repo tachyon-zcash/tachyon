@@ -71,6 +71,11 @@ pub struct QrIntakeOutput<'dr, D: Driver<'dr>> {
     pub profile: gadgets::qr::QrProfile<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Six elements: `epoch` is an integer, `anchor_prev`, `anchor_end` and
+/// `discriminant` field elements, `profile` two integers. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrIntake {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrProfile);
@@ -153,6 +158,11 @@ pub struct QrIntakeSidesOutput<'dr, D: Driver<'dr>> {
     pub non_residue_hash: [Element<'dr, D>; 2],
 }
 
+/// # Injectivity
+///
+/// Eight elements: the six of [`QrIntake`], encoded by it from the first five
+/// components, then `non_residue_hash`, a curve point. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrIntakeSides {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
     /// non_residue_hash)`
@@ -218,6 +228,10 @@ impl Header<Fp> for QrIntakeSides {
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
+/// # Injectivity
+///
+/// The `Data` and encoding of [`QrIntakeSides`], whose `encode` this calls, so
+/// that header's argument carries over. `SUFFIX` tells the two headers apart.
 impl Header<Fp> for QrSideSelection {
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type OnlinePolyCommit = (PolySlot<QrInterpolantPoly>, PolySlot<QrQuotientPoly>);
@@ -972,6 +986,11 @@ pub struct QrBucketOutput<'dr, D: Driver<'dr>> {
     pub contents_hash: [Element<'dr, D>; 2],
 }
 
+/// # Injectivity
+///
+/// Eight elements: `epoch` is an integer, `anchor_start`, `anchor_next` and
+/// `discriminant` field elements, `profile` two integers, `contents_hash` a
+/// curve point. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for QrBucket {
     /// `(epoch, anchor_start, anchor_next, discriminant, profile,
     /// contents_hash)`

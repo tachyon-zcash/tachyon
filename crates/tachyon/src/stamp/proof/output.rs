@@ -38,6 +38,10 @@ pub struct OutputHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = 
     pub cv: Point<'dr, D, C>,
 }
 
+/// # Injectivity
+///
+/// Four elements: `cm` and `pad` are field elements, `cv` a curve point. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);

@@ -48,6 +48,11 @@ pub struct NoteSecretOutput<'dr, D: Driver<'dr>> {
     pub mk: gadgets::master::NoteMasterKey<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Six elements. `cm` and `mk` are field elements. `note` is four components
+/// in four elements: `rcm`, `pk` and `psi` are field elements, `value` an
+/// integer. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
@@ -110,6 +115,10 @@ pub struct NoteNullifiersOutput<'dr, D: Driver<'dr>> {
     pub epoch_end: gadgets::epoch::EpochIndex<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Three elements: `cm` is a field element, `epoch_start` and `epoch_end`
+/// integers. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteNullifiers {
     /// `(cm, epoch_start, epoch_end)`
     type Data = (note::Commitment, EpochIndex, EpochIndex);

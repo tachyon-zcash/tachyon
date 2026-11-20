@@ -83,6 +83,11 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_next: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Four elements: `anchor_start` and `anchor_next` are field elements,
+/// `epoch_start` and `epoch_next` integers. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for ArbitraryUnspent {
     /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
@@ -141,6 +146,11 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_next: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Five elements: `cm`, `anchor_start` and `anchor_next` are field elements,
+/// `epoch_start` and `epoch_next` integers. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteUnspent {
     /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
@@ -216,6 +226,10 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_end: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Two elements: `anchor_start` and `anchor_end` are field elements. See
+/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for AnchorSpan {
     /// `(anchor_start, anchor_end)`
     type Data = (Anchor, Anchor);

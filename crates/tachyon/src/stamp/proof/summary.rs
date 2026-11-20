@@ -57,6 +57,10 @@ pub struct SummaryOutput<'dr, D: Driver<'dr>> {
     pub anchor_end: Element<'dr, D>,
 }
 
+/// # Injectivity
+///
+/// Three elements: `epoch` is an integer, `anchor_prev` and `anchor_end` field
+/// elements. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for Summary {
     /// `(epoch, anchor_prev, anchor_end)`
     type Data = (EpochIndex, Anchor, Anchor);
