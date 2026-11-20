@@ -1,10 +1,25 @@
 import Tachyon
+import Tachyon.Meta.AxiomBudget
 
 /-!
 # Axiom census
 
-The headline theorems depend only on Lean's standard axioms, and in particular on no `sorryAx`.
+Every declaration of every `Tachyon` module depends only on Lean's standard axioms, and in
+particular on no `sorryAx` (`#check_axiom_budget`, which also checks that every module under
+`Tachyon/` is imported). The headline theorems below are pinned to their exact axiom sets.
 -/
+
+#check_axiom_budget Tachyon.ActionsDerivable.leafGenerated Tachyon.ActionsDerivable.feeFuse_leaves
+  Tachyon.StampDerivable.leafGenerated Tachyon.StampDerivable.published Tachyon.unmerge_strips_fee
+  Tachyon.StampTrace.spec Tachyon.StampTrace.findLeaf Tachyon.BundleVerified.fee_published
+  Tachyon.BundleVerified.fee_change_published Tachyon.unmerge_needs_pairing
+  Tachyon.BundleVerified.tachygrams_eq Tachyon.BundleVerified.leaves_disjoint Tachyon.no_double_spend
+  Tachyon.no_double_spend_of_valid Tachyon.SpendDerivable.pair Tachyon.StampTree.leaves_node
+  Tachyon.StampTree.derivable Tachyon.no_double_spend_of_covered_spends
+  Tachyon.no_double_spend_in_stamp Tachyon.QrBucketDerivable.covers Tachyon.QrBucket.Covers.onChain
+  Tachyon.NoteUnspentDerivable.lineage Tachyon.SpendDerivable.lineage Tachyon.Chain.Node.epoch_unique
+  Tachyon.Chain.StampLiftStep.epoch_eq Tachyon.Chain.Valid.disjoint_of_window
+  Tachyon.Chain.Valid.nodup_two_epochs
 
 /--
 info: 'Tachyon.ActionsDerivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
