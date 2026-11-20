@@ -2,7 +2,7 @@
 
 An anchor is an $\mathbb{F}_p$ element produced by a Poseidon hash chain, representing a running commitment to the Tachyon pool state.
 
-Each stamp and each epoch transition produces a new pool state, but consensus may <!-- should? must? --> only acknowledge pool states that represent the end of a block.
+Each stamp and each epoch transition produces a new pool state, but consensus must only acknowledge pool states that represent the end of a block.
 
 These end-of-block states are anchors.
 

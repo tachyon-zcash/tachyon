@@ -53,13 +53,13 @@ This set is the atomic unit which folds into pool state to contribute to the anc
 
 ## Consensus validation
 
-Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. It also checks that every member is absent from every block of the current epoch and the immediately preceding epoch. A duplicate within that two-epoch window is rejected.
+Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. It also checks that every member is absent from every earlier stamp of the current epoch and the immediately preceding epoch, including earlier stamps of the same block. A duplicate within that two-epoch window is rejected.
 
-The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
+A spend anchored at epoch $a$ publishes $(\mathsf{nf}_a, \mathsf{nf}_{a+1})$, and its spendable lineage proves $\mathsf{nf}_x$ unpublished in each epoch $x$ from the note's creation up to $a$, stopping before $a$. Anchor recency requires a stamp published in epoch $p$ to anchor at epoch $p$ or $p-1$[^anchor].
 
-A stamp's anchor may have been advanced within its epoch via `ActionLift` or `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in the same epoch. Consensus therefore scans every block in the anchor's epoch, not just blocks after the anchor.
+If a second spend of the same note anchors after the first spend's publication epoch $p_1$, its lineage tests $\mathsf{nf}_{p_1}$ against epoch $p_1$, which holds $\mathsf{nf}_{p_1}$ by recency ($p_1 \in \{a_1, a_1 + 1\}$), and rejects. Otherwise its anchor epoch $a_2$ satisfies $a_2 \leq p_1$, so recency puts $p_2 \leq a_2 + 1 \leq p_1 + 1$ and $a_2 \in \{a_1 - 1, a_1, a_1 + 1\}$: the two spends share $\mathsf{nf}_{a_1}$ or $\mathsf{nf}_{a_1+1}$ within the two-epoch window[^nullifiers-pair].
 
-A spend publishes a nullifier for the current epoch and one for the next epoch[^nullifiers-pair]. The next-epoch nullifier published in epoch $e$ is the present-epoch nullifier that any later spend of the same note would have to publish in epoch $e+1$. Including the previous epoch in the check catches that collision.
+Scanning earlier stamps of the current epoch catches a second spend anchored in the same epoch as the first, because neither lineage covers its own anchor epoch. Including the preceding epoch catches the cases where recency places the two publications in consecutive epochs: both spends anchored in $e$ with the second published in $e+1$, or the first anchored in $e$ and published in $e+1$ and the second anchored in $e+1$ and published in $e+2$.
 
 [^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 
@@ -69,8 +69,6 @@ A spend publishes a nullifier for the current epoch and one for the next epoch[^
 
 [^bundle]: See [Bundle](./bundle.md) for the phase-ordered body and the stamp trailer.
 
-[^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment.
-
-[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `ActionLift` and `StampLift` advance an anchor within an epoch.
+[^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment and the anchor-recency rule.
 
 [^nullifiers-pair]: See [Nullifiers](./nullifiers.md) for the present/future nullifier pair published with each spend.
