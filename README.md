@@ -19,38 +19,40 @@ covers several bundles, and the other bundles are stripped of their stamps.
 
 ```mermaid
 classDiagram
-    class Bundle["Bundle&lt;S: StampState&gt;"] {
+    direction LR
+    class Bundle {
         value_balance: value::Balance
-        actions: Vec~action::Descriptor~
-        action_auth: one signature and tachygram pair per action
         fee: fee::Descriptor
-        fee_auth: Tachygram
         binding_sig: Signature
-        memo: Vec~u8~
-        stamp: S
+        verify()
+        strip()
     }
-    class Descriptor["action::Descriptor"] {
+    class Action {
         cv: value::Commitment
         rk: ActionVerificationKey
+        sig: action::Signature
+        tachygrams: Tachygram[2]
     }
-    class FeeDescriptor["fee::Descriptor"] {
-        cv_feemax: value::Commitment
-        v_fee: value::Positive
-    }
-    class ProofStamp["ProofStamp&lt;P: Proof&gt;"] {
+    class ProofStamp {
         anchor: Anchor
         tachygram_set: TachygramSetCommit
-        adjuncts: txids of the other covered transactions
-        proof: Box~P~
+        proof: stamp::Proof
+        merge()
+        unmerge()
+        compress()
     }
-    Bundle *-- Descriptor : actions
-    Bundle *-- FeeDescriptor : fee
-    Bundle *-- ProofStamp : stamp, unless stripped
+    Bundle "1" *-- "0..*" Action : actions
+    Bundle "1" *-- "0..1" ProofStamp : stamp
+    ProofStamp --> "0..*" Bundle : adjuncts
 ```
 
-A bundle's stamp state `S` is either `ProofStamp` or `StrippedStamp`, which
-has no fields. The book's [Bundles](book/src/bundle.md) chapter explains each
-field.
+A stamp's adjuncts are the other bundles it covers, listed by transaction id.
+`merge` combines two stamps into one, and `unmerge` divides one back out.
+`strip` removes the stamp from a bundle that another stamp covers.
+
+In the crate, an action's `cv` and `rk` form an `action::Descriptor`, and its
+signature and tachygrams sit beside it in `Bundle::action_auth`. The book's
+[Bundles](book/src/bundle.md) chapter explains every field.
 
 ## Development
 
