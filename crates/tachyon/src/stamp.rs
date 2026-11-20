@@ -265,17 +265,7 @@ impl<P: Proof> ProofStamp<P> {
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let anchor = Anchor::read(&mut reader)?;
 
-        // Full validation confirms this against the covered bundles.
-        let tachygram_set = {
-            let point = serialization::read_eq_affine(&mut reader)?;
-            if point.is_identity() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygram set commitment is the identity",
-                ));
-            }
-            TachygramSetCommit::from(point)
-        };
+        let tachygram_set = TachygramSetCommit::read(&mut reader)?;
 
         let adjuncts = {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
@@ -333,7 +323,7 @@ impl<P: Proof> ProofStamp<P> {
     /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         self.anchor.write(&mut writer)?;
-        serialization::write_eq_affine(&mut writer, self.tachygram_set.as_ref())?;
+        self.tachygram_set.write(&mut writer)?;
         serialization::write_compactsize(
             &mut writer,
             u64::try_from(self.adjuncts.len()).map_err(|_err| {

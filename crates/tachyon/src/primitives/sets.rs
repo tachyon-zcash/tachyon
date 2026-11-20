@@ -2,7 +2,11 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta, udon::curve::Projective as _};
+use ragu::{
+    Cycle as _, Polynomial, ProductionRank,
+    pasta::Pasta,
+    udon::curve::{Affine as _, Projective as _},
+};
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
@@ -25,11 +29,17 @@ impl TachygramSetCommit {
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails or the bytes are not a canonical
-    /// curve point.
+    /// Returns an error if reading fails, the point is not canonically
+    /// encoded, or the point is the identity.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let commit = serialization::read_eq_affine(&mut reader)?;
-        Ok(Self(commit))
+        let point = serialization::read_eq_affine(&mut reader)?;
+        if point.is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygram set commitment is the identity",
+            ));
+        }
+        Ok(Self(point))
     }
 
     /// Write as an affine point to the consensus wire format.
