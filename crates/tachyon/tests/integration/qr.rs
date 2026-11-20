@@ -3,14 +3,14 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem, slice};
 
-use ragu::udon::{curve::Projective as _, field::Field as _};
+use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetBridge, TachygramSetPoly,
     constants::EPOCH_MAX,
     nullifier::Nullifier,
-    pasta::{Eq, EqAffine, Fp},
+    pasta::{EqAffine, Fp},
     stamp::proof::{
         pool::{UnspentFuse, UnspentLift},
         qr, spend, spendable,
@@ -1247,7 +1247,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             span0.1.next_epoch(epoch.next().unwrap()).unwrap(),
             disc,
             profile,
-            TachygramSetBridge::from(app.bridge_hash(Eq::from(contents).to_affine()).unwrap()),
+            TachygramSetBridge::from(app.bridge_hash(contents).unwrap()),
         )
     );
     assert_eq!(bucket.pcd.commitments()[1], contents);
