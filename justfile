@@ -7,6 +7,11 @@ _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
 
+# keep in step with .github/workflows/coverage.yml. `--remap-path-prefix` makes
+# paths workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
+# outside the default cargo-llvm-cov excludes.
+_cov := "--remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
+
 fmt:
     cargo +{{_nightly}} fmt --all
 
@@ -19,6 +24,26 @@ test *ARGS:
     cargo test --workspace --features test-epoch-size --lib -- {{ARGS}}
     cargo test --workspace --release --features test-epoch-size --test integration -- {{ARGS}}
     cargo test --workspace --release --features test-epoch-size --doc -- {{ARGS}}
+
+# local coverage requires the llvm-tools-preview component and cargo-llvm-cov 0.9.1
+# line coverage with the same profiles as the unit and integration CI jobs
+coverage *ARGS:
+    just coverage-lib {{ARGS}}
+    just coverage-integration {{ARGS}}
+
+# unit-test coverage in debug mode, including overflow and debug assertions
+coverage-lib *ARGS:
+    cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size --lib {{ARGS}}
+
+# integration-test coverage in release mode
+coverage-integration *ARGS:
+    cargo llvm-cov {{_cov}} --release --workspace --locked --features test-epoch-size --test integration {{ARGS}}
+
+# line coverage of the test suite, as an HTML report
+# keep HTML outside target/llvm-cov, which the next coverage pass clears
+coverage-html *ARGS:
+    just coverage-lib --html --output-dir target/coverage-html/lib {{ARGS}}
+    just coverage-integration --html --output-dir target/coverage-html/integration {{ARGS}}
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
