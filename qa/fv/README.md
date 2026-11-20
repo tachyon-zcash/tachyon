@@ -20,9 +20,10 @@ model reads it as the identity it checks. An accepted state is one that a regist
 from accepted inputs (`ActionsDerivable`, `StampDerivable`). This idealizes PCD knowledge soundness.
 Ragu's three internal steps (`Rerandomize`, `Bootstrap` and `Decompress`) have no constructors, as
 part of that idealization: `Rerandomize` keeps its input's header data and both slots, `Bootstrap`
-outputs the unit header, and `Decompress`'s circuit leaves its header data unconstrained (bound by
-the compressed PCD's claim) with slots padded to `1`, a `Stamp` state already derivable at any
-anchor by dividing one `FeeSeed` by itself.
+outputs the unit header, and `Decompress` is not registered under the `Standard` profile at the
+pinned commits. Registering `Decompress` admits an `Actions` header with both slots `1` at any
+compressed claim's anchor, outside `ActionsDerivable`; for `Stamp`, slots `1` at any anchor is
+derivable by dividing one `FeeSeed` by itself.
 
 `SetPoly.lean` defines `setPoly D`, the product of `X - d` over a multiset `D`. The results are
 stated on these root multisets. A product of set polynomials is the sum of their multisets.
@@ -45,9 +46,11 @@ models the anchor chain and the publication rules that `Chain.Valid` collects.
 `Qr.lean` models the QR evidence: summaries, intakes, the split and descent, `QrBucketSeal`, and the
 evidence trees, whose `EvidenceTreeOpen` replays a bucket. `Unspent.lean` models `ArbitraryUnspent`
 (`QrUnspentInit`, `UnspentFuse`, `UnspentLift`), `NoteNullifiers` (`NullifierDerive`,
-`NullifierFuse`) and `UnspentBind`. `Consensus/Entry.lean` derives a published chain's entry anchors
-and the anchors it reaches (`OnChain`) from its stamps. `Instances.lean` exhibits a concrete
-`ZMod 7` instance of the headline hypotheses.
+`NullifierFuse`) and `UnspentBind`. `CubicMember.lean` defines Rust's cubic indexed-member encoding
+and proves `MemberLaw` for it. `Consensus/Entry.lean` derives a published chain's entry anchors and
+the anchors it reaches (`OnChain`) from its stamps. `TreeTraces.lean` maps chain-anchored
+derivations into `StampTrace`. `Instances.lean` exhibits a concrete `ZMod 37` instance of the
+headline hypotheses and a `ZMod 307` instance of Rust's cubic.
 
 ## What is verified
 
@@ -131,12 +134,12 @@ correspondence is:
 | `stamp/proof/stamp.rs`: `SpendAction` | `SpendTree.lean`: `ActionsTree.spend` | The action set is the action digest of the header's pair (a call in `Q`), the tachygram set is the pair, and the anchor is the header's. The `pk` check and `rk` are not modelled; `DigestLaw` on `Q` idealizes the digest. |
 | `stamp/proof/delegation.rs`: `NoteSeed`; `stamp/proof/spend.rs`: `SpendBind` | `Spend.lean`: `NoteSecretDerivable`, `SpendDerivable` | `cm` commits to `pk = paymentKey(ak, nk)` and `psi`, and `mk = nfMaster(psi, nk)`; `NoteLaw` on `n` idealizes binding. `SpendBind`'s `cm` equality and pair derivation (`groupNullifier`) at `e`, `e + 1` agree. Nullifier non-zero checks, `cv` and `pk` are not modelled. |
 | `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold (in `q`) and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s epoch, `anchor_next` and successor equalities and its `cm` opening agree; its `anchor_start` equality is dropped. `SpendableLift`'s three equalities agree. |
-| `stamp/proof/summary.rs`: `SummarySeed`, `SummaryAdvance`; `stamp/proof/qr.rs`: `QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeMerge` | `Qr.lean`: `SummaryDerivable`, `QrIntakeDerivable` | Folds (in `q`), epoch, discriminant and profile equalities, and slot products agree. Each fold absorbs the slot polynomial its bridge hash binds. Non-empty stamp and intake checks are dropped; `EpochIndex` range checks are built into the `ℕ` epoch representation. |
-| `stamp/proof/qr.rs`: `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend` | `Qr.lean`: `QrIntakeDerivable.descend` | One constructor: the split's product, the selection's exceptional-value opening on the split's non-residue polynomial, and the descent's class identity at `R₀ + depth`. The distinct-sides check is dropped; the depth bound `< 32` is built into the `List Bool` path representation. |
+| `stamp/proof/summary.rs`: `SummarySeed`, `SummaryAdvance`; `stamp/proof/qr.rs`: `QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeMerge` | `Qr.lean`: `SummaryDerivable`, `QrIntakeDerivable` | Folds (in `q`), epoch, discriminant and profile equalities, and slot products agree. Each fold absorbs the slot polynomial its bridge hash binds. Non-empty stamp and intake checks are dropped; the `ℕ` epoch representation relies on the `EpochIndex` range checks. |
+| `stamp/proof/qr.rs`: `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend` | `Qr.lean`: `QrIntakeDerivable.descend` | One constructor: the split's product, the selection's exceptional-value opening on the split's non-residue polynomial, and the descent's class identity at `R₀ + depth`. The distinct-sides check is dropped; the `List Bool` path representation relies on the `< 32` depth bound. |
 | `stamp/proof/qr.rs`: `QrBucketSeal`; `stamp/proof/evidence.rs`: evidence steps | `Qr.lean`: `QrEvidenceDerivable` | The seal's two boundary digests (in `q`) and contents copy agree. The leaf and node digests are exact on `r` under `EvidenceLaw`; a multi-level descent is a chain of one-level descents; network field equalities are dropped. |
-| `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, `emax` bounds, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value and empty-segment exclusion are dropped. |
+| `stamp/proof/qr.rs`: `QrUnspentInit`; `stamp/proof/pool.rs`: `UnspentFuse`, `UnspentLift`, `UnspentBind` | `Unspent.lean`: `ArbitraryUnspentDerivable`, `NoteUnspentDerivable` | Header equalities, successor epochs, `emax` bounds, member factors, the nonzero contents opening and the bind's product agree. `enforce_sides_of` is read through its per-position root equations on the bucket's path. The nonzero tested value is dropped; segment non-emptiness is not a step constraint and is derived (`ArbitraryUnspentDerivable.epoch_lt`, `NoteUnspentDerivable.epoch_lt`). |
 | `stamp/proof/delegation.rs`: `NullifierDerive`, `NullifierFuse` | `Unspent.lean`: `NoteNullifiersDerivable`, `groupNullifier` | `NullifierDerive` takes `epoch_start % 4 = 0` (`EpochIndex::from_group_start`) and keys four `group` reads on every fourth epoch across its 16-epoch window, agreeing with `groupNullifier` (`NoteNullifiersDerivable.seq_eq`); `epoch_start + 15 ≤ emax` and `cm` equality agree. `NullifierFuse` contiguity is dropped. |
-| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleCovered`, `BundleVerified` | `BundleCovered` checks uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, `tachygrams_covered` (`coveredTachygrams` of carried pairs and fee changes) and `tachygram_set`. `BundleVerified` adds `StampDerivable` (which assumes lift epoch preservation). Signatures, wire bounds, value balance and adjunct pointers are not modelled. |
+| `bundle.rs`: `verify_covered`, `verify_proof`, `verify`; `stamp.rs`: `Proof::verify` | `Consensus/Bundle.lean`: `BundleCovered`, `BundleVerified` | `BundleCovered` checks uniqueness on bare action descriptors and fee descriptors, tachygram uniqueness, `tachygrams_covered` (`coveredTachygrams` of carried pairs and fee changes) and `tachygram_set`. `BundleVerified` adds `StampDerivable` (which assumes lift epoch preservation). The covered-tachygram rank bound, signatures, wire bounds, value balance and adjunct pointers are not modelled. |
 
 Rust paths in the table are relative to `crates/tachyon/src/`. Since the preceding audited main
 `dca1ecb5`, the relevant changes are:
@@ -178,12 +181,18 @@ keeps the inputs' signs, and unmerge keeps the dividend's signs and reverses the
 - Every digest a stamp covers is found among its positive leaf occurrences, with its provenance and
   an anchor in the stamp's epoch (`StampTrace.findLeaf`). Division never yields a digest that no
   leaf derived.
+- `ActionsTree.toTrace` and `StampTree.toTrace` (`TreeTraces.lean`) map a chain-anchored derivation
+  to a trace with `TreeProvenance`, recording the tree's own `TreeLeaf` whose `TreeLeaf.IsFeeLeaf`
+  agrees with `IsFee` of its `TreeLeaf.digest`. Every covered digest in `IsFee` comes from a
+  `FeeSeed` or `FeeFuse` leaf among the positive occurrences (`StampTree.fee_leaf`), and a covered
+  spend's stamp derivation supplies the bundle's own fee digest by such a leaf when `IsFee` holds of
+  `feeDigest fee.1 fee.2` (`CoveredSpend.fee_leaf`).
 
-These results take the trace as an input. `StampDerivable` is a proposition, so nothing produces a
-trace from it. That a verified stamp proof has a trace is the
-[PCD knowledge extraction](#proof-system) assumption. `Leaf d a` is an uninterpreted type. The
-results say which leaf occurrence a covered digest comes from. They say nothing about the witness it
-carries or about the leaf step's constraints on it.
+These results take the trace or `StampTree` as an input. `StampDerivable` is a proposition, so
+nothing produces a trace from it. That a verified stamp proof has a trace or `StampTree` is the
+[PCD knowledge extraction](#proof-system) assumption. `Leaf d a` in `ProvenanceTraces.lean` is an
+uninterpreted type; `TreeProvenance` instantiates it with `TreeLeaf`, which carries only the modelled
+leaf step's header and digest call.
 
 ### Double spends
 
@@ -238,8 +247,8 @@ carries or about the leaf step's constraints on it.
 - A spend whose anchor is a chain node at epoch `e` carries its note secret's nullifiers at `e` and
   `e + 1` (`SpendDerivable.pair`). A `SpendableInit` lineage's anchor folds the creation stamp at
   its witnessed epoch, and a stamp fold in `q` is a chain node only in its own epoch. Every other
-  lineage rests on a `NoteUnspent` segment's `anchor_next`, an entry anchor of `epoch_next`, which is
-  a chain node only at `epoch_next`.
+  lineage rests on a `NoteUnspent` segment's `anchor_next`, a boundary digest into `epoch_next` from
+  a call in `q`, which is a chain node only at `epoch_next` (`Chain.Node.of_nextEpoch`).
 - A `CoveredSpend` of `cm` in a published chain stamp `s` ties `s` to a bundle accepted by
   `BundleCovered`: it carries `s`'s tachygrams as the bundle's published tachygrams, records the
   bundle's action digests in `Q`, carries a `StampTree` of the verified header against
@@ -255,28 +264,31 @@ carries or about the leaf step's constraints on it.
 
 ### Concrete instance
 
-`Tachyon/Instances.lean` instantiates the model at `ZMod 7` with concrete hash functions and finite
-call sets holding the calls the chain and derivations make, on a two-stamp chain in epoch 0 whose
-first stamp publishes a note commitment and whose second stamp covers one spend of that note (via
-`SpendableInit`) and a fee change.
+`Tachyon/Instances.lean` instantiates the model at `ZMod 37` with concrete hash functions and finite
+call sets holding the calls the chain and derivations make, on a two-epoch chain whose epoch 0 stamp
+publishes `[cm, 2]` and whose epoch 1 bundle covers one spend of that note and a fee change. The
+spend's lineage is a `QrSpendableInit` on a `NoteUnspent` segment over epoch 0, whose bucket comes
+from one descent and is replayed through an evidence tree and `EvidenceTreeOpen`.
 
 - `Instances.headline_hypotheses` inhabits every hypothesis of `no_double_spend_of_covered_spends`
   except the second spend (`p₂`, `hsplit`, `hs₂`, `hfresh`), and of `no_double_spend_in_stamp`
   except the second spend and `hindex` (checked by two `example` applications), as well as
   `CoveredSpend.pair_le`, `SpendDerivable.pair` and `SpendDerivable.lineage`.
+- `Instances.lineage_hypotheses` inhabits `SpendDerivable.lineage` and `NoteUnspentDerivable.lineage`
+  with a lineage covering epoch 0.
 - `Instances.bundle_verified` inhabits `BundleVerified` (via `StampTree.derivable` and
   `Instances.hepoch`) with `IsFee` holding of the bundle's fee digest.
-- `Instances.bucket_onChain_hypotheses` inhabits a sealed QR bucket over epoch 0's two stamps for
-  `QrBucketDerivable.covers` and `QrBucket.Covers.onChain`, and `Instances.lift_hypotheses` inhabits
-  a span lift onto a chain node for `Chain.StampLiftStep.epoch_eq`.
-- Not covered: `NoteUnspentDerivable.lineage` (and the QR-lineage branch of `SpendDerivable.lineage`).
-  `NoteNullifiersDerivable` requires `epoch_start + 15 ≤ emax`, needing `MemberLaw` across 16 epoch
-  indices; linear polynomials over `ZMod 7` lack enough non-associate primes, and the production
-  cubic `(m + (i + 1) X) ^ 3 - c` needs a field with a non-cube `c` and no nontrivial cube root of
-  unity among the index ratios, such as the Pallas base field. Proving that cubic's `MemberLaw`,
-  that Rust's `NON_RESIDUE` is a non-square, and that `enforce_sides_of`'s bounded 32-term sums do
-  not wrap modulo `p` all require the Pallas field and are deferred to Phase 1 of the extraction
-  plan (`require Ragu`).
+- `Instances.bucket_onChain_hypotheses` inhabits a sealed QR bucket over epoch 0's stamp, with one
+  descent, for `QrBucketDerivable.covers` and `QrBucket.Covers.onChain`, and
+  `Instances.lift_hypotheses` inhabits a span lift onto a chain node for
+  `Chain.StampLiftStep.epoch_eq`.
+- `Instances.rust_memberLaw` inhabits `MemberLaw` at 16 epoch indices for Rust's `cubicMember` with
+  `c = 5` over `ZMod 307` (via `cubicMember_law`). The `ZMod 37` chain instance uses a family of
+  monic irreducible quadratics for its 16-index `MemberLaw` and `2` as `qnr`.
+- Not checked in Lean: the Pallas-specific facts that `cubicMember_law`'s hypotheses hold at Pallas
+  with `c = 2` and `emax = 2 ^ 20 - 1` and that Rust's `NON_RESIDUE = 5` is a non-square at Pallas
+  (needing the Pallas prime, Phase 1 of the extraction plan), and no field wrap in `enforce_sides_of`'s
+  mask sums and bit fold (needing a model of the mask fold, which the model lacks).
 
 ## Trust partition
 
@@ -284,21 +296,26 @@ first stamp publishes a note commitment and whose second stamp covers one spend 
   implementation or the circuits Ragu compiles from it.
 - **Trusted, inspected by hand against the Rust** (no fingerprint ties them to it): `setPoly`,
   `Stamp`, `GeneratedBy`, `Merge`, `Unmerge`, `ActionsDerivable`, `StampDerivable`, `LeafRecord`,
-  `ActionsTrace`, `StampTrace`, `leafDigests`, `PublishedStamp`, `coveredDigests`,
-  `coveredTachygrams`, `BundleCovered`, `BundleVerified`, `Chain.AnchorQueries`, `Chain.HashLaw`,
-  `Chain.Node`, `Chain.foldBlock`, `Chain.FoldQueried`, `Chain.BlockAnchor`, `Chain.AnchorSpan`,
-  `Chain.SpanDerivable`, `Chain.StampLiftStep`, `Chain.StampClosed`, `Chain.Stamp`, `Chain.InWindow`,
-  `Chain.StampAccepted`, `Chain.Valid`, `Chain.published`, `Chain.tachygramsInEpochs`,
-  `Chain.epochStamps`, `Chain.entry`, `Chain.ChainQueried`, `Chain.OnChain`, `Matches`, `Summary`,
-  `SummaryDerivable`, `QrIntake`, `QrIntakeDerivable`, `QrBucket`, `QrEvidence`, `EvidenceQueries`,
-  `QrEvidenceDerivable`, `QrBucketDerivable`, `EvidenceLaw`, `EvidenceSound`, `QrEvidence.Sound`,
-  `QrIntake.Covers`, `QrBucket.Covers`, `MemberLaw`, `UnspentTest`, `ArbitraryUnspent`, `ArbitraryUnspentDerivable`, `NoteNullifiers`,
-  `groupNullifier`, `NoteNullifiersDerivable`, `NoteUnspentDerivable`, `SpendRecord`,
-  `SpendRecord.pair`, `SpendRecord.Recent`, `SpendRecord.Lineage`, `NoteSecret`, `NoteUnspent`,
-  `NoteSpendable`, `SpendHeader`, `NoteQueries`, `NoteLaw`, `NoteSecretDerivable`, `UnspentSpec`,
-  `SpendableDerivable`, `SpendDerivable`, `TreeLeaf`, `TreeLeaf.anchor`, `ActionsTree`, `StampTree`,
-  `ActionsTree.leaves`, `StampTree.leaves`, `DigestLaw`, `CoveredSpend`, and every standalone premise
-  of the headline theorems (`¬ IsSquare qnr`, `hepoch`, `hfresh`, `hindex`).
+  `ActionsTrace`, `StampTrace`, `ActionsTrace.leaves`, `StampTrace.positive`, `StampTrace.negative`,
+  `leafDigests`, `PublishedStamp`, `coveredDigests`, `coveredTachygrams`, `BundleCovered`,
+  `BundleVerified`, `Chain.AnchorQueries`, `Chain.HashLaw`, `Chain.Node`, `Chain.foldBlock`,
+  `Chain.FoldQueried`, `Chain.AnchorSpan`, `Chain.SpanDerivable`, `Chain.StampLiftStep`,
+  `Chain.StampClosed`, `Chain.Stamp`, `Chain.InWindow`, `Chain.StampAccepted`, `Chain.Valid`,
+  `Chain.published`, `Chain.tachygramsInEpochs`, `Chain.epochStamps`, `Chain.entry`,
+  `Chain.ChainQueried`, `Chain.OnChain`, `Matches`, `Summary`, `SummaryDerivable`, `QrIntake`,
+  `QrIntakeDerivable`, `QrBucket`, `QrEvidence`, `EvidenceQueries`, `QrEvidenceDerivable`,
+  `QrBucketDerivable`, `EvidenceLaw`, `EvidenceSound`, `QrEvidence.Sound`, `QrIntake.Covers`,
+  `QrBucket.Covers`, `MemberLaw`, `cubicMember`, `UnspentTest`, `ArbitraryUnspent`,
+  `ArbitraryUnspentDerivable`, `NoteNullifiers`, `groupNullifier`, `NoteNullifiersDerivable`,
+  `NoteUnspentDerivable`, `SpendRecord`, `SpendRecord.pair`, `SpendRecord.Recent`,
+  `SpendRecord.Lineage`, `NoteSecret`, `NoteUnspent`, `NoteSpendable`, `SpendHeader`, `NoteQueries`,
+  `NoteLaw`, `NoteSecretDerivable`, `UnspentSpec`, `SpendableDerivable`, `SpendDerivable`,
+  `TreeLeaf`, `TreeLeaf.anchor`, `TreeLeaf.digest`, `TreeLeaf.IsFeeLeaf`, `TreeProvenance`,
+  `ActionsTree`, `StampTree`, `ActionsTree.leaves`, `StampTree.leaves`, `ActionsTree.toTrace`,
+  `StampTree.toTrace`, `DigestLaw`, `CoveredSpend`, every standalone premise of the headline
+  theorems (`¬ IsSquare qnr`, `hepoch`, `hfresh`, `hindex`), and the Rust checks that the
+  representation relies on (`EpochIndex` range checks, `QrSideDescend`'s `< 32` depth bound, and
+  descriptor/authorization pairing in `Bundle`).
 - **Trusted foundations.** Lean's kernel and the three standard axioms (`propext`,
   `Classical.choice`, `Quot.sound`, checked across every declaration by `#check_axiom_budget`), and
   mathlib.
@@ -371,12 +388,17 @@ finite call set without a collision satisfies each law over a finite field (`Ins
   its boundary calls at `e < N`, and its stamp-fold calls (`FoldQueried`) at `e ≤ N` lie in `q`. The
   chain lemmas hold at epochs `≤ N`; `no_double_spend_of_covered_spends` sets `N := s₂.epoch` and
   `no_double_spend_in_stamp` sets `N := s.epoch` (covering every anchor read via recency).
-- **`MemberLaw`.** An indexed member `(m + (i + 1) X) ^ 3 - c` at an epoch index `i ≤ EPOCH_MAX` is
-  prime, and one such member divides another only when their indices and values agree. This is the
-  injectivity claim of `collections/indexed_multiset.rs` for indices below `⌊√(p/3)⌋`, taken as a
-  hypothesis, not proved.
+- **`MemberLaw`.** `member` is a parameter of the headline theorems: `MemberLaw member emax` asks
+  that `member i m` is prime for `i ≤ emax` and that one such member divides another only when their
+  indices and values agree. `cubicMember` (`CubicMember.lean`) defines `collections/indexed_multiset.rs`'s
+  encoding `(m + (i + 1) X) ^ 3 - c`, `cubicMember_law` proves `MemberLaw (cubicMember c) emax` over
+  any field where `c` is a non-cube, `3 ≠ 0`, each `i + 1 ≠ 0` for `i ≤ emax`, and the cubes of
+  `i + 1` for `i ≤ emax` are distinct, and `Instances.rust_memberLaw` instantiates it at `ZMod 307`
+  with `c = 5` and `emax = 15`. At the Pallas base field (`c = 2`, `emax = EPOCH_MAX = 2 ^ 20 - 1`),
+  `p ≡ 1 (mod 3)`, `2` is a non-cube, and `2 ^ 20 ≪ √(p / 3)` (checked by computation outside Lean,
+  not in Lean).
 - **The quadratic non-residue.** The QR results take `qnr` to be a non-square. Rust fixes it to `5`
-  in the Pallas base field.
+  in the Pallas base field (`5` is a non-square modulo `p`, checked by computation outside Lean).
 - **Poseidon.** Collision resistance, preimage resistance and domain separation are assumed, never
   proved.
 
@@ -384,14 +406,19 @@ finite call set without a collision satisfies each law over a finite field (`Ins
 
 `Chain.Valid` is a hypothesis of the chain-level theorems. It includes these rules.
 
-- **Anchor membership.** A stamp's anchor is an acknowledged end-of-block anchor on the accepted
-  chain. `no_double_spend_of_covered_spends` and `no_double_spend_in_stamp` take the accepted
-  anchors to be the anchors the published chain reaches (`OnChain`), which include every
-  end-of-block anchor.
-- **Two-epoch window.** A published tachygram is absent from every earlier stamp of its publication
-  epoch and the epoch before.
+- **Non-empty, duplicate-free stamps.** Each published stamp's tachygram list is non-empty and
+  duplicate-free (`StampAccepted.tachygrams_ne_nil`, `StampAccepted.tachygrams_nodup`).
+- **Anchor membership.** A stamp's anchor is an accepted anchor on the chain
+  (`StampAccepted.anchor_accepted`). The model has no blocks: `no_double_spend_of_covered_spends` and
+  `no_double_spend_in_stamp` take the accepted anchors to be the anchors the published chain reaches
+  (`OnChain`), which fold each epoch's entry anchor with any prefix of the epoch's stamps and
+  therefore include every end-of-block anchor of any block split.
 - **Anchor recency.** A stamp's anchor epoch is its publication epoch or the epoch before
   (`StampAccepted.recency`).
+- **Epoch ordering.** Publication epochs are monotonically non-decreasing in chain order
+  (`Valid.ordered`).
+- **Two-epoch window.** A published tachygram is absent from every earlier stamp of its publication
+  epoch and the epoch before (`Valid.window_disjoint`).
 
 The chain model folds each anchor with the epoch of the block that contains it. Consensus must
 compute the folds with the same epochs, apply the boundary digest once per epoch, empty epochs
@@ -409,11 +436,14 @@ gives each `Node q` anchor a unique epoch under `HashLaw`); `CoveredSpend.pair_l
   `actions`.
 - **Dropped and representation-built constraints.** Each step's table row names the constraints the
   model drops. Dropping a constraint that the model's types do not encode only adds derivable
-  headers, so the results still hold. That argument does not apply where the representation builds a
-  circuit constraint in: `NullifierDerive`'s `epoch_start % 4 = 0` alignment is modelled explicitly
-  (`NoteNullifiersDerivable.derive`), while `EpochIndex` range checks (built into `ℕ` epochs so
-  `e + 1` never wraps) and `QrSideDescend`'s `< 32` depth bound (built into carrying a QR profile as
-  a `List Bool` path) are trusted in the representation.
+  headers, so the results still hold. That argument does not apply where the representation relies
+  on a constraint or builds one in: `NullifierDerive`'s `epoch_start % 4 = 0` alignment is modelled
+  explicitly (`NoteNullifiersDerivable.derive`), while `EpochIndex` range checks (`ℕ` epochs rely on
+  them so `e + 1` never wraps), `QrSideDescend`'s `< 32` depth bound (carrying a QR profile as a
+  `List Bool` path relies on it so `(depth, bits)` determines the path), and action
+  descriptor/authorization pairing (`BundleCovered` carries `actions : List (Δ × F × F)` as paired
+  tuples, whereas Rust's `Bundle::verify` pairs `actions` with `action_auth` by `zip` without
+  checking equal length) are trusted in the representation.
 - **QR side tests.** `enforce_sides_of` is read through its per-position root equations on the
   bucket's path. Its mask sums and bit fold select exactly the first `depth` positions and compare
   them with `bits`; that this arithmetic does not wrap in the field is assumed, not proved.
@@ -440,8 +470,9 @@ window finds no duplicate. Both spends pass.
 `Tachyon/Meta/AxiomBudget.lean` defines `#check_axiom_budget`, invoked from `Tachyon/Axioms.lean`.
 It checks every declaration of every imported `Tachyon` module (auxiliary declarations included) to
 confirm that none is an `axiom` and none depends on any axiom outside `propext`, `Classical.choice`
-and `Quot.sound` (ruling out `sorryAx` and `Lean.ofReduceBool`), verifies that all 27 pinned
-headline theorems in `Axioms.lean` (checked with `#print axioms` inside `#guard_msgs`) were visited,
-and checks that the imported `Tachyon` modules match the `.lean` files under `Tachyon/` plus
-`Tachyon.lean`. `just fv` runs `lake build --wfail`, failing on any warning, when run locally; no CI
-job runs it.
+and `Quot.sound` (ruling out `sorryAx` and `Lean.ofReduceBool`), verifies that all 31 pinned
+headline theorems in `Axioms.lean` (`StampTree.fee_leaf`, `CoveredSpend.fee_leaf`, `cubicMember_law`,
+`Instances.rust_memberLaw`, and the 27 core stamp, bundle, QR, lineage, chain and double-spend
+theorems, each checked with `#print axioms` inside `#guard_msgs`) were visited, and checks that the
+imported `Tachyon` modules match the `.lean` files under `Tachyon/` plus `Tachyon.lean`. `just fv`
+runs `lake build --wfail`, failing on any warning, when run locally; no CI job runs it.
