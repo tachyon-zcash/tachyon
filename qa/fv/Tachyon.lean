@@ -13,5 +13,6 @@ import Tachyon.Consensus
 import Tachyon.Spend
 import Tachyon.SpendTree
 import Tachyon.Consensus.Spends
+import Tachyon.CubicMember
 import Tachyon.Instances
 import Tachyon.TreeTraces

@@ -3,6 +3,7 @@ import Mathlib.Algebra.Polynomial.SpecificDegree
 import Mathlib.Tactic.IntervalCases
 import Mathlib.Tactic.LinearCombination
 import Tachyon.Consensus.Spends
+import Tachyon.CubicMember
 
 /-!
 # A concrete instance
@@ -30,10 +31,12 @@ scoped law holds on them.
   the bucket above.
 * `lift_hypotheses` is a span lift onto the chain, for `StampLiftStep.epoch_eq`.
 
-`member` is not Rust's encoding `(m + (i + 1) X) ^ 3 - c`. It is a family of monic irreducible
-quadratics, enough to show `MemberLaw` at sixteen epoch indices is satisfiable together with the
-rest; Rust's encoding at the Pallas field is a separate fact this module doesn't prove. Likewise
-`qnr` is a non-residue of `ZMod 37`, not Rust's `NON_RESIDUE`.
+The chain instance's `member` is not Rust's encoding `(m + (i + 1) X) ^ 3 - c`. It is a family of
+monic irreducible quadratics, enough to show `MemberLaw` at sixteen epoch indices is satisfiable
+together with the rest. Rust's encoding (`cubicMember`) satisfies `MemberLaw` at sixteen indices
+over `ZMod 307` with `c = 5` (`rust_memberLaw`, from `cubicMember_law`). At the Pallas field
+`cubicMember_law`'s hypotheses are facts about its prime that this module doesn't check. `qnr` is a
+non-residue of `ZMod 37`, not Rust's `NON_RESIDUE`.
 -/
 
 namespace Tachyon.Instances
@@ -487,6 +490,13 @@ theorem bucket_onChain_hypotheses :
     QrBucketDerivable q r nextStamp nextEpoch 2 leaf node bucket ∧ bucket.epoch + 1 ≤ 1 ∧
       bucket.anchor_next = entry nextStamp nextEpoch 0 chain (bucket.epoch + 1) :=
   ⟨opened, le_rfl, lineage_hypotheses.2⟩
+
+instance : Fact (Nat.Prime 307) := ⟨by decide +kernel⟩
+
+/-- Rust's encoding `(m + (i + 1) X) ^ 3 - 5` satisfies `MemberLaw` at sixteen epoch indices over
+`ZMod 307`: `5` is not a cube, and the cubes of `1, …, 16` are distinct. -/
+theorem rust_memberLaw : MemberLaw (cubicMember (5 : ZMod 307)) 15 :=
+  cubicMember_law (by decide +kernel) (by decide) (by decide +kernel) (by decide +kernel)
 
 /-- A derivable span and a `StampLiftStep` from the entry anchor of epoch 0 onto the chain node after
 its stamp. -/
