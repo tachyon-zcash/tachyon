@@ -132,7 +132,6 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
-        // Both tachygrams are enforced nonzero.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their
