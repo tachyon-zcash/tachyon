@@ -3,16 +3,11 @@ use core::cmp::Ordering;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
-use ragu::udon::{curve::Projective as _, field::Field as _};
+use ragu::udon::{curve::Affine as _, field::Field as _};
 use rand_core::CryptoRng;
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::{
-    bridge_hash::bridge_hash,
-    digest::poseidon,
-    pasta::{Eq, Fp},
-    serialization,
-};
+use crate::{bridge_hash::bridge_hash, digest::poseidon, pasta::Fp, serialization};
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -68,7 +63,7 @@ impl Anchor {
         epoch: EpochIndex,
         &stamp_commit: &TachygramSetCommit,
     ) -> Result<Self, AnchorError> {
-        if *stamp_commit.as_ref() == Eq::identity() {
+        if stamp_commit.as_ref().is_identity() {
             Err(AnchorError::NextStampZero)
         } else if stamp_commit == TachygramSetCommit::default() {
             Err(AnchorError::NextStampEmpty)
@@ -76,7 +71,7 @@ impl Anchor {
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
                 epoch.into(),
-                bridge_hash(stamp_commit.as_ref().to_affine()),
+                bridge_hash(stamp_commit.into()),
             )))
         }
     }

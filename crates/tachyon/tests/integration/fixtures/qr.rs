@@ -6,10 +6,7 @@ use core::iter;
 use ragu::{
     Polynomial, ProductionRank,
     pasta::Pasta,
-    udon::{
-        curve::{Affine as _, Projective as _},
-        field::Field as _,
-    },
+    udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
 use zcash_tachyon::{
@@ -17,7 +14,7 @@ use zcash_tachyon::{
     TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{EpAffine, Fp},
     stamp::proof::{App, evidence, pool, qr},
     witness,
 };
@@ -130,7 +127,7 @@ impl QrIntakeEntry {
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
         key.extend_from_slice(&profile.bits.to_le_bytes());
-        key.extend_from_slice(&Eq::from(self.pcd.commitments()[1]).to_affine().to_bytes());
+        key.extend_from_slice(&self.pcd.commitments()[1].to_bytes());
         key.extend_from_slice(&Fp::from(anchor_final_prev).to_bytes());
         SEALED.get(&key, |rng| self.clone().seal(rng, app, anchor_final_prev))
     }

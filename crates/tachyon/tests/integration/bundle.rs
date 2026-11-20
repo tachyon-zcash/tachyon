@@ -11,7 +11,10 @@ use core::{assert_matches, cmp::Reverse, mem};
 use corez::io;
 use ragu::{
     ProductionRank, Rank as _,
-    udon::{curve::Projective as _, field::Field as _},
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -23,7 +26,7 @@ use zcash_tachyon::{
     entropy::ActionEntropy,
     fee,
     keys::private,
-    pasta::{Ep, Eq, Fp},
+    pasta::{Ep, EqAffine, Fp},
     stamp::{self, ProofStamp, StrippedStamp},
     value, *,
 };
@@ -1163,7 +1166,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
 fn read_rejects_an_identity_tachygram_set() {
     let app = &application();
     let (_, mut bundle) = spend(app);
-    bundle.stamp.tachygram_set = TachygramSetCommit::from(Eq::identity());
+    bundle.stamp.tachygram_set = TachygramSetCommit::from(EqAffine::identity());
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     for err in [

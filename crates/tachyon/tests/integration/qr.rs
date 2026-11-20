@@ -3,14 +3,14 @@ extern crate alloc;
 use alloc::{string::ToString as _, vec, vec::Vec};
 use core::{array, assert_matches, iter, mem, slice};
 
-use ragu::udon::{curve::Projective as _, field::Field as _};
+use ragu::udon::field::Field as _;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
     TachygramSetBridge, TachygramSetPoly,
     constants::EPOCH_MAX,
     nullifier::Nullifier,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
     stamp::proof::{
         pool::{UnspentFuse, UnspentLift},
         qr, spend, spendable,
@@ -97,10 +97,8 @@ fn qr_intake_split_partitions_the_contents_by_class() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let non_residue_hash = TachygramSetBridge::from(
-        app.bridge_hash(non_residue_commit.as_ref().to_affine())
-            .unwrap(),
-    );
+    let non_residue_hash =
+        TachygramSetBridge::from(app.bridge_hash(non_residue_commit.into()).unwrap());
     assert_eq!(
         *split.data(),
         (
@@ -115,22 +113,20 @@ fn qr_intake_split_partitions_the_contents_by_class() {
     assert_eq!(
         split.commitments()[..2],
         [
-            Eq::from(
+            EqAffine::from(
                 residue
                     .iter()
                     .copied()
                     .collect::<TachygramSetPoly>()
                     .commit()
-            )
-            .to_affine(),
-            Eq::from(
+            ),
+            EqAffine::from(
                 non_residue
                     .iter()
                     .copied()
                     .collect::<TachygramSetPoly>()
                     .commit()
-            )
-            .to_affine(),
+            ),
         ]
     );
     assert!(app.verify_uncompressed(&split, &mut *rng).unwrap());
@@ -281,7 +277,7 @@ fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
     assert!(app.verify_differential(&rootless.pcd, &mut *rng).unwrap());
     assert_ne!(
         rootless.pcd.commitments()[1],
-        Eq::from(scaled_qr_contents(&[], Fp::ONE).commit()).to_affine()
+        EqAffine::from(scaled_qr_contents(&[], Fp::ONE).commit())
     );
     let deep = Fp::from(11u64);
     let factors_deep = [
@@ -539,7 +535,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
     assert_eq!(bucket_profile.depth, u32::BITS);
     assert_eq!(
         bucket.pcd.commitments()[1],
-        Eq::from(members.into_iter().collect::<TachygramSetPoly>().commit()).to_affine()
+        EqAffine::from(members.into_iter().collect::<TachygramSetPoly>().commit())
     );
     for member in [exceptional, companion] {
         let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(member));
@@ -703,8 +699,8 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             let select_witness = witness::qr_side_select((*split.data(), ()), &members, side);
             let expected_selection = *split.data();
             let expected_hints = [
-                Eq::from(select_witness.0.commit()).to_affine(),
-                Eq::from(select_witness.1.commit()).to_affine(),
+                EqAffine::from(select_witness.0.commit()),
+                EqAffine::from(select_witness.1.commit()),
             ];
             let (selection, ()) = app
                 .fuse(
@@ -738,14 +734,13 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             );
             assert_eq!(
                 child.commitments()[1],
-                Eq::from(
+                EqAffine::from(
                     side_members
                         .iter()
                         .copied()
                         .collect::<TachygramSetPoly>()
                         .commit()
                 )
-                .to_affine()
             );
             assert!(app.verify_uncompressed(&child, &mut *rng).unwrap());
         }
@@ -1004,14 +999,13 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     assert_eq!(child_profile, QrProfile::ROOT.descend(false));
     assert_eq!(
         child.commitments()[1],
-        Eq::from(
+        EqAffine::from(
             padded_non_residue
                 .iter()
                 .copied()
                 .collect::<TachygramSetPoly>()
                 .commit()
         )
-        .to_affine()
     );
 }
 
@@ -1102,10 +1096,7 @@ fn qr_intake_merge_joins_two_spans() {
         *merged.data(),
         (epoch, start, end, discriminant, QrProfile::ROOT)
     );
-    assert_eq!(
-        merged.commitments()[1],
-        Eq::from(union.commit()).to_affine()
-    );
+    assert_eq!(merged.commitments()[1], EqAffine::from(union.commit()));
     assert!(app.verify_uncompressed(&merged, &mut *rng).unwrap());
 }
 
@@ -1256,7 +1247,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             span0.1.next_epoch(epoch.next().unwrap()).unwrap(),
             disc,
             profile,
-            TachygramSetBridge::from(app.bridge_hash(Eq::from(contents).to_affine()).unwrap()),
+            TachygramSetBridge::from(app.bridge_hash(contents).unwrap()),
         )
     );
     assert_eq!(bucket.pcd.commitments()[1], contents);
@@ -1310,7 +1301,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(profile, QrProfile::ROOT);
     assert_eq!(
         bucket.pcd.commitments()[1],
-        Eq::from(iter::empty().collect::<TachygramSetPoly>().commit()).to_affine()
+        EqAffine::from(iter::empty().collect::<TachygramSetPoly>().commit())
     );
 
     let left = pool.unspent(app, (epoch2, epoch3), |_| nf2);
@@ -1331,7 +1322,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(fused_anchor_next, entry4);
     assert_eq!(
         fused.commitments()[0],
-        Eq::from(NfSeqPoly::new(epoch2, &[nf2, nf3]).commit()).to_affine()
+        EqAffine::from(NfSeqPoly::new(epoch2, &[nf2, nf3]).commit())
     );
     assert!(app.verify_uncompressed(&fused, &mut *rng).unwrap());
 }
@@ -1765,7 +1756,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
         );
         assert_eq!(
             segment.commitments()[0],
-            Eq::from(NfSeqPoly::new(epoch0, &[nf]).commit()).to_affine()
+            EqAffine::from(NfSeqPoly::new(epoch0, &[nf]).commit())
         );
         assert!(app.verify_uncompressed(&segment, &mut *rng).unwrap());
     }

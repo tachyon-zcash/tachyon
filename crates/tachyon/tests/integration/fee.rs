@@ -6,7 +6,7 @@ use alloc::{
 };
 use core::assert_matches;
 
-use ragu::udon::{curve::Projective as _, field::Field as _};
+use ragu::udon::field::Field as _;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
@@ -712,9 +712,7 @@ fn fee_seed_binds_its_singletons_and_header() {
         assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
     }
     let pcd = seed_pcd.proof().clone().carry::<Stamp>((
-        app.bridge_hash(valid.3.commit().as_ref().to_affine())
-            .unwrap()
-            .into(),
+        app.bridge_hash(valid.3.commit().into()).unwrap().into(),
         anchor,
     ));
     assert!(app.verify_differential(&pcd, rng).unwrap());

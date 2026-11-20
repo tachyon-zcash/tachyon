@@ -3,21 +3,22 @@ use core::iter;
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Polynomial, ProductionRank, pasta::Pasta,
-    udon::curve::Projective as _,
+    Cycle as _, Polynomial, ProductionRank,
+    pasta::Pasta,
+    udon::curve::{Affine as _, Projective as _},
 };
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
 use crate::{
     collections::multiset,
     pasta,
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{EpAffine, EqAffine, Fp},
     serialization,
 };
 
 /// Pedersen commitment to a tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct TachygramSetCommit(Eq);
+pub struct TachygramSetCommit(EqAffine);
 
 /// Bridge hash of a tachygram-set commitment: a Pallas point.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -28,11 +29,17 @@ impl TachygramSetCommit {
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails or the bytes are not a canonical
-    /// curve point.
+    /// Returns an error if reading fails, the point is not canonically
+    /// encoded, or the point is the identity.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let commit = serialization::read_eq_affine(&mut reader)?;
-        Ok(Self(commit.into()))
+        let point = serialization::read_eq_affine(&mut reader)?;
+        if point.is_identity() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygram set commitment is the identity",
+            ));
+        }
+        Ok(Self(point))
     }
 
     /// Write as an affine point to the consensus wire format.
@@ -41,7 +48,7 @@ impl TachygramSetCommit {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
+        serialization::write_eq_affine(&mut writer, &self.0)?;
         Ok(())
     }
 }
@@ -55,59 +62,11 @@ impl Default for TachygramSetCommit {
 
 /// Pedersen commitment to a stamp's action-digest set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct ActionSetCommit(Eq);
-
-impl ActionSetCommit {
-    /// Read as an affine point from the consensus wire format.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading fails or the bytes are not a canonical
-    /// curve point.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let commit = serialization::read_eq_affine(&mut reader)?;
-        Ok(Self(commit.into()))
-    }
-
-    /// Write as an affine point to the consensus wire format.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing fails.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
-        Ok(())
-    }
-}
-
-impl Default for ActionSetCommit {
-    /// A commitment to an empty set.
-    fn default() -> Self {
-        iter::empty().collect::<ActionSetPoly>().commit()
-    }
-}
+pub struct ActionSetCommit(EqAffine);
 
 /// Pedersen commitment to an anchor span's member set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct AnchorSetCommit(Eq);
-
-impl AnchorSetCommit {
-    /// Commitment to the one-member set $\\{\mathsf{anchor}\\}$, the
-    /// polynomial $X - \mathsf{anchor}$, computed from the fixed generators:
-    ///
-    /// $$
-    ///   G_1 - [\mathsf{anchor}]\,G_0
-    /// $$
-    #[must_use]
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "the generator table spans every coefficient of a production-rank polynomial"
-    )]
-    pub fn singleton(anchor: Anchor) -> Self {
-        let generators = Pasta::host_generators(pasta::baked()).g();
-        Self(Eq::from(generators[1]) - generators[0] * Fp::from(anchor))
-    }
-}
+pub struct AnchorSetCommit(EqAffine);
 
 /// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
@@ -130,13 +89,11 @@ impl AnchorSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
-        AnchorSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
+        AnchorSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
@@ -161,13 +118,11 @@ impl TachygramSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> TachygramSetCommit {
-        TachygramSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
+        TachygramSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
@@ -178,13 +133,11 @@ impl ActionSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
-        ActionSetCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the set polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
+        ActionSetCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 

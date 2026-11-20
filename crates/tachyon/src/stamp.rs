@@ -34,10 +34,7 @@ use ragu::{
     ProductionRank, Rank as _,
     pasta::Pasta,
     pcd::wire,
-    udon::{
-        curve::{Affine as _, Projective as _},
-        field::Field as _,
-    },
+    udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
 
@@ -50,7 +47,7 @@ use crate::{
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, Eq, Fp},
+    pasta::{EpAffine, EqAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -179,12 +176,10 @@ impl Proof for Uncompressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let bridge = bridge_hash(header.1.as_ref().to_affine());
-        let pcd = self.clone().carry::<Stamp>((bridge.into(), header.2));
+        let bridge = bridge_hash(header.1.into()).into();
+        let pcd = self.clone().carry::<Stamp>((bridge, header.2));
         let [action_slot, tachygram_slot] = pcd.commitments();
-        if action_slot != Eq::from(header.0).to_affine()
-            || tachygram_slot != Eq::from(header.1).to_affine()
-        {
+        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
             return Ok(false);
         }
         let compressed = match app.compress(&pcd, rng) {
@@ -216,13 +211,11 @@ impl Proof for Compressed {
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
         let [action_slot, tachygram_slot] = self.online_commitments();
-        if action_slot != Eq::from(header.0).to_affine()
-            || tachygram_slot != Eq::from(header.1).to_affine()
-        {
+        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
             return Ok(false);
         }
-        let bridge = bridge_hash(header.1.as_ref().to_affine());
-        app.verify_compressed(&self.clone().carry::<Stamp>((bridge.into(), header.2)))
+        let bridge = bridge_hash(header.1.into()).into();
+        app.verify_compressed(&self.clone().carry::<Stamp>((bridge, header.2)))
     }
 }
 
@@ -238,7 +231,7 @@ impl<P: Proof> StampState for ProofStamp<P> {
             &self.adjuncts.iter().copied().collect::<Vec<_>>(),
             &blake2b::stamp_proof_digest(
                 self.anchor.0.to_bytes(),
-                self.tachygram_set.as_ref().to_affine().to_bytes(),
+                self.tachygram_set.as_ref().to_bytes(),
                 proof.as_ref(),
             ),
         )
@@ -272,17 +265,7 @@ impl<P: Proof> ProofStamp<P> {
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let anchor = Anchor::read(&mut reader)?;
 
-        // Full validation confirms this against the covered bundles.
-        let tachygram_set = {
-            let point = serialization::read_eq_affine(&mut reader)?;
-            if point.is_identity() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygram set commitment is the identity",
-                ));
-            }
-            TachygramSetCommit::from(Eq::from(point))
-        };
+        let tachygram_set = TachygramSetCommit::read(&mut reader)?;
 
         let adjuncts = {
             let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
@@ -340,7 +323,7 @@ impl<P: Proof> ProofStamp<P> {
     /// Returns an error if writing fails or the proof has no encoding.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         self.anchor.write(&mut writer)?;
-        serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
+        self.tachygram_set.write(&mut writer)?;
         serialization::write_compactsize(
             &mut writer,
             u64::try_from(self.adjuncts.len()).map_err(|_err| {
@@ -887,10 +870,10 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let left_bridge = bridge_hash(left_tg_poly.commit().as_ref().to_affine());
-        let right_bridge = bridge_hash(right_tg_poly.commit().as_ref().to_affine());
-        let left_pcd = left_proof.carry::<Stamp>((left_bridge.into(), left_anchor));
-        let right_pcd = right_proof.carry::<Stamp>((right_bridge.into(), right_anchor));
+        let left_bridge = bridge_hash(left_tg_poly.commit().into()).into();
+        let right_bridge = bridge_hash(right_tg_poly.commit().into()).into();
+        let left_pcd = left_proof.carry::<Stamp>((left_bridge, left_anchor));
+        let right_pcd = right_proof.carry::<Stamp>((right_bridge, right_anchor));
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
@@ -932,8 +915,8 @@ impl ProofStamp<Uncompressed> {
         spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
-        let mut stamp_pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
+        let bridge = bridge_hash(self.tachygram_set.into()).into();
+        let mut stamp_pcd = self.proof.carry::<Stamp>((bridge, self.anchor));
         for span in spans {
             stamp_pcd = app
                 .fuse(
@@ -1078,10 +1061,7 @@ impl ProofStamp<Uncompressed> {
             .commit();
         let proof = app
             .rerandomize(
-                merged_proof.carry::<Stamp>((
-                    bridge_hash(tachygram_set.as_ref().to_affine()).into(),
-                    anchor,
-                )),
+                merged_proof.carry::<Stamp>((bridge_hash(tachygram_set.into()).into(), anchor)),
                 rng,
             )?
             .proof()
@@ -1182,14 +1162,12 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>();
 
-        let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().as_ref().to_affine());
-        let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().as_ref().to_affine());
-        let dividend_pcd = self
-            .proof
-            .carry::<Stamp>((dividend_bridge.into(), self.anchor));
+        let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().into()).into();
+        let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().into()).into();
+        let dividend_pcd = self.proof.carry::<Stamp>((dividend_bridge, self.anchor));
         let divisor_pcd = divisor_stamp
             .proof
-            .carry::<Stamp>((divisor_bridge.into(), divisor_stamp.anchor));
+            .carry::<Stamp>((divisor_bridge, divisor_stamp.anchor));
 
         let (pcd, ()) = app.fuse(
             rng,
@@ -1229,8 +1207,8 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
     ) -> Result<ProofStamp<Compressed>, ragu::Error> {
-        let bridge = bridge_hash(self.tachygram_set.as_ref().to_affine());
-        let pcd = self.proof.carry::<Stamp>((bridge.into(), self.anchor));
+        let bridge = bridge_hash(self.tachygram_set.into()).into();
+        let pcd = self.proof.carry::<Stamp>((bridge, self.anchor));
         let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
         Ok(ProofStamp {
             anchor: self.anchor,

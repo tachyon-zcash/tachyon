@@ -1,14 +1,18 @@
 use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu::{Cycle as _, Polynomial, ProductionRank, pasta::Pasta, udon::field::Field as _};
+use ragu::{
+    Cycle as _, Polynomial, ProductionRank,
+    pasta::Pasta,
+    udon::{curve::Projective as _, field::Field as _},
+};
 use rand_core::CryptoRng;
 
 use super::PolySlot;
 use crate::{
     collections::qr,
     pasta,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
 };
 
 /// A routing network's first discriminant $R_0$.
@@ -51,19 +55,17 @@ impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the interpolant at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
+        QrInterpolantCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
 /// Pedersen commitment to a class interpolant.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrInterpolantCommit(Eq);
+pub struct QrInterpolantCommit(EqAffine);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c \cdot (X + s) = q \cdot h$.
@@ -77,19 +79,17 @@ impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the quotient at a given point.
-    #[must_use]
-    pub fn eval(&self, at: Fp) -> Fp {
-        self.0.eval(at)
+        QrQuotientCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
 /// Pedersen commitment to a class-decomposition quotient.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrQuotientCommit(Eq);
+pub struct QrQuotientCommit(EqAffine);
 
 /// A QR profile: the number of splits taken and the side taken at each.
 ///
