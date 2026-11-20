@@ -25,6 +25,7 @@ test *ARGS:
     cargo test --workspace --release --features test-epoch-size --test integration -- {{ARGS}}
     cargo test --workspace --release --features test-epoch-size --doc -- {{ARGS}}
 
+# local coverage requires the llvm-tools-preview component and cargo-llvm-cov 0.9.1
 # line coverage with the same profiles as the unit and integration CI jobs
 coverage *ARGS:
     just coverage-lib {{ARGS}}

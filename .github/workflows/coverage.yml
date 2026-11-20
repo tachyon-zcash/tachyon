@@ -39,6 +39,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
         with:
+          components: llvm-tools-preview
           cargo-tools: cargo-llvm-cov@0.9.1
           cache-suffix: coverage
 
