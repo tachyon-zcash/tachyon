@@ -55,9 +55,11 @@ structure BundleVerified (IsFee : F → Prop) (epoch : A → E) (R : E → F →
       stamp.tachygramSet, stamp.anchor⟩
 
 /-- A fee digest absorbs its fee change, so its leaf derives exactly that change. Idealizes
-`Tachyon-FeeDg` collision resistance as exact. -/
-structure FeeDigestLaw (R : E → F → Multiset F) (feeDigest : Φ → F → F) : Prop where
-  change : ∀ e φ c, R e (feeDigest φ c) = {c}
+`Tachyon-FeeDg` collision resistance on the calls `Q`; a finite `Q` without a collision satisfies
+it. -/
+structure FeeDigestLaw (R : E → F → Multiset F) (feeDigest : Φ → F → F) (Q : Φ → F → Prop) :
+    Prop where
+  change : ∀ e {φ c}, Q φ c → R e (feeDigest φ c) = {c}
 
 variable {IsFee : F → Prop} {epoch : A → E} {R : E → F → Multiset F}
   {actionDigest : Δ → F → F → F} {feeDigest : Φ → F → F} {actions : List (Δ × F × F)}
@@ -90,11 +92,12 @@ theorem BundleVerified.fee_published
   exact Multiset.le_bind _ (by simp [coveredDigests])
 
 /-- A verified bundle publishes its own fee change. -/
-theorem BundleVerified.fee_change_published (hfee : FeeDigestLaw R feeDigest)
+theorem BundleVerified.fee_change_published {Q : Φ → F → Prop} (hfee : FeeDigestLaw R feeDigest Q)
+    (hq : Q fee.1 fee.2)
     (h : BundleVerified IsFee epoch R actionDigest feeDigest actions fee adjunctFees stamp) :
     fee.2 ∈ stamp.tachygrams := by
   have hle := h.fee_published
-  rw [hfee.change] at hle
+  rw [hfee.change _ hq] at hle
   exact Multiset.mem_coe.mp (Multiset.singleton_le.mp hle)
 
 end Tachyon

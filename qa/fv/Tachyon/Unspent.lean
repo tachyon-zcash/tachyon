@@ -129,8 +129,8 @@ inductive NoteUnspentDerivable (Bucket : QrBucket F F → Prop) (qnr : F) (membe
 
 variable {Bucket : QrBucket F A → Prop} {qnr : F} {member : ℕ → F → F[X]}
   {Secret : NoteSecret F → Prop} {nullifier : F → ℕ → F}
-  {emax : ℕ} {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A} {zero : A}
-  {chain : List (Chain.Stamp F A)} {genesis : A} {e₀ : ℕ}
+  {emax : ℕ} {q : AnchorQueries F A ℕ} {nextStamp : A → ℕ → F[X] → A} {nextEpoch : A → ℕ → A}
+  {zero : A} {chain : List (Chain.Stamp F A)} {genesis : A} {e₀ : ℕ} {N : ℕ}
 
 /-- A derivation's sequence holds one note secret's nullifiers, given that a commitment fixes its
 master key (`NoteSecretDerivable.master_eq`). -/
@@ -155,19 +155,19 @@ theorem NoteNullifiersDerivable.seq_eq
     refine ⟨kL, hkL, hkLcm, ML ++ MR, fun y hy => (List.mem_append.mp hy).elim (hML y) (hMR y), ?_⟩
     simp only [hl, hr, hmk, List.map_append, List.prod_append]
 
-/-- Every derivable segment ends on a boundary digest into its `epoch_next`. -/
+/-- Every derivable segment ends on a boundary digest into its `epoch_next`, from a call in `q`. -/
 theorem ArbitraryUnspentDerivable.anchor_next_boundary
-    (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch) {u : ArbitraryUnspent F A}
+    (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch) {u : ArbitraryUnspent F A}
     (hu : ArbitraryUnspentDerivable Bucket qnr member emax u) :
-    ∃ a, u.anchor_next = nextEpoch a u.epoch_next := by
+    ∃ a, u.anchor_next = nextEpoch a u.epoch_next ∧ q.boundary a u.epoch_next := by
   induction hu with
   | init _ hb =>
-    obtain ⟨_, _, -, hnext, -⟩ := hbucket _ hb
-    exact ⟨_, hnext⟩
+    obtain ⟨_, _, -, -, -, hnext, hq, -⟩ := hbucket _ hb
+    exact ⟨_, hnext, hq⟩
   | fuse _ _ _ _ _ ihr => exact ihr
   | lift _ _ hb =>
-    obtain ⟨_, _, -, hnext, -⟩ := hbucket _ hb
-    exact ⟨_, hnext⟩
+    obtain ⟨_, _, -, -, -, hnext, hq, -⟩ := hbucket _ hb
+    exact ⟨_, hnext, hq⟩
 
 /-- Every derivable segment covers at least one epoch. -/
 theorem ArbitraryUnspentDerivable.epoch_lt {u : ArbitraryUnspent F A}
@@ -184,37 +184,41 @@ theorem NoteUnspentDerivable.epoch_lt {Bucket : QrBucket F F → Prop} {u : Note
   exact hunspent.epoch_lt
 
 /-- The property of `NoteUnspent` derivability the spend lineage consumes. -/
-theorem NoteUnspentDerivable.spec {Bucket : QrBucket F F → Prop} {nextStamp : F → ℕ → F[X] → F}
-    {nextEpoch : F → ℕ → F} (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch) :
-    UnspentSpec nextEpoch (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) where
+theorem NoteUnspentDerivable.spec {Bucket : QrBucket F F → Prop} {q : AnchorQueries F F ℕ}
+    {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F}
+    (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch) :
+    UnspentSpec q nextEpoch (NoteUnspentDerivable Bucket qnr member Secret nullifier emax) where
   anchor_next_entry := fun ⟨_, hunspent, _, _⟩ => hunspent.anchor_next_boundary hbucket
 
-/-- A derivable `ArbitraryUnspent` that ends on the published entry anchor of its `epoch_next`
-starts on the entry anchor of its `epoch_start`, and for each epoch `x` it covers, `elapsed` holds
-a member at `x` whose value is unpublished in `x`. -/
-theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
-    (hqnr : ¬ IsSquare qnr) (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch)
+/-- A derivable `ArbitraryUnspent` that ends on the published entry anchor of its `epoch_next`, up to
+the bound `N` of the chain's calls, starts on the entry anchor of its `epoch_start`, and for each
+epoch `x` it covers, `elapsed` holds a member at `x` whose value is unpublished in `x`. -/
+theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
+    (hqnr : ¬ IsSquare qnr) (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch)
+    (hchain : ChainQueried q nextStamp nextEpoch zero chain N)
     {u : ArbitraryUnspent F A} (hu : ArbitraryUnspentDerivable Bucket qnr member emax u)
+    (hN : u.epoch_next ≤ N)
     (hnext : u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next) :
     u.anchor_start = entry nextStamp nextEpoch zero chain u.epoch_start ∧
       ∀ x, u.epoch_start ≤ x → x < u.epoch_next →
         ∃ v, x ≤ emax ∧ member x v ∣ u.elapsed ∧ ¬ published chain x v := by
-  have tested : ∀ {b : QrBucket F A} {v : F}, Bucket b → UnspentTest qnr b v →
+  have tested : ∀ {b : QrBucket F A} {v : F}, Bucket b → UnspentTest qnr b v → b.epoch + 1 ≤ N →
       b.anchor_next = entry nextStamp nextEpoch zero chain (b.epoch + 1) →
         b.anchor_start = entry nextStamp nextEpoch zero chain b.epoch ∧
-          ¬ published chain b.epoch v := fun hb htest hnext => by
-    obtain ⟨hstart, hcomplete, -⟩ := (hbucket _ hb).onChain hlaw hnext
+          ¬ published chain b.epoch v := fun hb htest he hnext => by
+    obtain ⟨hstart, hcomplete, -⟩ := (hbucket _ hb).onChain hlaw hchain he hnext
     exact ⟨hstart, fun hpub => htest.2 (hcomplete _ hpub (htest.matches hqnr))⟩
   induction hu with
   | @init b v hb hmax htest =>
-    obtain ⟨hstart, hfresh⟩ := tested hb htest hnext
+    obtain ⟨hstart, hfresh⟩ := tested hb htest hN hnext
     refine ⟨hstart, fun x hx hx' => ?_⟩
     dsimp only at hx hx' ⊢
     obtain rfl : x = b.epoch := by omega
     exact ⟨v, by omega, dvd_rfl, hfresh⟩
-  | @fuse left right _ _ hjoin hepoch ihl ihr =>
-    obtain ⟨hrstart, hr⟩ := ihr hnext
-    obtain ⟨hlstart, hl⟩ := ihl (by rw [hjoin, hrstart, hepoch])
+  | @fuse left right _ hright hjoin hepoch ihl ihr =>
+    obtain ⟨hrstart, hr⟩ := ihr hN hnext
+    have := hright.epoch_lt
+    obtain ⟨hlstart, hl⟩ := ihl (by dsimp only at hN; omega) (by rw [hjoin, hrstart, hepoch])
     refine ⟨hlstart, fun x hx hx' => ?_⟩
     by_cases hlt : x < left.epoch_next
     · obtain ⟨v, hv, hdvd, hfresh⟩ := hl x hx hlt
@@ -222,8 +226,8 @@ theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp
     · obtain ⟨v, hv, hdvd, hfresh⟩ := hr x (by omega) hx'
       exact ⟨v, hv, hdvd.mul_left _, hfresh⟩
   | @lift left b v _ hb hjoin hepoch hmax htest ih =>
-    obtain ⟨hbstart, hfresh⟩ := tested hb htest hnext
-    obtain ⟨hlstart, hl⟩ := ih (by rw [hjoin, hbstart, hepoch])
+    obtain ⟨hbstart, hfresh⟩ := tested hb htest hN hnext
+    obtain ⟨hlstart, hl⟩ := ih (by dsimp only at hN; omega) (by rw [hjoin, hbstart, hepoch])
     refine ⟨hlstart, fun x hx hx' => ?_⟩
     dsimp only at hx hx' ⊢
     by_cases hlt : x < left.epoch_next
@@ -233,22 +237,25 @@ theorem ArbitraryUnspentDerivable.lineage (hlaw : HashLaw genesis e₀ nextStamp
       exact ⟨v, by omega, dvd_mul_left _ _, hfresh⟩
 
 /-- **Unspent lineage.** A derivable `NoteUnspent` that ends on the published entry anchor of its
-`epoch_next` starts on the entry anchor of its `epoch_start`, and for every note secret of its
-`cm`, the nullifier at each epoch of `[epoch_start, epoch_next)` is unpublished in that epoch. -/
-theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop}
+`epoch_next`, up to the bound `N` of the chain's calls, starts on the entry anchor of its
+`epoch_start`, and for every note secret of its `cm`, the nullifier at each epoch of
+`[epoch_start, epoch_next)` is unpublished in that epoch. -/
+theorem NoteUnspentDerivable.lineage {Bucket : QrBucket F F → Prop} {q : AnchorQueries F F ℕ}
     {nextStamp : F → ℕ → F[X] → F} {nextEpoch : F → ℕ → F} {zero genesis : F}
-    {chain : List (Chain.Stamp F F)} (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
+    {chain : List (Chain.Stamp F F)} (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
     (hqnr : ¬ IsSquare qnr) (hmember : MemberLaw member emax)
     (hmaster : ∀ {k₁ k₂ : NoteSecret F}, Secret k₁ → Secret k₂ → k₁.cm = k₂.cm →
       k₁.master = k₂.master)
-    (hbucket : ∀ b, Bucket b → b.Covers nextStamp nextEpoch)
+    (hbucket : ∀ b, Bucket b → b.Covers q nextStamp nextEpoch)
+    (hchain : ChainQueried q nextStamp nextEpoch zero chain N)
     {u : NoteUnspent F} (hu : NoteUnspentDerivable Bucket qnr member Secret nullifier emax u)
+    (hN : u.epoch_next ≤ N)
     (hnext : u.anchor_next = entry nextStamp nextEpoch zero chain u.epoch_next) :
     u.anchor_start = entry nextStamp nextEpoch zero chain u.epoch_start ∧
       ∀ k, Secret k → k.cm = u.cm →
         ∀ x, u.epoch_start ≤ x → x < u.epoch_next → ¬ published chain x (nullifier k.master x) := by
   obtain @⟨unspent, nullifiers, complement, hunspent, hnullifiers, hbind⟩ := hu
-  obtain ⟨hstart, hlineage⟩ := hunspent.lineage hlaw hqnr hbucket hnext
+  obtain ⟨hstart, hlineage⟩ := hunspent.lineage hlaw hqnr hbucket hchain hN hnext
   obtain ⟨secret, hsecret, hcm, M, hM, hseq⟩ := hnullifiers.seq_eq hmaster
   refine ⟨hstart, fun k hk hkcm x hx hx' => ?_⟩
   rw [hmaster hk hsecret (hkcm.trans hcm.symm)]

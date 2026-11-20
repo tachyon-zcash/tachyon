@@ -13,9 +13,9 @@ This module models the chain-level consensus rules alongside the stamp proof tre
       Here `nextStamp` abstracts that composition as a function of its polynomial opening.
    - `nextEpoch` (`Tachyon-AnchorEp`), absorbing the previous epoch's final anchor and the new
      epoch index.
-   Under collision resistance and domain separation (`HashLaw`), every reachable chain node has a
-   unique epoch (`Node.epoch_unique`), and every `nextStamp` predecessor of a chain node belongs to
-   the same epoch (`Node.of_nextStamp`).
+   Under collision resistance and domain separation on the calls made (`HashLaw`), every reachable
+   chain node has a unique epoch (`Node.epoch_unique`), and every `nextStamp` predecessor of a
+   chain node belongs to the same epoch (`Node.of_nextStamp`).
 
 2. **End-of-block anchors (`book/src/anchor.md`)**:
    Within a block at epoch `e`, each published stamp folds its tachygram set via `nextStamp`, and
@@ -51,118 +51,157 @@ variable [Field F]
 
 /-! ## Anchor chain and hash laws -/
 
-/-- Collision-resistance and domain-separation laws for the two Poseidon anchor folds
-`Tachyon-AnchorSt` (`nextStamp`) and `Tachyon-AnchorEp` (`nextEpoch`), rooted at `genesis`
-(`H_ep(0, 0)` at epoch `e₀`). -/
-structure HashLaw (genesis : A) (e₀ : E)
-    (nextStamp : A → E → F[X] → A) (nextEpoch : A → E → A) : Prop where
-  nextStamp_inj : ∀ {a₁ a₂ : A} {e₁ e₂ : E} {c₁ c₂ : F[X]},
-    nextStamp a₁ e₁ c₁ = nextStamp a₂ e₂ c₂ → a₁ = a₂ ∧ e₁ = e₂ ∧ c₁ = c₂
-  nextEpoch_inj : ∀ {a₁ a₂ : A} {e₁ e₂ : E},
-    nextEpoch a₁ e₁ = nextEpoch a₂ e₂ → a₁ = a₂ ∧ e₁ = e₂
-  stamp_ne_epoch : ∀ {a₁ : A} {e₁ : E} {c₁ : F[X]} {a₂ : A} {e₂ : E},
-    nextStamp a₁ e₁ c₁ ≠ nextEpoch a₂ e₂
-  stamp_ne_genesis : ∀ {a : A} {e : E} {c : F[X]},
-    nextStamp a e c ≠ genesis
-  epoch_ne_genesis : ∀ {a : A} {e : E},
-    e ≠ e₀ → nextEpoch a e ≠ genesis
+/-- The anchor-fold calls under consideration: `stamp a e c` is a call `nextStamp a e c`, and
+`boundary a e` a call `nextEpoch a e`. -/
+structure AnchorQueries (F A E : Type*) [Field F] where
+  stamp : A → E → F[X] → Prop
+  boundary : A → E → Prop
 
-/-- Reachable pool states in the consensus anchor chain, indexed by their epoch.
+/-- Collision-resistance and domain-separation laws for the two Poseidon anchor folds
+`Tachyon-AnchorSt` (`nextStamp`) and `Tachyon-AnchorEp` (`nextEpoch`) on the calls `q`, rooted at
+`genesis` (`H_ep(0, 0)` at epoch `e₀`). A finite `q` without a collision satisfies it. -/
+structure HashLaw (q : AnchorQueries F A E) (genesis : A) (e₀ : E)
+    (nextStamp : A → E → F[X] → A) (nextEpoch : A → E → A) : Prop where
+  nextStamp_inj : ∀ {a₁ a₂ : A} {e₁ e₂ : E} {c₁ c₂ : F[X]}, q.stamp a₁ e₁ c₁ → q.stamp a₂ e₂ c₂ →
+    nextStamp a₁ e₁ c₁ = nextStamp a₂ e₂ c₂ → a₁ = a₂ ∧ e₁ = e₂ ∧ c₁ = c₂
+  nextEpoch_inj : ∀ {a₁ a₂ : A} {e₁ e₂ : E}, q.boundary a₁ e₁ → q.boundary a₂ e₂ →
+    nextEpoch a₁ e₁ = nextEpoch a₂ e₂ → a₁ = a₂ ∧ e₁ = e₂
+  stamp_ne_epoch : ∀ {a₁ : A} {e₁ : E} {c₁ : F[X]} {a₂ : A} {e₂ : E}, q.stamp a₁ e₁ c₁ →
+    q.boundary a₂ e₂ → nextStamp a₁ e₁ c₁ ≠ nextEpoch a₂ e₂
+  stamp_ne_genesis : ∀ {a : A} {e : E} {c : F[X]}, q.stamp a e c → nextStamp a e c ≠ genesis
+  epoch_ne_genesis : ∀ {a : A} {e : E}, q.boundary a e → e ≠ e₀ → nextEpoch a e ≠ genesis
+
+/-- Reachable pool states in the consensus anchor chain over the calls `q`, indexed by their epoch.
 `stamp` corresponds to `Anchor::next_stamp` (which rejects the empty set polynomial `1`), and
 `epoch` corresponds to `Anchor::next_epoch` (which rejects the genesis epoch `e₀`). -/
-inductive Node (genesis : A) (e₀ : E)
+inductive Node (q : AnchorQueries F A E) (genesis : A) (e₀ : E)
     (nextStamp : A → E → F[X] → A) (nextEpoch : A → E → A) : E → A → Prop
-  | genesis : Node genesis e₀ nextStamp nextEpoch e₀ genesis
+  | genesis : Node q genesis e₀ nextStamp nextEpoch e₀ genesis
   | stamp {e : E} {a : A} (c : F[X]) :
-      Node genesis e₀ nextStamp nextEpoch e a →
-      c ≠ 1 →
-      Node genesis e₀ nextStamp nextEpoch e (nextStamp a e c)
+      Node q genesis e₀ nextStamp nextEpoch e a →
+      c ≠ 1 → q.stamp a e c →
+      Node q genesis e₀ nextStamp nextEpoch e (nextStamp a e c)
   | epoch {e e' : E} {a : A} :
-      Node genesis e₀ nextStamp nextEpoch e a →
-      e' ≠ e₀ →
-      Node genesis e₀ nextStamp nextEpoch e' (nextEpoch a e')
+      Node q genesis e₀ nextStamp nextEpoch e a →
+      e' ≠ e₀ → q.boundary a e' →
+      Node q genesis e₀ nextStamp nextEpoch e' (nextEpoch a e')
 
-variable {genesis : A} {e₀ : E} {nextStamp : A → E → F[X] → A} {nextEpoch : A → E → A}
+variable {q : AnchorQueries F A E} {genesis : A} {e₀ : E} {nextStamp : A → E → F[X] → A}
+  {nextEpoch : A → E → A}
 
 /-- Every reachable chain node belongs to a unique epoch. -/
-theorem Node.epoch_unique (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
+theorem Node.epoch_unique (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
     {e₁ e₂ : E} {a : A}
-    (h₁ : Node genesis e₀ nextStamp nextEpoch e₁ a)
-    (h₂ : Node genesis e₀ nextStamp nextEpoch e₂ a) : e₁ = e₂ := by
+    (h₁ : Node q genesis e₀ nextStamp nextEpoch e₁ a)
+    (h₂ : Node q genesis e₀ nextStamp nextEpoch e₂ a) : e₁ = e₂ := by
   generalize ha : a = a' at h₂
   cases h₁ with
   | genesis =>
     cases h₂ with
     | genesis => rfl
-    | stamp _ _ => exact absurd ha.symm hlaw.stamp_ne_genesis
-    | epoch _ he' => exact absurd ha.symm (hlaw.epoch_ne_genesis he')
-  | stamp c₁ _ =>
+    | stamp _ _ _ hq => exact absurd ha.symm (hlaw.stamp_ne_genesis hq)
+    | epoch _ he' hq => exact absurd ha.symm (hlaw.epoch_ne_genesis hq he')
+  | stamp c₁ _ _ hq₁ =>
     cases h₂ with
-    | genesis => exact absurd ha hlaw.stamp_ne_genesis
-    | stamp c₂ _ => exact (hlaw.nextStamp_inj ha).2.1
-    | epoch _ _ => exact absurd ha hlaw.stamp_ne_epoch
-  | epoch _ he₁ =>
+    | genesis => exact absurd ha (hlaw.stamp_ne_genesis hq₁)
+    | stamp c₂ _ _ hq₂ => exact (hlaw.nextStamp_inj hq₁ hq₂ ha).2.1
+    | epoch _ _ hq₂ => exact absurd ha (hlaw.stamp_ne_epoch hq₁ hq₂)
+  | epoch _ he₁ hq₁ =>
     cases h₂ with
-    | genesis => exact absurd ha (hlaw.epoch_ne_genesis he₁)
-    | stamp _ _ => exact absurd ha.symm hlaw.stamp_ne_epoch
-    | epoch _ _ => exact (hlaw.nextEpoch_inj ha).2
+    | genesis => exact absurd ha (hlaw.epoch_ne_genesis hq₁ he₁)
+    | stamp _ _ _ hq₂ => exact absurd ha.symm (hlaw.stamp_ne_epoch hq₂ hq₁)
+    | epoch _ _ hq₂ => exact (hlaw.nextEpoch_inj hq₁ hq₂ ha).2
 
-/-- If `nextStamp a e_s c` is a chain node at epoch `e`, then `e_s = e` and its predecessor `a` is
-also a chain node at epoch `e`. Because `nextStamp` cannot collide with `nextEpoch` or `genesis`,
-a stamp fold never crosses an epoch boundary. -/
-theorem Node.of_nextStamp (hlaw : HashLaw genesis e₀ nextStamp nextEpoch)
-    {e e_s : E} {a : A} {c : F[X]}
-    (h : Node genesis e₀ nextStamp nextEpoch e (nextStamp a e_s c)) :
-    e_s = e ∧ Node genesis e₀ nextStamp nextEpoch e a := by
+/-- If the call `nextStamp a e_s c` is a chain node at epoch `e`, then `e_s = e` and its
+predecessor `a` is also a chain node at epoch `e`. Because `nextStamp` cannot collide with
+`nextEpoch` or `genesis`, a stamp fold never crosses an epoch boundary. -/
+theorem Node.of_nextStamp (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch)
+    {e e_s : E} {a : A} {c : F[X]} (hq : q.stamp a e_s c)
+    (h : Node q genesis e₀ nextStamp nextEpoch e (nextStamp a e_s c)) :
+    e_s = e ∧ Node q genesis e₀ nextStamp nextEpoch e a := by
   generalize htarget : nextStamp a e_s c = target at h
   cases h with
-  | genesis => exact absurd htarget hlaw.stamp_ne_genesis
-  | stamp c' hprev _ =>
-    obtain ⟨rfl, rfl, _⟩ := hlaw.nextStamp_inj htarget.symm
+  | genesis => exact absurd htarget (hlaw.stamp_ne_genesis hq)
+  | stamp c' hprev _ hq' =>
+    obtain ⟨rfl, rfl, _⟩ := hlaw.nextStamp_inj hq' hq htarget.symm
     exact ⟨rfl, hprev⟩
-  | epoch _ _ => exact absurd htarget hlaw.stamp_ne_epoch
+  | epoch _ _ hq' => exact absurd htarget (hlaw.stamp_ne_epoch hq hq')
 
 /-- Fold a block's list of stamp tachygram-set polynomials into an anchor at epoch `e`.
 A block that publishes no stamp leaves the anchor unchanged (`book/src/anchor.md`). -/
 def foldBlock (nextStamp : A → E → F[X] → A) (e : E) (a : A) (stamps : List F[X]) : A :=
   stamps.foldl (fun acc c => nextStamp acc e c) a
 
+/-- Every fold of `foldBlock nextStamp e a stamps` is a call in `q`. -/
+def FoldQueried (q : AnchorQueries F A E) (nextStamp : A → E → F[X] → A) (e : E) (a : A)
+    (stamps : List F[X]) : Prop :=
+  ∀ P c S, P ++ c :: S = stamps → q.stamp (foldBlock nextStamp e a P) e c
+
+theorem FoldQueried.append {e : E} {a : A} {L L' : List F[X]} :
+    FoldQueried q nextStamp e a (L ++ L') ↔
+      FoldQueried q nextStamp e a L ∧ FoldQueried q nextStamp e (foldBlock nextStamp e a L) L' := by
+  constructor
+  · intro h
+    refine ⟨fun P c S hP => h P c (S ++ L') (by rw [← hP]; simp), fun P c S hP => ?_⟩
+    have := h (L ++ P) c S (by rw [← hP]; simp)
+    simpa [foldBlock, List.foldl_append] using this
+  · rintro ⟨hL, hL'⟩ P c S hP
+    rcases List.append_eq_append_iff.mp hP with ⟨M, rfl, hM⟩ | ⟨M, hL'eq, hM⟩
+    · rcases M with _ | ⟨c', M⟩
+      · simp only [List.nil_append] at hM
+        simpa [foldBlock] using hL' [] c S hM
+      · simp only [List.cons_append, List.cons.injEq] at hM
+        obtain ⟨rfl, rfl⟩ := hM
+        exact hL P c M rfl
+    · subst hL'eq
+      have := hL' M c S hM.symm
+      simpa [foldBlock, List.foldl_append] using this
+
+theorem FoldQueried.singleton {e : E} {a : A} {c : F[X]} (hq : q.stamp a e c) :
+    FoldQueried q nextStamp e a [c] := by
+  rintro (_ | ⟨x, P⟩) c' S h
+  · obtain ⟨rfl, -⟩ := List.cons.inj h
+    exact hq
+  · simp at h
+
 theorem Node.foldBlock {e : E} {a : A} {stamps : List F[X]}
-    (ha : Node genesis e₀ nextStamp nextEpoch e a)
-    (hstamps : ∀ c ∈ stamps, c ≠ 1) :
-    Node genesis e₀ nextStamp nextEpoch e (foldBlock nextStamp e a stamps) := by
+    (ha : Node q genesis e₀ nextStamp nextEpoch e a)
+    (hstamps : ∀ c ∈ stamps, c ≠ 1) (hq : FoldQueried q nextStamp e a stamps) :
+    Node q genesis e₀ nextStamp nextEpoch e (foldBlock nextStamp e a stamps) := by
   induction stamps generalizing a with
   | nil => exact ha
   | cons c cs ih =>
-    apply ih (ha.stamp c (hstamps c List.mem_cons_self))
-    intro c' hc'
-    exact hstamps c' (List.mem_cons_of_mem c hc')
+    apply ih (ha.stamp c (hstamps c List.mem_cons_self) (hq [] c cs rfl))
+    · intro c' hc'
+      exact hstamps c' (List.mem_cons_of_mem c hc')
+    · intro P c' S hP
+      simpa [foldBlock] using hq (c :: P) c' S (by rw [← hP]; rfl)
 
-/-- End-of-block anchors acknowledged by consensus (`book/src/anchor.md`).
+/-- End-of-block anchors acknowledged by consensus (`book/src/anchor.md`), over the calls `q`.
 Each block folds zero or more non-empty stamps at the current epoch; entering a new epoch `e'`
 first applies the boundary digest `nextEpoch`. -/
-inductive BlockAnchor (genesis : A) (e₀ : E)
+inductive BlockAnchor (q : AnchorQueries F A E) (genesis : A) (e₀ : E)
     (nextStamp : A → E → F[X] → A) (nextEpoch : A → E → A) : E → A → Prop
-  | genesis : BlockAnchor genesis e₀ nextStamp nextEpoch e₀ genesis
+  | genesis : BlockAnchor q genesis e₀ nextStamp nextEpoch e₀ genesis
   | block {e : E} {a : A} (stamps : List F[X]) :
-      BlockAnchor genesis e₀ nextStamp nextEpoch e a →
-      (∀ c ∈ stamps, c ≠ 1) →
-      BlockAnchor genesis e₀ nextStamp nextEpoch e (foldBlock nextStamp e a stamps)
+      BlockAnchor q genesis e₀ nextStamp nextEpoch e a →
+      (∀ c ∈ stamps, c ≠ 1) → FoldQueried q nextStamp e a stamps →
+      BlockAnchor q genesis e₀ nextStamp nextEpoch e (foldBlock nextStamp e a stamps)
   | epochBlock {e e' : E} {a : A} (stamps : List F[X]) :
-      BlockAnchor genesis e₀ nextStamp nextEpoch e a →
-      e' ≠ e₀ →
-      (∀ c ∈ stamps, c ≠ 1) →
-      BlockAnchor genesis e₀ nextStamp nextEpoch e'
+      BlockAnchor q genesis e₀ nextStamp nextEpoch e a →
+      e' ≠ e₀ → q.boundary a e' →
+      (∀ c ∈ stamps, c ≠ 1) → FoldQueried q nextStamp e' (nextEpoch a e') stamps →
+      BlockAnchor q genesis e₀ nextStamp nextEpoch e'
         (foldBlock nextStamp e' (nextEpoch a e') stamps)
 
 /-- Every acknowledged end-of-block anchor is a reachable chain `Node` at its block's epoch. -/
 theorem BlockAnchor.toNode {e : E} {a : A}
-    (h : BlockAnchor genesis e₀ nextStamp nextEpoch e a) :
-    Node genesis e₀ nextStamp nextEpoch e a := by
+    (h : BlockAnchor q genesis e₀ nextStamp nextEpoch e a) :
+    Node q genesis e₀ nextStamp nextEpoch e a := by
   induction h with
   | genesis => exact Node.genesis
-  | block stamps _ hne ih => exact ih.foldBlock hne
-  | epochBlock stamps _ he' hne ih => exact (ih.epoch he').foldBlock hne
+  | block stamps _ hne hq ih => exact ih.foldBlock hne hq
+  | epochBlock stamps _ he' hb hne hq ih => exact (ih.epoch he' hb).foldBlock hne hq
 
 /-! ## Anchor spans and `StampLift` epoch invariance -/
 
@@ -175,18 +214,19 @@ structure AnchorSpan (F : Type*) [Field F] where
   anchor_end : F
 
 /-- Derivable `AnchorSpan` headers (`AnchorSpanSeed` and `AnchorSpanFuse` in
-`crates/tachyon/src/stamp/proof/pool.rs`). Neither `anchor_start` nor `e` is constrained at the
-seed; chain membership of `anchor_end` pins the entire span downstream. -/
-inductive SpanDerivable (nextStamp : F → E → F[X] → F) : AnchorSpan F → Prop
+`crates/tachyon/src/stamp/proof/pool.rs`) over the calls `q`. Neither `anchor_start` nor `e` is
+constrained at the seed; chain membership of `anchor_end` pins the entire span downstream. -/
+inductive SpanDerivable (q : AnchorQueries F F E) (nextStamp : F → E → F[X] → F) :
+    AnchorSpan F → Prop
   | seed (a : F) (e : E) (c : F[X]) :
-      c ≠ 1 →
-      SpanDerivable nextStamp ⟨a, setPoly {nextStamp a e c}, nextStamp a e c⟩
+      c ≠ 1 → q.stamp a e c →
+      SpanDerivable q nextStamp ⟨a, setPoly {nextStamp a e c}, nextStamp a e c⟩
   | fuse {left right : AnchorSpan F} {combined : F[X]} :
-      SpanDerivable nextStamp left →
-      SpanDerivable nextStamp right →
+      SpanDerivable q nextStamp left →
+      SpanDerivable q nextStamp right →
       left.anchor_end = right.anchor_start →
       combined = left.members * right.members →
-      SpanDerivable nextStamp ⟨left.anchor_start, combined, right.anchor_end⟩
+      SpanDerivable q nextStamp ⟨left.anchor_start, combined, right.anchor_end⟩
 
 /-- The `StampLift` / `ActionLift` step relation (`crates/tachyon/src/stamp/proof/stamp.rs`):
 `s.anchor` must either be a root of `span.members` or equal `span.anchor_start`, and the output
@@ -195,28 +235,31 @@ def StampLiftStep (s : Tachyon.Stamp F F) (span : AnchorSpan F) (s' : Tachyon.St
   span.members.eval s.anchor * (s.anchor - span.anchor_start) = 0 ∧
   s' = { s with anchor := span.anchor_end }
 
-variable {genesisF : F} {nextStampF : F → E → F[X] → F} {nextEpochF : F → E → F}
+variable {qF : AnchorQueries F F E} {genesisF : F} {nextStampF : F → E → F[X] → F}
+  {nextEpochF : F → E → F}
 
-/-- A set of anchors labelled by epoch that holds every `nextStamp` predecessor of its members, at
-the member's epoch. Chain nodes form one (`Node.stampClosed`), and so do the anchors a published
-chain reaches (`OnChain.stampClosed`). -/
-def StampClosed (nextStamp : A → E → F[X] → A) (Good : E → A → Prop) : Prop :=
-  ∀ {e e_s : E} {a : A} {c : F[X]}, Good e (nextStamp a e_s c) → e_s = e ∧ Good e a
+/-- A set of anchors labelled by epoch that holds the predecessor of every call in `q` that lands
+in it, at the member's epoch. Chain nodes form one (`Node.stampClosed`), and so do the anchors a
+published chain reaches up to a bound (`OnChain.stampClosed`). -/
+def StampClosed (q : AnchorQueries F A E) (nextStamp : A → E → F[X] → A)
+    (Good : E → A → Prop) : Prop :=
+  ∀ {e e_s : E} {a : A} {c : F[X]}, q.stamp a e_s c → Good e (nextStamp a e_s c) →
+    e_s = e ∧ Good e a
 
-theorem Node.stampClosed (hlaw : HashLaw genesis e₀ nextStamp nextEpoch) :
-    StampClosed nextStamp (Node genesis e₀ nextStamp nextEpoch) :=
-  fun h => Node.of_nextStamp hlaw h
+theorem Node.stampClosed (hlaw : HashLaw q genesis e₀ nextStamp nextEpoch) :
+    StampClosed q nextStamp (Node q genesis e₀ nextStamp nextEpoch) :=
+  fun hq h => Node.of_nextStamp hlaw hq h
 
 /-- If a derivable `AnchorSpan` ends on a member of a stamp-closed set at epoch `e`, then
 `anchor_start` is a member at epoch `e`, and `members` is `setPoly M` for a multiset `M` of members
 all at epoch `e`. -/
-theorem SpanDerivable.node_epoch {Good : E → F → Prop} (hclosed : StampClosed nextStampF Good)
-    {span : AnchorSpan F} (hspan : SpanDerivable nextStampF span)
+theorem SpanDerivable.node_epoch {Good : E → F → Prop} (hclosed : StampClosed qF nextStampF Good)
+    {span : AnchorSpan F} (hspan : SpanDerivable qF nextStampF span)
     {e : E} (hend : Good e span.anchor_end) :
     Good e span.anchor_start ∧ ∃ M : Multiset F, span.members = setPoly M ∧ ∀ m ∈ M, Good e m := by
   induction hspan with
-  | seed a e_s c _ =>
-    obtain ⟨rfl, ha⟩ := hclosed hend
+  | seed a e_s c _ hq =>
+    obtain ⟨rfl, ha⟩ := hclosed hq hend
     refine ⟨ha, {nextStampF a e_s c}, rfl, ?_⟩
     intro m hm
     rw [Multiset.mem_singleton] at hm
@@ -234,9 +277,9 @@ theorem SpanDerivable.node_epoch {Good : E → F → Prop} (hclosed : StampClose
 /-- **Span argument for `StampLift`**: if `span` is derivable, `StampLiftStep s span s'` holds, and
 `s'.anchor` is a member of a stamp-closed set at epoch `e`, such as a chain node, then `s.anchor`
 is also a member at epoch `e`. -/
-theorem StampLiftStep.node_same_epoch {Good : E → F → Prop} (hclosed : StampClosed nextStampF Good)
-    {s s' : Tachyon.Stamp F F} {span : AnchorSpan F}
-    (hspan : SpanDerivable nextStampF span)
+theorem StampLiftStep.node_same_epoch {Good : E → F → Prop}
+    (hclosed : StampClosed qF nextStampF Good) {s s' : Tachyon.Stamp F F} {span : AnchorSpan F}
+    (hspan : SpanDerivable qF nextStampF span)
     (hlift : StampLiftStep s span s')
     {e : E} (hend : Good e s'.anchor) : Good e s.anchor := by
   obtain ⟨heval, rfl⟩ := hlift
@@ -254,15 +297,15 @@ theorem StampLiftStep.node_same_epoch {Good : E → F → Prop} (hclosed : Stamp
 (`Tachyon/ProofTree.lean`): for any epoch labeling `epoch : F → E` that agrees with `Chain.Node`,
 a `StampLiftStep` ending at a chain node preserves `epoch`. -/
 theorem StampLiftStep.epoch_eq
-    (hlaw : HashLaw genesisF e₀ nextStampF nextEpochF)
+    (hlaw : HashLaw qF genesisF e₀ nextStampF nextEpochF)
     {epoch : F → E}
-    (hepoch : ∀ {e : E} {a : F}, Node genesisF e₀ nextStampF nextEpochF e a → epoch a = e)
+    (hepoch : ∀ {e : E} {a : F}, Node qF genesisF e₀ nextStampF nextEpochF e a → epoch a = e)
     {s s' : Tachyon.Stamp F F} {span : AnchorSpan F}
-    (hspan : SpanDerivable nextStampF span)
+    (hspan : SpanDerivable qF nextStampF span)
     (hlift : StampLiftStep s span s')
-    {e : E} (hend : Node genesisF e₀ nextStampF nextEpochF e s'.anchor) :
+    {e : E} (hend : Node qF genesisF e₀ nextStampF nextEpochF e s'.anchor) :
     epoch s'.anchor = epoch s.anchor := by
-  have hs : Node genesisF e₀ nextStampF nextEpochF e s.anchor :=
+  have hs : Node qF genesisF e₀ nextStampF nextEpochF e s.anchor :=
     hlift.node_same_epoch (Node.stampClosed hlaw) hspan hend
   rw [hepoch hend, hepoch hs]
 
