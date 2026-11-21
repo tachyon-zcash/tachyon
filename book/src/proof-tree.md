@@ -343,8 +343,8 @@ A published tachygram that is a note commitment is the commitment of an output l
 
 ### What the stamp proof leaves to others
 
-- **Balance.** The proof shows that each value commitment commits to its note's value. The binding signature shows that the commitments of a bundle sum to its value balance, as [Authorization](./authorization.md) and [Dynamic Fee](./fee.md) describe.
-- **Authorization.** The proof shows that a spend's randomized key is built on the note's spend validating key. The action signature shows that the signer holds the matching signing key.
+- **Balance.** The stamp proof shows that each value commitment commits to its note's value. The binding signature shows that the commitments of a bundle sum to its value balance, as [Authorization](./authorization.md) and [Dynamic Fee](./fee.md) describe.
+- **Authorization.** The stamp proof shows that a spend's randomized key is built on the note's spend validating key. The action signature shows that the signer holds the matching signing key.
 - **Reused nullifier trapdoors.** Two notes with one $\psi$ and one nullifier key have the same nullifiers, and spending one makes the other unspendable[^nullifiers]. Avoiding the reuse is the wallet's task.
 - **Anchors without a spend.** A stamp with no spend leaf verifies at any anchor its prover chooses. Rule 3 still applies to it.
 - **The discriminant.** A bucket's exclusion holds under whichever first discriminant its builder chose.
