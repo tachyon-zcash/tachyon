@@ -28,6 +28,69 @@ pub enum AnchorError {
 }
 
 /// Running anchor over the consensus state.
+///
+/// An anchor is the head of a hash chain over a pool history. The history
+/// starts at the genesis value [`Anchor::default`], and each entry advances
+/// the anchor $a$ by one digest.
+///
+/// - A stamp published in epoch $e$ gives $\mathsf{st}(a, e, B)$, the
+///   [`anchor_next_stamp`](poseidon::anchor_next_stamp) digest of $a$, $e$ and
+///   the two coordinates of $B$. $B$ is the canonical [bridge
+///   hash](super::TachygramSetBridge) of the stamp's tachygram accumulator.
+///   This digest is a stamp link.
+/// - A boundary into epoch $e \geq 1$ gives $\mathsf{ep}(a, e)$, the
+///   [`anchor_next_epoch`](poseidon::anchor_next_epoch) digest. It is the
+///   boundary digest of $a$ into $e$. In a history, $a$ is the final anchor of
+///   the epoch before $e$ and the digest is the entry anchor of $e$.
+///
+/// The genesis value is $\mathsf{ep}(0, 0)$.
+///
+/// # Injectivity
+///
+/// An anchor stands for the pool history that produced it. A history is its
+/// entries in order. A stamp entry is an epoch and a tachygram accumulator,
+/// and a boundary entry is the epoch it enters.
+///
+/// Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
+/// determines its function and the elements it absorbed. The two functions
+/// have different tags. An anchor is therefore the digest of one kind of
+/// entry, and it determines that entry and the anchor before it. A stamp
+/// link determines the epoch and the bridge hash, and the bridge hash
+/// determines the accumulator and its polynomial
+/// ([`TachygramSetBridge`](super::TachygramSetBridge)). An epoch is an
+/// integer at most `EPOCH_MAX` and is absorbed as that integer.
+///
+/// No later anchor of a history equals the genesis value. A stamp link has
+/// the other tag. [`next_epoch`](Self::next_epoch) rejects epoch zero, so a
+/// boundary digest of a history absorbs an epoch the genesis value does not.
+///
+/// Walking back from an anchor of a history therefore finds one entry at each
+/// step, and it reaches the genesis value only at the history's start. Two
+/// histories with one anchor have the same entries, and no history holds an
+/// anchor twice.
+///
+/// # Chains in a step
+///
+/// A step computes the same digests on wires. Several steps take the anchor
+/// that a digest absorbs, or the epoch, as a wire of the prover's choice.
+/// Such a step shows that a chain of digests exists. It does not show that
+/// the chain is part of a pool history.
+///
+/// A *stamp chain* of $k$ links from $a_0$ to $a_k$ is, for each $i$ from 1
+/// to $k$, an epoch $e_i$ at most `EPOCH_MAX`, a polynomial $P_i$ other than
+/// the constant one and a bridge hash $B_i$ of the accumulator of $P_i$, with
+/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ when
+/// every $e_i$ is $e$. A chain of no links has $a_k = a_0$.
+///
+/// Each $a_i$ after $a_0$ determines $a_{i-1}$, $e_i$, $B_i$ and $P_i$, as
+/// above. When $a_k$ is an anchor of a pool history, the $k$ links are the
+/// last $k$ entries behind $a_k$ in that history. Each is a stamp entry,
+/// $e_i$ is its epoch, $B_i$ is the canonical bridge hash of its accumulator
+/// and $P_i$ is the polynomial that accumulator commits to.
+///
+/// A boundary digest $\mathsf{ep}(a, e)$ that is an anchor of a pool history
+/// is likewise that history's boundary entry into $e$, and $a$ is the anchor
+/// behind it.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
@@ -110,9 +173,10 @@ impl Anchor {
 }
 
 impl Default for Anchor {
-    /// The entry anchor of epoch zero is `H_epoch(0, 0)`. Its fold input is
-    /// zero, which is no chain vertex; [`Anchor::next_epoch`] rejects index
-    /// zero, so no crossing produces it.
+    /// The genesis value $\mathsf{ep}(0, 0)$, the entry anchor of epoch zero.
+    ///
+    /// No other anchor of a pool history equals it. See
+    /// [Injectivity](Anchor#injectivity).
     fn default() -> Self {
         Self(*ANCHOR_GENESIS)
     }

@@ -1,11 +1,14 @@
 //! Tachygram accumulators over consecutive stamps of one epoch.
 //!
-//! A summary folds each stamp's tachygram set into one set polynomial while
-//! the anchor absorbs each stamp's bridge hash. Consensus forbids republishing
-//! a tachygram within two epochs. The accumulator is therefore square-free.
-//! The prover chooses where a summary starts and stops. A consumer joins
-//! summaries whose anchors are equal. The joined chain contains every stamp
-//! absorption.
+//! A summary multiplies each stamp's tachygram polynomial into one polynomial
+//! while the anchor absorbs each stamp's bridge hash. The prover chooses where
+//! a summary starts and stops.
+//! [`QrIntakeMerge`](super::qr::QrIntakeMerge) joins the intakes of summaries
+//! whose anchors meet.
+//!
+//! Consensus rejects a tachygram published twice within two epochs. The
+//! accumulated polynomial of a summary on the published chain therefore has
+//! no repeated root.
 
 use core::convert::Infallible;
 
@@ -31,14 +34,51 @@ use crate::{
 ///
 /// Both polynomials are a [`TachygramSetPoly`]: [`Summary::ACCUMULATED`] and
 /// [`Summary::LAST_STAMP`].
+///
+/// # Injectivity
+///
+/// [`SummarySeed`] and [`SummaryAdvance`] output this header. A verified
+/// `Summary` asserts that `epoch` is an integer at most `EPOCH_MAX`, and that
+/// its prover knows a [stamp chain](Anchor#chains-in-a-step) in `epoch` of
+/// $k \geq 1$ links from `anchor_prev` to `anchor_end`, with polynomials
+/// $P_1, \dots, P_k$, for which
+///
+/// - [`Summary::ACCUMULATED`] is the product $P_1 \cdots P_k$,
+/// - [`Summary::LAST_STAMP`] is $P_k$.
+///
+/// No step relies on a link's polynomial differing from the constant one.
+///
+/// Each field and each polynomial determines what it stands for.
+///
+/// - `epoch` stands for the epoch every link absorbs. It is an integer at most
+///   `EPOCH_MAX`, and every circuit that encodes this header range-checks it.
+///   `anchor_end` determines it.
+/// - `anchor_end` stands for the pool history up to the chain's last stamp. It
+///   is a stamp link, so it determines the chain's last link, and each anchor
+///   of the chain determines the link before it ([`Anchor`]).
+/// - `anchor_prev` is where the chain starts. [`SummarySeed`] takes it from its
+///   prover, so the assertion says nothing of what lies behind it.
+/// - [`Summary::ACCUMULATED`] stands for every tachygram of the chain's stamps.
+///   It is the product of the chain's polynomials and has no other factor, so a
+///   value is a root of it exactly when it is a root of some $P_i$. Where each
+///   $P_i$ is a [set polynomial](crate::collections::multiset), it is the set
+///   polynomial of the multiset sum of the stamps' tachygrams.
+/// - [`Summary::LAST_STAMP`] is the polynomial whose bridge hash the last link
+///   absorbs, and `anchor_end` determines it. It sits in the last slot because
+///   a step reads the bridge hash of that slot. No step reads it from an input.
+///
+/// `Data` encodes as the three elements `(epoch, anchor_prev, anchor_end)`. A
+/// native epoch is an integer at most `EPOCH_MAX` and an anchor is a field
+/// element, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-/// Every tachygram of the stamps in `(anchor_prev, anchor_end]`.
+/// The product of the polynomials of the stamps in
+/// `(anchor_prev, anchor_end]`.
 #[derive(Debug)]
 pub struct Accumulated(Infallible);
 
-/// The last stamp's tachygrams. Its bridge hash enters `anchor_end`.
+/// The last stamp's polynomial. Its bridge hash enters `anchor_end`.
 #[derive(Debug)]
 pub struct LastStamp(Infallible);
 
@@ -102,10 +142,25 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// `anchor_prev` and `epoch` are free witnesses. Consensus uses the epoch of
-/// the block that contains the stamp when advancing the anchor.
-/// [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] carry the same stamp
-/// set and open once each at the challenge.
+/// The step reads no input. `anchor_prev` and `epoch` are wires of the
+/// prover's choice, and `epoch` is range-checked.
+///
+/// Both output polynomials are committed before the challenge. The circuit
+/// equates their openings at $\zeta$, so they are one polynomial $P$. It
+/// holds the opening away from one, so $P$ is not the constant one.
+///
+/// [`Summary::LAST_STAMP`] is the step's last output slot, so Ragu holds the
+/// bridge hash wires to a [bridge hash](crate::TachygramSetBridge) $B$ of the
+/// accumulator of $P$. `anchor_end` is the output of the
+/// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on
+/// `anchor_prev`, `epoch` and $B$. No identity at the challenge reads it.
+///
+/// These are a [stamp chain](Anchor#chains-in-a-step) of one link in `epoch`
+/// whose polynomial is both output polynomials, which is what [`Summary`]
+/// asserts with $k = 1$.
+///
+/// [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] open once each at the
+/// challenge.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -203,6 +258,33 @@ impl Step<Pasta> for SummarySeed {
 /// The left and output [`Summary::ACCUMULATED`] hold the accumulated sets;
 /// the output's [`Summary::LAST_STAMP`] holds the next stamp's tachygrams.
 /// Each is opened once.
+///
+/// # Soundness
+///
+/// The left input is a verified [`Summary`]. It asserts a
+/// [stamp chain](Anchor#chains-in-a-step) in its `epoch` from its
+/// `anchor_prev` to its `anchor_end`, and its [`Summary::ACCUMULATED`] is the
+/// product $A$ of the chain's polynomials.
+///
+/// $A$ is fixed in the input PCD, and both output polynomials are committed
+/// before the challenge. The circuit equates the opening of the output's
+/// [`Summary::ACCUMULATED`] at $\zeta$ with $A(\zeta) \cdot P(\zeta)$, for
+/// $P$ the output's [`Summary::LAST_STAMP`]. The output's
+/// [`Summary::ACCUMULATED`] is therefore $A \cdot P$. The circuit holds
+/// $P(\zeta)$ away from one, so $P$ is not the constant one.
+///
+/// [`Summary::LAST_STAMP`] is the step's last output slot, so Ragu holds the
+/// bridge hash wires to a [bridge hash](crate::TachygramSetBridge) $B$ of the
+/// accumulator of $P$. The output `anchor_end` is the output of the
+/// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on the input's
+/// `anchor_end`, the input's `epoch` and $B$. No identity at the challenge
+/// reads it. The step copies `epoch` and `anchor_prev` from the input.
+///
+/// The input's chain with this link is a stamp chain in `epoch` from
+/// `anchor_prev` to the output `anchor_end`. Its polynomials multiply to the
+/// output's [`Summary::ACCUMULATED`] and its last is $P$, which is what
+/// [`Summary`] asserts. The step does not read the input's
+/// [`Summary::LAST_STAMP`].
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
