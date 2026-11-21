@@ -1,21 +1,47 @@
 //! # Quadratic-residue classification
 //!
-//! A value $x$ takes the residue side at a discriminant $R$ iff $x + R$ is a
-//! square or zero, and the non-residue side otherwise. A root $y$ attests
-//! either side: $y^2 = x + R$ on the residue side, $y^2 = n \cdot (x + R)$ for
-//! a fixed non-residue $n$ on the other.
+//! A value $x$ takes the residue side at a discriminant $R$ when $x + R$ is a
+//! square or zero, and the non-residue side otherwise.
+//!
+//! ## Sides
+//!
+//! A field element is zero, a nonzero square or a non-residue, and only one
+//! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
+//! $R$, and every pair has one.
+//!
+//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`]. The product $n
+//! \cdot s$ is a square exactly when $s$ is zero or a non-residue.
+//!
+//! - A $y$ with $y^2 = x + R$ shows that $x$ takes the residue side.
+//! - A $y$ with $y^2 = n \cdot (x + R)$ shows that $x + R$ is zero or a
+//!   non-residue. Together with $x + R \neq 0$ it shows that $x$ takes the
+//!   non-residue side.
+//!
+//! A value other than $-R$ has a root for its own side and none for the other.
+//! The value $-R$ has the root zero under both equations and takes the residue
+//! side.
 //!
 //! ## Class decomposition
 //!
-//! With $q$ one side's values as roots and $u$ interpolating their roots
-//! $y_i$, at that side's class multiplier $c$,
+//! Take polynomials $q$, $u$ and $h$ and a class multiplier $c$, which is $1$
+//! for the residue side and $n$ for the non-residue side. If
 //!
 //! $$
-//!   u(X)^2 - c \cdot (X + R) = q(X) \cdot h(X),
+//!   u(X)^2 - c \cdot (X + R) = q(X) \cdot h(X)
 //! $$
 //!
-//! so every root of $q$ takes that side. The exceptional value $-R$ has root
-//! $0$ under either class; $q_\mathsf{non}(-R) \neq 0$ files it residue-side.
+//! then $u(x)^2 = c \cdot (x + R)$ at every root $x$ of $q$. With $c = 1$
+//! every root of $q$ takes the residue side. With $c = n$ every root of $q$
+//! other than $-R$ takes the non-residue side, and $q(-R) \neq 0$ rules that
+//! one out.
+//!
+//! The identity reaches $q$ only through its roots in the field. It holds
+//! $q$ to no shape, and it says nothing about a value that is not a root of
+//! $q$.
+//!
+//! A prover with $q$ the product of $(X - x_i)$ over distinct values of one
+//! side takes $u$ to interpolate a root $y_i$ at each $x_i$. Then $u^2 - c
+//! \cdot (X + R)$ vanishes at every $x_i$, and $h$ is the quotient.
 //!
 //! The identity also reads over one value against many discriminants: with
 //! the $R_j$ as the roots of $q$ and $x$ as the shift, $u(R_j)^2 = c(x +
@@ -37,8 +63,11 @@ use ragu::{
 
 use crate::pasta::Fp;
 
-/// The least quadratic non-residue of the Pallas base field. Distinct from
-/// the cubic non-residue the sequence encoding uses.
+/// The least quadratic non-residue of the Pallas base field, $n = 5$. Distinct
+/// from the cubic non-residue the sequence encoding uses.
+///
+/// The Legendre symbol is multiplicative, so $n \cdot s$ is a square exactly
+/// when $s$ is zero or a non-residue.
 pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000005"
 ));

@@ -17,6 +17,13 @@ use crate::{
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.
+///
+/// The two wires are a path only when something holds them to one. [`root`]
+/// and [`descend`] build paths, and [`enforce_sides_of`] accepts only a path.
+///
+/// [`root`]: Self::root
+/// [`descend`]: Self::descend
+/// [`enforce_sides_of`]: Self::enforce_sides_of
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
@@ -28,7 +35,7 @@ pub struct QrProfile<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
-    /// Allocates a header's profile.
+    /// Allocates a header's profile as two wires, without a constraint.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -61,6 +68,15 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// The child profile on side `bit`. The parent's depth is checked below
     /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
     /// the new side.
+    ///
+    /// # Soundness
+    ///
+    /// The range check holds the parent's `depth` to an integer $d$ below
+    /// `MAX_DEPTH`. The child has `depth` $d + 1$ and `bits` $2 \cdot
+    /// \mathsf{bits} + b$ for the boolean $b$. When the parent is a path, the
+    /// child is that path followed by the side $b$, in the encoding of
+    /// [`primitives::QrProfile`]. Its `bits` stay below $2^{d+1}$, so no sum
+    /// wraps.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
         self.depth
@@ -78,11 +94,49 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// At each discriminant $d_i$ of the progression from `discriminant`, the
-    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
-    /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
-    /// non-residue side. The depth mask must be a prefix of `depth` ones, and
-    /// the selected sides must pack to `bits`.
+    /// Each of the `MAX_DEPTH` positions $j$ allocates a side $b_j$, a root
+    /// $r_j$ and a mask bit $m_j$. With $x$ the value, $R_0$ the discriminant,
+    /// $s_j = x + R_0 + j$ and $n$ the fixed non-residue, the constraints are
+    ///
+    /// $$
+    ///   r_j^2 = \bigl(n - (n - 1) \cdot b_j\bigr) \cdot s_j,
+    ///   \qquad
+    ///   b_j = 0 \implies s_j \neq 0,
+    /// $$
+    ///
+    /// $$
+    ///   \sum_j m_j = \mathsf{depth},
+    ///   \qquad
+    ///   2 \sum_j j \cdot m_j = \mathsf{depth} \cdot (\mathsf{depth} - 1),
+    ///   \qquad
+    ///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
+    /// $$
+    ///
+    /// with $a_0 = 0$ and the last $a$ equal to `bits`.
+    ///
+    /// # Soundness
+    ///
+    /// $b_j$ is the [side](crate::collections::qr#sides) of $x$ at $R_0 + j$.
+    /// With $b_j = 1$ the root shows that $s_j$ is a square or zero. With
+    /// $b_j = 0$ the root and $s_j \neq 0$ show that $s_j$ is a non-residue.
+    /// The two cases exclude each other, so the constraints leave $b_j$ no
+    /// choice.
+    ///
+    /// The mask bits are boolean, so `depth` is an integer $d$ from $0$ to
+    /// `MAX_DEPTH`. Both sides of the second equation are integers below the
+    /// modulus. Among $d$ distinct positions the sum of the positions is at
+    /// least $d \cdot (d - 1)/2$, and only the first $d$ positions reach it.
+    /// The mask is therefore $d$ ones followed by zeros.
+    ///
+    /// Under that mask the fold doubles $a$ and adds $b_j$ at each of the
+    /// first $d$ positions and leaves $a$ unchanged after them. `bits` is
+    /// $\sum_{j < d} b_j \cdot 2^{d-1-j}$, which is below $2^{32}$.
+    ///
+    /// The profile's two wires are thus the
+    /// [encoding](primitives::QrProfile) of the path that the first $d$ sides
+    /// of $x$ make, and $x$ is in the class of this profile at $R_0$. The
+    /// gadget reads no challenge. It holds for whatever wires it is given as
+    /// `value` and `discriminant`.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
