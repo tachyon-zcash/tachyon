@@ -66,6 +66,9 @@ const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 /// The feemax blind, the trapdoor of $\mathsf{cv}_\mathsf{feemax}$,
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
+///
+/// The blind is the digest read as an integer, which is also the scalar. The
+/// digest determines $\mathsf{pk}$, $\psi$ and $\mathsf{rcm}$.
 #[must_use]
 pub fn feemax_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     let [hash] = emulated(FEE_BLIND_DOMAIN, [pk, psi, rcm]);
@@ -227,6 +230,10 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
+///
+/// The randomizer $\alpha$ is the digest read as an integer. A step
+/// decomposes it into 254 bits, so a digest at or above $2^{254}$ has no
+/// assignment. The digest determines $\theta$ and $\mathsf{cm}$.
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(SPEND_ALPHA_DOMAIN, [theta, cm]);
@@ -240,6 +247,10 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
+///
+/// The randomizer $\alpha$ is the digest read as an integer, as in
+/// [`alpha_spend`]. The digest determines $\theta$ and $\mathsf{cm}$, and its
+/// tag differs from the spend's.
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(OUTPUT_ALPHA_DOMAIN, [theta, cm]);

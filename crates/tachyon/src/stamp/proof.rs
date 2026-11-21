@@ -74,7 +74,8 @@
 //!   accumulator under the nested generators, so a bridge hash determines its
 //!   accumulator. One accumulator has many bridge hashes.
 //!   [`bridge_hash`](crate::bridge_hash) computes the one an honest prover
-//!   uses.
+//!   uses. No discrete-log relation is known between the value commitment
+//!   generators $\mathcal{V}$ and $\mathcal{R}$ either.
 //! - **Challenge.** Ragu squeezes a step's challenge from a transcript and
 //!   models that hash as a random oracle. The challenge is then uniform and
 //!   independent of everything the transcript absorbed before it.
