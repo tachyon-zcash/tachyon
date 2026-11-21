@@ -13,7 +13,8 @@
 //! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
 //! [`QrStampIntakeSeed`] from one unsummarized stamp, and
 //! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
-//! partitions an intake at its discriminant into [`QrIntakeSides`],
+//! partitions an intake at its discriminant into [`QrIntakeSides`], with
+//! non-residue and residue set polynomials $q_0$ and $q_1$.
 //! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
@@ -730,9 +731,9 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity and
-/// rejects a split whose two sides are the same set.
+/// The non-residue set polynomial $q_0$ opens once at $-R$; the two hint
+/// polynomials supply output commitments. [`QrSideDescend`] checks their class
+/// identity and rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -801,27 +802,31 @@ impl Step<Pasta> for QrSideSelect {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// With $s$ the sibling, $u$ its interpolant and $h$ the quotient,
+/// For the sibling's set polynomial $q$, interpolant $u$ and quotient $h$,
+/// the class decomposition satisfies
 ///
 /// $$
-///   u(X)^2 - c \cdot (X + R) = s(X) \cdot h(X)
+///   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 /// $$
 ///
-/// at the sibling's class $c$ holds only if every root of $s$ takes that
-/// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
-/// split's product, every member of the extracted class is then in the
-/// child. A split whose two sides are the same set is rejected.
+/// The discriminant is $R = R_0 + j$ at parent depth $j$. For child bit $b$,
+/// the sibling's multiplier is $m = 1 + b(c - 1)$, with $c$ the fixed
+/// non-residue. A residue child has a non-residue sibling, so the multiplier
+/// is the opposite of the one used to check the queried class directly.
+/// The identity and the exceptional-value check attest the sibling's class:
+/// at every member $x_i$, the class root $r_i = u(x_i)$ satisfies
+/// $r_i^2 = m \cdot (x_i + R)$. The split's product then places every
+/// member of the extracted class in the child. Equal side openings are
+/// rejected.
 ///
 /// # Soundness
 ///
 /// The selection's metadata and non-residue bridge hash match the split.
-/// The framework fixes both inputs' polynomials and the side bit before the
-/// challenge. Every root of the sibling satisfies $u(x)^2 = c \cdot (x + R)$
-/// at the sibling's class $c$, and the split's product places every member of
-/// the other class in the child. The child may hold a stray member of the
-/// sibling's class; consumers open it nonzero, so a stray member cannot pass a
-/// value that is present. $R$ is read off the header, so a descent classifies
-/// at the same $R_0$ as every other step of the network. The parent's depth is
+/// The framework fixes both input headers, their online commitments, and the
+/// staged child bit before the challenge $\zeta$. The child may hold a stray
+/// member of the sibling's class; consumers open it nonzero, so a stray member
+/// cannot pass a value that is present. The discriminant $R$ is computed from
+/// $R_0$ and the parent depth in the header. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 ///
@@ -1209,23 +1214,25 @@ impl Step<Pasta> for QrBucketSeal {
 /// root witnessing class `j`, including positions past that prefix. The step
 /// also opens the bucket at the value for nonzero. The `MAX_DEPTH` positions
 /// $j = 0, 1, \dots$ index the progression, so position $j$
-/// classifies at $R_j = R_0 + j$. With $x$ the value and $s_j = x +
-/// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
+/// classifies at $R_j = R_0 + j$. With tachygram $x$, each position witnesses
+/// a class bit $b_j$ and class root $r_j$. The multiplier is
+/// $m_j = c - (c - 1)b_j$ for the fixed non-residue $c$. Unlike descent,
+/// this uses the queried class rather than its sibling.
 ///
 /// $$
-///   r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j,
+///   r_j^2 = m_j \cdot (x + R_j),
 ///   \qquad
-///   b_j = 0 \implies s_j \neq 0.
+///   b_j = 0 \implies x + R_j \neq 0.
 /// $$
 ///
-/// A mask $m_j$ selects the bucket's path through two sums and a fold,
+/// A mask $e_j$ selects the bucket's path through two sums and a fold,
 ///
 /// $$
-///   \sum_j m_j = \mathsf{depth},
+///   \sum_j e_j = \mathsf{depth},
 ///   \qquad
-///   \sum_j j \cdot m_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
+///   \sum_j j \cdot e_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
 ///   \qquad
-///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
+///   a_{j+1} = a_j + e_j \cdot (a_j + b_j),
 /// $$
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
@@ -1241,8 +1248,9 @@ impl Step<Pasta> for QrBucketSeal {
 ///
 /// # Soundness
 ///
-/// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c \cdot
-/// s_j$ is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero
+/// Since $c$ is a non-residue, for nonzero $x + R_j$ exactly one of
+/// $x + R_j$ and $c \cdot (x + R_j)$ is a square, fixing $b_j$. For
+/// $x + R_j = 0$ the nonzero
 /// rule forces the residue side, where [`QrSideSelect`] files the exceptional
 /// value. Among boolean vectors of weight `depth` only the leading positions
 /// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
@@ -1251,7 +1259,7 @@ impl Step<Pasta> for QrBucketSeal {
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's `first_discriminant`, so the exclusion holds for the
 /// network the bucket belongs to. `value` is a free witness. The challenge
-/// absorbs it, so the sequence identity fixes the one member to it;
+/// $\zeta$ binds it, so the sequence identity fixes the one member to it;
 /// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
 /// note's genuine derivation.
 ///

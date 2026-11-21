@@ -266,8 +266,12 @@ impl QrSide {
     }
 }
 
-/// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
-/// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and offset $s$.
+/// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
+/// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
+///
+/// The library builds canonical hints and offers no raw-coefficient
+/// constructor outside `test-utils`. The steps accept any typed interpolant
+/// and quotient pair that satisfies their checks.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -290,8 +294,12 @@ impl QrInterpolantPoly {
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrInterpolantCommit(EqAffine);
 
-/// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
-/// c \cdot (X + s) = q \cdot h$.
+/// Witness polynomial for the class decomposition quotient $h$ in
+/// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
+///
+/// The library builds canonical hints and offers no raw-coefficient
+/// constructor outside `test-utils`. The steps accept any typed interpolant
+/// and quotient pair that satisfies their checks.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
@@ -375,6 +383,13 @@ impl QrProfile {
 }
 
 /// The profile of a sequence of classes: [`Self::ROOT`] descended through each.
+/// A bounded prefix of a path gives the profile at that depth, for example
+/// `path.iter().copied().take(depth).collect::<QrProfile>()` for `depth` at
+/// most [`QrProfile::MAX_DEPTH`].
+///
+/// # Panics
+///
+/// A 33rd class panics in [`QrProfile::descend`].
 impl FromIterator<QrClass> for QrProfile {
     #[expect(
         clippy::renamed_function_params,
@@ -422,6 +437,7 @@ impl QrClassification {
 }
 
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
+/// It carries no class and is distinct from a root $x$ of a set polynomial.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

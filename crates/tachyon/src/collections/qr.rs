@@ -1,14 +1,15 @@
 //! # Quadratic-residue classification
 //!
 //! A value $x$ takes the residue side at a discriminant $R$ iff $x + R$ is a
-//! square or zero, and the non-residue side otherwise. A root $y$ attests
-//! its class by $y^2 = m \cdot (x + R)$, with class multiplier $m = 1$ on
+//! square or zero, and the non-residue side otherwise. A class root $r$
+//! attests its class by $r^2 = m \cdot (x + R)$, with multiplier $m = 1$ on
 //! the residue side and $m = c$ on the other, for a fixed non-residue $c$.
 //!
 //! ## Class decomposition
 //!
-//! Let $q$ be one side's set polynomial and $u$ interpolate its class roots
-//! $y_i$. The class decomposition satisfies
+//! Let $q_0$ and $q_1$ be the non-residue and residue set polynomials.
+//! For one side's set polynomial $q$, the interpolant satisfies
+//! $u(x_i) = r_i$ with $r_i^2 = m \cdot (x_i + R)$. The decomposition satisfies
 //!
 //! $$
 //!   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
@@ -51,8 +52,8 @@ pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
 /// side takes $u = 1$ and an all-zero side takes $u = q$, so neither
 /// polynomial is zero.
 ///
-/// Returns `None` when two abscissas coincide or a point $(x, y)$ satisfies
-/// $y^2 \neq m \cdot (x + R)$.
+/// Returns `None` when two abscissas coincide or a point $(x, r)$ satisfies
+/// $r^2 \neq m \cdot (x + R)$.
 #[must_use]
 #[expect(
     clippy::expect_used,

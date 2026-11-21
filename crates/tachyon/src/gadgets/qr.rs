@@ -81,11 +81,13 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// `path` is the value's class at each of the 32 depths, its path.
     /// `roots` gives the class root witnessing each step of the path.
     ///
-    /// At each discriminant $d_i$ of the progression from `first_discriminant`,
-    /// the witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$
-    /// and the fixed non-residue $c$, which fixes the side; a zero $s$
-    /// cannot claim the non-residue side. The depth mask must be a prefix
-    /// of `depth` ones, and the selected sides must pack to `bits`.
+    /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
+    /// with $R_j = R_0 + j$ from `first_discriminant` and multiplier
+    /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
+    /// non-residue is $c$. Unlike descent, which checks the sibling's class,
+    /// this check uses the queried class itself. A zero shifted value cannot
+    /// claim the non-residue class. The mask $e_j$ must be a prefix of
+    /// `depth` ones, and the selected classes must pack to `bits`.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
