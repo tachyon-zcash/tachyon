@@ -31,20 +31,82 @@ use crate::{
     value,
 };
 
-/// Non-empty proven action content with no fee in its lineage.
+/// One or more proven actions at one anchor, with no fee.
 ///
-/// The output polynomials are the action-digest and tachygram sets. Each leaf
-/// step ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
-/// and enforces them against their roots at a Fiat-Shamir challenge.
-/// The action set is enforced against the action the step derives,
-/// the tachygram set against the pair bound on the left bind header.
-/// [`ActionMerge`] enforces each output set as the product of its inputs.
+/// The polynomials are the actions' digest set and tachygram set.
+/// [`FeeFuse`] turns an `Actions` into a [`Stamp`].
 ///
-/// `anchor` is a free witness at [`OutputAction`]. At [`SpendAction`] it comes
-/// from the left [`SpendHeader`]. At [`ActionMerge`] the step requires
-/// `left.anchor == right.anchor`. At [`ActionLift`] the step checks that
-/// `anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member, and moves
-/// it to the span's `anchor_end`.
+/// # Injectivity
+///
+/// [`OutputAction`], [`SpendAction`], [`ActionMerge`] and [`ActionLift`]
+/// output this header. A verified `Actions` asserts that its prover knows a
+/// multiset of one or more leaves, each with a digest $d_i$ and a tachygram
+/// pair $t_i, t'_i$, for which its [`ActionSetPoly`] is
+///
+/// $$
+///   A(X) = \prod_i (X - d_i)
+/// $$
+///
+/// and its [`TachygramSetPoly`] is
+///
+/// $$
+///   T(X) = \prod_i (X - t_i)(X - t'_i)
+/// $$
+///
+/// Each leaf is an output leaf or a spend leaf.
+///
+/// An *output leaf* names a verified [`OutputHeader`] with fields `cm`, `pad`
+/// and `cv`, and an element $\theta$.
+///
+/// - $\alpha$ is the [output randomizer](poseidon::alpha_output) of $\theta$
+///   and `cm`, read as an integer, and $0 < \alpha < 2^{254}$.
+/// - $\mathsf{rk} = \[\alpha\]\mathcal{G}$.
+/// - $d$ is the [action digest](poseidon::action_digest) of `cv`, $\mathsf{rk}$
+///   and the pair of `cm` and `pad`. The pair is the leaf's tachygrams.
+///
+/// A *spend leaf* names a verified [`SpendHeader`] with fields `cm`,
+/// `nf_current`, `nf_next`, `anchor`, `pk` and `cv`, a point $\mathsf{ak}$
+/// and elements $\mathsf{nk}$ and $\theta$.
+///
+/// - `pk` is the [payment key](poseidon::payment_key) of $\mathsf{ak}$ and
+///   $\mathsf{nk}$.
+/// - $\alpha$ is the [spend randomizer](poseidon::alpha_spend) of $\theta$ and
+///   `cm`, read as an integer, and $\alpha < 2^{254}$.
+/// - $\mathsf{rk} = \mathsf{ak} + \[\alpha\]\mathcal{G}$.
+/// - $d$ is the action digest of `cv`, $\mathsf{rk}$ and the pair of
+///   `nf_current` and `nf_next`. The pair is the leaf's tachygrams.
+/// - A [stamp chain](Anchor#chains-in-a-step) leads from the spend header's
+///   `anchor` to this header's `anchor`.
+///
+/// Each field and polynomial determines what it stands for.
+///
+/// - `anchor` stands for a pool history. A stamp chain leads to it from the
+///   anchor at which each spend leaf's note is shown spendable, and the chain's
+///   last anchor determines every link ([`Anchor`]). The assertion says nothing
+///   of `anchor` for an output leaf.
+/// - $A$ stands for the leaves. It is the [set
+///   polynomial](crate::collections::multiset) of their digests, so it
+///   determines the digests with their multiplicities. An [action
+///   digest](ActionDigest) determines `cv`, $\mathsf{rk}$ and the pair. An
+///   output's pair is a note commitment and a padding tachygram, and a spend's
+///   pair is two nullifiers. Those three digests have different tags, so an
+///   action digest determines which kind of leaf it is.
+/// - $T$ stands for the leaves' tachygrams. It is the set polynomial of the
+///   pairs that the roots of $A$ determine, so $A$ determines $T$.
+///
+/// A leaf's digest determines the following of its note.
+///
+/// - In an output leaf the pair determines `cm`, and `cm` determines the note.
+///   $\mathsf{rk}$ determines $\alpha$, because $\alpha$ is below the order of
+///   $\mathcal{G}$, and $\alpha$ determines $\theta$ and `cm`.
+/// - In a spend leaf the pair determines the master key and the epoch
+///   ([`SpendHeader`]), and `cv` determines the value. They do not determine
+///   `cm`. `cm` determines `pk` and with it $\mathsf{ak}$. For that
+///   $\mathsf{ak}$, $\mathsf{rk}$ determines $\alpha$, and $\alpha$ determines
+///   $\theta$ and `cm`. Two spend leaves with one digest and one $\mathsf{ak}$
+///   therefore spend one note.
+///
+/// `Data` is the anchor and encodes as that element.
 #[derive(Debug)]
 pub struct Actions;
 
@@ -72,20 +134,60 @@ impl Header<Fp> for Actions {
     }
 }
 
-/// Header for one or more fee-bearing lineages.
+/// Proven actions and fees at one anchor.
 ///
 /// The polynomials are an [`ActionSetPoly`] and a [`TachygramSetPoly`].
-/// `tachygram_set_bridge` holds the bridge hash of the [`TachygramSetPoly`].
-/// [`StampMerge`] enforces both output sets as input products.
+/// `tachygram_set_bridge` holds a bridge hash of the [`TachygramSetPoly`]'s
+/// accumulator.
 ///
-/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
-/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
+/// # Injectivity
 ///
-/// `anchor` is a free witness at [`FeeSeed`]. At [`FeeFuse`] it comes from
-/// the left [`Actions`]. At [`StampMerge`] the step requires
-/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
-/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
-/// and moves it to the span's `anchor_end`.
+/// [`FeeFuse`], [`FeeSeed`], [`StampMerge`], [`StampLift`] and
+/// [`StampUnmerge`] output this header. A verified `Stamp` asserts what a
+/// verified [`Actions`] asserts, with three differences.
+///
+/// - The multiset of leaves may be empty. $A$ and $T$ are then the constant
+///   one.
+/// - A leaf may be a fee leaf, which has one tachygram and one factor in $T$.
+/// - `tachygram_set_bridge` is a bridge hash of the accumulator of $T$.
+///
+/// A *fee leaf* is a note $(\mathsf{rcm}, \mathsf{pk}, m, \psi)$ and an
+/// integer $f$ that the prover knows.
+///
+/// - $0 \leq f \leq m \leq$ `MAX_MONEY`.
+/// - $\mathsf{cv}_\mathsf{feemax}$ is the note's [max fee
+///   commitment](gadgets::note::Note::cv_feemax).
+/// - $\mathsf{cm}_\mathsf{chg}$ is the [note
+///   commitment](poseidon::note_commitment) of $(\mathsf{rcm}, \mathsf{pk}, m -
+///   f, \psi)$ and is nonzero. It is the leaf's tachygram.
+/// - $d$ is the [fee digest](poseidon::fee_digest) of
+///   $\mathsf{cv}_\mathsf{feemax}$, $f$ and $\mathsf{cm}_\mathsf{chg}$.
+///
+/// The assertion does not say that a fee leaf is present. [`StampUnmerge`]
+/// removes leaves and can remove every one. No step relies on a fee change
+/// being nonzero.
+///
+/// Each field and polynomial determines what it stands for.
+///
+/// - `anchor` stands for a pool history, as in [`Actions`]. The assertion says
+///   nothing of it for a fee leaf.
+/// - `tachygram_set_bridge` stands for $T$. A [bridge hash](TachygramSetBridge)
+///   determines its accumulator, and the accumulator determines its polynomial.
+///   Each step that outputs a `Stamp` writes the two wires Ragu gives it for
+///   its own last output slot, which holds $T$. One accumulator has many bridge
+///   hashes. No step reads this field.
+/// - $A$ stands for the leaves, as in [`Actions`]. A fee digest has its own
+///   tag, so a digest also determines whether its leaf is a fee leaf. A fee
+///   digest determines $\mathsf{cv}_\mathsf{feemax}$, $f$ and
+///   $\mathsf{cm}_\mathsf{chg}$. $\mathsf{cm}_\mathsf{chg}$ determines
+///   $\mathsf{rcm}$, $\mathsf{pk}$, $m - f$ and $\psi$, so the digest
+///   determines the note and the fee.
+/// - $T$ stands for the leaves' tachygrams, as in [`Actions`], with one root
+///   for each fee leaf. $A$ determines $T$.
+///
+/// `Data` encodes as `anchor` and the two affine coordinates of the bridge
+/// hash. A point other than the identity is its coordinates and the identity
+/// has no encoding, so distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -151,11 +253,38 @@ impl Header<Fp> for Stamp {
 /// action key `rk`, and enforces the one-action set plus the two-element
 /// tachygram set `{cm, pad}`.
 ///
-/// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
-/// `rk` planned over one note matches another only through a preimage.
-///
 /// Three permutations (`alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
+///
+/// # Soundness
+///
+/// The left input is a verified [`OutputHeader`]. Its `cm`, `pad` and `cv`
+/// are fixed before the challenge, and so is the staged digest.
+///
+/// - $\alpha$ is the output of the [`alpha_output`](poseidon::alpha_output)
+///   circuit on a wire $\theta$ with no other constraint and the header's `cm`
+///   wire.
+/// - $\alpha$ is decomposed into 254 bits, its only decomposition, and
+///   [`G_BASE`](struct@fixed_base::G_BASE) multiplied by them gives
+///   $\mathsf{rk}$. An $\alpha$ that is zero or at least $2^{254}$ has no
+///   assignment.
+/// - $d$ is the output of the action digest circuit on the header's `cv`, on
+///   $\mathsf{rk}$ and on the header's `cm` and `pad` wires. It is held equal
+///   to the staged digest.
+///
+/// These are an output leaf's equations. The circuit equates the action
+/// set's opening at $\zeta$ with $\zeta - d$, and the tachygram set's opening
+/// with $(\zeta - \mathsf{cm})(\zeta - \mathsf{pad})$. Both polynomials are
+/// committed before $\zeta$, and $d$, `cm` and `pad` are fixed before it. By
+/// the [check at the challenge](super#checks-at-the-challenge), $A$ is
+/// $X - d$ and $T$ is $(X - \mathsf{cm})(X - \mathsf{pad})$, which is what
+/// [`Actions`] asserts of one output leaf.
+///
+/// $\theta$ is not fixed before $\zeta$. The leaf says only that some
+/// $\theta$ gives the staged digest.
+///
+/// The output's `anchor` is a wire with no constraint. The assertion's stamp
+/// chain is about spend leaves, and this step outputs none.
 #[derive(Debug)]
 pub struct OutputAction;
 
@@ -270,13 +399,45 @@ impl Step<Pasta> for OutputAction {
 /// the two-element tachygram set `{nf_current, nf_next}` (the pair `SpendBind`
 /// derived from the master key).
 ///
-/// `pk = payment_key(ak, nk)` is the only thing tying `ak` to the note.
-/// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
-/// `rk` planned over one note matches another only through a preimage.
-///
 /// Four permutations (`pk`, `alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set
 /// polynomials.
+///
+/// # Soundness
+///
+/// The left input is a verified [`SpendHeader`]. Its fields are fixed before
+/// the challenge, and so is the staged digest.
+///
+/// - $\mathsf{ak}$ is allocated as a point, which enforces the curve equation,
+///   and $\mathsf{nk}$ is a wire with no other constraint. The output of the
+///   payment key circuit on them is held equal to the header's `pk` wire. `pk`
+///   determines $\mathsf{ak}$ and $\mathsf{nk}$, so they are the keys of the
+///   note's [`NoteSecret`](super::delegation::NoteSecret).
+/// - $\alpha$ is the output of the [`alpha_spend`](poseidon::alpha_spend)
+///   circuit on a wire $\theta$ with no other constraint and the header's `cm`
+///   wire. It is decomposed into 254 bits, its only decomposition, and an
+///   $\alpha$ of at least $2^{254}$ has no assignment.
+/// - $\mathsf{rk}$ is [`G_BASE`](struct@fixed_base::G_BASE) multiplied by those
+///   bits and added to $\mathsf{ak}$. The addition has [cases without an
+///   assignment](fixed_base#cases-without-an-assignment), which exclude at most
+///   five values of $\alpha$ for one $\mathsf{ak}$.
+/// - $d$ is the output of the action digest circuit on the header's `cv`, on
+///   $\mathsf{rk}$ and on the header's `nf_current` and `nf_next` wires. It is
+///   held equal to the staged digest.
+///
+/// These are a spend leaf's equations. The circuit equates the action set's
+/// opening at $\zeta$ with $\zeta - d$, and the tachygram set's opening with
+/// the product of $\zeta$ less each nullifier. Both polynomials are committed
+/// before $\zeta$, and $d$ and the two nullifiers are fixed before it. By the
+/// [check at the challenge](super#checks-at-the-challenge), $A$ is $X - d$
+/// and $T$ is the set polynomial of the nullifier pair, which is what
+/// [`Actions`] asserts of one spend leaf.
+///
+/// $\theta$, $\mathsf{ak}$ and $\mathsf{nk}$ are not fixed before $\zeta$.
+/// The leaf says only that some values give the staged digest.
+///
+/// The output's `anchor` is the header's `anchor` wire, so the leaf's stamp
+/// chain has no links.
 #[derive(Debug)]
 pub struct SpendAction;
 
@@ -405,6 +566,14 @@ impl Step<Pasta> for SpendAction {
 ///
 /// Opens both inputs' action and tachygram sets and both products at one
 /// challenge.
+///
+/// # Soundness
+///
+/// Both inputs are verified [`Stamp`]s. The argument is [`ActionMerge`]'s,
+/// for leaves that may be fee leaves and multisets that may be empty.
+///
+/// The output's `tachygram_set_bridge` is the two wires Ragu gives the step
+/// for its last output slot, which holds the product $T$.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -495,6 +664,22 @@ impl Step<Pasta> for StampMerge {
 ///
 /// Opens both inputs' action and tachygram sets and both products at one
 /// challenge.
+///
+/// # Soundness
+///
+/// Both inputs are verified [`Actions`]. The circuit equates the output
+/// action set's opening at $\zeta$ with the product of the two inputs'
+/// openings, and does the same for the tachygram sets. All six polynomials
+/// are fixed before $\zeta$, so by the
+/// [check at the challenge](super#checks-at-the-challenge) each output
+/// polynomial is the product of the two input polynomials. A product of set
+/// polynomials is the set polynomial of the multiset sum
+/// ([multiset](crate::collections::multiset)). The output's leaves are the
+/// left input's leaves together with the right input's.
+///
+/// The circuit holds the two `anchor` wires equal and outputs the left one.
+/// Each spend leaf's stamp chain ends at its input's anchor, which is the
+/// output's.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -568,11 +753,11 @@ impl Step<Pasta> for ActionMerge {
 
 /// Advance a stamp's anchor to the end of an [`AnchorSpan`].
 ///
-/// The stamp's `anchor` must be the span's `anchor_start` or one of its
-/// members:
+/// The stamp's `anchor` $a$ must be the span's `anchor_start` $s$ or one of
+/// its members:
 ///
 /// $$
-///   M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0
+///   M(a) \cdot (a - s) = 0
 /// $$
 ///
 /// The output anchor is always `anchor_end`, because the members polynomial
@@ -583,7 +768,12 @@ impl Step<Pasta> for ActionMerge {
 ///
 /// # Soundness
 ///
-/// The span's member polynomial $M$ is bound by the right input proof.
+/// The left input is a verified [`Stamp`] and the right input a verified
+/// [`AnchorSpan`]. The argument is [`ActionLift`]'s, for leaves that may be
+/// fee leaves and a multiset that may be empty.
+///
+/// The output's `tachygram_set_bridge` is the two wires Ragu gives the step
+/// for its last output slot, which holds the left input's $T$.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -674,6 +864,25 @@ impl Step<Pasta> for StampLift {
 /// members.
 ///
 /// Opens the span members and both input and output action and tachygram sets.
+///
+/// # Soundness
+///
+/// The left input is a verified [`Actions`] and the right input a verified
+/// [`AnchorSpan`]. The circuit equates each output set's opening at $\zeta$
+/// with the left set's opening. All four polynomials are fixed before
+/// $\zeta$, so by the [check at the challenge](super#checks-at-the-challenge)
+/// the output holds the left input's polynomials and its leaves.
+///
+/// The circuit opens the span's members polynomial $M$ at the left `anchor`
+/// wire and holds the product of that opening and `anchor - anchor_start` to
+/// zero. The opening is the value of $M$ at that point, so `anchor` is
+/// `anchor_start` or a root of $M$. The span asserts a stamp chain from
+/// `anchor_start` to `anchor_end`, and one from each root of $M$ to
+/// `anchor_end`.
+///
+/// The output's anchor is the span's `anchor_end` wire. A spend leaf's stamp
+/// chain to the left anchor, followed by the span's chain from there, is a
+/// stamp chain to the output's anchor.
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -750,6 +959,41 @@ impl Step<Pasta> for ActionLift {
 ///
 /// Opens both input and output sets. The fee note and fee are fixed before
 /// the challenge.
+///
+/// # Soundness
+///
+/// The left input is a verified [`Actions`]. The note's `pk`, `psi` and `rcm`
+/// wires, its value and the fee are each held equal to a staged value, so
+/// all five are fixed before the challenge.
+///
+/// - The value $m$ is `MAX_MONEY` less the integer of 51 `slack` bits held at
+///   most `MAX_MONEY` ([`from_slack`](gadgets::value::Positive::from_slack)).
+///   It is an integer in `0..=MAX_MONEY`, and it determines the `slack` bits.
+/// - [`split`](gadgets::value::Positive::split) makes the fee $f$ and the
+///   change $m - f$ integers in `0..=m`.
+/// - $\mathsf{cv}_\mathsf{feemax}$ is the note's [max fee
+///   commitment](gadgets::note::Note::cv_feemax), computed from the same
+///   `slack` bits.
+/// - $\mathsf{cm}_\mathsf{chg}$ is the output of the note commitment circuit on
+///   the note's `rcm`, `pk` and `psi` wires and the change. It is held nonzero.
+/// - $d$ is the output of the fee digest circuit on
+///   $\mathsf{cv}_\mathsf{feemax}$, the fee and $\mathsf{cm}_\mathsf{chg}$.
+///
+/// These are a fee leaf's equations. $d$ and $\mathsf{cm}_\mathsf{chg}$ are
+/// computed from the five staged values alone, so both are fixed before
+/// $\zeta$.
+///
+/// The circuit equates the output action set's opening at $\zeta$ with the
+/// left opening times $\zeta - d$, and the output tachygram set's opening
+/// with the left opening times $\zeta - \mathsf{cm}_\mathsf{chg}$. All four
+/// polynomials are fixed before $\zeta$. By the
+/// [check at the challenge](super#checks-at-the-challenge) the output
+/// polynomials are the left input's times the fee leaf's factors, and the
+/// output's leaves are the left input's leaves and the fee leaf.
+///
+/// The output's `anchor` is the left `anchor` wire, where each spend leaf's
+/// stamp chain ends. Its `tachygram_set_bridge` is the two wires Ragu gives
+/// the step for its last output slot, which holds $T$.
 ///
 /// # Caller contract
 ///
@@ -909,6 +1153,35 @@ impl Step<Pasta> for FeeFuse {
 /// Proves a zero-action bundle's zero fee.
 ///
 /// Opens both singleton sets. The fee note is fixed before the challenge.
+///
+/// # Soundness
+///
+/// The step reads no input. The note's `pk`, `psi` and `rcm` wires are each
+/// held equal to a staged value, its value wire is held to zero, and the fee
+/// is the constant zero.
+///
+/// - $\mathsf{cv}_\mathsf{feemax}$ is the note's [max fee
+///   commitment](gadgets::note::Note::cv_feemax_zero) at value zero.
+/// - $\mathsf{cm}_\mathsf{chg}$ is the output of the note commitment circuit on
+///   the note's own four wires, because the change $m - f$ is zero as the value
+///   is. It is held nonzero.
+/// - $d$ is the output of the fee digest circuit on
+///   $\mathsf{cv}_\mathsf{feemax}$, the constant zero and
+///   $\mathsf{cm}_\mathsf{chg}$.
+///
+/// These are a fee leaf's equations with $m = f = 0$. $d$ and
+/// $\mathsf{cm}_\mathsf{chg}$ are computed from the three staged values and
+/// constants, so both are fixed before $\zeta$.
+///
+/// The circuit equates the action set's opening at $\zeta$ with $\zeta - d$
+/// and the tachygram set's opening with $\zeta - \mathsf{cm}_\mathsf{chg}$.
+/// Both polynomials are committed before $\zeta$. By the
+/// [check at the challenge](super#checks-at-the-challenge) they are the two
+/// factors of one fee leaf.
+///
+/// The output's `anchor` is a wire with no constraint, and the stamp has no
+/// spend leaf. Its `tachygram_set_bridge` is the two wires Ragu gives the
+/// step for its last output slot, which holds $T$.
 #[derive(Debug)]
 pub struct FeeSeed;
 
@@ -1044,34 +1317,43 @@ impl Step<Pasta> for FeeSeed {
 
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
 ///
-/// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
-/// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its
-/// tachygram polynomial is the product over exactly those leaves'
-/// tachygrams. The output is leaf-generated over the dividend's leaf
-/// multiset minus the divisor's, at the shared anchor.
+/// The left input is the dividend and the right input the divisor. The
+/// output holds the dividend's leaves less the divisor's.
 ///
 /// # Soundness
 ///
-/// The quotient is witnessed but not free. Each product relation opens the
-/// dividend, divisor and quotient slots at the framework's challenge, so
-/// $\mathsf{divisor} \cdot \mathsf{quotient} = \mathsf{dividend}$ holds as a
-/// polynomial identity in each column.
+/// Both inputs are verified [`Stamp`]s. The circuit equates the dividend
+/// action set's opening at $\zeta$ with the product of the divisor's and the
+/// output's openings, and does the same for the tachygram sets. All six
+/// polynomials are fixed before $\zeta$. By the
+/// [check at the challenge](super#checks-at-the-challenge) the divisor's
+/// polynomial times the output's is the dividend's, for both sets.
 ///
-/// Both columns are products of linear factors, so unique factorization in
-/// $\mathbb{F}_p\[X\]$ places the divisor's digest multiset inside the
-/// dividend's. Repeated roots subtract by multiplicity. Each action digest
-/// absorbs its tachygram pair's sum and product, which fix the pair as a
-/// multiset, and each fee digest absorbs its fee change. By Poseidon
-/// collision resistance a digest determines its tachygrams, and the tachygram
-/// quotient is exactly the removed leaves' tachygrams.
+/// The dividend's and the divisor's action polynomials are set polynomials
+/// of leaf digests. A polynomial that divides a set polynomial is a scalar
+/// times the set polynomial of a sub-multiset
+/// ([multiset](crate::collections::multiset)). The divisor's digests are
+/// therefore among the dividend's, with multiplicity. The output's action
+/// polynomial is the quotient, which is the set polynomial of the digests
+/// that remain.
 ///
-/// This quotient argument rests on the product check at a challenge fixed
-/// after every set commitment, the commitments' binding, and collision
-/// resistance of the domain-separated action and fee digests.
+/// Pair each divisor leaf with a dividend leaf of the same digest. A digest
+/// determines its leaf's tachygrams, so paired leaves have the same factor in
+/// $T$. The divisor's tachygram polynomial is the product of the paired
+/// factors, and the output's is the product of the unpaired dividend leaves'
+/// factors.
 ///
-/// Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in
-/// hand, and merging in a complement first lets division remove any leaf
-/// multiset the stamps in hand combine to express.
+/// The unpaired dividend leaves are the output's leaves. The circuit holds
+/// the two `anchor` wires equal and outputs the left one, where each of
+/// those leaves' stamp chains ends. When every dividend leaf is paired, the
+/// output has no leaf and both its polynomials are the constant one.
+///
+/// A divisor need not be a stamp that was merged into the dividend. Any
+/// verified `Stamp` at the same anchor whose digests are among the dividend's
+/// divides it.
+///
+/// The output's `tachygram_set_bridge` is the two wires Ragu gives the step
+/// for its last output slot, which holds the output's $T$.
 ///
 /// Six online polynomials open once each at one shared challenge.
 #[derive(Debug)]

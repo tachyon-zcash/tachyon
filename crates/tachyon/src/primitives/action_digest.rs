@@ -12,10 +12,20 @@ use crate::{
 
 /// Poseidon digest of an action's `cv`, `rk` and unordered tachygram pair.
 ///
-/// Each action produces one digest, which serves as a root in the
-/// accumulator polynomial. Multiple actions are accumulated via
-/// polynomial commitment, not on this type. A fee digest
-/// $d_\mathsf{fee}$ joins the same action set.
+/// Each action produces one digest, which is a root of a stamp's
+/// [`ActionSetPoly`](super::ActionSetPoly). A fee digest $d_\mathsf{fee}$
+/// joins the same action set.
+///
+/// # Injectivity
+///
+/// The type holds any field element. A value that [`new`](Self::new) returns
+/// is an [action digest](poseidon::action_digest), and one that
+/// [`fee::Descriptor::digest`](crate::fee::Descriptor::digest) returns is a
+/// [fee digest](poseidon::fee_digest). The two functions have different
+/// tags, so a digest determines which of the two it is and what it absorbed.
+/// An action digest determines `cv`, `rk` and the unordered pair. A fee
+/// digest determines the max fee commitment, the fee and the fee change
+/// commitment.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
 

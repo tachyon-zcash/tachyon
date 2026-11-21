@@ -21,12 +21,46 @@ use crate::{
     value,
 };
 
-/// Header binding an output's tachygram pair and value to one note
+/// An output's tachygram pair and value commitment, derived from one note
 /// (wallet-only).
 ///
 /// Carries the note commitment `cm`, the padding tachygram `pad`, and the
-/// value commitment `cv`, all derived from the same note. `rk` is produced
-/// downstream at [`OutputAction`](super::stamp::OutputAction).
+/// value commitment `cv`. `rk` is produced downstream at
+/// [`OutputAction`](super::stamp::OutputAction), which reads all three
+/// fields.
+///
+/// # Injectivity
+///
+/// [`OutputBind`] outputs this header. A verified `OutputHeader` asserts that
+/// its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ and an
+/// integer $r$ for which
+///
+/// - $v$ is an integer in `0..=MAX_MONEY`,
+/// - `cm` is the [note commitment](crate::digest::poseidon::note_commitment) of
+///   the note and is nonzero,
+/// - `pad` is the [padding tachygram](crate::digest::poseidon::pad_tachygram)
+///   of the same note and is nonzero,
+/// - `cv` is $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ with $0 < r < 2^{254}$.
+///
+/// The assertion does not make $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a
+/// payment key. [`NoteSeed`](super::delegation::NoteSeed) holds both for a
+/// note that is spent. No step relies on `cm` or `pad` being nonzero.
+///
+/// Each field determines what it stands for.
+///
+/// - `cm` stands for the note. A note commitment determines the note's four
+///   fields.
+/// - `pad` stands for the same note. It determines the same four fields under
+///   its own tag, so `cm` and `pad` determine each other.
+/// - `cv` stands for the note's value, negated. It is a [value
+///   commitment](fixed_base#value-commitments), so it determines its opening,
+///   and the opening's value is $-v$ for the $v$ that `cm` and `pad` absorb.
+///
+/// Both slots are padding. `OutputBind` opens neither.
+///
+/// `Data` encodes as `cm`, `pad` and the two affine coordinates of `cv`. A
+/// point other than the identity is its coordinates and the identity has no
+/// encoding, so distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -72,6 +106,26 @@ impl Header<Fp> for OutputHeader {
 /// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
 /// Two permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
+///
+/// # Soundness
+///
+/// The step reads no input and no challenge. Its constraints relate wires of
+/// its own, and the output header is built from those wires.
+///
+/// - The value is the [amount](gadgets::value::Positive::from_bits) that 51 bit
+///   wires encode, held at most `MAX_MONEY`.
+/// - `cm` and `pad` are the outputs of the two digest circuits on one `rcm`
+///   wire, one `pk` wire, the value and one `psi` wire. Both outputs are held
+///   nonzero.
+/// - The blind is 254 bit wires with no other constraint.
+///   [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them gives the blind
+///   point, and a zero blind has no assignment.
+/// - `cv` is [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) multiplied by the
+///   value's 51 bit wires, added to the blind point. The committed value is
+///   therefore the one both digests absorb.
+///
+/// These are the equations [`OutputHeader`] asserts. `rcm`, `pk` and `psi`
+/// carry no other constraint.
 #[derive(Debug)]
 pub struct OutputBind;
 

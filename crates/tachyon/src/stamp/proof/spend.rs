@@ -24,14 +24,54 @@ use crate::{
     value,
 };
 
-/// Header binding a spend to its lineage note, epoch nullifier pair and value
-/// commitment.
+/// A spend's note, epoch nullifier pair, pool anchor, payment key and value
+/// commitment (wallet-only).
 ///
 /// Carries the note commitment `cm`, the lineage's nullifier and its
 /// neighbour `(nf_current, nf_next)` derived from the note's master key, the
 /// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
+///
+/// # Injectivity
+///
+/// [`SpendBind`] outputs this header. A verified `SpendHeader` asserts that,
+/// for one epoch $e$ below `EPOCH_MAX`,
+///
+/// - a verified [`NoteSpendable`] carries `cm`, $e$ and `anchor`,
+/// - a verified [`NoteSecret`] carries `cm` and `pk`, with a value $v$ and a
+///   master key $\mathsf{mk}$,
+/// - `nf_current` and `nf_next` are the
+///   [nullifiers](crate::digest::poseidon::nullifier_group) of $\mathsf{mk}$ at
+///   $e$ and at $e + 1$, and both are nonzero,
+/// - `cv` is $\[v\]\mathcal{V} + \[r\]\mathcal{R}$ for an integer $r$ that its
+///   prover knows, with $0 < r < 2^{254}$.
+///
+/// No step relies on the nullifiers being nonzero.
+///
+/// Each field determines what it stands for.
+///
+/// - `cm` stands for the spent note. It determines the note's four fields, and
+///   with them $\mathsf{mk}$ ([`NoteSecret`]).
+/// - `nf_current` and `nf_next` stand for the note's spend at epoch $e$. A
+///   nullifier determines its master key and its epoch, so the pair determines
+///   $e$, which is not a field. `cm` and $e$ determine the pair. The pair does
+///   not determine `cm`, because notes that share $\psi$ and $\mathsf{nk}$
+///   share $\mathsf{mk}$.
+/// - `anchor` stands for the pool history at which [`NoteSpendable`] shows the
+///   note spendable.
+/// - `pk` stands for the note's owner. `cm` determines it, and it determines
+///   $\mathsf{ak}$ and $\mathsf{nk}$.
+/// - `cv` stands for the note's value. It is a [value
+///   commitment](fixed_base#value-commitments), so it determines its opening,
+///   and the opening's value is the $v$ that `cm` determines.
+///
+/// Both slots are padding. `SpendBind` opens neither.
+///
+/// `Data` encodes as the five elements `cm`, `nf_current`, `nf_next`,
+/// `anchor` and `pk`, then the two affine coordinates of `cv`. A point other
+/// than the identity is its coordinates and the identity has no encoding, so
+/// distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -110,12 +150,29 @@ impl Header<Fp> for SpendHeader {
 ///
 /// # Soundness
 ///
-/// [`NoteSeed`](super::delegation::NoteSeed) proves that the input master key,
-/// commitment and note belong together. The spendable proof supplies the epoch;
-/// the circuit checks that it and its successor are in range, and selects each
-/// nullifier by the epoch's constrained low bits. The nullifier pair,
-/// payment key and value all come from these proved inputs. Only the value
-/// commitment's blinding scalar `rcv` is freely chosen.
+/// The left input is a verified [`NoteSpendable`] and the right input a
+/// verified [`NoteSecret`]. The circuit holds their `cm` wires equal. The
+/// secret's value, `pk` and `mk` are then those of the note the lineage
+/// follows, because `cm` determines all three.
+///
+/// [`EpochIndex::next`](crate::gadgets::epoch::EpochIndex::next) range-checks
+/// the lineage's epoch wire $e$ and the wire $e + 1$. The sum does not wrap,
+/// and $e$ is below `EPOCH_MAX`.
+/// [`derive_nullifier`](crate::gadgets::master::NoteMasterKey::derive_nullifier)
+/// on the secret's `mk` wire returns the nullifier of that key at $e$ and
+/// then at $e + 1$. Both results are held nonzero.
+///
+/// The blind is 254 bit wires with no other constraint.
+/// [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them gives the blind
+/// point, and a zero blind has no assignment. `cv` is
+/// [`V_BASE`](struct@fixed_base::V_BASE) multiplied by the 51-bit
+/// decomposition of the secret's value wire, added to the blind point. The
+/// value wire is an amount because every circuit that encodes a `NoteSecret`
+/// range-checks it, so the bits are its only decomposition.
+///
+/// The step reads no challenge. The output's `cm` and `anchor` are the
+/// lineage's wires and its `pk` is the secret's. These are the equations
+/// [`SpendHeader`] asserts.
 ///
 /// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
