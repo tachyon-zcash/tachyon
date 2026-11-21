@@ -33,10 +33,11 @@ pub struct NfSeqCommit(EqAffine);
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
 ///
-/// A member is a nullifier indexed by its epoch. The polynomial determines
-/// the multiset of its members, by the
+/// A member is a nullifier indexed by its epoch. A product of member
+/// encodings determines the multiset of its members, by the
 /// [indexed multiset](crate::collections::indexed_multiset)'s Injectivity
-/// section.
+/// section. The type itself holds any polynomial. A header that carries one
+/// says which product it is.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 

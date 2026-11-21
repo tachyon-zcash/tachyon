@@ -32,12 +32,13 @@ use crate::{
 
 /// A note's commitment, its opening and its master key (wallet-only).
 ///
-/// [`NullifierDerive`] reads `mk` and [`SpendBind`](super::spend::SpendBind)
-/// reads `mk`, the value and `pk`.
+/// [`NullifierDerive`] reads `cm` and `mk`.
+/// [`SpendBind`](super::spend::SpendBind) reads `cm`, `mk`, the value and
+/// `pk`.
 ///
 /// # Injectivity
 ///
-/// Only [`NoteSeed`] outputs this header. A verified `NoteSecret` asserts that
+/// [`NoteSeed`] outputs this header. A verified `NoteSecret` asserts that
 /// its prover knows a point $\mathsf{ak}$ and an element $\mathsf{nk}$ for
 /// which
 ///
@@ -47,6 +48,8 @@ use crate::{
 ///   $\mathsf{nk}$,
 /// - `cm` is the [note commitment](poseidon::note_commitment) of `note`,
 /// - `note.rcm` is nonzero and `note.value` is an integer in `0..=MAX_MONEY`.
+///
+/// No step relies on `note.rcm` being nonzero.
 ///
 /// Each field determines what it stands for.
 ///
@@ -62,8 +65,9 @@ use crate::{
 ///   `mk`.
 ///
 /// `mk` does not determine `cm`. Two notes with one $\psi$ and one
-/// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their values
-/// and `rcm`. Steps that join two headers of a note compare `cm`.
+/// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their
+/// $\mathsf{ak}$, values and `rcm`. Steps that join two headers of a note
+/// compare `cm`.
 ///
 /// `Data` encodes as the six elements `(cm, rcm, pk, value, psi, mk)`. The
 /// native `value` is an integer at most `MAX_MONEY` and the other five are
@@ -136,15 +140,16 @@ impl Header<Fp> for NoteSecret {
 ///
 /// - `cm` stands for the note whose nullifiers these are. `cm` determines
 ///   $\mathsf{mk}$, and $\mathsf{mk}$ and $e$ determine $\mathsf{nf}_e$.
-/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Each
-///   producer range-checks them, so an equation between two epochs holds over
+/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Every
+///   circuit that encodes this header range-checks both, whether it reads the
+///   header or outputs it. An equation between two epochs therefore holds over
 ///   the integers, and the range holds the epochs from the first to the second
 ///   and no others.
 /// - The three fields determine $S$. $S$ has one factor for each epoch of the
-///   range and no other factor. An epoch is within the encoding's index bound,
-///   so the factors are irreducible and pairwise different, $S$ determines the
-///   tuples $(e, \mathsf{nf}_e)$, and a polynomial that divides $S$ is a scalar
-///   times the factors of some of those epochs.
+///   range and no other factor. Each factor is irreducible. Epochs are within
+///   the encoding's index bound, so different epochs give different factors.
+///   $S$ therefore determines the tuples $(e, \mathsf{nf}_e)$, and a polynomial
+///   that divides $S$ is a scalar times the factors of some of those epochs.
 ///
 /// The second slot is padding. No producer opens it.
 ///
@@ -213,7 +218,8 @@ impl Header<Fp> for NoteNullifiers {
 ///   The identity has no assignment.
 /// - `pk`, `mk` and `cm` are the outputs of the three digest circuits on
 ///   $(\mathsf{ak}, \mathsf{nk})$, on $(\psi, \mathsf{nk})$ and on the four
-///   note fields. One $\mathsf{nk}$ wire and one $\psi$ wire feed all of them.
+///   note fields. One $\mathsf{nk}$ wire feeds `pk` and `mk`. One $\psi$ wire
+///   feeds `mk` and `cm`, and the `pk` wire feeds `cm`.
 ///
 /// These are the equations [`NoteSecret`] asserts. The step does not show that
 /// `cm` was ever published.

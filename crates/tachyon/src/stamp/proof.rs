@@ -31,23 +31,41 @@
 //! - A step states, under **Soundness**, why its constraints make the output
 //!   header's assertion follow from the input headers' assertions.
 //!
-//! An assertion is about the values in one header and the polynomials in its
-//! slots. It says nothing about the published chain. The Proof Tree chapter
-//! of the book joins the assertions to the consensus rules.
+//! An assertion is about the fields of one header, the polynomials in its
+//! slots, and the other verified PCDs it names. It says nothing about the
+//! published chain. The Proof Tree chapter of the book joins the assertions
+//! to the consensus rules.
+//!
+//! A value *determines* a thing when two different things for one value give
+//! a Poseidon collision or a discrete-log relation that the assumptions below
+//! say nobody can produce.
 //!
 //! ## Assumptions
 //!
-//! - **Recursion.** A PCD that verifies was built by a tree of registered
-//!   steps, and every circuit in the tree is satisfied. Each input a step reads
+//! - **Recursion.** Ragu is an argument of knowledge. Whoever produces a PCD
+//!   that verifies can also produce the tree of steps that built it, with every
+//!   step's wires, and every circuit in the tree is satisfied. This is what
+//!   "its prover knows" means in a header's assertion. Each input a step reads
 //!   is a verified PCD of the header the step declares. A value a step opens is
 //!   the value of the polynomial that the step producing that slot committed.
 //!   An output slot a step does not open holds the constant one. A header
 //!   reaches a step or a verifier as [`HEADER_SIZE`] elements that end in its
 //!   suffix, and no two headers share a suffix.
-//! - **Poseidon.** No two distinct triples of tag, absorbed elements and
-//!   squeeze position are known that give the same element. No absorbed
-//!   elements are known that give zero, or that give an element drawn at
-//!   random.
+//!
+//!   The tree holds the steps registered in [`new_application`] and two of
+//!   Ragu's own. The bootstrap step outputs the unit header. Rerandomization
+//!   reads a PCD of any header and outputs that header with the same fields,
+//!   and it holds each output polynomial equal to the input's at its
+//!   challenge. A header's documentation names the registered steps that
+//!   output it, and rerandomization preserves every assertion they establish.
+//!   This application registers no decompression step.
+//! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
+//!   triples of tag, absorbed elements of that number and squeeze position are
+//!   known that give the same element. For every tag and position, no absorbed
+//!   elements are known that give zero, and given an element drawn at random
+//!   none can be found that give it (preimage resistance).
+//!   [`Anchor`](crate::primitives::Anchor) uses the zero case and
+//!   [`AnchorSpanSeed`](pool::AnchorSpanSeed) the random one.
 //! - **Commitments.** No discrete-log relation is known among the generators of
 //!   either curve. An accumulator is the sum $\sum_j c_j G_j$ of fixed host
 //!   generators weighted by a polynomial's coefficients, without a blinding
@@ -57,6 +75,9 @@
 //!   accumulator. One accumulator has many bridge hashes.
 //!   [`bridge_hash`](crate::bridge_hash) computes the one an honest prover
 //!   uses.
+//! - **Challenge.** Ragu squeezes a step's challenge from a transcript and
+//!   models that hash as a random oracle. The challenge is then uniform and
+//!   independent of everything the transcript absorbed before it.
 //!
 //! ## Checks at the challenge
 //!
@@ -70,10 +91,12 @@
 //!
 //! A step that equates two expressions in openings at $\zeta$ equates two
 //! polynomials at a random point. When every polynomial and coefficient in
-//! them is fixed before $\zeta$, the two polynomials are equal, except with
-//! probability at most $2^{14}/p$ for the degrees a product of two slots
-//! reaches. Each step names the values its identities read and says why each
-//! is fixed.
+//! them is fixed before $\zeta$, the two polynomials are equal, unless
+//! $\zeta$ is a root of their difference. A product of two slots has degree
+//! below $2^{14}$, so one attempt at one step meets a root with probability
+//! below $2^{14}/p$, and the bound adds over the steps of a tree and over a
+//! prover's attempts. Each step names the values its identities read and says
+//! why each is fixed.
 //!
 //! An opening at any other point is the committed polynomial's value at that
 //! point. A zero opening shows that the point is a root.

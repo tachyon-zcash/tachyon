@@ -12,7 +12,8 @@
 //! adds each block of four absorbed elements into the rate and permutes, and
 //! a last block of fewer than four is added with zeros in the missing
 //! positions. The first squeeze reads rate element zero of the final state,
-//! and a later squeeze reads the next rate element of the same state.
+//! and each of the next three reads the next rate element of the same state.
+//! No function here squeezes more than four.
 //!
 //! The sponge does not record how many elements it absorbed, so an input and
 //! the same input followed by zeros give one digest. Each tag here belongs to
@@ -23,7 +24,9 @@
 //!
 //! Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
 //! then determines its function and every element that function absorbed.
-//! Each function below says what its absorbed elements determine in turn.
+//! Where an absorbed element is built from something else, such as a point,
+//! an integer, an unordered pair or an epoch, the function says below what
+//! the digest determines in turn.
 
 use core::array;
 
@@ -208,6 +211,9 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 ///     \psi,\ \mathsf{nk}
 ///   )
 /// $$
+///
+/// A master key determines $\psi$ and $\mathsf{nk}$. It absorbs nothing else
+/// of the note, so notes that share both share the master key.
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     let [hash] = emulated(NULLIFIER_MASTER_DOMAIN, [psi, nk]);

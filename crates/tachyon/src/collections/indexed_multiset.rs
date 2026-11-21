@@ -14,9 +14,9 @@
 //!
 //! where $c = 2$ is selected because it is the smallest cubic non-residue.
 //!
-//! Since $(m + (i+1)X)^3 \neq c$ the encoding is irreducible. In full, $Y^3 -
-//! c$ is a cubic without a root, and $F_{i,m}$ is its image under the
-//! substitution $Y = m + (i+1)X$, which is invertible because $i + 1 \neq 0$.
+//! $Y^3 - c$ is a cubic without a root, so it is irreducible. $F_{i,m}$ is its
+//! image under the substitution $Y = m + (i+1)X$, which is invertible because
+//! $i + 1 \neq 0$. The encoding is therefore irreducible.
 //!
 //! ## Product composition
 //!
@@ -60,12 +60,13 @@
 //! $F_{i_1,m_1} = \lambda F_{i_2,m_2}$ then
 //!
 //! $$
-//!   (m_1 + (i_1+1)X)^3 - \lambda \cdot (m_2 + (i_2+1)X)^3 = c \cdot (1 -
-//! \lambda) $$
+//!   (m_1 + (i_1+1)X)^3 - \lambda \cdot (m_2 + (i_2+1)X)^3
+//! $$
 //!
-//! is constant. Its derivative vanishes, which makes the two linear terms
-//! proportional, and a multiple of a cube is constant only when it is zero.
-//! Hence $\lambda = 1$ and the two cubes are equal.
+//! equals $c \cdot (1 - \lambda)$ and is constant. Its derivative vanishes,
+//! which makes the two linear terms proportional, and a multiple of a cube is
+//! constant only when it is zero. Hence $\lambda = 1$ and the two cubes are
+//! equal.
 //!
 //! Single-member encodings collide when the ratio of their linear terms is a
 //! cube root of unity.
@@ -73,14 +74,14 @@
 //! Precisely, if
 //!
 //! $$
-//!   \frac{m_1 + (i_1+1)X}{m_2 + (i_2+1)X} \in \{1, \zeta, \zeta^2\}
+//!   \frac{m_1 + (i_1+1)X}{m_2 + (i_2+1)X} \in \{1, \omega, \omega^2\}
 //! $$
 //!
 //! then $(i_1, m_1)$ cannot be distinguished from $(i_2, m_2)$ in an
 //! indexed multiset.
 //!
 //! Specifying $i_\mathsf{max} + 1$ below $\lfloor\sqrt{p/3}\rfloor$ is
-//! sufficient to prevent collisions. A ratio $\omega \neq 1$ satisfies
+//! sufficient to prevent collisions. A ratio $\omega$ other than one satisfies
 //! $\omega^2 + \omega + 1 = 0$, which for $a_k = i_k + 1$ and $a_1 = \omega
 //! a_2$ gives $a_1^2 + a_1 a_2 + a_2^2 \equiv 0 \pmod p$. For integers $1 \leq
 //! a_k < \sqrt{p/3}$ the left side is positive and below $p$.
