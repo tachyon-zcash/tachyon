@@ -20,7 +20,7 @@ $$
 
 where $e$ is the containing block's epoch and $B$ is the bridge hash of the stamp's tachygram accumulator[^tachygrams]. The bridge hash is a Pallas point that commits to the two coordinates of the accumulator, and the fold absorbs its affine coordinates. An accumulator has many bridge hashes. Consensus absorbs the one an honest prover computes, which has no blinding term.
 
-[^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
+[^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the tachygram accumulator whose bridge hash this absorbs, and the rule that full validation recomputes the accumulator from the published tachygrams.
 
 ## Epoch boundary
 

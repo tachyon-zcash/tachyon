@@ -216,7 +216,7 @@ This section states the consensus rules the proof system relies on, and derives 
 ### Assumptions
 
 - **Recursion.** The proof system is an argument of knowledge. Whoever produces a PCD that verifies can produce the tree of steps that built it, with every step's wires, and every circuit in the tree is satisfied.
-- **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct inputs are known that give the same output, across tags and across the squeeze positions of one sponge. `AnchorSpanSeed` alone needs more, and its argument models the stamp absorption digest as a random function.
+- **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct triples of tag, absorbed elements and squeeze position are known that give the same element. `AnchorSpanSeed` alone needs more, and its argument models the stamp absorption digest as a random function.
 - **Commitments.** No discrete-log relation is known among the commitment generators, the two value commitment generators included. An accumulator then determines its polynomial, a bridge hash determines its accumulator, and a value commitment determines its opening.
 - **Challenge.** A step's challenge is modelled as a random oracle output over everything committed before it.
 
