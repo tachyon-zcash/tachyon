@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
+        QrDiscriminant, QrProfile, QrSplit, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -272,8 +272,10 @@ pub fn qr_intake_merge(
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
 ///
-/// Splits `members` at the intake's discriminant. The step checks the
-/// factorization against the intake.
+/// `split` must be the intake's members split at
+/// `discriminant.at(profile.depth)`. This helper does not check the members or
+/// discriminant. The step checks the factors' product against the intake and
+/// requires a non-unit intake opening.
 ///
 /// # Panics
 ///
@@ -281,19 +283,19 @@ pub fn qr_intake_merge(
 /// of `WalletRank`.
 #[must_use]
 pub fn qr_intake_split(
-    (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
-    members: &[Tachygram],
+    (_left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
+    split: &QrSplit,
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
-    let at_depth = discriminant.at(profile.depth);
-    at_depth.split(members).factors()
+    split.factors()
 }
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
-/// Splits `members` at the intake's discriminant and prepares hints for
-/// the sibling of `child`. [`QrSideDescend`] checks the resulting identity
-/// against the committed sibling.
+/// `split` must be the intake's members split at
+/// `discriminant.at(profile.depth)`. This helper prepares hints for the sibling
+/// of `child` without checking the members or discriminant. [`QrSideSelect`]
+/// checks the exceptional opening; [`QrSideDescend`] checks the sibling
+/// identity at the header's own discriminant plus depth.
 ///
 /// # Panics
 ///
@@ -301,18 +303,15 @@ pub fn qr_intake_split(
 /// decomposition capacity of `WalletRank`.
 #[must_use]
 pub fn qr_side_select(
-    (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
-    members: &[Tachygram],
+    (_left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
+    split: &QrSplit,
     child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
-    let at_depth = discriminant.at(profile.depth);
     #[expect(
         clippy::expect_used,
         reason = "repeated or over-rank sibling members are invalid input"
     )]
-    at_depth
-        .split(members)
+    split
         .class_decomposition(child.sibling())
         .expect("sibling has a repeated member or exceeds WalletRank")
 }

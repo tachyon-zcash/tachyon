@@ -167,7 +167,7 @@ impl QrIntakeEntry {
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                split.factors(),
+                witness::qr_intake_split((*self.pcd.data(), ()), &split),
                 self.pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -177,7 +177,7 @@ impl QrIntakeEntry {
                 .fuse(
                     rng,
                     qr::QrSideSelect,
-                    split.class_decomposition(child.sibling()).unwrap(),
+                    witness::qr_side_select((*sides.data(), ()), &split, child),
                     sides.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
