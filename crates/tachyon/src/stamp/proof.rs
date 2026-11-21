@@ -48,9 +48,11 @@
 //!   "its prover knows" means in a header's assertion. Each input a step reads
 //!   is a verified PCD of the header the step declares. A value a step opens is
 //!   the value of the polynomial that the step producing that slot committed.
-//!   An output slot a step does not open holds the constant one. A header
-//!   reaches a step or a verifier as [`HEADER_SIZE`] elements that end in its
-//!   suffix, and no two headers share a suffix.
+//!   An output slot a step does not open holds the constant one. The two bridge
+//!   hash wires a step reads are a bridge hash of the accumulator in that
+//!   step's last output slot. No step circuit constrains them, and Ragu holds
+//!   them to the slot. A header reaches a step or a verifier as [`HEADER_SIZE`]
+//!   elements that end in its suffix, and no two headers share a suffix.
 //!
 //!   The tree holds the steps registered in [`new_application`] and two of
 //!   Ragu's own. The bootstrap step outputs the unit header. Rerandomization
