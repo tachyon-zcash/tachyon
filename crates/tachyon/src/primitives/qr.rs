@@ -105,32 +105,31 @@ impl QrDiscriminant {
     #[must_use]
     pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
         (0..depth)
-            .map(|level| self.at(level).classify(value).class())
+            .map(|level| {
+                let (class, _root) = self.at(level).classify(value);
+                class
+            })
             .collect()
     }
 
-    /// The checked classifications of `value` at this discriminant and each
-    /// of the next [`QrProfile::MAX_DEPTH`] minus one discriminants.
-    ///
-    /// Here the path is the run of discriminants beginning at $R$ and ending
-    /// at $R + 31$. Entry `j` is the complete solution at `self.at(j)`.
-    /// The value's class path is only the [`QrClassification::class`]
-    /// projection of these classifications.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a profile index cannot fit in a `u32`, which cannot occur
-    /// for the fixed profile width.
+    /// `value`'s class path from this discriminant, with the class root at
+    /// each step.
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "array indices are below QrProfile::MAX_DEPTH"
-    )]
-    pub fn classify_path(self, value: Tachygram) -> [QrClassification; QrProfile::MAX_DEPTH] {
-        array::from_fn(|level| {
-            self.at(u32::try_from(level).expect("profile index fits in u32"))
-                .classify(value)
-        })
+    pub(crate) fn classify_path(
+        self,
+        value: Tachygram,
+    ) -> (
+        [QrClass; QrProfile::MAX_DEPTH],
+        [QrClassRoot; QrProfile::MAX_DEPTH],
+    ) {
+        let mut discriminant = self;
+        let mut path = [QrClass::NonResidue; QrProfile::MAX_DEPTH];
+        let mut roots = [QrClassRoot(Fp::ZERO); QrProfile::MAX_DEPTH];
+        for (class, root) in path.iter_mut().zip(&mut roots) {
+            (*class, *root) = discriminant.classify(value);
+            discriminant = discriminant.at(1);
+        }
+        (path, roots)
     }
 
     /// Classify `value` at this discriminant by solving the class equation
@@ -140,7 +139,7 @@ impl QrDiscriminant {
     ///
     /// Panics if neither branch has a root, which is impossible in this field.
     #[must_use]
-    pub fn classify(self, value: Tachygram) -> QrClassification {
+    pub fn classify(self, value: Tachygram) -> (QrClass, QrClassRoot) {
         let shifted = Fp::from(value) + self.0;
         let (class, root) = shifted.sqrt().map_or_else(
             || {
@@ -156,12 +155,7 @@ impl QrDiscriminant {
             },
             |root| (QrClass::Residue, root),
         );
-        QrClassification {
-            value,
-            discriminant: self,
-            class,
-            root: QrClassRoot(root),
-        }
+        (class, QrClassRoot(root))
     }
 
     /// Split `members` at this discriminant into `(non_residue, residue)`.
@@ -179,13 +173,12 @@ impl QrDiscriminant {
             points: Vec::new(),
         };
         for &member in members {
-            let classification = self.classify(member);
-            let side = match classification.class() {
+            let (class, root) = self.classify(member);
+            let side = match class {
                 QrClass::NonResidue => &mut non_residue,
                 QrClass::Residue => &mut residue,
             };
-            side.points
-                .push((classification.value(), classification.root()));
+            side.points.push((member, root));
         }
         (non_residue, residue)
     }
@@ -397,42 +390,6 @@ impl FromIterator<QrClass> for QrProfile {
     )]
     fn from_iter<I: IntoIterator<Item = QrClass>>(classes: I) -> Self {
         classes.into_iter().fold(Self::ROOT, Self::descend)
-    }
-}
-
-/// A value classified at a discriminant: a solution of the equation
-/// $r^2 = m \cdot (x + R)$, with $x + R \neq 0$ when $m = c$.
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct QrClassification {
-    value: Tachygram,
-    discriminant: QrDiscriminant,
-    class: QrClass,
-    root: QrClassRoot,
-}
-
-impl QrClassification {
-    /// The classified value $x$.
-    #[must_use]
-    pub const fn value(&self) -> Tachygram {
-        self.value
-    }
-
-    /// The discriminant $R$.
-    #[must_use]
-    pub const fn discriminant(&self) -> QrDiscriminant {
-        self.discriminant
-    }
-
-    /// The class of the value at this discriminant.
-    #[must_use]
-    pub const fn class(&self) -> QrClass {
-        self.class
-    }
-
-    /// The root $r$.
-    #[must_use]
-    pub const fn root(&self) -> QrClassRoot {
-        self.root
     }
 }
 

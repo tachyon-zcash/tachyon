@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrClassification, QrDiscriminant, QrProfile, QrSide, Tachygram, TachygramSetPoly, effect,
+        QrDiscriminant, QrProfile, QrSide, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -379,11 +379,11 @@ pub fn qr_unspent_init(
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_start, _anchor_next, first_discriminant, profile, _) = left;
-    let classifications = first_discriminant.classify_path(value);
+    let (path, roots) = first_discriminant.classify_path(value);
     (
         value,
-        classifications.each_ref().map(QrClassification::class),
-        classifications.each_ref().map(QrClassification::root),
+        path,
+        roots,
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
@@ -432,11 +432,11 @@ pub fn unspent_lift(
     let (_, epoch_start, ..) = left;
     let (epoch, _anchor_start, _anchor_next, first_discriminant, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
-    let classifications = first_discriminant.classify_path(value);
+    let (path, roots) = first_discriminant.classify_path(value);
     (
         value,
-        classifications.each_ref().map(QrClassification::class),
-        classifications.each_ref().map(QrClassification::root),
+        path,
+        roots,
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
