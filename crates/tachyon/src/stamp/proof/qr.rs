@@ -1147,15 +1147,13 @@ impl Step<Pasta> for QrSideDescend {
     }
 }
 
-/// One profile's members over a whole epoch.
+/// One profile's members between two boundary digests of one epoch.
 ///
 /// The bucket covers `[anchor_start, anchor_next)`. Both bounds are boundary
-/// digests. The range excludes `anchor_next`. In a bucket that a
-/// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
-/// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
-/// computes `anchor_next` from the intake's `anchor_end`.
-/// The [`TachygramSetPoly`] holds the contents. `contents_hash` is its
-/// certified bridge hash.
+/// digests. The range excludes `anchor_next`. [`QrBucketSeal`] computes
+/// `anchor_next` from the intake's `anchor_end`. The [`TachygramSetPoly`]
+/// holds the contents, and `contents_hash` is a bridge hash of its
+/// accumulator.
 ///
 /// # Injectivity
 ///

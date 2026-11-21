@@ -212,7 +212,7 @@ This section states the consensus rules the proof system relies on, and derives 
 ### Assumptions
 
 - **Recursion.** The proof system is an argument of knowledge. Whoever produces a PCD that verifies can produce the tree of steps that built it, with every step's wires, and every circuit in the tree is satisfied.
-- **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct inputs are known that give the same output, across tags and across the squeeze positions of one sponge. No input is known that gives zero, and none can be found that gives an element drawn at random.
+- **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct inputs are known that give the same output, across tags and across the squeeze positions of one sponge. `AnchorSpanSeed` alone needs more, and its argument models the stamp absorption digest as a random function.
 - **Commitments.** No discrete-log relation is known among the commitment generators. An accumulator then determines its polynomial, and a bridge hash determines its accumulator.
 - **Challenge.** A step's challenge is modelled as a random oracle output over everything committed before it.
 
@@ -255,7 +255,7 @@ An `AnchorSpan` asserts a chain of stamp absorptions from `anchor_start` to `anc
 `ActionLift` and `StampLift` accept an anchor that is `anchor_start` or a root of the members polynomial, and output `anchor_end`.
 A lifted anchor is therefore joined to the anchor it replaced by a chain of stamp absorptions.
 
-`OutputAction` and `FeeSeed` take their anchor from the prover. `SpendAction` takes it from the spendable through `SpendBind`. The merges hold two anchors equal.
+`OutputAction` and `FeeSeed` take their anchor from the prover. `SpendAction` takes it from the spendable through `SpendBind`, and `FeeFuse` copies it. The merges and `StampUnmerge` hold two anchors equal.
 When the anchor of a stamp is canonical, every anchor that a spend in the stamp was lifted from is a canonical anchor of the same epoch, at or before the stamp's anchor.
 
 ### A sealed bucket covers its epoch

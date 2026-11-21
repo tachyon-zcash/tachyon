@@ -238,7 +238,7 @@ Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hSta
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
-Consensus carries `Compressed` proofs in [block items](./aggregation.md), and `Uncompressed` proofs use the same `tachyonBundleState == 0x01` layout while stamps are [merged](./aggregation.md#merge-to-produce-aggregate) and [lifted](./proof-tree.md#stamp-anchor) outside consensus.
+Consensus carries `Compressed` proofs in [block items](./aggregation.md), and `Uncompressed` proofs use the same `tachyonBundleState == 0x01` layout while stamps are [merged](./aggregation.md#merge-to-produce-aggregate) and [lifted](./proof-tree.md#anchor-segments) outside consensus.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. Its definition is the same for both proof forms.
 
