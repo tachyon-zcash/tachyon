@@ -375,7 +375,7 @@ Four children reach one hash through two steps, since a step takes at most two p
 
 $$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
 
-Both, like `EvidenceTreeLeafPair`, require their inputs to agree on `epoch`, `anchor_start`, `anchor_next` and `first_discriminant`, and emit those inputs' values.
+Both, like `EvidenceTreeLeafPair`, require their inputs to agree on `epoch`, `anchor_start`, `anchor_next` and `discriminant`, and emit those inputs' values.
 Those four are checked equal because a consumer reads the extent off the tree: a tree spanning further than its leaves do would let a bucket's exclusion cover folds the bucket never held.
 Every bucket of one network shares all four.
 `EvidenceTreeCap` raises a root by repeating it into all four slots. A builder runs it until the depth is a multiple of the levels one descent covers.
@@ -648,12 +648,12 @@ flowchart LR
 | ------ | ------ | ----- |
 | AnchorSpan | (anchor_start, anchor_end) | AnchorSetPoly: members; TachygramSetPoly |
 | Summary | (epoch, anchor_prev, anchor_end) | TachygramSetPoly `ACCUMULATED`: accumulated set; TachygramSetPoly `LAST_STAMP` |
-| QrIntake | (epoch, anchor_prev, anchor_end, `first_discriminant` $R_0$, profile) | TachygramSetPoly: contents |
-| QrIntakeSides | (epoch, anchor_prev, anchor_end, `first_discriminant` $R_0$, profile, non_residue_hash) | TachygramSetPoly `RESIDUE`: residue; TachygramSetPoly `NON_RESIDUE`: non_residue |
+| QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | TachygramSetPoly: contents |
+| QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | TachygramSetPoly `RESIDUE`: residue; TachygramSetPoly `NON_RESIDUE`: non_residue |
 | QrSideSelection | QrIntakeSides fields, including non_residue_hash | QrInterpolantPoly: interpolant; QrQuotientPoly: quotient |
-| QrBucket | (epoch, anchor_start, anchor_next, `first_discriminant` $R_0$, profile, contents_hash) | TachygramSetPoly: contents |
-| EvidenceTree | (epoch, anchor_start, anchor_next, `first_discriminant` $R_0$, root) | — |
-| EvidenceTreePair | (epoch, anchor_start, anchor_next, `first_discriminant` $R_0$, first, second) | — |
+| QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents_hash) | TachygramSetPoly: contents |
+| EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) | — |
+| EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) | — |
 | ArbitraryUnspent | (anchor_start, epoch_start, epoch_next, anchor_next) | NfSeqPoly: elapsed |
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) | NfSeqPoly |
 | NoteSecret | (cm, note, mk) | — |
@@ -677,9 +677,9 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | SummarySeed | — | — | anchor_prev, epoch, stamp | Summary |
 | SummaryAdvance | Summary | — | extended, stamp | Summary |
 | QrSpendableInit | NoteUnspent | QrBucket | — | NoteSpendable |
-| QrSummaryIntake | Summary | — | `first_discriminant` $R_0$ | QrIntake |
-| QrStampIntakeSeed | — | — | anchor_prev, epoch, `first_discriminant` $R_0$, stamp | QrIntake |
-| QrEmptyIntakeSeed | — | — | anchor, epoch, `first_discriminant` $R_0$ | QrIntake |
+| QrSummaryIntake | Summary | — | discriminant | QrIntake |
+| QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp | QrIntake |
+| QrEmptyIntakeSeed | — | — | anchor, epoch, discriminant | QrIntake |
 | QrIntakeMerge | QrIntake | QrIntake | merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | non_residue, residue | QrIntakeSides |
 | QrSideSelect | QrIntakeSides | — | interpolant, quotient | QrSideSelection |

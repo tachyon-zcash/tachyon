@@ -160,12 +160,12 @@ fn the_profile_reaches_the_maximum_depth() {
 
 #[test]
 fn classifications_at_each_depth_solve_the_class_equation() {
-    let first_discriminant = QrDiscriminant::from(Fp::from(11));
-    let exceptional = -Fp::from(first_discriminant.at(1));
+    let discriminant = QrDiscriminant::from(Fp::from(11));
+    let exceptional = -Fp::from(discriminant.at(1));
     for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9), exceptional] {
-        let (path, roots) = first_discriminant.classify_path(value.into());
+        let (path, roots) = discriminant.classify_path(value.into());
         for (depth, (class, root)) in (0..).zip(path.into_iter().zip(roots)) {
-            let at_depth = first_discriminant.at(depth);
+            let at_depth = discriminant.at(depth);
             assert_eq!((class, root), at_depth.classify(value.into()));
             let shifted = value + Fp::from(at_depth);
             assert_eq!(Fp::from(root).square(), class.multiplier() * shifted);

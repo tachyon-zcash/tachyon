@@ -217,43 +217,43 @@ pub fn summary_advance(
     )
 }
 
-/// Prepare the witness for [`QrSummaryIntake`]: `(first_discriminant,)`.
+/// Prepare the witness for [`QrSummaryIntake`]: `(discriminant,)`.
 #[must_use]
 pub const fn qr_summary_intake(
     (_left, _right): (StepLeft<QrSummaryIntake>, StepRight<QrSummaryIntake>),
-    first_discriminant: QrDiscriminant,
+    discriminant: QrDiscriminant,
 ) -> StepWitness<'static, QrSummaryIntake> {
-    (first_discriminant,)
+    (discriminant,)
 }
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
-/// first_discriminant, stamp_set)`.
+/// discriminant, stamp_set)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
-    first_discriminant: QrDiscriminant,
+    discriminant: QrDiscriminant,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, QrStampIntakeSeed> {
     (
         anchor_prev,
         epoch,
-        first_discriminant,
+        discriminant,
         tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 
 /// Prepare the witness for [`QrEmptyIntakeSeed`]: `(anchor, epoch,
-/// first_discriminant)`.
+/// discriminant)`.
 #[must_use]
 pub const fn qr_empty_intake_seed(
     (_left, _right): (StepLeft<QrEmptyIntakeSeed>, StepRight<QrEmptyIntakeSeed>),
     anchor: Anchor,
     epoch: EpochIndex,
-    first_discriminant: QrDiscriminant,
+    discriminant: QrDiscriminant,
 ) -> StepWitness<'static, QrEmptyIntakeSeed> {
-    (anchor, epoch, first_discriminant)
+    (anchor, epoch, discriminant)
 }
 
 /// Prepare the witness for [`QrIntakeMerge`]: `(merged,)`.
@@ -284,8 +284,8 @@ pub fn qr_intake_split(
     (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = left;
-    let at_depth = first_discriminant.at(profile.depth);
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
+    let at_depth = discriminant.at(profile.depth);
     at_depth.split(members).factors()
 }
 
@@ -305,8 +305,8 @@ pub fn qr_side_select(
     members: &[Tachygram],
     child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
-    let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) = left;
-    let at_depth = first_discriminant.at(profile.depth);
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
+    let at_depth = discriminant.at(profile.depth);
     #[expect(
         clippy::expect_used,
         reason = "repeated or over-rank sibling members are invalid input"
@@ -353,8 +353,8 @@ pub fn qr_unspent_init(
     (left, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_start, _anchor_next, first_discriminant, profile, _) = left;
-    let (path, roots) = first_discriminant.classify_path(value);
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = left;
+    let (path, roots) = discriminant.classify_path(value);
     (
         value,
         path,
@@ -405,9 +405,9 @@ pub fn unspent_lift(
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentLift> {
     let (_, epoch_start, ..) = left;
-    let (epoch, _anchor_start, _anchor_next, first_discriminant, profile, _) = right;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
-    let (path, roots) = first_discriminant.classify_path(value);
+    let (path, roots) = discriminant.classify_path(value);
     (
         value,
         path,

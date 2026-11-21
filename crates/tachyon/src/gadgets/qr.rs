@@ -82,7 +82,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// `roots` gives the class root witnessing each step of the path.
     ///
     /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
-    /// with $R_j = R_0 + j$ from `first_discriminant` and multiplier
+    /// with $R_j = R_0 + j$ from `discriminant` and multiplier
     /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
     /// non-residue is $c$. Unlike descent, which checks the sibling's class,
     /// this check uses the queried class itself. A zero shifted value cannot
@@ -93,12 +93,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,
-        first_discriminant: &Element<'dr, D>,
+        discriminant: &Element<'dr, D>,
         path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
         roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
-        let mut shifted = value.add(dr, first_discriminant);
+        let mut shifted = value.add(dr, discriminant);
         let mut depth_acc = Element::constant(dr, Fp::ZERO);
         let mut index_acc = Element::constant(dr, Fp::ZERO);
         let mut bits_acc = Element::constant(dr, Fp::ZERO);

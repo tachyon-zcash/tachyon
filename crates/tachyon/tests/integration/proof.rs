@@ -38,12 +38,12 @@ fn detached_segment(
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> ragu::Pcd<Pasta, WalletRank, pool::ArbitraryUnspent> {
     let anchor_final_prev = Anchor::random(rng);
-    let first_discriminant = zcash_tachyon::QrDiscriminant::random(rng);
+    let discriminant = zcash_tachyon::QrDiscriminant::random(rng);
     let intake = QrIntakeEntry::empty(
         app,
         anchor_final_prev.next_epoch(epoch).unwrap(),
         epoch,
-        first_discriminant,
+        discriminant,
     );
     let bucket = intake.seal(rng, app, anchor_final_prev);
     bucket.segment(rng, app, nf)

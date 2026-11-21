@@ -40,20 +40,20 @@ pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 /// A change to `QrDiscriminant::at` or `QrDiscriminant::classify` would
 /// invalidate the two constants, and the assertions here would fail.
 pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
-    let first_discriminant = shared_discriminant();
-    let absent = Fp::from(1_915_239_271u64) - Fp::from(first_discriminant);
-    let exceptional = -Fp::from(first_discriminant) - Fp::from(31u64);
-    let companion = Fp::from(5_828_521_534u64) - Fp::from(first_discriminant);
+    let discriminant = shared_discriminant();
+    let absent = Fp::from(1_915_239_271u64) - Fp::from(discriminant);
+    let exceptional = -Fp::from(discriminant) - Fp::from(31u64);
+    let companion = Fp::from(5_828_521_534u64) - Fp::from(discriminant);
     assert_ne!(absent, exceptional);
     assert_ne!(absent, companion);
     assert_ne!(exceptional, companion);
     assert_eq!(
-        qr_profile_of(absent, first_discriminant, u32::BITS),
-        qr_profile_of(exceptional, first_discriminant, u32::BITS)
+        qr_profile_of(absent, discriminant, u32::BITS),
+        qr_profile_of(exceptional, discriminant, u32::BITS)
     );
     assert_eq!(
-        qr_profile_of(absent, first_discriminant, u32::BITS),
-        qr_profile_of(companion, first_discriminant, u32::BITS)
+        qr_profile_of(absent, discriminant, u32::BITS),
+        qr_profile_of(companion, discriminant, u32::BITS)
     );
     [absent, exceptional, companion]
 }
@@ -70,9 +70,9 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
         .derive_nullifier(EpochIndex::new(0));
     let mut rng = keyed_rng("shared discriminant", &[]);
     iter::repeat_with(|| QrDiscriminant::random(&mut rng))
-        .find(|&first_discriminant| {
-            qr_profile_of(Fp::from(note.commitment()), first_discriminant, 2)
-                != qr_profile_of(Fp::from(nf), first_discriminant, 2)
+        .find(|&discriminant| {
+            qr_profile_of(Fp::from(note.commitment()), discriminant, 2)
+                != qr_profile_of(Fp::from(nf), discriminant, 2)
         })
         .unwrap()
 }
@@ -94,19 +94,19 @@ impl QrIntakeEntry {
         app: &App<'_>,
         anchor: Anchor,
         epoch: EpochIndex,
-        first_discriminant: QrDiscriminant,
+        discriminant: QrDiscriminant,
     ) -> Self {
         static EMPTY: Proved<QrIntakeEntry> = Proved::new("qr_empty_intake");
 
         let mut key = Fp::from(anchor).to_bytes().to_vec();
         key.extend_from_slice(&u32::from(epoch).to_le_bytes());
-        key.extend_from_slice(&Fp::from(first_discriminant).to_bytes());
+        key.extend_from_slice(&Fp::from(discriminant).to_bytes());
         EMPTY.get(&key, |rng| {
             let (pcd, ()) = app
                 .seed(
                     rng,
                     qr::QrEmptyIntakeSeed,
-                    witness::qr_empty_intake_seed(((), ()), anchor, epoch, first_discriminant),
+                    witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
                 )
                 .unwrap();
             Self {
@@ -120,9 +120,9 @@ impl QrIntakeEntry {
     pub fn sealed(&self, app: &App<'_>, anchor_final_prev: Anchor) -> QrBucketEntry {
         static SEALED: Proved<QrBucketEntry> = Proved::new("qr_sealed");
 
-        let (epoch, start, end, first_discriminant, profile) = *self.pcd.data();
+        let (epoch, start, end, discriminant, profile) = *self.pcd.data();
         let mut key = u32::from(epoch).to_le_bytes().to_vec();
-        for value in [Fp::from(start), Fp::from(end), Fp::from(first_discriminant)] {
+        for value in [Fp::from(start), Fp::from(end), Fp::from(discriminant)] {
             key.extend_from_slice(&value.to_bytes());
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
@@ -161,8 +161,8 @@ impl QrIntakeEntry {
         app: &App<'_>,
         kept: [QrClass; N],
     ) -> [Self; N] {
-        let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = *self.pcd.data();
-        let split = first_discriminant.at(profile.depth).split(&self.members);
+        let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *self.pcd.data();
+        let split = discriminant.at(profile.depth).split(&self.members);
         let (sides, ()) = app
             .fuse(
                 rng,
@@ -230,10 +230,10 @@ impl QrIntakeEntry {
                 QrClass::NonResidue => (residue_factor, non_residue_factor),
                 QrClass::Residue => (non_residue_factor, residue_factor),
             };
-            let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) =
+            let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) =
                 *sides.data();
             let (sibling_members, sibling_scale) = sibling;
-            let split = first_discriminant.at(profile.depth).split(sibling_members);
+            let split = discriminant.at(profile.depth).split(sibling_members);
             assert_eq!(split.members(child).len(), 0);
             let (interpolant, quotient) = split.class_decomposition(child.sibling()).unwrap();
             let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
@@ -288,7 +288,7 @@ pub(crate) struct EvidenceLeaf {
 
 impl EvidenceLeaf {
     pub(crate) fn profile(&self) -> QrProfile {
-        let (_epoch, _anchor_start, _anchor_next, _first_discriminant, profile, _contents_hash) =
+        let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, _contents_hash) =
             self.header;
         profile
     }
@@ -305,13 +305,9 @@ impl EvidenceTreeEntry {
     fn node_key(buckets: &[&QrBucketEntry]) -> Vec<u8> {
         let mut key = u32::try_from(buckets.len()).unwrap().to_le_bytes().to_vec();
         for bucket in buckets {
-            let (epoch, start, next, first_discriminant, profile, bridge) = *bucket.pcd.data();
+            let (epoch, start, next, discriminant, profile, bridge) = *bucket.pcd.data();
             key.extend_from_slice(&u32::from(epoch).to_le_bytes());
-            for value in [
-                Fp::from(start),
-                Fp::from(next),
-                Fp::from(first_discriminant),
-            ] {
+            for value in [Fp::from(start), Fp::from(next), Fp::from(discriminant)] {
                 key.extend_from_slice(&value.to_bytes());
             }
             key.extend_from_slice(&profile.depth.to_le_bytes());
@@ -550,12 +546,8 @@ impl EvidenceTreeEntry {
     }
 }
 
-pub(crate) fn qr_profile_of(
-    value: Fp,
-    first_discriminant: QrDiscriminant,
-    depth: u32,
-) -> QrProfile {
-    let first = value + Fp::from(first_discriminant);
+pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
+    let first = value + Fp::from(discriminant);
     let bits = (0..depth).fold(0, |bits, level| {
         let shifted = first + Fp::from(u64::from(level));
         (bits << 1) | u32::from(shifted.sqrt().is_some())
