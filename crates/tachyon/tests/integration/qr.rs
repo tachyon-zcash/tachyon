@@ -328,7 +328,9 @@ fn scaled_qr_buckets_answer_as_honest_buckets() {
         .derive_note_private(note.psi)
         .derive_nullifier(epoch);
     let first_discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
-        .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
+        .find(|&candidate| {
+            qr_profile_of(cm.into(), candidate, 1) == qr_profile_of(nf.into(), candidate, 1)
+        })
         .unwrap();
     let (side, _cm_root) = first_discriminant.at(0).classify(cm);
     let other = iter::repeat_with(|| user.random_note(400))
@@ -482,7 +484,9 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
         .derive_note_private(note.psi)
         .derive_nullifier(EpochIndex::new(0));
     let first_discriminant = iter::repeat_with(|| QrDiscriminant::random(rng))
-        .find(|&candidate| candidate.profile(cm, 1) == candidate.profile(nf.into(), 1))
+        .find(|&candidate| {
+            qr_profile_of(cm.into(), candidate, 1) == qr_profile_of(nf.into(), candidate, 1)
+        })
         .unwrap();
     let (side, _cm_root) = first_discriminant.at(0).classify(cm);
     let absent = iter::repeat_with(|| Tachygram::random(rng))
@@ -1632,7 +1636,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
     let cm = Tachygram::from(PoolSim::shared_note(500).commitment());
     let nf = iter::repeat_with(|| Nullifier::from(Fp::random(|bytes| rng.fill_bytes(bytes))))
         .find(|&candidate| {
-            first_discriminant.profile(candidate.into(), 2) == first_discriminant.profile(cm, 2)
+            qr_profile_of(candidate.into(), first_discriminant, 2)
+                == qr_profile_of(cm.into(), first_discriminant, 2)
         })
         .unwrap();
     let bucket = pool.qr_bucket(
@@ -1707,7 +1712,8 @@ fn qr_unspent_init_rejects_corrupted_inputs() {
                 Tachygram::from(
                     iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
                         .find(|&value| {
-                            first_discriminant.profile(value.into(), 2) != bucket.pcd.data().4
+                            let (_, _, _, _, profile, _) = *bucket.pcd.data();
+                            qr_profile_of(value, first_discriminant, 2) != profile
                         })
                         .unwrap(),
                 ),

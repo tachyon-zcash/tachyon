@@ -48,12 +48,12 @@ pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
     assert_ne!(absent, companion);
     assert_ne!(exceptional, companion);
     assert_eq!(
-        first_discriminant.profile(absent.into(), u32::BITS),
-        first_discriminant.profile(exceptional.into(), u32::BITS)
+        qr_profile_of(absent, first_discriminant, u32::BITS),
+        qr_profile_of(exceptional, first_discriminant, u32::BITS)
     );
     assert_eq!(
-        first_discriminant.profile(absent.into(), u32::BITS),
-        first_discriminant.profile(companion.into(), u32::BITS)
+        qr_profile_of(absent, first_discriminant, u32::BITS),
+        qr_profile_of(companion, first_discriminant, u32::BITS)
     );
     [absent, exceptional, companion]
 }
@@ -71,8 +71,8 @@ pub(crate) fn shared_discriminant() -> QrDiscriminant {
     let mut rng = keyed_rng("shared discriminant", &[]);
     iter::repeat_with(|| QrDiscriminant::random(&mut rng))
         .find(|&first_discriminant| {
-            first_discriminant.profile(note.commitment().into(), 2)
-                != first_discriminant.profile(nf.into(), 2)
+            qr_profile_of(Fp::from(note.commitment()), first_discriminant, 2)
+                != qr_profile_of(Fp::from(nf), first_discriminant, 2)
         })
         .unwrap()
 }
@@ -242,7 +242,7 @@ impl QrIntakeEntry {
                 .fuse(
                     rng,
                     qr::QrSideSelect,
-                    (interpolant, QrQuotientPoly::arbitrary(scaled_quotient)),
+                    (interpolant, QrQuotientPoly::from(scaled_quotient)),
                     sides.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )

@@ -27,9 +27,7 @@ pub enum QrClass {
 }
 
 impl QrClass {
-    /// The other class at a split.
-    /// A caller routing to a child uses this to name the sibling's class,
-    /// even when that side has no members.
+    /// The other class.
     #[must_use]
     pub const fn sibling(self) -> Self {
         match self {
@@ -41,7 +39,7 @@ impl QrClass {
     /// The class multiplier $m$: one for the residue class, the fixed
     /// non-residue $c$ for the non-residue class.
     #[must_use]
-    pub const fn multiplier(self) -> Fp {
+    pub(crate) const fn multiplier(self) -> Fp {
         match self {
             Self::NonResidue => qr::QUADRATIC_NON_RESIDUE,
             Self::Residue => Fp::ONE,
@@ -94,22 +92,6 @@ impl QrDiscriminant {
     #[must_use]
     pub fn at(self, depth: u32) -> Self {
         Self(self.0 + Fp::from(u64::from(depth)))
-    }
-
-    /// The profile `value` takes through `depth` splits, the first here.
-    /// The profile starts at depth zero relative to this discriminant.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `depth` exceeds [`QrProfile::MAX_DEPTH`].
-    #[must_use]
-    pub fn profile(self, value: Tachygram, depth: u32) -> QrProfile {
-        (0..depth)
-            .map(|level| {
-                let (class, _root) = self.at(level).classify(value);
-                class
-            })
-            .collect()
     }
 
     /// `value`'s class path from this discriminant, with the class root at
@@ -259,11 +241,7 @@ impl QrSplit {
 
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
-///
-/// The library builds canonical hints and offers no raw-coefficient
-/// constructor outside `test-utils`. The steps accept any typed interpolant
-/// and quotient pair that satisfies their checks.
-#[derive(AsRef, Clone, Debug, Into)]
+#[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
 impl QrInterpolantPoly {
@@ -287,24 +265,12 @@ pub struct QrInterpolantCommit(EqAffine);
 
 /// Witness polynomial for the class decomposition quotient $h$ in
 /// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
-///
-/// The library builds canonical hints and offers no raw-coefficient
-/// constructor outside `test-utils`. The steps accept any typed interpolant
-/// and quotient pair that satisfies their checks.
-#[derive(AsRef, Clone, Debug, Into)]
+#[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
 impl QrQuotientPoly {
     /// Names this polynomial in a header that carries one.
     pub const SLOT: PolySlot<Self> = PolySlot::new();
-
-    /// Wraps an arbitrary polynomial, skipping the decomposition, to exercise
-    /// step inputs.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[must_use]
-    pub const fn arbitrary(poly: Polynomial<Fp, WalletRank>) -> Self {
-        Self(poly)
-    }
 
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
@@ -370,24 +336,6 @@ impl QrProfile {
         array::from_fn(|position| {
             u32::try_from(position).is_ok_and(|selected| selected < self.depth)
         })
-    }
-}
-
-/// The profile of a sequence of classes: [`Self::ROOT`] descended through each.
-/// A bounded prefix of a path gives the profile at that depth, for example
-/// `path.iter().copied().take(depth).collect::<QrProfile>()` for `depth` at
-/// most [`QrProfile::MAX_DEPTH`].
-///
-/// # Panics
-///
-/// A 33rd class panics in [`QrProfile::descend`].
-impl FromIterator<QrClass> for QrProfile {
-    #[expect(
-        clippy::renamed_function_params,
-        reason = "name the classes in the profile"
-    )]
-    fn from_iter<I: IntoIterator<Item = QrClass>>(classes: I) -> Self {
-        classes.into_iter().fold(Self::ROOT, Self::descend)
     }
 }
 

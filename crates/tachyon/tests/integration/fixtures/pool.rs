@@ -18,8 +18,8 @@ use zcash_tachyon::{
 use super::{
     Proved, keyed_rng,
     qr::{
-        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_triplet,
-        shared_discriminant,
+        EvidenceTreeEntry, QR_DEPTHS, QrBucketEntry, QrIntakeEntry, qr_profile_of,
+        qr_profile_triplet, shared_discriminant,
     },
     wallet::shared_sk,
 };
@@ -356,7 +356,7 @@ impl PoolSim {
         let key = Self::qr_profile_key(
             span,
             first_discriminant,
-            first_discriminant.profile(value.into(), u32::BITS),
+            qr_profile_of(value, first_discriminant, u32::BITS),
         );
         DESCENTS.get(&key, |rng| {
             let root = self.qr_intake(app, span, first_discriminant, value, QR_DEPTHS[0]);

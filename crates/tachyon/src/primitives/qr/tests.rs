@@ -109,34 +109,6 @@ fn class_decomposition_rejects_a_side_over_its_rank() {
 }
 
 #[test]
-fn profile_records_the_classes_from_the_first_discriminant() {
-    let first_discriminant = QrDiscriminant::from(Fp::from(11));
-    let value = Tachygram::from(Fp::from(3));
-    let (path, _roots) = first_discriminant.classify_path(value);
-    for depth in [0, 1, 31, 32] {
-        let first = Fp::from(value) + Fp::from(first_discriminant);
-        let bits = (0..depth).fold(0, |bits, level| {
-            let shifted = first + Fp::from(u64::from(level));
-            (bits << 1) | u32::from(shifted.sqrt().is_some())
-        });
-        let expected = QrProfile { depth, bits };
-        let prefix = path[..usize::try_from(depth).unwrap()]
-            .iter()
-            .copied()
-            .collect::<QrProfile>();
-        assert_eq!(prefix, expected);
-        assert_eq!(first_discriminant.profile(value, depth), prefix);
-    }
-}
-
-#[test]
-#[should_panic(expected = "profile has no bit left for another side")]
-fn a_profile_past_the_maximum_depth_panics() {
-    let first_discriminant = QrDiscriminant::from(Fp::from(11));
-    let _profile = first_discriminant.profile(Tachygram::from(Fp::from(3)), u32::BITS + 1);
-}
-
-#[test]
 fn discriminants_are_indexed_from_the_first() {
     let first = Fp::from(11);
     let first_discriminant = QrDiscriminant::from(first);
@@ -165,31 +137,6 @@ fn the_bits_record_the_splits_outermost_first() {
         .descend(QrClass::NonResidue)
         .descend(QrClass::NonResidue);
     assert_eq!(high.bits, 0b100);
-}
-
-#[test]
-fn collecting_classes_packs_the_path_and_its_prefixes() {
-    let path = [QrClass::NonResidue, QrClass::NonResidue, QrClass::Residue];
-    for (length, expected) in [
-        (0, QrProfile::ROOT),
-        (1, QrProfile { depth: 1, bits: 0 }),
-        (2, QrProfile { depth: 2, bits: 0 }),
-        (3, QrProfile { depth: 3, bits: 1 }),
-    ] {
-        assert_eq!(
-            path[..length].iter().copied().collect::<QrProfile>(),
-            expected
-        );
-    }
-    assert_eq!(
-        [QrClass::Residue; QrProfile::MAX_DEPTH]
-            .into_iter()
-            .collect::<QrProfile>(),
-        QrProfile {
-            depth: u32::BITS,
-            bits: u32::MAX
-        },
-    );
 }
 
 #[test]
