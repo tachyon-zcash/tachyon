@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrDiscriminant, QrProfile, QrSide, Tachygram, TachygramSetPoly, effect,
+        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -272,73 +272,48 @@ pub fn qr_intake_merge(
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
 ///
-/// The sides must be cut at the intake's discriminant, in non-residue then
-/// residue order. The step checks their factorization against the intake.
+/// Splits `members` at the intake's discriminant. The step checks the
+/// factorization against the intake.
 ///
 /// # Panics
 ///
-/// Panics if either side's discriminant differs from the intake's cut, the
-/// classes are in the wrong order, or either side's set polynomial exceeds
-/// the coefficient capacity of `WalletRank`.
+/// Panics if either side's set polynomial exceeds the coefficient capacity
+/// of `WalletRank`.
 #[must_use]
 pub fn qr_intake_split(
     (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
-    non_residue: &QrSide,
-    residue: &QrSide,
+    members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
     let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = left;
-    let discriminant = first_discriminant.at(profile.depth);
-    assert_eq!(
-        non_residue.discriminant(),
-        discriminant,
-        "non-residue side must be cut at the intake's discriminant"
-    );
-    assert_eq!(
-        residue.discriminant(),
-        discriminant,
-        "residue side must be cut at the intake's discriminant"
-    );
-    assert_eq!(
-        non_residue.class(),
-        QrClass::NonResidue,
-        "first side must be non-residue"
-    );
-    assert_eq!(
-        residue.class(),
-        QrClass::Residue,
-        "second side must be residue"
-    );
-    (non_residue.set_poly(), residue.set_poly())
+    let at_depth = first_discriminant.at(profile.depth);
+    at_depth.split(members).factors()
 }
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
-/// `sibling` is the side not descended into, cut at the intake's
-/// discriminant. [`QrSideDescend`] checks the resulting identity against the
-/// committed sibling; this helper only checks the discriminant.
+/// Splits `members` at the intake's discriminant and prepares hints for
+/// the sibling of `child`. [`QrSideDescend`] checks the resulting identity
+/// against the committed sibling.
 ///
 /// # Panics
 ///
-/// Panics if the sibling's discriminant differs from the intake's cut, a
-/// sibling member repeats, or the sibling exceeds the class decomposition
-/// capacity of `WalletRank`.
+/// Panics if a sibling member repeats or the sibling exceeds the class
+/// decomposition capacity of `WalletRank`.
 #[must_use]
 pub fn qr_side_select(
     (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
-    sibling: &QrSide,
+    members: &[Tachygram],
+    child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
     let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) = left;
-    assert_eq!(
-        sibling.discriminant(),
-        first_discriminant.at(profile.depth),
-        "sibling must be cut at the intake's discriminant"
-    );
+    let at_depth = first_discriminant.at(profile.depth);
     #[expect(
         clippy::expect_used,
         reason = "repeated or over-rank sibling members are invalid input"
     )]
-    sibling
-        .class_decomposition()
+    at_depth
+        .split(members)
+        .class_decomposition(child.sibling())
         .expect("sibling has a repeated member or exceeds WalletRank")
 }
 

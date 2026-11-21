@@ -150,8 +150,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
     let root = pool.qr_root(app, span0, first_discriminant);
     let members = root.members;
 
-    let (non_residue, _) = first_discriminant.split(&members);
-    let half = non_residue.set_poly();
+    let (half, _residue) = witness::qr_intake_split((*root.pcd.data(), ()), &members);
     let split_witness = (half.clone(), half);
     let (forged, ()) = app
         .fuse(
@@ -177,15 +176,13 @@ fn qr_intake_split_rejects_an_empty_intake() {
         epoch3,
         pool.epoch_discriminant(epoch3),
     );
-    let (_, _, _, first_discriminant, profile) = *intake.pcd.data();
-    let (non_residue, residue) = first_discriminant.at(profile.depth).split(&[]);
 
     assert_matches!(
         app
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split((*intake.pcd.data(), ()), &non_residue, &residue),
+                witness::qr_intake_split((*intake.pcd.data(), ()), &[]),
                 intake.pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -204,11 +201,6 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
     let first_discriminant = QrDiscriminant::random(rng);
     let member = Tachygram::random(rng);
     let (side, _root) = first_discriminant.at(0).classify(member);
-    let (empty_non_residue, empty_residue) = first_discriminant.split(&[]);
-    let sibling = match side {
-        QrClass::NonResidue => &empty_residue,
-        QrClass::Residue => &empty_non_residue,
-    };
 
     let (root, ()) = app
         .seed(
@@ -238,7 +230,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*sides.data(), ()), sibling),
+            witness::qr_side_select((*sides.data(), ()), &[member, member], side),
             sides.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -647,26 +639,21 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
         let (.., profile) = *intake.pcd.data();
         let depth = profile.depth;
         let exceptional = Tachygram::from(value);
-        let (non_residue_side, residue_side) = first_discriminant.at(depth).split(&intake.members);
         let (honest_sides, ()) = app
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split(
-                    (*intake.pcd.data(), ()),
-                    &non_residue_side,
-                    &residue_side,
-                ),
+                witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members),
                 intake.pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        for sibling in [&residue_side, &non_residue_side] {
+        for child in [QrClass::NonResidue, QrClass::Residue] {
             let (selection, ()) = app
                 .fuse(
                     rng,
                     qr::QrSideSelect,
-                    witness::qr_side_select((*honest_sides.data(), ()), sibling),
+                    witness::qr_side_select((*honest_sides.data(), ()), &intake.members, child),
                     honest_sides.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
@@ -696,7 +683,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             app.fuse(
                 rng,
                 qr::QrSideSelect,
-                witness::qr_side_select((*sides.data(), ()), &residue_side),
+                witness::qr_side_select((*sides.data(), ()), &intake.members, QrClass::NonResidue),
                 sides,
                 app.bootstrap_proof().clone().carry::<()>(()),
             ).err(),
@@ -728,17 +715,11 @@ fn qr_side_descend_carries_each_side_one_level_down() {
         )
         .unwrap();
     let exceptional_data = *exceptional_root.data();
-    let (exceptional_non_residue, exceptional_residue) =
-        exceptional_first_discriminant.split(&exceptional_members);
     let (exceptional_split, ()) = app
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split(
-                (*exceptional_root.data(), ()),
-                &exceptional_non_residue,
-                &exceptional_residue,
-            ),
+            witness::qr_intake_split((*exceptional_root.data(), ()), &exceptional_members),
             exceptional_root,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -754,7 +735,6 @@ fn qr_side_descend_carries_each_side_one_level_down() {
         (*root.pcd.data(), split0, root.members),
     ] {
         let (epoch, start, anchor_end, first_discriminant, _) = data;
-        let (non_residue, residue) = first_discriminant.split(&members);
 
         for class in [QrClass::Residue, QrClass::NonResidue] {
             let side_members: Vec<Tachygram> = members
@@ -765,11 +745,8 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                     member_class == class
                 })
                 .collect();
-            let sibling = match class {
-                QrClass::NonResidue => &residue,
-                QrClass::Residue => &non_residue,
-            };
-            let (interpolant, quotient) = witness::qr_side_select((*split.data(), ()), sibling);
+            let (interpolant, quotient) =
+                witness::qr_side_select((*split.data(), ()), &members, class);
             let expected_selection = *split.data();
             let expected_hints = [
                 EqAffine::from(interpolant.commit()),
@@ -832,10 +809,9 @@ fn qr_side_select_defers_hint_validation_to_descent() {
     let sides = pool.qr_split(app, span0, first_discriminant, Fp::ZERO, 0);
     let members = root.members;
 
-    let (non_residue, residue) = first_discriminant.split(&members);
-    for wrong_sibling in [&non_residue, &residue] {
-        let side = wrong_sibling.class();
-        let selection_witness = witness::qr_side_select((*sides.data(), ()), wrong_sibling);
+    for side in [QrClass::NonResidue, QrClass::Residue] {
+        let selection_witness =
+            witness::qr_side_select((*sides.data(), ()), &members, side.sibling());
         let (selection, ()) = app
             .fuse(
                 rng,
@@ -866,7 +842,7 @@ fn qr_side_descend_matches_selection_metadata() {
     let start = Anchor::random(rng);
     let first_discriminant = QrDiscriminant::random(rng);
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::random(rng));
-    let (non_residue, residue) = first_discriminant.split(&members);
+    let (non_residue, residue) = first_discriminant.split(&members).factors();
     let (root, ()) = app
         .seed(
             rng,
@@ -878,7 +854,7 @@ fn qr_side_descend_matches_selection_metadata() {
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split((*root.data(), ()), &non_residue, &residue),
+            witness::qr_intake_split((*root.data(), ()), &members),
             root.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -928,22 +904,20 @@ fn qr_side_descend_matches_selection_metadata() {
                 ),
             )
             .unwrap();
-        let (other_non_residue, other_residue) = other_first_discriminant.split(other_members);
         let (foreign_sides, ()) = app
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split(
-                    (*foreign_root.data(), ()),
-                    &other_non_residue,
-                    &other_residue,
-                ),
+                witness::qr_intake_split((*foreign_root.data(), ()), other_members),
                 foreign_root,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let selection_witness =
-            witness::qr_side_select((*foreign_sides.data(), ()), &other_residue);
+        let selection_witness = witness::qr_side_select(
+            (*foreign_sides.data(), ()),
+            other_members,
+            QrClass::NonResidue,
+        );
         let (selection, ()) = app
             .fuse(
                 rng,
@@ -968,7 +942,7 @@ fn qr_side_descend_matches_selection_metadata() {
         );
     }
     // A genuine foreign split can share all scalar metadata yet have another q0.
-    let split_witness = (residue.set_poly(), non_residue.set_poly());
+    let split_witness = (residue, non_residue);
     let (foreign_sides, ()) = app
         .fuse(
             rng,
@@ -982,7 +956,7 @@ fn qr_side_descend_matches_selection_metadata() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*foreign_sides.data(), ()), &residue),
+            witness::qr_side_select((*foreign_sides.data(), ()), &members, QrClass::NonResidue),
             foreign_sides,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1032,12 +1006,11 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .unwrap();
 
     {
-        let (full_non_residue, _) = first_discriminant.split(&members);
         let (selection, ()) = app
             .fuse(
                 rng,
                 qr::QrSideSelect,
-                witness::qr_side_select((*sides.data(), ()), &full_non_residue),
+                witness::qr_side_select((*sides.data(), ()), &members, QrClass::Residue),
                 sides.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -1059,12 +1032,15 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         .copied()
         .filter(|&member| member != smuggled)
         .collect();
-    let (_, reduced_residue) = first_discriminant.split(&members_without_smuggled);
     let (selection, ()) = app
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*sides.data(), ()), &reduced_residue),
+            witness::qr_side_select(
+                (*sides.data(), ()),
+                &members_without_smuggled,
+                QrClass::NonResidue,
+            ),
             sides.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1110,8 +1086,7 @@ fn qr_side_descend_refuses_a_full_register() {
         qr_profile_of(absent, first_discriminant, u32::BITS)
     );
 
-    let (non_residue, residue) = first_discriminant.at(profile.depth).split(&intake.members);
-    let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &non_residue, &residue);
+    let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = app
         .fuse(
             rng,
@@ -1125,7 +1100,7 @@ fn qr_side_descend_refuses_a_full_register() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*sides.data(), ()), &non_residue),
+            witness::qr_side_select((*sides.data(), ()), &intake.members, QrClass::Residue),
             sides.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1289,12 +1264,11 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
             ),
         )
         .unwrap();
-    let (non_residue, residue) = first_discriminant.split(&left_members);
     let (split, ()) = app
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split((*left.data(), ()), &non_residue, &residue),
+            witness::qr_intake_split((*left.data(), ()), &left_members),
             left,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1303,7 +1277,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .fuse(
             rng,
             qr::QrSideSelect,
-            witness::qr_side_select((*split.data(), ()), &non_residue),
+            witness::qr_side_select((*split.data(), ()), &left_members, QrClass::Residue),
             split.clone(),
             app.bootstrap_proof().clone().carry::<()>(()),
         )

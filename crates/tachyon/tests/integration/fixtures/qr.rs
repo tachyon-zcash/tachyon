@@ -162,27 +162,22 @@ impl QrIntakeEntry {
         kept: [QrClass; N],
     ) -> [Self; N] {
         let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = *self.pcd.data();
-        let (non_residue, residue) = first_discriminant.at(profile.depth).split(&self.members);
-        let witness = witness::qr_intake_split((*self.pcd.data(), ()), &non_residue, &residue);
+        let split = first_discriminant.at(profile.depth).split(&self.members);
         let (sides, ()) = app
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness,
+                split.factors(),
                 self.pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        kept.map(|class| {
-            let (child, sibling) = match class {
-                QrClass::NonResidue => (&non_residue, &residue),
-                QrClass::Residue => (&residue, &non_residue),
-            };
+        kept.map(|child| {
             let (selection, ()) = app
                 .fuse(
                     rng,
                     qr::QrSideSelect,
-                    witness::qr_side_select((*sides.data(), ()), sibling),
+                    split.class_decomposition(child.sibling()).unwrap(),
                     sides.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
@@ -191,14 +186,14 @@ impl QrIntakeEntry {
                 .fuse(
                     rng,
                     qr::QrSideDescend,
-                    witness::qr_side_descend((*sides.data(), *selection.data()), child.class()),
+                    witness::qr_side_descend((*sides.data(), *selection.data()), child),
                     sides.clone(),
                     selection,
                 )
                 .unwrap();
             Self {
                 pcd,
-                members: child.members().collect(),
+                members: split.members(child).collect(),
             }
         })
     }
@@ -238,13 +233,9 @@ impl QrIntakeEntry {
             let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) =
                 *sides.data();
             let (sibling_members, sibling_scale) = sibling;
-            let (non_residue, residue) = first_discriminant.at(profile.depth).split(sibling_members);
-            let (sibling_side, other_side) = match child.sibling() {
-                QrClass::NonResidue => (non_residue, residue),
-                QrClass::Residue => (residue, non_residue),
-            };
-            assert_eq!(other_side.members().len(), 0);
-            let (interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &sibling_side);
+            let split = first_discriminant.at(profile.depth).split(sibling_members);
+            assert_eq!(split.members(child).len(), 0);
+            let (interpolant, quotient) = split.class_decomposition(child.sibling()).unwrap();
             let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
             scaled_quotient.scale(sibling_scale.invert().unwrap());
             let (selection, ()) = app

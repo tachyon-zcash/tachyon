@@ -46,22 +46,20 @@ fn split_keeps_class_order_and_repeated_members() {
     let other_nonsquare = Tachygram::from(Fp::from(4) * qr::QUADRATIC_NON_RESIDUE + exceptional);
     let members = [square, nonsquare, zero, other_nonsquare, nonsquare, square];
 
-    let (non_residue, residue) = discriminant.split(&members);
+    let split = discriminant.split(&members);
     assert_eq!(
-        non_residue.members().collect::<Vec<_>>(),
+        split.members(QrClass::NonResidue).collect::<Vec<_>>(),
         [nonsquare, other_nonsquare, nonsquare]
     );
     assert_eq!(
-        residue.members().collect::<Vec<_>>(),
+        split.members(QrClass::Residue).collect::<Vec<_>>(),
         [square, zero, square]
     );
     for (class, side) in [
-        (QrClass::NonResidue, non_residue),
-        (QrClass::Residue, residue),
+        (QrClass::NonResidue, &split.non_residue),
+        (QrClass::Residue, &split.residue),
     ] {
-        assert_eq!(side.class(), class);
-        assert_eq!(side.discriminant(), discriminant);
-        for &(member, root) in &side.points {
+        for &(member, root) in side {
             let shifted = Fp::from(member) + Fp::from(discriminant);
             assert_eq!(Fp::from(root).square(), class.multiplier() * shifted);
             if shifted == Fp::ZERO {
@@ -77,13 +75,13 @@ fn class_decomposition_requires_distinct_members() {
     let exceptional = -Fp::from(discriminant);
     let zero = Tachygram::from(exceptional);
     let square = Tachygram::from(Fp::ONE + exceptional);
-    let (_, repeated) = discriminant.split(&[square, square]);
-    assert!(repeated.class_decomposition().is_none());
-    let (empty_non_residue, empty_residue) = discriminant.split(&[]);
-    assert!(empty_non_residue.class_decomposition().is_some());
-    assert!(empty_residue.class_decomposition().is_some());
-    let (_, exceptional_residue) = discriminant.split(&[zero]);
-    assert!(exceptional_residue.class_decomposition().is_some());
+    let repeated = discriminant.split(&[square, square]);
+    assert!(repeated.class_decomposition(QrClass::Residue).is_none());
+    let empty = discriminant.split(&[]);
+    assert!(empty.class_decomposition(QrClass::NonResidue).is_some());
+    assert!(empty.class_decomposition(QrClass::Residue).is_some());
+    let singleton = discriminant.split(&[zero]);
+    assert!(singleton.class_decomposition(QrClass::Residue).is_some());
 }
 
 #[test]
@@ -93,8 +91,7 @@ fn set_polynomial_needs_one_coefficient_more_than_the_member_count() {
     let members = (1..=u64::try_from(WalletRank::num_coeffs()).unwrap())
         .map(|root| Tachygram::from(Fp::from(root).square()))
         .collect::<Vec<_>>();
-    let (_, residue) = discriminant.split(&members);
-    let _poly = residue.set_poly();
+    let _factors = discriminant.split(&members).factors();
 }
 
 #[test]
@@ -103,8 +100,12 @@ fn class_decomposition_rejects_a_side_over_its_rank() {
     let members = (1..=u64::try_from(WalletRank::num_coeffs() + 1).unwrap())
         .map(|root| Tachygram::from(Fp::from(root).square()))
         .collect::<Vec<_>>();
-    let (_, residue) = discriminant.split(&members);
-    assert!(residue.class_decomposition().is_none());
+    assert!(
+        discriminant
+            .split(&members)
+            .class_decomposition(QrClass::Residue)
+            .is_none()
+    );
 }
 
 #[test]

@@ -158,76 +158,68 @@ impl QrDiscriminant {
         (class, QrClassRoot(root))
     }
 
-    /// Split `members` at this discriminant into `(non_residue, residue)`.
-    /// Each list retains its input order and any repeats.
+    /// Split `members` at this discriminant, retaining order and repeats
+    /// within each class.
     #[must_use]
-    pub fn split(self, members: &[Tachygram]) -> (QrSide, QrSide) {
-        let mut non_residue = QrSide {
+    pub fn split(self, members: &[Tachygram]) -> QrSplit {
+        let mut split = QrSplit {
             discriminant: self,
-            class: QrClass::NonResidue,
-            points: Vec::new(),
-        };
-        let mut residue = QrSide {
-            discriminant: self,
-            class: QrClass::Residue,
-            points: Vec::new(),
+            non_residue: Vec::new(),
+            residue: Vec::new(),
         };
         for &member in members {
             let (class, root) = self.classify(member);
             let side = match class {
-                QrClass::NonResidue => &mut non_residue,
-                QrClass::Residue => &mut residue,
+                QrClass::NonResidue => &mut split.non_residue,
+                QrClass::Residue => &mut split.residue,
             };
-            side.points.push((member, root));
+            side.push((member, root));
         }
-        (non_residue, residue)
+        split
     }
 }
 
-/// One side of a split: the classifications that share a class at one
-/// discriminant.
+/// A set split at one discriminant: its members of each class, with their
+/// class roots.
 #[derive(Debug)]
-pub struct QrSide {
+pub struct QrSplit {
     discriminant: QrDiscriminant,
-    class: QrClass,
-    points: Vec<(Tachygram, QrClassRoot)>,
+    non_residue: Vec<(Tachygram, QrClassRoot)>,
+    residue: Vec<(Tachygram, QrClassRoot)>,
 }
 
-impl QrSide {
-    /// The discriminant $R$ of this side.
-    #[must_use]
-    pub const fn discriminant(&self) -> QrDiscriminant {
-        self.discriminant
+impl QrSplit {
+    /// The members of `class`, in the order they were given.
+    /// These members form the child's set for the next split. The factors
+    /// are polynomials and do not give back the member list.
+    pub fn members(&self, class: QrClass) -> impl ExactSizeIterator<Item = Tachygram> + '_ {
+        let points = match class {
+            QrClass::NonResidue => &self.non_residue,
+            QrClass::Residue => &self.residue,
+        };
+        points.iter().map(|&(value, _root)| value)
     }
 
-    /// The class of this side.
-    #[must_use]
-    pub const fn class(&self) -> QrClass {
-        self.class
-    }
-
-    /// The side's members, in the order they were given.
-    pub fn members(&self) -> impl ExactSizeIterator<Item = Tachygram> + '_ {
-        self.points.iter().map(|&(value, _root)| value)
-    }
-
-    /// The side's set polynomial $q$.
+    /// The two sides' set polynomials, `(non_residue, residue)`.
     ///
     /// # Panics
     ///
-    /// Panics if the side has at least `WalletRank::num_coeffs()` members:
+    /// Panics if either side has at least `WalletRank::num_coeffs()` members:
     /// its monic set polynomial needs one more coefficient than members.
     #[must_use]
-    pub fn set_poly(&self) -> TachygramSetPoly {
+    pub fn factors(&self) -> (TachygramSetPoly, TachygramSetPoly) {
+        let non_residue = self.members(QrClass::NonResidue);
+        let residue = self.members(QrClass::Residue);
         assert!(
-            self.points.len() < WalletRank::num_coeffs(),
+            non_residue.len() < WalletRank::num_coeffs()
+                && residue.len() < WalletRank::num_coeffs(),
             "side's set polynomial exceeds WalletRank"
         );
-        self.members().collect()
+        (non_residue.collect(), residue.collect())
     }
 
-    /// The class decomposition $(u, h)$ of this side, with $u$ interpolating
-    /// its member and root pairs $(x, r)$.
+    /// The class decomposition $(u, h)$ of the side of `class`, with $u$
+    /// interpolating its member and root pairs $(x, r)$.
     ///
     /// $$
     /// u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
@@ -245,15 +237,21 @@ impl QrSide {
     /// The decomposition uses that polynomial as a temporary divisor and
     /// does not commit it. A committed intake cannot hold a side that large.
     #[must_use]
-    pub fn class_decomposition(&self) -> Option<(QrInterpolantPoly, QrQuotientPoly)> {
-        if self.points.len() > WalletRank::num_coeffs() {
+    pub fn class_decomposition(
+        &self,
+        class: QrClass,
+    ) -> Option<(QrInterpolantPoly, QrQuotientPoly)> {
+        let points = match class {
+            QrClass::NonResidue => &self.non_residue,
+            QrClass::Residue => &self.residue,
+        };
+        if points.len() > WalletRank::num_coeffs() {
             return None;
         }
-        let points = self
-            .points
+        let field_points = points
             .iter()
             .map(|&(value, root)| (Fp::from(value), Fp::from(root)));
-        qr::decomposition(points, self.class.multiplier(), self.discriminant.into()).map(
+        qr::decomposition(field_points, class.multiplier(), self.discriminant.into()).map(
             |(interpolant, quotient)| (QrInterpolantPoly(interpolant), QrQuotientPoly(quotient)),
         )
     }
