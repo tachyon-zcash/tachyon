@@ -29,25 +29,28 @@
 //!
 //! A value commitment is $\mathsf{cv} = \[v\]\mathcal{V} +
 //! \[r\]\mathcal{R}$ for a value $v$ and a blind $r$. A step computes the
-//! blind point $\[r\]\mathcal{R}$ with [`struct@R_BASE`] and adds the value
-//! term to it with `mul_and_add`. The blind is an integer with
-//! $0 < r < 2^{254}$, because a zero blind gives the identity.
+//! blind point $\[r\]\mathcal{R}$ with `mul` on [`struct@R_BASE`]. The blind
+//! is an integer with $0 < r < 2^{254}$, because a zero blind gives the
+//! identity. A step whose value may be other than zero adds the value term
+//! to the blind point with `mul_and_add`. A step that holds the value to
+//! zero returns the blind point alone.
 //!
-//! Every point is a commitment to every value under some blind, so the point
-//! alone fixes no value. A satisfied step shows that its prover knows an
-//! opening $(v, r)$ whose $v$ is the amount the step constrains. Two openings
+//! A satisfied step shows that its prover knows an opening $(v, r)$ of
+//! $\mathsf{cv}$ whose $v$ is the amount the step constrains. Two openings
 //! of one point that differ modulo $q$ give the discrete logarithm of
 //! $\mathcal{V}$ to the base $\mathcal{R}$, which the
 //! [Commitments assumption](crate::stamp::proof#assumptions) says nobody
-//! knows. A value commitment therefore determines its opening modulo $q$.
+//! knows. Nobody therefore knows two openings of one value commitment, and
+//! in that sense it determines its opening modulo $q$.
 //!
 //! A value is an amount or its negation, an integer of absolute value at most
 //! `MAX_MONEY`. Such integers are distinct modulo $q$, and so are blinds
 //! below $2^{254}$, so the commitment determines the value and the blind as
 //! integers.
 //!
-//! For a value commitment, a case without an assignment needs the blind point
-//! to be a known multiple of $\mathcal{V}$, which gives the same discrete
+//! The blind point alone has one case without an assignment, the zero blind.
+//! Where a value term is added, each further case needs the blind point to be
+//! a known multiple of $\mathcal{V}$, which gives the same discrete
 //! logarithm.
 
 use lazy_static::lazy_static;

@@ -115,9 +115,18 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// Enforces a zero `value` and returns the max fee commitment for it: the
     /// blind term alone, with no value term.
     ///
-    /// This is the point [`cv_feemax`](Self::cv_feemax) gives a note of value
-    /// zero, with the blind decomposed the same way. The same argument
-    /// applies.
+    /// # Injectivity
+    ///
+    /// The result is [`R_BASE`](struct@fixed_base::R_BASE) multiplied by the
+    /// 254-bit decomposition of the blind digest, with nothing added. It is
+    /// the max fee commitment $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ at
+    /// $v = 0$. A digest that is zero or at least $2^{254}$ has no
+    /// assignment, and there is no other case without one.
+    ///
+    /// The point is a [value commitment](fixed_base#value-commitments) with
+    /// value zero, so it determines $r$. The blind digest determines `pk`,
+    /// `psi` and `rcm`, as in [`cv_feemax`](Self::cv_feemax), so the point
+    /// determines the note.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;

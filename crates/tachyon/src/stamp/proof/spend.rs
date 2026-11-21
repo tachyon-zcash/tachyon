@@ -146,7 +146,8 @@ impl Header<Fp> for SpendHeader {
 /// action-producing step to publish, with the note's `pk` and
 /// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Two permutations (the pair) and two scalar multiplications (`cv`).
+/// Two permutations (the pair) and two scalar multiplications (`cv`). Two
+/// sponges run whether or not $e$ and $e + 1$ share a group.
 ///
 /// # Soundness
 ///
@@ -173,8 +174,6 @@ impl Header<Fp> for SpendHeader {
 /// The step reads no challenge. The output's `cm` and `anchor` are the
 /// lineage's wires and its `pk` is the secret's. These are the equations
 /// [`SpendHeader`] asserts.
-///
-/// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
 pub struct SpendBind;
 
