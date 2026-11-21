@@ -126,7 +126,7 @@ pub struct QrQuotientCommit(EqAffine);
 ///
 /// The type holds any two integers. A profile with `depth` above
 /// [`MAX_DEPTH`](Self::MAX_DEPTH), or with `bits` at or above $2^d$, is no
-/// path. The circuit gadget's `descend` builds only paths, and its
+/// path. The circuit gadget's `descend` builds a path from a path, and its
 /// `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct QrProfile {
@@ -177,8 +177,9 @@ impl QrProfile {
 }
 
 /// A value's side and square root at one discriminant: `(true, r)` with
-/// $r^2 = s$, or `(false, r)` with $r^2 = c \cdot s$, for $s$ the shifted
-/// value.
+/// $r^2 = s$, or `(false, r)` with $r^2 = n \cdot s$, for $s$ the shifted
+/// value and $n$ the
+/// [non-residue](crate::collections::qr::QUADRATIC_NON_RESIDUE).
 ///
 /// The root is what [shows the side](crate::collections::qr#sides) to a
 /// circuit. A zero $s$ has the root zero and the residue side.

@@ -19,7 +19,8 @@ use crate::{
 /// sides taken and those sides as bits.
 ///
 /// The two wires are a path only when something holds them to one. [`root`]
-/// and [`descend`] build paths, and [`enforce_sides_of`] accepts only a path.
+/// is the path of no sides, [`descend`] builds a path from a path, and
+/// [`enforce_sides_of`] accepts only a path.
 ///
 /// [`root`]: Self::root
 /// [`descend`]: Self::descend

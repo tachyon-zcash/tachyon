@@ -55,6 +55,13 @@ use crate::{
 /// - the [node digest](poseidon::evidence_tree_node) of four elements that are
 ///   valid for those network fields.
 ///
+/// The valid elements are the least set closed under the two rules, so an
+/// element is valid only through finitely many uses of them, ending in leaf
+/// digests. [`EvidenceTreeOpen`] outputs a bucket from a valid element, and
+/// that bucket has the header and contents of the bucket behind the leaf. By
+/// induction on the step tree, every leaf digest behind a valid element is of
+/// a header that [`QrBucketSeal`](super::qr::QrBucketSeal) output.
+///
 /// [`EvidenceTreeFuse`], [`EvidenceTreeCap`] and [`EvidenceTreeDescend`]
 /// output this header. A verified `EvidenceTree` asserts that `root` is valid
 /// for its network fields.
@@ -772,9 +779,6 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// The bridge hash is not fixed before the challenge. The step equates
 /// nothing at $\zeta$. It opens the output's contents there and leaves the
 /// opening unconstrained, so that the slot holds the committed polynomial.
-///
-/// [`EvidenceTreeFuse`] and [`EvidenceTreeCap`] output node digests, so a
-/// tree this step can open comes from [`EvidenceTreeDescend`].
 #[derive(Debug)]
 pub struct EvidenceTreeOpen;
 

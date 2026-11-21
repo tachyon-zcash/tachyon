@@ -62,35 +62,37 @@ use crate::{
 ///
 /// [`QrSummaryIntake`], [`QrStampIntakeSeed`], [`QrEmptyIntakeSeed`],
 /// [`QrIntakeMerge`] and [`QrSideDescend`] output this header. A verified
-/// `QrIntake` with contents $C$ asserts the following.
+/// `QrIntake` with contents $C$ asserts that `epoch` is an integer at most
+/// `EPOCH_MAX`, that `profile` is a [path](QrProfile#injectivity), and that
+/// its prover knows a [stamp chain](Anchor#chains-in-a-step) in `epoch` from
+/// `anchor_prev` to `anchor_end` for which, with $P$ the product of the
+/// chain's polynomials,
 ///
-/// - `epoch` is an integer at most `EPOCH_MAX`, and a [stamp
-///   chain](Anchor#chains-in-a-step) in `epoch` runs from `anchor_prev` to
-///   `anchor_end`. Write $P$ for the product of the chain's polynomials, which
-///   is the constant one for a chain of no links.
-/// - `profile` is a [path](QrProfile#injectivity).
-/// - $C$ divides $P$.
-/// - Every root of $P$ in the [class](QrDiscriminant#injectivity) of `profile`
+/// - $C$ divides $P$,
+/// - every root of $P$ in the [class](QrDiscriminant#injectivity) of `profile`
 ///   at `discriminant` is a root of $C$.
 ///
-/// Each field determines what it stands for.
+/// $P$ is the constant one for a chain of no absorptions.
 ///
-/// - `anchor_prev` and `anchor_end` stand for the chain. Each anchor after the
-///   first determines the link behind it and that link's polynomial, so two
-///   chains with one `anchor_end` and one length are the same chain.
-/// - `epoch` stands for the epoch that every link absorbs. `anchor_end`
-///   determines it when the chain has a link. Nothing absorbs the `epoch` of a
-///   chain without links until [`QrBucketSeal`] does. The `EpochIndex` gadget
-///   range-checks the wire where a step allocates it and where a step reads it
-///   from an input header.
+/// The assertion is of some chain between the two anchors. The header does
+/// not carry the number of absorptions, and nothing here shows that the two
+/// anchors have one chain only. [`QrBucket`] shows that of a sealed intake.
+///
+/// - `anchor_prev` and `anchor_end` are the two ends of the chain.
+/// - `epoch` is the epoch that every absorption of the chain absorbs. The
+///   `EpochIndex` gadget range-checks the wire where a step allocates it and
+///   where a step reads it from an input header. In a chain of no absorptions
+///   no digest absorbs `epoch`, and the field is any integer in range.
+///   [`QrBucketSeal`] absorbs it into both boundary digests.
 /// - `discriminant` and `profile` stand for a class of values. The class is a
 ///   function of the two fields.
 /// - $C$ stands for the roots of $P$ in that class. It has every one of them
 ///   and no root that $P$ lacks. It may have roots of $P$ outside the class.
 ///
-/// The assertion is about roots because no constraint makes a link's
+/// The assertion is about roots because no constraint makes an absorption's
 /// polynomial a [set polynomial](crate::collections::multiset). Where each
-/// $P_i$ is one, a root of $P$ is a tachygram of one of the chain's stamps.
+/// polynomial of the chain is one, a root of $P$ is a tachygram of one of the
+/// chain's stamps.
 ///
 /// The first slot is padding. No producer opens it.
 ///
@@ -332,17 +334,18 @@ impl Header<Fp> for QrSideSelection {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`Summary`]. It asserts a stamp chain in `epoch`
-/// from `anchor_prev` to `anchor_end`, and that its
-/// [`Summary::ACCUMULATED`] polynomial is the product $P$ of the chain's
+/// The input is a verified [`Summary`]. Its prover knows a stamp chain in
+/// `epoch` from `anchor_prev` to `anchor_end`, and its
+/// [`Summary::ACCUMULATED`] polynomial is the product $P$ of that chain's
 /// polynomials.
 ///
 /// The output's contents are committed before the challenge and the
 /// accumulated polynomial is in an input's slot. The circuit equates their
 /// openings at $\zeta$, so the contents are $P$.
 ///
-/// The output copies `epoch` and both anchors, so it has the summary's chain.
-/// Its profile is the constant path of no sides, whose class is every value.
+/// The output copies `epoch` and both anchors, so the summary's chain is a
+/// chain between the output's anchors, and the prover knows it. The output's
+/// profile is the constant path of no sides, whose class is every value.
 /// $P$ divides itself and has all of its own roots, which is what
 /// [`QrIntake`] asserts. `discriminant` is a wire from `Step::Witness`, and
 /// any element is a valid [`QrDiscriminant`].
@@ -439,13 +442,14 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// The circuit opens the output's contents $C$ at $\zeta$ and holds the
 /// opening different from one. The constant one opens to one at every point,
-/// so $C$ is another polynomial.
+/// so $C$ is not the constant one.
 ///
-/// `anchor_end` is the [stamp link](poseidon::anchor_next_stamp) digest of
+/// `anchor_end` is the [stamp absorption](poseidon::anchor_next_stamp) of
 /// `anchor_prev`, `epoch` and the bridge hash of the step's last output slot,
-/// which is the slot of $C$. The chain from `anchor_prev` to `anchor_end` is
-/// that one link, and $P = C$. The profile is the constant path of no sides,
-/// so [`QrIntake`]'s assertion holds as it does in [`QrSummaryIntake`].
+/// which is the slot of $C$. That one absorption is a stamp chain from
+/// `anchor_prev` to `anchor_end` that the prover knows, and $P = C$. The
+/// profile is the constant path of no sides, so [`QrIntake`]'s assertion holds
+/// as it does in [`QrSummaryIntake`].
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -565,8 +569,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
 /// holds their opening at $\zeta$ equal to one, so the contents are the
 /// constant one.
 ///
-/// The output has `anchor` at both ends, which is a stamp chain of no links
-/// with $P = 1$. The constant one divides it, and $P$ has no root.
+/// The output has `anchor` at both ends, which is a stamp chain of no
+/// absorptions with $P = 1$. The constant one divides it, and $P$ has no root.
 /// [`QrIntake`]'s assertion holds for any `anchor` and any `epoch`. The step
 /// does not show that `epoch` has no stamp or that `anchor` belongs to it.
 /// [`QrBucketSeal`] absorbs both into its boundary digests.
@@ -651,12 +655,13 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// # Soundness
 ///
-/// Both inputs are verified [`QrIntake`]s. Write $C_L$, $P_L$ and $C_R$,
-/// $P_R$ for their contents and chain products. The circuit holds `epoch`,
-/// `discriminant` and both elements of `profile` equal across the inputs, and
-/// holds the left `anchor_end` equal to the right `anchor_prev`. The left
-/// chain followed by the right chain is a stamp chain in `epoch` from the left
-/// `anchor_prev` to the right `anchor_end`, with product $P_L \cdot P_R$.
+/// Both inputs are verified [`QrIntake`]s. Write $C_L$ and $C_R$ for their
+/// contents, and $P_L$ and $P_R$ for the products of the chains their provers
+/// know. The circuit holds `epoch`, `discriminant` and both elements of
+/// `profile` equal across the inputs, and holds the left `anchor_end` equal to
+/// the right `anchor_prev`. The left chain followed by the right chain is a
+/// stamp chain in `epoch` from the left `anchor_prev` to the right
+/// `anchor_end`, with product $P_L \cdot P_R$, and the prover knows it.
 ///
 /// The two input contents and the output contents are fixed before the
 /// challenge. The circuit equates the output's opening at $\zeta$ with the
@@ -990,8 +995,9 @@ impl Step<Pasta> for QrSideSelect {
 /// non-residue side, and $-R$ is not a root. Either way no root of the
 /// sibling takes side $b$ at $R$.
 ///
-/// The output keeps the input's `epoch`, anchors and `discriminant`, so it
-/// has the input's chain and product $P$. Its profile is the input's path
+/// The output keeps the input's `epoch`, anchors and `discriminant`, so the
+/// chain the left input's prover knows, with product $P$, is a chain between
+/// the output's anchors. The output's profile is the input's path
 /// followed by $b$, by the gadget's `descend`. That last side is the side at
 /// depth $d$, which classifies at $R$. The left input asserts that
 /// $\mathsf{Res} \cdot \mathsf{Non}$ divides $P$ and has every root of $P$ in
@@ -1155,8 +1161,8 @@ impl Step<Pasta> for QrSideDescend {
 ///
 /// [`QrBucketSeal`] and
 /// [`EvidenceTreeOpen`](super::evidence::EvidenceTreeOpen) output this
-/// header. A verified `QrBucket` with contents $C$ asserts that, for an anchor
-/// $a$,
+/// header. A verified `QrBucket` with contents $C$ asserts that its prover
+/// knows an anchor $a$ for which
 ///
 /// - `epoch` is an integer $e$ below `EPOCH_MAX`,
 /// - `anchor_start` is a [boundary digest](poseidon::anchor_next_epoch) into
@@ -1171,13 +1177,16 @@ impl Step<Pasta> for QrSideDescend {
 /// - `anchor_next` stands for the end of the chain. A boundary digest
 ///   determines the anchor and the epoch it absorbs, so it determines $a$ and
 ///   $e + 1$.
-/// - `anchor_start` stands for the start of the chain. A boundary digest and a
-///   stamp link have different tags, so no anchor after the first of a stamp
-///   chain is `anchor_start`. Walking back from $a$, the chain ends the one
-///   time it reaches `anchor_start`. The two anchors therefore determine the
-///   chain, its length and its product $P$.
-/// - `epoch` is absorbed by both boundary digests and by every link, so either
-///   anchor determines it.
+/// - `anchor_start` stands for the start of the chain. Take two stamp chains
+///   from `anchor_start` to $a$. Each anchor after the first determines the
+///   absorption behind it, so walking back from $a$ the two agree for as long
+///   as both run. A boundary digest and a stamp absorption have different tags,
+///   so no anchor after the first of either chain is `anchor_start`, and
+///   neither chain runs on past the other's start. The two are one chain.
+///   `anchor_start` and `anchor_next` therefore determine the chain, its number
+///   of absorptions and its product $P$.
+/// - `epoch` is absorbed by both boundary digests and by every stamp
+///   absorption, so either anchor determines it.
 /// - `discriminant` and `profile` stand for a class, as in [`QrIntake`].
 /// - `contents_hash` stands for $C$ and determines it. $C$ does not determine
 ///   `contents_hash`, because one accumulator has many bridge hashes.
@@ -1292,9 +1301,8 @@ impl Header<Fp> for QrBucket {
 /// `epoch + 1`, and outputs it as the bucket's `anchor_next`.
 ///
 /// The intake covers stamp absorptions over `(anchor_prev, anchor_end]` within
-/// `epoch`. The bucket covers `[anchor_start, anchor_next)`. This range also
-/// contains `anchor_start`. `anchor_start` absorbs no tachygrams. Both bucket
-/// bounds are boundary digests.
+/// `epoch`. The bucket covers `[anchor_start, anchor_next)`. `anchor_start`
+/// absorbs no tachygrams. Both bucket bounds are boundary digests.
 ///
 /// # Soundness
 ///

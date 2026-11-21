@@ -35,9 +35,8 @@
 //! other than $-R$ takes the non-residue side, and $q(-R) \neq 0$ rules that
 //! one out.
 //!
-//! The identity reaches $q$ only through its roots in the field. It holds
-//! $q$ to no shape, and it says nothing about a value that is not a root of
-//! $q$.
+//! The arguments use the identity only at the roots of $q$ in the field.
+//! They draw nothing from it about a value that is not a root of $q$.
 //!
 //! A prover with $q$ the product of $(X - x_i)$ over distinct values of one
 //! side takes $u$ to interpolate a root $y_i$ at each $x_i$. Then $u^2 - c
@@ -137,7 +136,8 @@ pub(crate) fn split(
 /// side takes $u = 1$ and an all-zero side takes $u = q$, so neither
 /// polynomial is zero.
 ///
-/// Returns `None` when two abscissas coincide or a point lies off the side.
+/// Returns `None` when two abscissas coincide or a point $(x, y)$ does not
+/// satisfy $y^2 = c \cdot (x + s)$.
 #[must_use]
 #[expect(
     clippy::expect_used,
