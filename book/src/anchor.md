@@ -15,10 +15,10 @@ A block that publishes no stamp leaves the anchor unchanged, unless the block st
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}(\mathsf{anchor},\ e,\ x(B),\ y(B))
 $$
 
-where $e$ is the containing block's epoch and $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
+where $e$ is the containing block's epoch and $B$ is the bridge hash of the stamp's tachygram accumulator[^tachygrams]. The bridge hash is a Pallas point that commits to the two coordinates of the accumulator, and the fold absorbs its affine coordinates. An accumulator has many bridge hashes. Consensus absorbs the one an honest prover computes, which has no blinding term.
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment this absorbs, and the rule that full validation recomputes it from the published tachygrams.
 

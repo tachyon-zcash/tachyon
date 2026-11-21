@@ -61,11 +61,9 @@
 //!   This application registers no decompression step.
 //! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
 //!   triples of tag, absorbed elements of that number and squeeze position are
-//!   known that give the same element. For every tag and position, no absorbed
-//!   elements are known that give zero, and given an element drawn at random
-//!   none can be found that give it (preimage resistance).
-//!   [`Anchor`](crate::primitives::Anchor) uses the zero case and
-//!   [`AnchorSpanSeed`](pool::AnchorSpanSeed) the random one.
+//!   known that give the same element. Given an element drawn at random, no
+//!   absorbed elements can be found that give it (preimage resistance). Only
+//!   [`AnchorSpanSeed`](pool::AnchorSpanSeed) uses preimage resistance.
 //! - **Commitments.** No discrete-log relation is known among the generators of
 //!   either curve. An accumulator is the sum $\sum_j c_j G_j$ of fixed host
 //!   generators weighted by a polynomial's coefficients, without a blinding
