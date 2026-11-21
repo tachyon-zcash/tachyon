@@ -3,7 +3,7 @@ use core::array;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, Polynomial, WalletRank,
+    Cycle as _, Polynomial, Rank as _, WalletRank,
     pasta::Pasta,
     udon::{curve::Projective as _, field::Field as _},
 };
@@ -28,6 +28,8 @@ pub enum QrClass {
 
 impl QrClass {
     /// The other class at a split.
+    /// A caller routing to a child uses this to name the sibling's class,
+    /// even when that side has no members.
     #[must_use]
     pub const fn sibling(self) -> Self {
         match self {
@@ -211,24 +213,23 @@ impl QrSide {
         self.class
     }
 
-    /// The side's classifications, in the order the members were given.
-    pub fn classifications(&self) -> impl ExactSizeIterator<Item = QrClassification> + '_ {
-        self.points.iter().map(|&(value, root)| QrClassification {
-            value,
-            discriminant: self.discriminant,
-            class: self.class,
-            root,
-        })
-    }
-
     /// The side's members, in the order they were given.
     pub fn members(&self) -> impl ExactSizeIterator<Item = Tachygram> + '_ {
         self.points.iter().map(|&(value, _root)| value)
     }
 
     /// The side's set polynomial $q$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the side has at least `WalletRank::num_coeffs()` members:
+    /// its monic set polynomial needs one more coefficient than members.
     #[must_use]
     pub fn set_poly(&self) -> TachygramSetPoly {
+        assert!(
+            self.points.len() < WalletRank::num_coeffs(),
+            "side's set polynomial exceeds WalletRank"
+        );
         self.members().collect()
     }
 
@@ -243,9 +244,18 @@ impl QrSide {
     /// pair. [`QrSideDescend`](crate::stamp::proof::qr::QrSideDescend)
     /// checks the identity against the sibling's slot.
     ///
-    /// Returns `None` when a member repeats.
+    /// Returns `None` when a member repeats or the side has more than
+    /// `WalletRank::num_coeffs()` members.
+    ///
+    /// At exactly `WalletRank::num_coeffs()` distinct members, the hints
+    /// still fit, but the monic set polynomial needs one more coefficient.
+    /// The decomposition uses that polynomial as a temporary divisor and
+    /// does not commit it. A committed intake cannot hold a side that large.
     #[must_use]
     pub fn class_decomposition(&self) -> Option<(QrInterpolantPoly, QrQuotientPoly)> {
+        if self.points.len() > WalletRank::num_coeffs() {
+            return None;
+        }
         let points = self
             .points
             .iter()

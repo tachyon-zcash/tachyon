@@ -63,13 +63,9 @@ fn split_keeps_class_order_and_repeated_members() {
     ] {
         assert_eq!(side.class(), class);
         assert_eq!(side.discriminant(), discriminant);
-        for classification in side.classifications() {
-            assert_eq!(classification.class(), class);
-            let shifted = Fp::from(classification.value()) + Fp::from(discriminant);
-            assert_eq!(
-                Fp::from(classification.root()).square(),
-                class.multiplier() * shifted
-            );
+        for &(member, root) in &side.points {
+            let shifted = Fp::from(member) + Fp::from(discriminant);
+            assert_eq!(Fp::from(root).square(), class.multiplier() * shifted);
             if shifted == Fp::ZERO {
                 assert_eq!(class, QrClass::Residue);
             }
@@ -90,6 +86,27 @@ fn class_decomposition_requires_distinct_members() {
     assert!(empty_residue.class_decomposition().is_some());
     let (_, exceptional_residue) = discriminant.split(&[zero]);
     assert!(exceptional_residue.class_decomposition().is_some());
+}
+
+#[test]
+#[should_panic(expected = "side's set polynomial exceeds WalletRank")]
+fn set_polynomial_needs_one_coefficient_more_than_the_member_count() {
+    let discriminant = QrDiscriminant::from(Fp::ZERO);
+    let members = (1..=u64::try_from(WalletRank::num_coeffs()).unwrap())
+        .map(|root| Tachygram::from(Fp::from(root).square()))
+        .collect::<Vec<_>>();
+    let (_, residue) = discriminant.split(&members);
+    let _poly = residue.set_poly();
+}
+
+#[test]
+fn class_decomposition_rejects_a_side_over_its_rank() {
+    let discriminant = QrDiscriminant::from(Fp::ZERO);
+    let members = (1..=u64::try_from(WalletRank::num_coeffs() + 1).unwrap())
+        .map(|root| Tachygram::from(Fp::from(root).square()))
+        .collect::<Vec<_>>();
+    let (_, residue) = discriminant.split(&members);
+    assert!(residue.class_decomposition().is_none());
 }
 
 #[test]

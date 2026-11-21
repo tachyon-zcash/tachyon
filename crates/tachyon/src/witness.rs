@@ -20,7 +20,7 @@ use crate::{
     pasta::Fp,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrClassification, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
+        QrClassification, QrDiscriminant, QrProfile, QrSide, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -271,48 +271,75 @@ pub fn qr_intake_merge(
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
+///
+/// The sides must be cut at the intake's discriminant, in non-residue then
+/// residue order. The step checks their factorization against the intake.
+///
+/// # Panics
+///
+/// Panics if either side's discriminant differs from the intake's cut, the
+/// classes are in the wrong order, or either side's set polynomial exceeds
+/// the coefficient capacity of `WalletRank`.
 #[must_use]
 pub fn qr_intake_split(
     (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
-    members: &[Tachygram],
+    non_residue: &QrSide,
+    residue: &QrSide,
 ) -> StepWitness<'static, QrIntakeSplit> {
     let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = left;
-    let (non_residue, residue) = first_discriminant.at(profile.depth).split(members);
+    let discriminant = first_discriminant.at(profile.depth);
+    assert_eq!(
+        non_residue.discriminant(),
+        discriminant,
+        "non-residue side must be cut at the intake's discriminant"
+    );
+    assert_eq!(
+        residue.discriminant(),
+        discriminant,
+        "residue side must be cut at the intake's discriminant"
+    );
+    assert_eq!(
+        non_residue.class(),
+        QrClass::NonResidue,
+        "first side must be non-residue"
+    );
+    assert_eq!(
+        residue.class(),
+        QrClass::Residue,
+        "second side must be residue"
+    );
     (non_residue.set_poly(), residue.set_poly())
 }
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
-/// `members` is the intake's members and `child` is the class descended into.
-/// The witness decomposes the members of class `child.sibling()` at
-/// `first_discriminant.at(profile.depth)`.
-///
-/// A different list can still give a well-formed pair. [`QrSideSelect`]
-/// commits the pair it receives; [`QrSideDescend`] checks that the identity
-/// holds against the sibling's slot.
+/// `sibling` is the side not descended into, cut at the intake's
+/// discriminant. [`QrSideDescend`] checks the resulting identity against the
+/// committed sibling; this helper only checks the discriminant.
 ///
 /// # Panics
 ///
-/// Panics if two members of the sibling's class coincide.
+/// Panics if the sibling's discriminant differs from the intake's cut, a
+/// sibling member repeats, or the sibling exceeds the class decomposition
+/// capacity of `WalletRank`.
 #[must_use]
 pub fn qr_side_select(
     (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
-    members: &[Tachygram],
-    child: QrClass,
+    sibling: &QrSide,
 ) -> StepWitness<'static, QrSideSelect> {
     let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) = left;
-    let (non_residue, residue) = first_discriminant.at(profile.depth).split(members);
-    let sibling = match child {
-        QrClass::Residue => non_residue,
-        QrClass::NonResidue => residue,
-    };
+    assert_eq!(
+        sibling.discriminant(),
+        first_discriminant.at(profile.depth),
+        "sibling must be cut at the intake's discriminant"
+    );
     #[expect(
         clippy::expect_used,
-        reason = "repeated sibling members are invalid input"
+        reason = "repeated or over-rank sibling members are invalid input"
     )]
     sibling
         .class_decomposition()
-        .expect("distinct members of the sibling class")
+        .expect("sibling has a repeated member or exceeds WalletRank")
 }
 
 /// Prepare the witness for [`QrSideDescend`]: `(class,)`.

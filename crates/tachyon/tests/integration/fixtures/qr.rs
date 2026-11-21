@@ -163,15 +163,44 @@ impl QrIntakeEntry {
     ) -> [Self; N] {
         let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = *self.pcd.data();
         let (non_residue, residue) = first_discriminant.at(profile.depth).split(&self.members);
-        self.split_with_factors(
-            rng,
-            app,
-            kept,
-            &[
-                (non_residue.members().collect(), Fp::ONE),
-                (residue.members().collect(), Fp::ONE),
-            ],
-        )
+        let witness = witness::qr_intake_split((*self.pcd.data(), ()), &non_residue, &residue);
+        let (sides, ()) = app
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                witness,
+                self.pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        kept.map(|class| {
+            let (child, sibling) = match class {
+                QrClass::NonResidue => (&non_residue, &residue),
+                QrClass::Residue => (&residue, &non_residue),
+            };
+            let (selection, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideSelect,
+                    witness::qr_side_select((*sides.data(), ()), sibling),
+                    sides.clone(),
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideDescend,
+                    witness::qr_side_descend((*sides.data(), *selection.data()), child.class()),
+                    sides.clone(),
+                    selection,
+                )
+                .unwrap();
+            Self {
+                pcd,
+                members: child.members().collect(),
+            }
+        })
     }
 
     /// Explicit factors in non-residue/residue order, including their scalar
@@ -189,7 +218,7 @@ impl QrIntakeEntry {
     ) -> [Self; N] {
         let polynomials = factors
             .each_ref()
-            .map(|factor| scaled_qr_contents(&factor.0, factor.1));
+            .map(|(members, scale)| scaled_qr_contents(members, *scale));
         let (sides, ()) = app
             .fuse(
                 rng,
@@ -215,7 +244,7 @@ impl QrIntakeEntry {
                 QrClass::Residue => (residue, non_residue),
             };
             assert_eq!(other_side.members().len(), 0);
-            let (interpolant, quotient) = sibling_side.class_decomposition().unwrap();
+            let (interpolant, quotient) = witness::qr_side_select((*sides.data(), ()), &sibling_side);
             let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
             scaled_quotient.scale(sibling_scale.invert().unwrap());
             let (selection, ()) = app
