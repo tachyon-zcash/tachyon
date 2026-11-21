@@ -95,11 +95,6 @@ use crate::{
 /// chain's stamps.
 ///
 /// The first slot is padding. No producer opens it.
-///
-/// `Data` encodes as the six elements `(epoch, anchor_prev, anchor_end,
-/// discriminant, depth, bits)`. A native epoch is an integer at most
-/// `EPOCH_MAX`. The profile's `depth` and `bits` are 32-bit integers and each
-/// takes an element of its own, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -190,10 +185,6 @@ impl Header<Fp> for QrIntake {
 ///   `QrIntakeSides` with one `non_residue_hash` have one $\mathsf{Non}$. This
 ///   is how a [`QrSideSelection`] speaks about this header's $\mathsf{Non}$.
 /// - No field stands for $\mathsf{Res}$. A step reads it from this PCD's slot.
-///
-/// `Data` encodes as the six elements of [`QrIntake`] and the two coordinates
-/// of `non_residue_hash`. A point other than the identity is its two
-/// coordinates, and the identity has no encoding.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -1191,12 +1182,6 @@ impl Step<Pasta> for QrSideDescend {
 /// - $C$ stands for the roots of $P$ in the class, as in [`QrIntake`].
 ///
 /// The first slot is padding. No producer opens it.
-///
-/// `Data` encodes as the eight elements `(epoch, anchor_start, anchor_next,
-/// discriminant, depth, bits, x, y)`, with $(x, y)$ the coordinates of
-/// `contents_hash`. The epoch and the profile encode as in [`QrIntake`]. A
-/// point other than the identity is its two coordinates, and the identity has
-/// no encoding.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -1331,8 +1316,8 @@ impl Header<Fp> for QrBucket {
 ///
 /// # Caller contract
 ///
-/// The caller confirms that the intake's epoch is before `EPOCH_MAX`, or it
-/// risks producing a proof that is false.
+/// The caller confirms that the intake's epoch is before `EPOCH_MAX`. The
+/// circuit has no assignment at `EPOCH_MAX`, and proving fails.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 

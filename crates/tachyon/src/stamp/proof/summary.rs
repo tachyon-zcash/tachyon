@@ -70,10 +70,6 @@ use crate::{
 ///   absorption absorbs, and `anchor_end` determines it. It sits in the last
 ///   slot because a step reads the bridge hash of that slot. No step reads it
 ///   from an input.
-///
-/// `Data` encodes as the three elements `(epoch, anchor_prev, anchor_end)`. A
-/// native epoch is an integer at most `EPOCH_MAX` and an anchor is a field
-/// element, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct Summary;
 

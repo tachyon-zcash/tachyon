@@ -67,11 +67,6 @@ use crate::{
 ///   and the opening's value is the $v$ that `cm` determines.
 ///
 /// Both slots are padding. `SpendBind` opens neither.
-///
-/// `Data` encodes as the five elements `cm`, `nf_current`, `nf_next`,
-/// `anchor` and `pk`, then the two affine coordinates of `cv`. A point other
-/// than the identity is its coordinates and the identity has no encoding, so
-/// distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -215,7 +210,7 @@ impl Step<Pasta> for SpendBind {
         let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
-        // A zero nullifier would collide with the note's own cm tachygram.
+        // Both nullifiers are held nonzero. No step relies on it.
         nf_current.clone().enforce_nonzero(dr)?;
         nf_next.clone().enforce_nonzero(dr)?;
 

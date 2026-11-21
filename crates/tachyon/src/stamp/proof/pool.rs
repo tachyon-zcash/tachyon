@@ -110,11 +110,6 @@ use crate::{
 ///   epoch of the range and no other factor.
 ///
 /// The second slot is padding.
-///
-/// `Data` encodes as the four elements `(anchor_start, epoch_start,
-/// epoch_next, anchor_next)`. A native epoch is an integer at most
-/// `EPOCH_MAX` and an anchor is a field element, so distinct `Data` encode
-/// differently.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -200,11 +195,6 @@ impl Header<Fp> for ArbitraryUnspent {
 ///   leaves that polynomial out, and no step reads it.
 ///
 /// The second slot is padding.
-///
-/// `Data` encodes as the five elements `(cm, anchor_start, epoch_start,
-/// epoch_next, anchor_next)`. A native epoch is an integer at most
-/// `EPOCH_MAX` and the other three are field elements, so distinct `Data`
-/// encode differently.
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
@@ -307,8 +297,6 @@ impl Header<Fp> for NoteUnspent {
 /// The second slot holds the stamp's polynomial where [`AnchorSpanSeed`]
 /// outputs the header and the constant one where [`AnchorSpanFuse`] does. The
 /// seed needs it there to read its bridge hash. No step reads it.
-///
-/// `Data` encodes as the two field elements `(anchor_start, anchor_end)`.
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
@@ -468,8 +456,8 @@ impl Step<Pasta> for AnchorSpanSeed {
                 oracles.bridge_hash().y().clone(),
             ],
         )?;
-        // The span's one member is the fold just computed, so a member chosen
-        // after the challenge takes a preimage of the fold.
+        // The span's one member is the stamp absorption just computed. Its
+        // inputs are not fixed before the challenge; see the step's Soundness.
         let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
         let member_factor = z.sub(dr, &anchor);
         members.enforce_equal(dr, &member_factor)?;

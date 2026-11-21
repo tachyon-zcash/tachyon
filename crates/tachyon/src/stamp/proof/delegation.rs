@@ -68,10 +68,6 @@ use crate::{
 /// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their
 /// $\mathsf{ak}$, values and `rcm`. Steps that join two headers of a note
 /// compare `cm`.
-///
-/// `Data` encodes as the six elements `(cm, rcm, pk, value, psi, mk)`. The
-/// native `value` is an integer at most `MAX_MONEY` and the other five are
-/// field elements, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
@@ -153,10 +149,6 @@ impl Header<Fp> for NoteSecret {
 ///   that divides $S$ is a scalar times the factors of some of those epochs.
 ///
 /// The second slot is padding. No producer opens it.
-///
-/// `Data` encodes as the three elements `(cm, epoch_start, epoch_end)`. A
-/// native epoch is an integer at most `EPOCH_MAX`, so distinct `Data` encode
-/// differently.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 

@@ -80,9 +80,6 @@ use crate::{
 /// does not depend on the other buckets of a tree.
 ///
 /// Both slots are padding. No producer opens them.
-///
-/// `Data` encodes as five elements, one for each field. A native epoch is an
-/// integer at most `EPOCH_MAX`.
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
@@ -163,9 +160,6 @@ impl Header<Fp> for EvidenceTree {
 /// order is the order in which [`EvidenceTreeFuse`] absorbs them.
 ///
 /// Both slots are padding. No producer opens them.
-///
-/// `Data` encodes as six elements, one for each field. A native epoch is an
-/// integer at most `EPOCH_MAX`.
 #[derive(Clone, Debug)]
 pub struct EvidenceTreePair;
 

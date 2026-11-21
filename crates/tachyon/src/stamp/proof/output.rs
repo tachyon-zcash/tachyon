@@ -57,10 +57,6 @@ use crate::{
 ///   and the opening's value is $-v$ for the $v$ that `cm` and `pad` absorb.
 ///
 /// Both slots are padding. `OutputBind` opens neither.
-///
-/// `Data` encodes as `cm`, `pad` and the two affine coordinates of `cv`. A
-/// point other than the identity is its coordinates and the identity has no
-/// encoding, so distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -186,8 +182,7 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
-        // Two zero tachygrams collide whatever they were meant to be, and a
-        // zero root leaves the set polynomial factor `(X - tg)` trivial.
+        // Both tachygrams are held nonzero. No step relies on it.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their

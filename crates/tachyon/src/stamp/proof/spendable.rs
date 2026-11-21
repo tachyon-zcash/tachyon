@@ -76,10 +76,6 @@ use crate::{
 ///   determines it. No step reads it from an input.
 ///
 /// The first slot is padding.
-///
-/// `Data` encodes as the three elements `(cm, epoch_current, anchor)`. A
-/// native epoch is an integer at most `EPOCH_MAX` and the other two are field
-/// elements, so distinct `Data` encode differently.
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
@@ -211,10 +207,8 @@ impl Step<Pasta> for SpendableInit {
                 .as_ref()
                 .map(|&(_, _, creation_epoch)| creation_epoch),
         )?;
-        // The anchor immediately after the creation stamp, computed in-circuit
-        // so the proof certifies the fold of the epoch and the stamp's bridge hash;
-        // consensus membership of the eventual spend anchor binds the rest
-        // (see the step doc).
+        // The anchor immediately after the creation stamp: the stamp absorption
+        // of the prover's `anchor_prev`, the epoch and the step's bridge hash.
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,

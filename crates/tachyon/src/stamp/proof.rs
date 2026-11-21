@@ -80,6 +80,23 @@
 //!   models that hash as a random oracle. The challenge is then uniform and
 //!   independent of everything the transcript absorbed before it.
 //!
+//! ## Native encodings
+//!
+//! Ragu's verifier recomputes a header's elements from its native `Data` and
+//! runs no constraint, so two `Data` values of one header must never encode
+//! alike ([`Header`](ragu::header::Header)). Every header here gives each
+//! part of its `Data` elements of its own, in a fixed order and number. Two
+//! `Data` values then encode alike only if some part does, and no part does.
+//!
+//! - An epoch, a note value and each half of a profile are native integers, at
+//!   most `EPOCH_MAX`, `MAX_MONEY` and $2^{32} - 1$. Each encodes as that
+//!   integer in one element, below the modulus. No header packs two of them
+//!   into one element.
+//! - A value commitment and a bridge hash are points. A point encodes as its
+//!   two affine coordinates, which determine it. The identity has no
+//!   coordinates, and encoding it fails.
+//! - Every other part wraps one field element and encodes as it.
+//!
 //! ## Checks at the challenge
 //!
 //! Ragu draws a step's challenge $\zeta$ after it has committed the step's

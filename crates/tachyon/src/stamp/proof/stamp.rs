@@ -117,8 +117,6 @@ use crate::{
 ///   $\theta$ and `cm`. This holds for one $\mathsf{ak}$. Nothing here shows
 ///   that two spend leaves with one $\mathsf{rk}$ and different $\mathsf{ak}$
 ///   spend one note.
-///
-/// `Data` is the anchor and encodes as that element.
 #[derive(Debug)]
 pub struct Actions;
 
@@ -196,10 +194,6 @@ impl Header<Fp> for Actions {
 ///   determines the note and the fee.
 /// - $T$ stands for the leaves' tachygrams, as in [`Actions`], with one root
 ///   for each fee leaf. $A$ determines $T$.
-///
-/// `Data` encodes as `anchor` and the two affine coordinates of the bridge
-/// hash. A point other than the identity is its coordinates and the identity
-/// has no encoding, so distinct `Data` encode differently.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -854,8 +848,8 @@ impl Step<Pasta> for StampLift {
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
-        // The output tachygram set copies the left one, so the output's bridge
-        // hash is the left stamp's.
+        // The output tachygram set copies the left one. With the honest bridge
+        // hash on both, the output's bridge hash is the left stamp's.
         let data = D::just(|| {
             let (stamp_bridge, _) = left.take();
             let (_, span_anchor_end) = right.take();
@@ -1020,8 +1014,8 @@ impl Step<Pasta> for ActionLift {
 /// # Caller contract
 ///
 /// The caller confirms that the max fee note's value is within `MAX_MONEY`
-/// and the fee is at most that value, or it risks producing a proof that is
-/// false.
+/// and the fee is at most that value. The circuit has no assignment
+/// otherwise, and proving fails.
 #[derive(Debug)]
 pub struct FeeFuse;
 
@@ -1131,7 +1125,7 @@ impl Step<Pasta> for FeeFuse {
         }
         .commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee, &fee_change)?;
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+        // The fee change is held nonzero. No step relies on it.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
@@ -1305,7 +1299,7 @@ impl Step<Pasta> for FeeSeed {
         // With a zero maximum and fee, the change note is the max-fee note.
         let fee_change = max_fee_note.commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero, &fee_change)?;
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+        // The fee change is held nonzero. No step relies on it.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
