@@ -271,6 +271,16 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 /// Advances the anchor with the stamp's epoch and tachygram-set bridge hash,
 /// absorbing the point's affine coordinates.
 ///
+/// $$
+///   \mathsf{anchor}' = \mathsf{Poseidon}_\texttt{Tachyon-AnchorSt}(
+///     \mathsf{anchor},\ e,\ x(B),\ y(B)
+///   )
+/// $$
+///
+/// The digest determines the previous anchor, the epoch and the bridge hash.
+/// Its tag differs from [`anchor_next_epoch`]'s, so an anchor that is both a
+/// stamp absorption and a boundary digest is a collision.
+///
 /// # Panics
 ///
 /// Panics if `stamp_hash` is the identity.
@@ -290,6 +300,13 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
 /// Digests a sealed bucket's metadata and contents bridge hash into a leaf,
 /// absorbing the point's affine coordinates.
+///
+/// The leaf absorbs the eight elements of a
+/// [`QrBucket`](crate::stamp::proof::qr::QrBucket) header in header order,
+/// with the profile as depth then bits and the bridge hash as its two
+/// coordinates. A leaf determines all eight. Its tag differs from
+/// [`evidence_tree_node`]'s, so an element that is both a leaf and a node is a
+/// collision.
 ///
 /// # Panics
 ///
@@ -325,13 +342,15 @@ pub fn evidence_tree_leaf(
     hash
 }
 
-/// Folds four subtree roots into their parent node of a evidence tree.
+/// Folds four subtree roots into their parent node of an evidence tree.
 ///
 /// $$
 ///   \mathsf{node} = \mathsf{Poseidon}_\texttt{Tachyon-EvidNode}(
 ///     c_0,\ c_1,\ c_2,\ c_3
 ///   )
 /// $$
+///
+/// A node determines its four subtree roots and their order.
 #[must_use]
 pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
     let [hash] = emulated(EVIDENCE_NODE_DOMAIN, children);
@@ -344,6 +363,14 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 ///
 /// Produces the entry anchor of `epoch` when `anchor_prev` is the final
 /// anchor of the epoch before.
+///
+/// $$
+///   \mathsf{anchor}' = \mathsf{Poseidon}_\texttt{Tachyon-AnchorEp}(
+///     \mathsf{anchor},\ e
+///   )
+/// $$
+///
+/// The digest determines the previous anchor and the epoch it enters.
 #[must_use]
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     let [hash] = emulated(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch]);
