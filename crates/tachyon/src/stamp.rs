@@ -1224,9 +1224,26 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Soundness
     ///
-    /// The parameter is a multiset: order does not matter, multiplicity does.
-    /// The header is built from [`Self::tachygram_set`]. The caller confirms
-    /// that commitment against the covered bundles' pairs and fee changes.
+    /// The verifier recomputes the action accumulator from `action_digests`,
+    /// a multiset, and takes the tachygram accumulator from
+    /// [`Self::tachygram_set`]. It accepts when the stamp proof's two online
+    /// commitments are those accumulators and the PCD verifies as a
+    /// [`Stamp`] whose data is [`Self::anchor`] and the bridge hash that
+    /// [`bridge_hash`] computes for the tachygram accumulator.
+    ///
+    /// An accumulator determines its polynomial, and a
+    /// [set polynomial](crate::collections::multiset) determines its roots
+    /// with their multiplicities. An accepted stamp therefore has what
+    /// [`Stamp`] asserts, with exactly `action_digests` as the digests of its
+    /// leaves and with the polynomial of [`Self::tachygram_set`] as its
+    /// tachygram set polynomial.
+    ///
+    /// The caller confirms [`Self::tachygram_set`] against the covered
+    /// bundles' pairs and fee changes, and builds `action_digests` from their
+    /// published descriptors, as
+    /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)
+    /// does. The caller also holds the anchor to the consensus rules. This
+    /// method checks neither.
     ///
     /// # Errors
     ///
