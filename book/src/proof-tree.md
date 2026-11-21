@@ -217,20 +217,23 @@ This section states the consensus rules the proof system relies on, and derives 
 
 - **Recursion.** The proof system is an argument of knowledge. Whoever produces a PCD that verifies can produce the tree of steps that built it, with every step's wires, and every circuit in the tree is satisfied.
 - **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct inputs are known that give the same output, across tags and across the squeeze positions of one sponge. `AnchorSpanSeed` alone needs more, and its argument models the stamp absorption digest as a random function.
-- **Commitments.** No discrete-log relation is known among the commitment generators. An accumulator then determines its polynomial, and a bridge hash determines its accumulator.
+- **Commitments.** No discrete-log relation is known among the commitment generators, the two value commitment generators included. An accumulator then determines its polynomial, a bridge hash determines its accumulator, and a value commitment determines its opening.
 - **Challenge.** A step's challenge is modelled as a random oracle output over everything committed before it.
 
 A value determines a thing when two different things for one value would give a collision or a discrete-log relation that these assumptions exclude.
 
 ### Consensus rules
 
-The argument uses five rules.
+The argument uses six rules.
 
 1. **Anchor chain.** Consensus advances the anchor as the [Anchor](./anchor.md) chapter defines. A stamp absorption absorbs the epoch of the containing block and the bridge hash that an honest prover computes for the stamp's tachygram accumulator. One boundary digest enters each epoch.
-2. **Covered sets.** Consensus rebuilds every action digest and fee digest from the covered bundles and recomputes both accumulators from the published members[^tachygrams]. It rejects a repeated action, fee descriptor or tachygram, and verifies the stamp proof against both accumulators and the stamp's anchor.
-3. **Acknowledged anchor.** The stamp's anchor is an end-of-block anchor of the accepted chain. Its epoch is the epoch of the block that contains the stamp, or the epoch before.
+2. **Covered sets.** A stamp covers the bundle that carries it and the bundles its adjunct list names. Consensus rebuilds every action digest and fee digest from the covered bundles and recomputes both accumulators from the published members[^tachygrams]. It rejects a repeated action, fee descriptor or tachygram, and verifies the stamp proof against both accumulators and the stamp's anchor.
+3. **Acknowledged anchor.** The stamp's anchor is an anchor of the accepted chain. Its epoch is the epoch of the block that contains the stamp, or the epoch before.
 4. **Two-epoch uniqueness.** No tachygram of the stamp appears in another stamp of the containing block's epoch or of the epoch before[^tachygrams].
-5. **Signatures.** Each action carries a signature under its randomized key, and the bundle's binding signature holds for its value commitments and value balance.
+5. **Block coverage.** Every bundle a stamp's adjunct list names is a stripped bundle of the same block, and every stripped bundle of a block is named by one stamp of that block[^aggregation].
+6. **Signatures and balance.** Every bundle of a block, stripped or not, carries a signature for each action under the action's randomized key and a binding signature for its value commitments and value balance. Consensus applies each bundle's value balance and fee once.
+
+Rule 3 is the rule the argument leans on hardest. The first half is what [Anchor](./anchor.md) calls acknowledging a pool state. The second half is the expiry that the [Aggregator](./network_roles/aggregator.md) chapter describes, after which a stamp can no longer be published. The proof system checks neither half.
 
 ### A canonical anchor fixes its history
 
@@ -291,14 +294,14 @@ An `EvidenceTree` adds nothing to this. A bucket opened from a tree has the fiel
 A `NoteSpendable` with fields `cm`, `epoch_current` and `anchor` asserts one of two things.
 
 - **Creation.** `anchor` is the stamp absorption, in `epoch_current`, of a polynomial that has `cm` as a root.
-- **Lineage.** Buckets of consecutive epochs run from some epoch $e_0$ up to `epoch_current`, each ending on the anchor where the next begins, and the last ending on `anchor`. `cm` is a root of the contents of the bucket of $e_0$. For every epoch $e$ from $e_0$ to the one before `epoch_current`, the nullifier of `cm` at $e$ is in the class of a bucket of $e$ on this run whose contents do not vanish at it.
+- **Lineage.** One anchor is given for each epoch from some epoch $e_0$ to `epoch_current`, and the last of them is `anchor`. For every epoch $e$ from $e_0$ to the one before `epoch_current`, a bucket of $e$ runs from the anchor of $e$ to the anchor of the next epoch, the nullifier of `cm` at $e$ is in its class, and its contents do not vanish at that nullifier. A bucket of $e_0$ between the same two anchors has `cm` as a root of its contents. Two buckets of one epoch between the same two anchors have the same chain of stamp absorptions, whatever their classes.
 
 In both forms `cm` is the commitment of a note whose master key the prover holds, and the nullifier of `cm` at an epoch is the one that master key gives.
 A note commitment determines its master key. A master key does not determine the commitment, so every step that joins two facts about a note compares `cm`.
 
 Suppose `anchor` is canonical.
 In the creation form, `cm` is a tachygram of the stamp absorbed at `anchor`, and `epoch_current` is that stamp's epoch.
-In the lineage form, `anchor` is the entry anchor of `epoch_current`, and each bucket on the run ends on a canonical entry anchor. Each bucket then covers its epoch. So `cm` is a tachygram published in $e_0$, and for every epoch $e$ from $e_0$ to the one before `epoch_current`, the nullifier of `cm` at $e$ is not a tachygram published in $e$.
+In the lineage form, `anchor` is the entry anchor of `epoch_current`, and each of these buckets ends on a canonical entry anchor, the last on `anchor` and each earlier one on the anchor where the next begins. Each bucket then covers its epoch. So `cm` is a tachygram published in $e_0$, and for every epoch $e$ from $e_0$ to the one before `epoch_current`, the nullifier of `cm` at $e$ is not a tachygram published in $e$.
 
 ### An accepted stamp {#stamp-anchor}
 
@@ -320,12 +323,12 @@ Its randomized key is the note's spend validating key plus a multiple of the gen
 The spendable's anchor is joined to the stamp's anchor by a chain of stamp absorptions.
 
 Rule 3 makes the stamp's anchor canonical, in epoch $E$ or the epoch before. The spendable's anchor is then canonical and in the same epoch, and `epoch_current` is that epoch, because the spendable's anchor absorbs it.
-The note was published at or before that anchor, and no nullifier of the note was published in any epoch from its publication to the one before `epoch_current`.
+The note was published at or before that anchor. For every epoch $e$ from its publication to the one before `epoch_current`, the note's nullifier at $e$ was not published in $e$.
 One of the two published nullifiers is the note's nullifier at $E$.
 
 ### No second spend
 
-Two spend leaves of one commitment in one stamp have the same pair, and rule 2 rejects the repeated tachygram.
+Every spend leaf of a stamp has the epoch of the stamp's anchor as its `epoch_current`. Two spend leaves of one commitment in one stamp therefore have the same pair, and rule 2 rejects the repeated tachygram.
 
 Suppose a commitment is published once, and two accepted stamps each hold a spend leaf of it. Let the first be accepted in epoch $E_1$ and the second in epoch $E_2$, no earlier. Let $e_2$ be the `epoch_current` of the second spend.
 
@@ -338,12 +341,16 @@ If $e_2$ is after $E_1$, the second spendable is of the lineage form, because th
 
 A spend needs both published nullifiers for this. The anchor may be one epoch old, and the pair always holds the nullifier of the epoch in which the stamp is accepted.
 
-A commitment published again in a later epoch starts a lineage of its own. The argument then gives each later spend a publication after the spend before it, so a commitment is spent at most as many times as it is published.
+A commitment can be published more than once, in epochs at least two apart by rule 4. A spendable then starts at one of the publications.
+The argument above used the single publication only to place the start of the second spendable at or before $E_1$. With several publications it shows that the second spendable starts at a publication after $E_1$.
+Each spend after the first therefore starts at a publication later than the spend before it, and a commitment is spent at most as many times as it is published.
+
 A published tachygram that is a note commitment is the commitment of an output leaf or the fee change of a fee leaf. A padding tachygram or a nullifier equal to a note commitment is a collision between two tags.
+Rule 5 lets a bundle's tachygrams be published once, in the block that holds the bundle. Each publication of a commitment is then one output or one fee change of one bundle, which that bundle's binding signature balances once by rule 6.
 
 ### What the stamp proof leaves to others
 
-- **Balance.** The stamp proof shows that each value commitment commits to its note's value. The binding signature shows that the commitments of a bundle sum to its value balance, as [Authorization](./authorization.md) and [Dynamic Fee](./fee.md) describe.
+- **Balance.** The stamp proof shows that each value commitment commits to its note's value. The binding signature shows that the commitments of a bundle sum to its value balance, as [Authorization](./authorization.md) and [Dynamic Fee](./fee.md) describe. The sum is over the integers. A stamp covers fewer than $2^{13}$ leaves and each value is at most `MAX_MONEY`, so no sum of a bundle's values reaches the group order.
 - **Authorization.** The stamp proof shows that a spend's randomized key is built on the note's spend validating key. The action signature shows that the signer holds the matching signing key.
 - **Reused nullifier trapdoors.** Two notes with one $\psi$ and one nullifier key have the same nullifiers, and spending one makes the other unspendable[^nullifiers]. Avoiding the reuse is the wallet's task.
 - **Anchors without a spend.** A stamp with no spend leaf verifies at any anchor its prover chooses. Rule 3 still applies to it.
