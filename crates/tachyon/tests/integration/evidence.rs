@@ -3,7 +3,7 @@ use core::iter;
 use ragu::{Polynomial, udon::field::Field as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminants, QrProfile, Tachygram, TachygramSetPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     pasta::Fp,
     stamp::proof::{evidence, qr},
@@ -58,19 +58,19 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     let pool = PoolSim::shared();
     let epoch0 = EpochIndex::new(0);
     let span0 = pool.epoch_span(epoch0);
-    let disc = shared_discriminant();
+    let first_discriminant = shared_discriminant();
     let tree = pool.evidence_tree(app);
     let real = &tree.leaves[..tree.real_leaves];
     assert!(real.iter().any(|leaf| leaf.profile().depth < 5));
     assert!(real.iter().filter(|leaf| !leaf.members.is_empty()).count() > 1);
-    let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
+    let (epoch, anchor_start, anchor_next, root_first_discriminant, _) = *tree.pcd.data();
     assert_eq!(
-        (epoch, anchor_start, anchor_next, root_discriminant),
+        (epoch, anchor_start, anchor_next, root_first_discriminant),
         (
             epoch0,
             Anchor::default(),
             span0.1.next_epoch(EpochIndex::new(1)).unwrap(),
-            disc
+            first_discriminant
         )
     );
     for leaf in real {
@@ -112,11 +112,11 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let pool = PoolSim::shared();
     let span0 = pool.epoch_span(epoch0);
     let span1 = pool.epoch_span(epoch1);
-    let discriminant = shared_discriminant();
+    let first_discriminant = shared_discriminant();
     let tree0 = pool.evidence_tree(app).pcd;
 
     let bucket0 = pool.epoch_bucket(app, epoch0);
-    let bucket1 = pool.qr_bucket(app, span1, discriminant, Fp::ZERO, 0, span0.1);
+    let bucket1 = pool.qr_bucket(app, span1, first_discriminant, Fp::ZERO, 0, span0.1);
     let (forged, ()) = app
         .fuse(
             rng,
@@ -129,11 +129,11 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     assert!(app.verify_uncompressed(&tree0, &mut *rng).unwrap());
 
-    let other_discriminant = QrDiscriminants::random(rng);
+    let other_first_discriminant = QrDiscriminant::random(rng);
     let foreign = pool.qr_bucket(
         app,
         span0,
-        other_discriminant,
+        other_first_discriminant,
         Fp::ZERO,
         0,
         Anchor::from(Fp::ZERO),
@@ -141,7 +141,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
     let short = pool.qr_bucket(
         app,
         (Anchor::default(), pool.mint_anchor()),
-        discriminant,
+        first_discriminant,
         Fp::ZERO,
         0,
         Anchor::from(Fp::ZERO),
@@ -156,7 +156,7 @@ fn evidence_tree_joins_reject_mismatched_trees() {
                 ((), ()),
                 fake_anchor_final_prev.next_epoch(epoch1).unwrap(),
                 epoch1,
-                discriminant,
+                first_discriminant,
                 &members,
             ),
         )

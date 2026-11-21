@@ -630,7 +630,7 @@ impl Step<Pasta> for UnspentLift {
         bucket.profile.enforce_sides_of(
             dr,
             &value_element,
-            &bucket.discriminant,
+            &bucket.first_discriminant,
             witness.as_ref().map(|&(_, path, ..)| path),
             witness.as_ref().map(|&(_, _, roots, ..)| roots),
             witness.as_ref().map(|&(_, _, _, mask, _)| mask),

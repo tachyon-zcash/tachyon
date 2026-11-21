@@ -81,22 +81,22 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// `path` is the value's class at each of the 32 depths, its path.
     /// `roots` gives the class root witnessing each step of the path.
     ///
-    /// At each discriminant $d_i$ of the progression from `discriminant`, the
-    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
-    /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
-    /// non-residue side. The depth mask must be a prefix of `depth` ones, and
-    /// the selected sides must pack to `bits`.
+    /// At each discriminant $d_i$ of the progression from `first_discriminant`,
+    /// the witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$
+    /// and the fixed non-residue $c$, which fixes the side; a zero $s$
+    /// cannot claim the non-residue side. The depth mask must be a prefix
+    /// of `depth` ones, and the selected sides must pack to `bits`.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,
-        discriminant: &Element<'dr, D>,
+        first_discriminant: &Element<'dr, D>,
         path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
         roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
-        let mut shifted = value.add(dr, discriminant);
+        let mut shifted = value.add(dr, first_discriminant);
         let mut depth_acc = Element::constant(dr, Fp::ZERO);
         let mut index_acc = Element::constant(dr, Fp::ZERO);
         let mut bits_acc = Element::constant(dr, Fp::ZERO);

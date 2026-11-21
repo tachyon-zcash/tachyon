@@ -10,7 +10,7 @@ use ragu::{
 };
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrClass, QrDiscriminants, QrProfile, QrQuotientPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrClass, QrDiscriminant, QrProfile, QrQuotientPoly,
     Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
@@ -37,23 +37,23 @@ pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 /// An exhaustive scan upward from 1, one Jacobi symbol per integer, found
 /// them.
 ///
-/// A change to `QrDiscriminants::at` or `QrDiscriminant::classify` would
+/// A change to `QrDiscriminant::at` or `QrDiscriminant::classify` would
 /// invalidate the two constants, and the assertions here would fail.
 pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
-    let discriminant = shared_discriminant();
-    let absent = Fp::from(1_915_239_271u64) - Fp::from(discriminant);
-    let exceptional = -Fp::from(discriminant) - Fp::from(31u64);
-    let companion = Fp::from(5_828_521_534u64) - Fp::from(discriminant);
+    let first_discriminant = shared_discriminant();
+    let absent = Fp::from(1_915_239_271u64) - Fp::from(first_discriminant);
+    let exceptional = -Fp::from(first_discriminant) - Fp::from(31u64);
+    let companion = Fp::from(5_828_521_534u64) - Fp::from(first_discriminant);
     assert_ne!(absent, exceptional);
     assert_ne!(absent, companion);
     assert_ne!(exceptional, companion);
     assert_eq!(
-        discriminant.profile(absent.into(), u32::BITS),
-        discriminant.profile(exceptional.into(), u32::BITS)
+        first_discriminant.profile(absent.into(), u32::BITS),
+        first_discriminant.profile(exceptional.into(), u32::BITS)
     );
     assert_eq!(
-        discriminant.profile(absent.into(), u32::BITS),
-        discriminant.profile(companion.into(), u32::BITS)
+        first_discriminant.profile(absent.into(), u32::BITS),
+        first_discriminant.profile(companion.into(), u32::BITS)
     );
     [absent, exceptional, companion]
 }
@@ -61,7 +61,7 @@ pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
 /// The first keyed shared discriminant whose depth-two profiles differ for the
 /// shared 500-value note's commitment and epoch-zero nullifier under the shared
 /// key.
-pub(crate) fn shared_discriminant() -> QrDiscriminants {
+pub(crate) fn shared_discriminant() -> QrDiscriminant {
     let note = PoolSim::shared_note(500);
     let nf = shared_sk()
         .derive_proof_private()
@@ -69,9 +69,10 @@ pub(crate) fn shared_discriminant() -> QrDiscriminants {
         .derive_note_private(note.psi)
         .derive_nullifier(EpochIndex::new(0));
     let mut rng = keyed_rng("shared discriminant", &[]);
-    iter::repeat_with(|| QrDiscriminants::random(&mut rng))
-        .find(|&discriminant| {
-            discriminant.profile(note.commitment().into(), 2) != discriminant.profile(nf.into(), 2)
+    iter::repeat_with(|| QrDiscriminant::random(&mut rng))
+        .find(|&first_discriminant| {
+            first_discriminant.profile(note.commitment().into(), 2)
+                != first_discriminant.profile(nf.into(), 2)
         })
         .unwrap()
 }
@@ -93,19 +94,19 @@ impl QrIntakeEntry {
         app: &App<'_>,
         anchor: Anchor,
         epoch: EpochIndex,
-        discriminant: QrDiscriminants,
+        first_discriminant: QrDiscriminant,
     ) -> Self {
         static EMPTY: Proved<QrIntakeEntry> = Proved::new("qr_empty_intake");
 
         let mut key = Fp::from(anchor).to_bytes().to_vec();
         key.extend_from_slice(&u32::from(epoch).to_le_bytes());
-        key.extend_from_slice(&Fp::from(discriminant).to_bytes());
+        key.extend_from_slice(&Fp::from(first_discriminant).to_bytes());
         EMPTY.get(&key, |rng| {
             let (pcd, ()) = app
                 .seed(
                     rng,
                     qr::QrEmptyIntakeSeed,
-                    witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
+                    witness::qr_empty_intake_seed(((), ()), anchor, epoch, first_discriminant),
                 )
                 .unwrap();
             Self {
@@ -119,9 +120,9 @@ impl QrIntakeEntry {
     pub fn sealed(&self, app: &App<'_>, anchor_final_prev: Anchor) -> QrBucketEntry {
         static SEALED: Proved<QrBucketEntry> = Proved::new("qr_sealed");
 
-        let (epoch, start, end, discriminant, profile) = *self.pcd.data();
+        let (epoch, start, end, first_discriminant, profile) = *self.pcd.data();
         let mut key = u32::from(epoch).to_le_bytes().to_vec();
-        for value in [Fp::from(start), Fp::from(end), Fp::from(discriminant)] {
+        for value in [Fp::from(start), Fp::from(end), Fp::from(first_discriminant)] {
             key.extend_from_slice(&value.to_bytes());
         }
         key.extend_from_slice(&profile.depth.to_le_bytes());
@@ -160,8 +161,8 @@ impl QrIntakeEntry {
         app: &App<'_>,
         kept: [QrClass; N],
     ) -> [Self; N] {
-        let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *self.pcd.data();
-        let (non_residue, residue) = discriminant.at(profile.depth).split(&self.members);
+        let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile) = *self.pcd.data();
+        let (non_residue, residue) = first_discriminant.at(profile.depth).split(&self.members);
         self.split_with_factors(
             rng,
             app,
@@ -205,10 +206,10 @@ impl QrIntakeEntry {
                 QrClass::NonResidue => (residue_factor, non_residue_factor),
                 QrClass::Residue => (non_residue_factor, residue_factor),
             };
-            let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) =
+            let (_epoch, _anchor_prev, _anchor_end, first_discriminant, profile, _non_residue_hash) =
                 *sides.data();
             let (sibling_members, sibling_scale) = sibling;
-            let (non_residue, residue) = discriminant.at(profile.depth).split(sibling_members);
+            let (non_residue, residue) = first_discriminant.at(profile.depth).split(sibling_members);
             let (sibling_side, other_side) = match child.sibling() {
                 QrClass::NonResidue => (non_residue, residue),
                 QrClass::Residue => (residue, non_residue),
@@ -256,7 +257,7 @@ pub(crate) struct EvidenceLeaf {
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminants,
+        QrDiscriminant,
         QrProfile,
         TachygramSetBridge,
     ),
@@ -267,7 +268,7 @@ pub(crate) struct EvidenceLeaf {
 
 impl EvidenceLeaf {
     pub(crate) fn profile(&self) -> QrProfile {
-        let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, _contents_hash) =
+        let (_epoch, _anchor_start, _anchor_next, _first_discriminant, profile, _contents_hash) =
             self.header;
         profile
     }
@@ -284,9 +285,13 @@ impl EvidenceTreeEntry {
     fn node_key(buckets: &[&QrBucketEntry]) -> Vec<u8> {
         let mut key = u32::try_from(buckets.len()).unwrap().to_le_bytes().to_vec();
         for bucket in buckets {
-            let (epoch, start, next, discriminant, profile, bridge) = *bucket.pcd.data();
+            let (epoch, start, next, first_discriminant, profile, bridge) = *bucket.pcd.data();
             key.extend_from_slice(&u32::from(epoch).to_le_bytes());
-            for value in [Fp::from(start), Fp::from(next), Fp::from(discriminant)] {
+            for value in [
+                Fp::from(start),
+                Fp::from(next),
+                Fp::from(first_discriminant),
+            ] {
                 key.extend_from_slice(&value.to_bytes());
             }
             key.extend_from_slice(&profile.depth.to_le_bytes());
@@ -525,8 +530,12 @@ impl EvidenceTreeEntry {
     }
 }
 
-pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminants, depth: u32) -> QrProfile {
-    let first = value + Fp::from(discriminant);
+pub(crate) fn qr_profile_of(
+    value: Fp,
+    first_discriminant: QrDiscriminant,
+    depth: u32,
+) -> QrProfile {
+    let first = value + Fp::from(first_discriminant);
     let bits = (0..depth).fold(0, |bits, level| {
         let shifted = first + Fp::from(u64::from(level));
         (bits << 1) | u32::from(shifted.sqrt().is_some())

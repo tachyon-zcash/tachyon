@@ -68,7 +68,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
             epoch: intake.epoch.clone(),
             anchor_start: intake.anchor_prev.clone(),
             anchor_next: crossing,
-            discriminant: intake.discriminant.clone(),
+            first_discriminant: intake.first_discriminant.clone(),
             profile: intake.profile.clone(),
             contents_hash: [
                 oracles.bridge_hash().x().clone(),
@@ -77,7 +77,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
         };
         let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let data = D::just(|| {
-            let (epoch, anchor_prev, _, discriminant, profile) = left.take();
+            let (epoch, anchor_prev, _, first_discriminant, profile) = left.take();
             let contents_hash = TachygramSetBridge::from(
                 EpAffine::from_xy(*hash_x.take(), *hash_y.take()).unwrap(),
             );
@@ -85,7 +85,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
                 epoch,
                 anchor_prev,
                 Anchor::from(*fields.anchor_next.value().take()),
-                discriminant,
+                first_discriminant,
                 profile,
                 contents_hash,
             )
@@ -119,12 +119,12 @@ fn qr_bucket_seal_rejects_substituted_contents() {
         )
         .unwrap();
     let empty = app.bootstrap_proof().clone().carry::<()>(());
-    let discriminant = QrDiscriminants::random(rng);
+    let first_discriminant = QrDiscriminant::random(rng);
     let (intake, ()) = app
         .fuse(
             rng,
             QrSummaryIntake,
-            witness::qr_summary_intake((*summary.data(), ()), discriminant),
+            witness::qr_summary_intake((*summary.data(), ()), first_discriminant),
             summary,
             empty.clone(),
         )
@@ -154,8 +154,8 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor, epoch, discriminants, linear)`
-    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminants, Fp);
+    /// `(anchor, epoch, first_discriminant, linear)`
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, Fp);
 
     const INDEX: Index = QrEmptyIntakeSeed::INDEX;
 
@@ -199,12 +199,12 @@ impl Step<Pasta> for NonemptyIntakeSeed {
             &mut (),
             witness.as_ref().map(|&(anchor, ..)| Fp::from(anchor)),
         )?;
-        let discriminant_element = Element::alloc(
+        let first_discriminant_element = Element::alloc(
             dr,
             &mut (),
             witness
                 .as_ref()
-                .map(|&(_, _, discriminant, _)| Fp::from(discriminant)),
+                .map(|&(_, _, first_discriminant, _)| Fp::from(first_discriminant)),
         )?;
         let epoch_element = gadgets::epoch::EpochIndex::alloc(
             dr,
@@ -212,16 +212,16 @@ impl Step<Pasta> for NonemptyIntakeSeed {
             witness.as_ref().map(|&(_, epoch, ..)| epoch),
         )?;
         let data = D::just(|| {
-            let (anchor, epoch, discriminant, _) = witness.take();
+            let (anchor, epoch, first_discriminant, _) = witness.take();
             let () = left.take();
             let () = right.take();
-            (epoch, anchor, anchor, discriminant, QrProfile::ROOT)
+            (epoch, anchor, anchor, first_discriminant, QrProfile::ROOT)
         });
         let fields = QrIntakeOutput {
             epoch: epoch_element,
             anchor_prev: anchor_element.clone(),
             anchor_end: anchor_element,
-            discriminant: discriminant_element,
+            first_discriminant: first_discriminant_element,
             profile: gadgets::qr::QrProfile::root(dr),
         };
         Ok((
@@ -236,13 +236,18 @@ impl Step<Pasta> for NonemptyIntakeSeed {
 fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
     let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
-    let discriminant = QrDiscriminants::random(rng);
+    let first_discriminant = QrDiscriminant::random(rng);
 
     let [honest, forged] = [Fp::ZERO, Fp::ONE].map(|linear| {
         app.seed(
             &mut *rng,
             NonemptyIntakeSeed,
-            (Anchor::default(), EpochIndex::new(0), discriminant, linear),
+            (
+                Anchor::default(),
+                EpochIndex::new(0),
+                first_discriminant,
+                linear,
+            ),
         )
         .unwrap()
         .0

@@ -32,7 +32,7 @@ use crate::{
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminants, QrProfile, TachygramSetBridge,
+        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetBridge,
         TachygramSetPoly,
     },
 };
@@ -40,8 +40,8 @@ use crate::{
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
 /// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
-/// whose own `(epoch, anchor_start, anchor_next, discriminants)` are the four
-/// this header carries. A one-leaf tree's root is that leaf's digest, and
+/// whose own `(epoch, anchor_start, anchor_next, first_discriminant)` are the
+/// four this header carries. A one-leaf tree's root is that leaf's digest, and
 /// [`EvidenceTreeDescend`] is what produces one.
 ///
 /// The tree claims nothing about which buckets it holds. A tree holding one
@@ -57,19 +57,13 @@ pub struct EvidenceTreeOutput<'dr, D: Driver<'dr>> {
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
-    pub discriminant: Element<'dr, D>,
+    pub first_discriminant: Element<'dr, D>,
     pub root: Element<'dr, D>,
 }
 
 impl Header<Fp> for EvidenceTree {
-    /// `(epoch, anchor_start, anchor_next, discriminants, root)`
-    type Data = (
-        EpochIndex,
-        Anchor,
-        Anchor,
-        QrDiscriminants,
-        EvidenceTreeRoot,
-    );
+    /// `(epoch, anchor_start, anchor_next, first_discriminant, root)`
+    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
     type OnlinePolyCommit = (Padding, Padding);
     type Output = Kind![Fp; EvidenceTreeOutput<'_, _>];
 
@@ -100,12 +94,12 @@ impl Header<Fp> for EvidenceTree {
                     .as_ref()
                     .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
-            discriminant: Element::alloc(
+            first_discriminant: Element::alloc(
                 dr,
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(.., discriminants, _)| Fp::from(discriminants)),
+                    .map(|&(.., first_discriminant, _)| Fp::from(first_discriminant)),
             )?,
             root: Element::alloc(
                 dr,
@@ -131,18 +125,18 @@ pub struct EvidenceTreePairOutput<'dr, D: Driver<'dr>> {
     pub epoch: gadgets::epoch::EpochIndex<'dr, D>,
     pub anchor_start: Element<'dr, D>,
     pub anchor_next: Element<'dr, D>,
-    pub discriminant: Element<'dr, D>,
+    pub first_discriminant: Element<'dr, D>,
     pub first: Element<'dr, D>,
     pub second: Element<'dr, D>,
 }
 
 impl Header<Fp> for EvidenceTreePair {
-    /// `(epoch, anchor_start, anchor_next, discriminants, first, second)`
+    /// `(epoch, anchor_start, anchor_next, first_discriminant, first, second)`
     type Data = (
         EpochIndex,
         Anchor,
         Anchor,
-        QrDiscriminants,
+        QrDiscriminant,
         EvidenceTreeRoot,
         EvidenceTreeRoot,
     );
@@ -176,12 +170,12 @@ impl Header<Fp> for EvidenceTreePair {
                     .as_ref()
                     .map(|&(_, _, anchor_next, ..)| Fp::from(anchor_next)),
             )?,
-            discriminant: Element::alloc(
+            first_discriminant: Element::alloc(
                 dr,
                 allocator,
                 witness
                     .as_ref()
-                    .map(|&(_, _, _, discriminants, ..)| Fp::from(discriminants)),
+                    .map(|&(_, _, _, first_discriminant, ..)| Fp::from(first_discriminant)),
             )?,
             first: Element::alloc(
                 dr,
@@ -251,7 +245,10 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
             (&*left_bucket.epoch, &*right_bucket.epoch),
             (&left_bucket.anchor_start, &right_bucket.anchor_start),
             (&left_bucket.anchor_next, &right_bucket.anchor_next),
-            (&left_bucket.discriminant, &right_bucket.discriminant),
+            (
+                &left_bucket.first_discriminant,
+                &right_bucket.first_discriminant,
+            ),
         ] {
             left_element.enforce_equal(dr, right_element)?;
         }
@@ -260,7 +257,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
             &left_bucket.epoch,
             &left_bucket.anchor_start,
             &left_bucket.anchor_next,
-            &left_bucket.discriminant,
+            &left_bucket.first_discriminant,
             (&left_bucket.profile.depth, &left_bucket.profile.bits),
             &left_bucket.contents_hash,
         )?;
@@ -269,17 +266,17 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
             &right_bucket.epoch,
             &right_bucket.anchor_start,
             &right_bucket.anchor_next,
-            &right_bucket.discriminant,
+            &right_bucket.first_discriminant,
             (&right_bucket.profile.depth, &right_bucket.profile.bits),
             &right_bucket.contents_hash,
         )?;
         let output = D::just(|| {
-            let (epoch, anchor_start, anchor_next, discriminant, ..) = left.take();
+            let (epoch, anchor_start, anchor_next, left_first_discriminant, ..) = left.take();
             (
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                left_first_discriminant,
                 EvidenceTreeRoot(*first.value().take()),
                 EvidenceTreeRoot(*second.value().take()),
             )
@@ -288,7 +285,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
             epoch: left_bucket.epoch.clone(),
             anchor_start: left_bucket.anchor_start.clone(),
             anchor_next: left_bucket.anchor_next.clone(),
-            discriminant: left_bucket.discriminant.clone(),
+            first_discriminant: left_bucket.first_discriminant.clone(),
             first,
             second,
         };
@@ -354,18 +351,21 @@ impl Step<Pasta> for EvidenceTreePairFuse {
             (&*left_tree.epoch, &*right_tree.epoch),
             (&left_tree.anchor_start, &right_tree.anchor_start),
             (&left_tree.anchor_next, &right_tree.anchor_next),
-            (&left_tree.discriminant, &right_tree.discriminant),
+            (
+                &left_tree.first_discriminant,
+                &right_tree.first_discriminant,
+            ),
         ] {
             left_element.enforce_equal(dr, right_element)?;
         }
         let output = D::just(|| {
-            let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
+            let (epoch, anchor_start, anchor_next, left_first_discriminant, root) = left.take();
             let (.., right_root) = right.take();
             (
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                left_first_discriminant,
                 root,
                 right_root,
             )
@@ -374,7 +374,7 @@ impl Step<Pasta> for EvidenceTreePairFuse {
             epoch: left_tree.epoch.clone(),
             anchor_start: left_tree.anchor_start.clone(),
             anchor_next: left_tree.anchor_next.clone(),
-            discriminant: left_tree.discriminant.clone(),
+            first_discriminant: left_tree.first_discriminant.clone(),
             first: left_tree.root.clone(),
             second: right_tree.root.clone(),
         };
@@ -438,7 +438,10 @@ impl Step<Pasta> for EvidenceTreeFuse {
             (&*left_pair.epoch, &*right_pair.epoch),
             (&left_pair.anchor_start, &right_pair.anchor_start),
             (&left_pair.anchor_next, &right_pair.anchor_next),
-            (&left_pair.discriminant, &right_pair.discriminant),
+            (
+                &left_pair.first_discriminant,
+                &right_pair.first_discriminant,
+            ),
         ] {
             left_element.enforce_equal(dr, right_element)?;
         }
@@ -452,12 +455,12 @@ impl Step<Pasta> for EvidenceTreeFuse {
             ],
         )?;
         let output = D::just(|| {
-            let (epoch, anchor_start, anchor_next, discriminant, ..) = left.take();
+            let (epoch, anchor_start, anchor_next, left_first_discriminant, ..) = left.take();
             (
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                left_first_discriminant,
                 EvidenceTreeRoot(*root.value().take()),
             )
         });
@@ -465,7 +468,7 @@ impl Step<Pasta> for EvidenceTreeFuse {
             epoch: left_pair.epoch.clone(),
             anchor_start: left_pair.anchor_start.clone(),
             anchor_next: left_pair.anchor_next.clone(),
-            discriminant: left_pair.discriminant.clone(),
+            first_discriminant: left_pair.first_discriminant.clone(),
             root,
         };
         Ok((
@@ -528,12 +531,12 @@ impl Step<Pasta> for EvidenceTreeCap {
         let children = array::from_fn::<_, EVIDENCE_TREE_ARITY, _>(|_| tree.root.clone());
         let raised = poseidon::circuit::evidence_tree_node(dr, &children)?;
         let output = D::just(|| {
-            let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
+            let (epoch, anchor_start, anchor_next, first_discriminant, _) = left.take();
             (
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                first_discriminant,
                 EvidenceTreeRoot(*raised.value().take()),
             )
         });
@@ -541,7 +544,7 @@ impl Step<Pasta> for EvidenceTreeCap {
             epoch: tree.epoch.clone(),
             anchor_start: tree.anchor_start.clone(),
             anchor_next: tree.anchor_next.clone(),
-            discriminant: tree.discriminant.clone(),
+            first_discriminant: tree.first_discriminant.clone(),
             root: raised,
         };
         Ok((
@@ -663,12 +666,12 @@ impl Step<Pasta> for EvidenceTreeDescend {
             node = outer.conditional_select(dr, &lower, &upper)?;
         }
         let output = D::just(|| {
-            let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
+            let (epoch, anchor_start, anchor_next, first_discriminant, _) = left.take();
             (
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                first_discriminant,
                 EvidenceTreeRoot(*node.value().take()),
             )
         });
@@ -676,7 +679,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
             epoch: tree.epoch.clone(),
             anchor_start: tree.anchor_start.clone(),
             anchor_next: tree.anchor_next.clone(),
-            discriminant: tree.discriminant.clone(),
+            first_discriminant: tree.first_discriminant.clone(),
             root: node,
         };
         Ok((
@@ -759,7 +762,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             epoch: tree.epoch.clone(),
             anchor_start: tree.anchor_start.clone(),
             anchor_next: tree.anchor_next.clone(),
-            discriminant: tree.discriminant.clone(),
+            first_discriminant: tree.first_discriminant.clone(),
             profile: gadgets::qr::QrProfile::alloc(
                 dr,
                 &mut (),
@@ -777,7 +780,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
             &fields.epoch,
             &fields.anchor_start,
             &fields.anchor_next,
-            &fields.discriminant,
+            &fields.first_discriminant,
             (&fields.profile.depth, &fields.profile.bits),
             &fields.contents_hash,
         )?;
@@ -785,7 +788,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
         let [hash_x, hash_y] = fields.contents_hash.each_ref().map(Element::value);
         let output = D::just(|| {
             let (profile, _) = witness.take();
-            let (epoch, anchor_start, anchor_next, discriminant, _) = left.take();
+            let (epoch, anchor_start, anchor_next, first_discriminant, _) = left.take();
             #[expect(
                 clippy::expect_used,
                 reason = "the oracle supplies commitment coordinates"
@@ -796,7 +799,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
                 epoch,
                 anchor_start,
                 anchor_next,
-                discriminant,
+                first_discriminant,
                 profile,
                 TachygramSetBridge::from(contents_hash),
             )

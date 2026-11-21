@@ -57,24 +57,45 @@ impl QrClass {
     }
 }
 
-/// A network's discriminants $R_j = R_0 + j$, indexed by depth.
-/// The network's headers carry this collection as its first discriminant.
+/// A QR discriminant $R$: a term of the class equation
+/// $r^2 = m \cdot (x + R)$. Discriminants progress by one. A network samples
+/// a first discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
+///
+/// # Choosing the first discriminant
+///
+/// The builder chooses $R_0$. No step proves that it is random, secret, or
+/// selected by the chain. Keeping it private until the epoch closes is a
+/// load-balancing policy. A biased or early-revealed choice affects that
+/// builder's buckets.
+///
+/// A seed fixes its own $R_0$. Routing headers carry it unchanged. A merge
+/// requires equal first discriminants on its inputs, and a descent requires
+/// equality between the split and the selection. Reopening an evidence leaf
+/// binds the same $R_0$.
+///
+/// A descent's challenge binds both input headers, their online commitments,
+/// and the staged child bit. The step computes $R = R_0 + \mathsf{depth}$
+/// from the header. It neither hashes nor stages $R$ separately, and the
+/// challenge does not absorb the output header. The seal copies $R_0$;
+/// its free witness is `anchor_final_prev`.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrDiscriminants(Fp);
+pub struct QrDiscriminant(Fp);
 
-impl QrDiscriminants {
-    /// Sample a uniformly random first discriminant.
+impl QrDiscriminant {
+    /// Sample a uniformly random discriminant.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// The discriminant $R_j$ at the given depth.
+    /// The discriminant $R + \mathsf{depth}$, counting `depth` from this
+    /// discriminant.
     #[must_use]
-    pub fn at(self, depth: u32) -> QrDiscriminant {
-        QrDiscriminant(self.0 + Fp::from(u64::from(depth)))
+    pub fn at(self, depth: u32) -> Self {
+        Self(self.0 + Fp::from(u64::from(depth)))
     }
 
-    /// The profile `value` takes through `depth` splits.
+    /// The profile `value` takes through `depth` splits, the first here.
+    /// The profile starts at depth zero relative to this discriminant.
     ///
     /// # Panics
     ///
@@ -86,24 +107,30 @@ impl QrDiscriminants {
             .collect()
     }
 
-    /// `value` classified at each of the [`QrProfile::MAX_DEPTH`] profile
-    /// depths.
+    /// The checked classifications of `value` at this discriminant and each
+    /// of the next [`QrProfile::MAX_DEPTH`] minus one discriminants.
+    ///
+    /// Here the path is the run of discriminants beginning at $R$ and ending
+    /// at $R + 31$. Entry `j` is the complete solution at `self.at(j)`.
+    /// The value's class path is only the [`QrClassification::class`]
+    /// projection of these classifications.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a profile index cannot fit in a `u32`, which cannot occur
+    /// for the fixed profile width.
     #[must_use]
     #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
+        clippy::expect_used,
         reason = "array indices are below QrProfile::MAX_DEPTH"
     )]
-    pub fn classify(self, value: Tachygram) -> [QrClassification; QrProfile::MAX_DEPTH] {
-        array::from_fn(|level| self.at(level as u32).classify(value))
+    pub fn classify_path(self, value: Tachygram) -> [QrClassification; QrProfile::MAX_DEPTH] {
+        array::from_fn(|level| {
+            self.at(u32::try_from(level).expect("profile index fits in u32"))
+                .classify(value)
+        })
     }
-}
 
-/// One discriminant $R$.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrDiscriminant(Fp);
-
-impl QrDiscriminant {
     /// Classify `value` at this discriminant by solving the class equation
     /// for the multiplier $m$ and root $r$.
     ///
