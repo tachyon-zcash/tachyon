@@ -26,9 +26,9 @@
 //! constraint makes a slot's polynomial a product of linear factors. What a
 //! step shows about a slot is about that polynomial's roots and factors. It
 //! is about a multiset once the polynomial is known to be a set polynomial.
-//! An identity at the challenge against factors computed in the circuit shows
-//! that. So does an accumulator that a verifier recomputes from published
-//! members.
+//! An identity at the challenge against factors computed in the circuit from
+//! values fixed before the challenge shows that. So does an accumulator that a
+//! verifier recomputes from published members.
 
 extern crate alloc;
 

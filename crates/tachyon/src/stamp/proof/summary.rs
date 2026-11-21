@@ -40,32 +40,36 @@ use crate::{
 /// [`SummarySeed`] and [`SummaryAdvance`] output this header. A verified
 /// `Summary` asserts that `epoch` is an integer at most `EPOCH_MAX`, and that
 /// its prover knows a [stamp chain](Anchor#chains-in-a-step) in `epoch` of
-/// $k \geq 1$ links from `anchor_prev` to `anchor_end`, with polynomials
-/// $P_1, \dots, P_k$, for which
+/// $k \geq 1$ absorptions from `anchor_prev` to `anchor_end`, with
+/// polynomials $P_1, \dots, P_k$, for which
 ///
 /// - [`Summary::ACCUMULATED`] is the product $P_1 \cdots P_k$,
 /// - [`Summary::LAST_STAMP`] is $P_k$.
 ///
-/// No step relies on a link's polynomial differing from the constant one.
+/// No step relies on an absorption's polynomial differing from the constant
+/// one.
 ///
 /// Each field and each polynomial determines what it stands for.
 ///
-/// - `epoch` stands for the epoch every link absorbs. It is an integer at most
-///   `EPOCH_MAX`, and every circuit that encodes this header range-checks it.
+/// - `epoch` stands for the epoch every absorption of the chain absorbs. It is
+///   an integer at most `EPOCH_MAX`. Every way of building the
+///   [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds its wire to that
+///   range, so it is in range in every circuit that holds this header.
 ///   `anchor_end` determines it.
-/// - `anchor_end` stands for the pool history up to the chain's last stamp. It
-///   is a stamp link, so it determines the chain's last link, and each anchor
-///   of the chain determines the link before it ([`Anchor`]).
+/// - `anchor_end` stands for the end of the chain. It is a stamp absorption, so
+///   it determines the chain's last absorption, and each anchor of the chain
+///   after the first determines the absorption behind it ([`Anchor`]).
 /// - `anchor_prev` is where the chain starts. [`SummarySeed`] takes it from its
 ///   prover, so the assertion says nothing of what lies behind it.
-/// - [`Summary::ACCUMULATED`] stands for every tachygram of the chain's stamps.
-///   It is the product of the chain's polynomials and has no other factor, so a
-///   value is a root of it exactly when it is a root of some $P_i$. Where each
-///   $P_i$ is a [set polynomial](crate::collections::multiset), it is the set
-///   polynomial of the multiset sum of the stamps' tachygrams.
-/// - [`Summary::LAST_STAMP`] is the polynomial whose bridge hash the last link
-///   absorbs, and `anchor_end` determines it. It sits in the last slot because
-///   a step reads the bridge hash of that slot. No step reads it from an input.
+/// - [`Summary::ACCUMULATED`] stands for the roots of the chain's polynomials.
+///   It is their product and has no other factor, so a value is a root of it
+///   exactly when it is a root of some $P_i$. Where each $P_i$ is a [set
+///   polynomial](crate::collections::multiset), it is the set polynomial of the
+///   multiset sum of the stamps' tachygrams.
+/// - [`Summary::LAST_STAMP`] is the polynomial whose bridge hash the last
+///   absorption absorbs, and `anchor_end` determines it. It sits in the last
+///   slot because a step reads the bridge hash of that slot. No step reads it
+///   from an input.
 ///
 /// `Data` encodes as the three elements `(epoch, anchor_prev, anchor_end)`. A
 /// native epoch is an integer at most `EPOCH_MAX` and an anchor is a field
@@ -155,7 +159,8 @@ impl Header<Fp> for Summary {
 /// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on
 /// `anchor_prev`, `epoch` and $B$. No identity at the challenge reads it.
 ///
-/// These are a [stamp chain](Anchor#chains-in-a-step) of one link in `epoch`
+/// These are a [stamp chain](Anchor#chains-in-a-step) of one absorption in
+/// `epoch`
 /// whose polynomial is both output polynomials, which is what [`Summary`]
 /// asserts with $k = 1$.
 ///
@@ -280,7 +285,7 @@ impl Step<Pasta> for SummarySeed {
 /// `anchor_end`, the input's `epoch` and $B$. No identity at the challenge
 /// reads it. The step copies `epoch` and `anchor_prev` from the input.
 ///
-/// The input's chain with this link is a stamp chain in `epoch` from
+/// The input's chain with this absorption is a stamp chain in `epoch` from
 /// `anchor_prev` to the output `anchor_end`. Its polynomials multiply to the
 /// output's [`Summary::ACCUMULATED`] and its last is $P$, which is what
 /// [`Summary`] asserts. The step does not read the input's

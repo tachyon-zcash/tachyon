@@ -11,11 +11,12 @@
 //! both endpoints included. Its `members` commit to the anchors in
 //! `(anchor_start, anchor_end]`.
 //!
-//! Anchor advances are single-level: every fold absorbs the containing
-//! block's epoch and one stamp's tachygram-set commitment into the running
-//! [`Anchor`] via [`Anchor::next_stamp`]. There is no per-block hash domain;
-//! block alignment is a consensus convention, with validators checking that
-//! anchor endpoints belong to the published per-block anchor sequence.
+//! An [`Anchor`] advances by a stamp absorption or by a boundary digest. A
+//! stamp absorption absorbs the epoch of the stamp's block and a bridge hash
+//! of the stamp's tachygram accumulator. A boundary digest absorbs the epoch
+//! it enters. No digest marks a block. Block alignment is a consensus
+//! convention, with validators checking that anchor endpoints belong to the
+//! published per-block anchor sequence.
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
@@ -62,10 +63,10 @@ use crate::{
 /// # Injectivity
 ///
 /// A value $v$ is *excluded at* epoch $e$ *between* anchors $b$ and $b'$ when
-/// a verified [`QrBucket`] has `epoch` $e$, `anchor_start` $b$ and
-/// `anchor_next` $b'$, $v$ is in the
+/// the prover knows a verified [`QrBucket`] with `epoch` $e$, `anchor_start`
+/// $b$ and `anchor_next` $b'$, for which $v$ is in the
 /// [class](crate::QrDiscriminant#injectivity) of its `profile` at its
-/// `discriminant`, and its contents do not vanish at $v$. The bucket asserts
+/// `discriminant` and its contents do not vanish at $v$. The bucket asserts
 /// a [stamp chain](Anchor#chains-in-a-step) in epoch $e$ from $b$, and that
 /// its contents have every root of the chain's polynomials in that class.
 /// $v$ is therefore a root of none of them. The bucket's two bounds
@@ -92,17 +93,18 @@ use crate::{
 ///
 /// Each field and the polynomial determine what they stand for.
 ///
-/// - `epoch_start` and `epoch_next` are integers at most `EPOCH_MAX`. Every
-///   circuit that encodes this header range-checks both, whether it reads the
-///   header or outputs it. An equation between two epochs therefore holds over
-///   the integers, and the range holds the epochs from the first up to the one
+/// - `epoch_start` and `epoch_next` are integers at most `EPOCH_MAX`. Every way
+///   of building the [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds
+///   its wire to that range, so both are in range in every circuit that holds
+///   this header. An equation between two epochs therefore holds over the
+///   integers, and the range holds the epochs from the first up to the one
 ///   before the second and no others.
-/// - `anchor_start` and `anchor_next` stand for the pool histories at the start
-///   of `epoch_start` and at the start of `epoch_next`. Each is a bucket's
-///   bound and so a boundary digest. `anchor_next` is the boundary digest of
-///   the end of the last bucket's stamp chain into `epoch_next`, so it
-///   determines that end and the epoch. [`Anchor`] says what the walk back from
-///   there determines.
+/// - `anchor_start` and `anchor_next` stand for the two ends of the segment,
+///   the first bucket's `anchor_start` and the last bucket's `anchor_next`.
+///   Each is a boundary digest. `anchor_next` is the boundary digest of the end
+///   of the last bucket's stamp chain into `epoch_next`, so it determines that
+///   end and the epoch. [`Anchor`] says what the chain's end determines in
+///   turn.
 /// - $E$ stands for the tested values. An epoch is within the encoding's index
 ///   bound, so $E$ determines the tuples $(e, v_e)$. It has one factor for each
 ///   epoch of the range and no other factor.
@@ -174,10 +176,9 @@ impl Header<Fp> for ArbitraryUnspent {
 /// # Injectivity
 ///
 /// [`UnspentBind`] outputs this header. A verified `NoteUnspent` asserts
-/// that a verified [`NoteNullifiers`] carries this `cm`, that
-/// `epoch_start < epoch_next <= EPOCH_MAX` as integers, and that its prover
-/// knows an anchor $b_e$ for each epoch $e$ of `epoch_start..=epoch_next` for
-/// which
+/// that `epoch_start < epoch_next <= EPOCH_MAX` as integers, and that its
+/// prover knows a verified [`NoteNullifiers`] that carries this `cm` and an
+/// anchor $b_e$ for each epoch $e$ of `epoch_start..=epoch_next` for which
 ///
 /// - $b_e$ is `anchor_start` at `epoch_start` and `anchor_next` at
 ///   `epoch_next`,
@@ -194,9 +195,9 @@ impl Header<Fp> for ArbitraryUnspent {
 ///   key and $e$ determine the nullifier. The five fields therefore determine
 ///   every tested value.
 /// - The other four fields are as on [`ArbitraryUnspent`].
-/// - The [`NfSeqPoly`] slot holds the quotient of the note's derived sequence
-///   by the tested values. [`UnspentBind`] needs it for its identity. No step
-///   reads it.
+/// - [`UnspentBind`] commits the quotient of the note's derived sequence by the
+///   tested values to the [`NfSeqPoly`] slot, for its identity. The assertion
+///   leaves that polynomial out, and no step reads it.
 ///
 /// The second slot is padding.
 ///
@@ -278,20 +279,20 @@ impl Header<Fp> for NoteUnspent {
 ///
 /// [`AnchorSpanSeed`] and [`AnchorSpanFuse`] output this header. A verified
 /// `AnchorSpan` asserts that its prover knows a
-/// [stamp chain](Anchor#chains-in-a-step) of $k \geq 1$ links from
+/// [stamp chain](Anchor#chains-in-a-step) of $k \geq 1$ absorptions from
 /// `anchor_start` to `anchor_end`, and that its [`AnchorSetPoly`] is
 ///
 /// $$
 ///   M(X) = \prod_{i=1}^{k} (X - a_i)
 /// $$
 ///
-/// over the chain's anchors after `anchor_start`. Each link's epoch is its
-/// prover's choice, and the assertion does not make them equal. No step
-/// relies on a link's polynomial differing from the constant one.
+/// over the chain's anchors after `anchor_start`. Each absorption's epoch is
+/// its prover's choice, and the assertion does not make them equal. No step
+/// relies on an absorption's polynomial differing from the constant one.
 ///
-/// - `anchor_end` stands for the pool history up to the chain's last stamp. It
-///   is a stamp link, so it determines the chain's last link, and each anchor
-///   of the chain determines the link before it ([`Anchor`]).
+/// - `anchor_end` stands for the end of the chain. It is a stamp absorption, so
+///   it determines the chain's last absorption, and each anchor of the chain
+///   after the first determines the absorption behind it ([`Anchor`]).
 /// - `anchor_start` is where the chain starts. [`AnchorSpanSeed`] takes it from
 ///   its prover, so the assertion says nothing of what lies behind it.
 /// - $M$ stands for the anchors the chain passes after `anchor_start`. It is
@@ -299,9 +300,9 @@ impl Header<Fp> for NoteUnspent {
 ///   ([multiset](crate::collections::multiset)), and its roots are those
 ///   anchors and no others. A stamp chain leads from each root to `anchor_end`.
 ///
-/// No link is a boundary digest. A span whose `anchor_end` is an anchor of a
-/// pool history is therefore a run of that history's stamp entries with no
-/// boundary among them.
+/// No anchor of the chain after the first is a boundary digest. A span whose
+/// `anchor_end` is an anchor of a pool history is therefore a run of that
+/// history's stamp entries with no boundary among them.
 ///
 /// The second slot holds the stamp's polynomial where [`AnchorSpanSeed`]
 /// outputs the header and the constant one where [`AnchorSpanFuse`] does. The
@@ -362,26 +363,32 @@ impl Header<Fp> for AnchorSpan {
 /// of $P$. `anchor_end` is the output of the
 /// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on
 /// `anchor_start`, `epoch` and $B$. These are a
-/// [stamp chain](Anchor#chains-in-a-step) of one link.
+/// [stamp chain](Anchor#chains-in-a-step) of one absorption.
 ///
 /// The circuit equates the member polynomial's opening at $\zeta$ with
 /// $\zeta - a$, for $a$ the `anchor_end` wire. The member polynomial $M$ is
 /// committed before $\zeta$. $a$ is not fixed before $\zeta$, because none of
-/// the three values its digest absorbs is. The identity alone therefore does
-/// not give $M = X - a$. Two cases do.
+/// the three values its digest absorbs is. This is the one step whose
+/// identity at the challenge reads a root that is not fixed before the
+/// challenge, and the identity alone does not give $M = X - a$. The argument
+/// takes two cases.
 ///
 /// - $M$ is $X - c$ for a constant $c$. The constraint then reads $a = c$, so
 ///   $M = X - a$.
 /// - $M$ is any other polynomial. $X - M(X)$ is then not constant and has
-///   degree below $2^{13}$. Its value at $\zeta$ is a target the prover does
-///   not choose. $\zeta$ is uniform, so no target is more than $2^{13}$ times
-///   as likely as under a uniform draw. The constraint requires the digest to
-///   equal the target, so the prover must find elements that the digest
-///   function takes to it. Preimage resistance in the [Poseidon
-///   assumption](crate::stamp::proof#assumptions) excludes this.
+///   degree below $2^{13}$, and the constraint requires the stamp absorption
+///   $a$ to equal its value at $\zeta$. Collision resistance does not exclude
+///   that. This case models the stamp absorption digest as a random function,
+///   as the [Poseidon assumption](crate::stamp::proof#assumptions) says of this
+///   step. One challenge and one digest output then meet the constraint with
+///   probability below $2^{13}/p$, whichever of the two is drawn first. A
+///   prover that draws $T$ challenges and computes $Q$ digests meets it with
+///   probability below $T \cdot Q \cdot 2^{13}/p$.
 ///
-/// $M$ is therefore the set polynomial of the chain's one anchor after
-/// `anchor_start`, which is what [`AnchorSpan`] asserts with $k = 1$.
+/// Outside that probability $M$ is the set polynomial of the chain's one
+/// anchor after `anchor_start`, which is what [`AnchorSpan`] asserts with
+/// $k = 1$. A check on values fixed before the challenge has no factor $Q$
+/// in its bound.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -493,7 +500,7 @@ impl Step<Pasta> for AnchorSpanSeed {
 /// Both inputs are verified [`AnchorSpan`]s. `left.anchor_end` is held equal
 /// to `right.anchor_start`, so the right chain starts where the left chain
 /// ends. Together they are one [stamp chain](Anchor#chains-in-a-step) from
-/// `left.anchor_start` to `right.anchor_end`, with the links of both.
+/// `left.anchor_start` to `right.anchor_end`, with the absorptions of both.
 ///
 /// The two input member polynomials and the output member polynomial are
 /// committed before the challenge. The circuit equates the output's opening
@@ -577,7 +584,7 @@ impl Step<Pasta> for AnchorSpanFuse {
     }
 }
 
-/// Compose two [`ArbitraryUnspent`] lineages meeting at an entry anchor.
+/// Compose two [`ArbitraryUnspent`] lineages meeting at a boundary digest.
 ///
 /// The halves meet at one boundary: `left.anchor_next == right.anchor_start`
 /// and `left.epoch_next == right.epoch_start`. The left half holds members

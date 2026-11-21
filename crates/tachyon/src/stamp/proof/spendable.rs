@@ -32,18 +32,18 @@ use crate::{
 /// # Injectivity
 ///
 /// [`SpendableInit`], [`QrSpendableInit`] and [`SpendableLift`] output this
-/// header. A verified `NoteSpendable` asserts that a verified
-/// [`NoteNullifiers`] carries this `cm`, that `epoch_current` is an integer
-/// at most `EPOCH_MAX`, and one of two things.
+/// header. A verified `NoteSpendable` asserts that `epoch_current` is an
+/// integer at most `EPOCH_MAX`, that its prover knows a verified
+/// [`NoteNullifiers`] that carries this `cm`, and one of two things.
 ///
 /// - **Creation.** The prover knows a [stamp chain](Anchor#chains-in-a-step) of
-///   one link in `epoch_current` that ends at `anchor`. The link's polynomial
-///   is the header's [`TachygramSetPoly`], and `cm` is a root of it.
+///   one absorption in `epoch_current` that ends at `anchor`. The absorption's
+///   polynomial is the header's [`TachygramSetPoly`], and `cm` is a root of it.
 /// - **Lineage.** The prover knows an epoch $e_0$ below `epoch_current` and an
 ///   anchor $b_e$ for each epoch $e$ from $e_0$ to `epoch_current`, with
-///   `anchor` the last of them. A verified [`QrBucket`] has `epoch` $e_0$,
-///   `anchor_start` $b_{e_0}$ and `anchor_next` $b_{e_0+1}$, and `cm` is a root
-///   of its contents. At every epoch $e$ from $e_0$ to the one before
+///   `anchor` the last of them. It knows a verified [`QrBucket`] with `epoch`
+///   $e_0$, `anchor_start` $b_{e_0}$ and `anchor_next` $b_{e_0+1}$, and `cm` is
+///   a root of its contents. At every epoch $e$ from $e_0$ to the one before
 ///   `epoch_current`, the nullifier of `cm` at $e$ is
 ///   [excluded](super::pool::ArbitraryUnspent#injectivity) between $b_e$ and
 ///   $b_{e+1}$. The header's [`TachygramSetPoly`] is the constant one.
@@ -62,12 +62,15 @@ use crate::{
 ///   nullifiers, so the header carries `cm`, and
 ///   [`SpendBind`](super::spend::SpendBind) compares it with the `cm` of its
 ///   `NoteSecret`.
-/// - `anchor` stands for the pool history up to the position. It is a stamp
-///   link in the creation form and a boundary digest in the lineage form. The
-///   two digests have different tags, so one anchor is of one form.
+/// - `anchor` stands for the position, the end of the chain in the creation
+///   form and the last of the anchors $b_e$ in the lineage form. It is a stamp
+///   absorption in the first and a boundary digest in the second. The two
+///   digests have different tags, so one anchor is of one form.
 /// - `epoch_current` stands for the epoch of the position. In both forms the
-///   digest `anchor` absorbs it, so `anchor` determines it. Every circuit that
-///   encodes this header range-checks it.
+///   digest `anchor` absorbs it, so `anchor` determines it. Every way of
+///   building the [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds its
+///   wire to the range, so it is in range in every circuit that holds this
+///   header.
 /// - The [`TachygramSetPoly`] is the creation stamp's polynomial in the
 ///   creation form. `anchor` absorbs a bridge hash of its accumulator and so
 ///   determines it. No step reads it from an input.
@@ -141,7 +144,7 @@ impl Header<Fp> for NoteSpendable {
 /// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on
 /// `anchor_prev`, the epoch and $B$.
 ///
-/// These are a [stamp chain](Anchor#chains-in-a-step) of one link in
+/// These are a [stamp chain](Anchor#chains-in-a-step) of one absorption in
 /// `epoch_current` that ends at `anchor`, with a polynomial that has `cm` as
 /// a root. This is the creation form of [`NoteSpendable`]. The step reads no
 /// challenge.
@@ -252,9 +255,8 @@ impl Step<Pasta> for SpendableInit {
 /// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
 /// absence of the note's nullifier arrive on its header. This step adds the
 /// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable on
-/// the segment's `(epoch_next, anchor_next)`: the entry anchor of the epoch
-/// after the bucket's, which [`QrBucketSeal`](super::qr::QrBucketSeal)
-/// computed.
+/// the segment's `(epoch_next, anchor_next)`. That anchor is the bucket's
+/// `anchor_next`, a boundary digest into the epoch after the bucket's.
 ///
 /// # Soundness
 ///
@@ -269,11 +271,11 @@ impl Step<Pasta> for SpendableInit {
 /// the value to zero, so `cm` is a root of the contents. The bucket's profile
 /// plays no part.
 ///
-/// The segment asserts that a verified [`NoteNullifiers`] carries `cm`, and
-/// that the nullifier of `cm` at the bucket's epoch is excluded between the
-/// bucket's two anchors. With the bucket, this is the lineage form of
-/// [`NoteSpendable`] with $e_0$ the bucket's epoch, `epoch_current` its
-/// successor and `anchor` the bucket's `anchor_next`.
+/// The segment asserts that its prover knows a verified [`NoteNullifiers`]
+/// that carries `cm`, and that the nullifier of `cm` at the bucket's epoch is
+/// excluded between the bucket's two anchors. With the bucket, this is the
+/// lineage form of [`NoteSpendable`] with $e_0$ the bucket's epoch,
+/// `epoch_current` its successor and `anchor` the bucket's `anchor_next`.
 ///
 /// The step opens no output slot, so both hold the constant one.
 #[derive(Debug)]
@@ -365,7 +367,7 @@ impl Step<Pasta> for QrSpendableInit {
 ///
 /// The left input is in the lineage form. The segment's `anchor_start` is a
 /// bucket's `anchor_start`, which is a boundary digest. A creation anchor is
-/// a stamp link, and an element that is both is a collision between the
+/// a stamp absorption, and an element that is both is a collision between the
 /// two tags.
 ///
 /// Equal `cm` make the segment's tested values the nullifiers of the
