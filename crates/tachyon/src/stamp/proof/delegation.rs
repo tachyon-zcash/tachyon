@@ -140,11 +140,12 @@ impl Header<Fp> for NoteSecret {
 ///
 /// - `cm` stands for the note whose nullifiers these are. `cm` determines
 ///   $\mathsf{mk}$, and $\mathsf{mk}$ and $e$ determine $\mathsf{nf}_e$.
-/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Every
-///   circuit that encodes this header range-checks both, whether it reads the
-///   header or outputs it. An equation between two epochs therefore holds over
-///   the integers, and the range holds the epochs from the first to the second
-///   and no others.
+/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Every way
+///   of building the [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds
+///   its wire to that range, so both are in range in every circuit that holds
+///   this header. An equation between two epochs therefore holds over the
+///   integers, and the range holds the epochs from the first to the second and
+///   no others.
 /// - The three fields determine $S$. $S$ has one factor for each epoch of the
 ///   range and no other factor. Each factor is irreducible. Epochs are within
 ///   the encoding's index bound, so different epochs give different factors.

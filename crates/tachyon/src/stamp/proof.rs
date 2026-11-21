@@ -63,9 +63,9 @@
 //!   This application registers no decompression step.
 //! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
 //!   triples of tag, absorbed elements of that number and squeeze position are
-//!   known that give the same element. Given an element drawn at random, no
-//!   absorbed elements can be found that give it (preimage resistance). Only
-//!   [`AnchorSpanSeed`](pool::AnchorSpanSeed) uses preimage resistance.
+//!   known that give the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed)
+//!   alone needs more. Its argument models the stamp absorption digest as a
+//!   random function, and it says so.
 //! - **Commitments.** No discrete-log relation is known among the generators of
 //!   either curve. An accumulator is the sum $\sum_j c_j G_j$ of fixed host
 //!   generators weighted by a polynomial's coefficients, without a blinding
