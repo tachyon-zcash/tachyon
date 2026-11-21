@@ -84,6 +84,10 @@ It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the linea
 It holds both nullifiers nonzero, and it has no assignment at the final epoch, which has no epoch after it.
 The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
 
+Beside the stamp proof, nothing a spend publishes depends on the note's age.
+Of the note's history the spendable carries only its current epoch, with no nullifier and no polynomial that records the epochs it has crossed, and the published pair sits at that epoch and the one after.
+No step from `SpendBind` on reads how long the note has existed.
+
 `SpendAction` consumes that `SpendHeader`, witnessing the action entropy `theta` and the proof authorizing key.
 It requires the key to derive the header's `pk`, so the randomized action key `rk` belongs to the lineage's note, whose minted value `cv` commits to[^notes].
 It derives the action randomizer `alpha` from `theta` and `cm`, then the action digest from `cv`, `rk`, and the nullifier pair's sum and product, and emits `Actions` whose tachygram set contains those same nullifiers and whose anchor is threaded from the spend.
@@ -354,8 +358,9 @@ Every QR header carries it, and the discriminants progress by one from it
 $$R_j = R_0 + j \quad (j = 0, \ldots, 31)$$
 
 A value takes the residue side at depth $j$ when its sum with $R_j$ is a square or zero.
-A profile is the string of sides on the path to a bucket, and it holds at most 32 sides.
-The depth of a balanced network is about the binary logarithm of its bucket count[^balance].
+A profile is the string of sides on the path to a bucket.
+Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed throughput.
+The 32-position register is a width, and no security level rests on its size[^balance].
 A builder can keep its first discriminant and its intake headers unpublished until the epoch closes, and publish the sealed buckets after.
 No step constrains which $R_0$ a builder chooses.
 [What the stamp proof leaves to others](#what-the-stamp-proof-leaves-to-others) says what a bucket's exclusion means under the builder's choice.
@@ -398,8 +403,10 @@ Each descent requires the parent's depth to be below 32.
 No constraint is placed on the child's own roots, so a child may hold roots that take the sibling's side.
 The documentation of `QrSideDescend` and of `QrIntake` in the crate says what the identity shows about the sibling and why the child still holds every root of its class.
 
-No step reads a capacity.
-A builder splits an intake that holds more than it wants in one bucket, and sibling buckets need not stop at the same depth.
+No step reads a capacity, and the crate holds the steps without a builder.
+A builder works in layers.
+A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial.
+Sibling buckets need not stop at the same depth.
 
 `QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary.
 The intake covers stamp absorptions over `(anchor_prev, anchor_end]` within its epoch, and the bucket covers `[anchor_start, anchor_next)`.
@@ -618,6 +625,10 @@ Each step that emits a `Stamp` writes the bridge hash of its tachygram set as `t
 
 Every stamp-producing operation rerandomizes its PCD before releasing it.
 `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built.
+
+A PCD's proof holds polynomials computed from the private inputs of the step that built it, and it embeds the commitments of the PCDs that step read.
+A proof and the PCDs it was built from therefore share group elements, even when their headers reveal nothing.
+The stamp proof a wallet publishes is built step by step from the PCDs the wallet holds, and an aggregator that merges two stamps holds both of them.
 
 A stamp leaves the process that built it at these points.
 A wallet hands an autonome to the p2p network.
