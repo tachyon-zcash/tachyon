@@ -62,39 +62,27 @@ use crate::{
 ///
 /// [`QrSummaryIntake`], [`QrStampIntakeSeed`], [`QrEmptyIntakeSeed`],
 /// [`QrIntakeMerge`] and [`QrSideDescend`] output this header. A verified
-/// `QrIntake` with contents $C$ asserts that `epoch` is an integer at most
-/// `EPOCH_MAX`, that `profile` is a [path](QrProfile#injectivity), and that
-/// its prover knows a [stamp chain](Anchor#chains-in-a-step) in `epoch` from
-/// `anchor_prev` to `anchor_end` for which, with $P$ the product of the
-/// chain's polynomials,
+/// `QrIntake` with contents $C$ asserts that `epoch` is an
+/// [integer](gadgets::epoch::EpochIndex) at most `EPOCH_MAX`, that `profile` is
+/// a [path](QrProfile#injectivity), and that its prover knows a [stamp
+/// chain](Anchor#chains-in-a-step) in `epoch` from `anchor_prev` to
+/// `anchor_end` for which, with $P$ the product of the chain's polynomials,
 ///
 /// - $C$ divides $P$,
 /// - every root of $P$ in the [class](QrDiscriminant#injectivity) of `profile`
 ///   at `discriminant` is a root of $C$.
 ///
-/// $P$ is the constant one for a chain of no absorptions.
+/// $C$ stands for the roots of $P$ in the class. It has all of them and no
+/// root that $P$ lacks, and it may have roots of $P$ outside the class. A root
+/// of $P$ is a tachygram where the chain's polynomials are
+/// [set polynomials](crate::collections::multiset), which no constraint here
+/// makes them.
 ///
-/// The assertion is of some chain between the two anchors. The header does
-/// not carry the number of absorptions, and nothing here shows that the two
-/// anchors have one chain only. [`QrBucket`] shows that of a sealed intake.
-///
-/// - `anchor_prev` and `anchor_end` are the two ends of the chain.
-/// - `epoch` is the epoch that every absorption of the chain absorbs. The
-///   `EpochIndex` gadget range-checks the wire where a step allocates it and
-///   where a step reads it from an input header. In a chain of no absorptions
-///   no digest absorbs `epoch`, and the field is any integer in range.
-///   [`QrBucketSeal`] absorbs it into both boundary digests.
-/// - `discriminant` and `profile` stand for a class of values. The class is a
-///   function of the two fields.
-/// - $C$ stands for the roots of $P$ in that class. It has every one of them
-///   and no root that $P$ lacks. It may have roots of $P$ outside the class.
-///
-/// The assertion is about roots because no constraint makes an absorption's
-/// polynomial a [set polynomial](crate::collections::multiset). Where each
-/// polynomial of the chain is one, a root of $P$ is a tachygram of one of the
-/// chain's stamps.
-///
-/// The first slot is padding. No producer opens it.
+/// The header does not determine the chain. It does not carry the number of
+/// absorptions, and nothing here shows that the two anchors have one chain
+/// only. [`QrBucket`] shows that of a sealed intake. A chain of no
+/// absorptions has $P = 1$ and absorbs `epoch` nowhere, so `epoch` is then
+/// any integer in range until [`QrBucketSeal`] absorbs it.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -166,25 +154,20 @@ impl Header<Fp> for QrIntake {
 ///
 /// # Injectivity
 ///
-/// [`QrIntakeSplit`] outputs this header. Write $\mathsf{Res}$ and
-/// $\mathsf{Non}$ for its two polynomials. A verified `QrIntakeSides` asserts
-/// that
+/// [`QrIntakeSplit`] outputs this header. With $\mathsf{Res}$ and
+/// $\mathsf{Non}$ its two polynomials, a verified `QrIntakeSides` asserts that
 ///
 /// - what [`QrIntake`] asserts holds of `intake` with $\mathsf{Res} \cdot
 ///   \mathsf{Non}$ as the contents,
-/// - $\mathsf{Res} \cdot \mathsf{Non}$ is not the constant one,
+/// - $\mathsf{Res} \cdot \mathsf{Non}$ is not the constant one, which no step
+///   relies on,
 /// - `non_residue_hash` is a [bridge hash](TachygramSetBridge) of the
 ///   accumulator of $\mathsf{Non}$.
 ///
-/// No step relies on the second of these. The header asserts nothing about
-/// the side of any root, and either polynomial may have roots of either side.
-///
-/// - `intake` stands for what it stands for in [`QrIntake`].
-/// - `non_residue_hash` stands for $\mathsf{Non}$. A bridge hash determines its
-///   accumulator and the accumulator's polynomial, so two verified
-///   `QrIntakeSides` with one `non_residue_hash` have one $\mathsf{Non}$. This
-///   is how a [`QrSideSelection`] speaks about this header's $\mathsf{Non}$.
-/// - No field stands for $\mathsf{Res}$. A step reads it from this PCD's slot.
+/// The header asserts nothing about the side of any root. `non_residue_hash`
+/// determines $\mathsf{Non}$, so two verified `QrIntakeSides` with one hash
+/// have one $\mathsf{Non}$, which is how a [`QrSideSelection`] speaks of it.
+/// No field stands for $\mathsf{Res}$.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -280,28 +263,17 @@ impl Header<Fp> for QrIntakeSides {
 ///
 /// [`QrSideSelect`] outputs this header. A verified `QrSideSelection`
 /// asserts that a verified [`QrIntakeSides`] has the same eight header
-/// elements, and that its non-residue polynomial $\mathsf{Non}$ has
-///
-/// $$
-///   \mathsf{Non}(-(R_0 + d)) \neq 0
-/// $$
-///
-/// for $R_0$ the `discriminant` and $d$ the profile's `depth`.
-///
-/// The assertion is about a polynomial that is not in this header's slots.
-/// `non_residue_hash` stands for it. Every verified [`QrIntakeSides`] with
-/// this `non_residue_hash` has this $\mathsf{Non}$, so the assertion holds of
-/// each of them. $R_0$ and $d$ stand for the point, which is the one value
-/// whose side a root under the non-residue multiplier
+/// elements and a non-residue polynomial $\mathsf{Non}$ with
+/// $\mathsf{Non}(-(R_0 + d)) \neq 0$, for $R_0$ the `discriminant` and $d$ the
+/// profile's `depth`. That point is the one value whose side a root under the
+/// non-residue multiplier
 /// [does not show](crate::collections::qr#class-decomposition).
 ///
-/// The two slots hold the hints, a [`QrInterpolantPoly`] and a
-/// [`QrQuotientPoly`]. The header asserts nothing about them. They sit in a
-/// PCD's slots so that they are fixed before the challenge of the step that
-/// reads them.
-///
-/// `Data` is the `Data` of [`QrIntakeSides`] and encodes the same way. The
-/// suffix tells the two headers apart.
+/// $\mathsf{Non}$ is not in this header's slots. `non_residue_hash`
+/// [determines it](QrIntakeSides#injectivity), so the assertion holds of
+/// every verified [`QrIntakeSides`] with this hash. The header asserts
+/// nothing about the two hints in its slots. They sit there so that they are
+/// fixed before the challenge of the step that reads them.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
@@ -325,21 +297,13 @@ impl Header<Fp> for QrSideSelection {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`Summary`]. Its prover knows a stamp chain in
-/// `epoch` from `anchor_prev` to `anchor_end`, and its
-/// [`Summary::ACCUMULATED`] polynomial is the product $P$ of that chain's
-/// polynomials.
-///
-/// The output's contents are committed before the challenge and the
-/// accumulated polynomial is in an input's slot. The circuit equates their
-/// openings at $\zeta$, so the contents are $P$.
-///
-/// The output copies `epoch` and both anchors, so the summary's chain is a
-/// chain between the output's anchors, and the prover knows it. The output's
-/// profile is the constant path of no sides, whose class is every value.
-/// $P$ divides itself and has all of its own roots, which is what
-/// [`QrIntake`] asserts. `discriminant` is a wire from `Step::Witness`, and
-/// any element is a valid [`QrDiscriminant`].
+/// The output's contents are committed before the challenge and the input's
+/// [`Summary::ACCUMULATED`] is in an input slot. The circuit equates their
+/// openings at $\zeta$, so the contents are the product $P$ of the chain that
+/// [`Summary`] asserts. `epoch` and both anchors are copied, so that chain is
+/// the output's. The profile is the constant path of no sides, whose class is
+/// every value. `discriminant` is a wire from `Step::Witness`, which
+/// [`QrDiscriminant`] allows.
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -428,19 +392,13 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// The step reads no input. `anchor_prev`, `epoch` and `discriminant` are
-/// wires from `Step::Witness`, and `epoch` is range-checked.
-///
-/// The circuit opens the output's contents $C$ at $\zeta$ and holds the
-/// opening different from one. The constant one opens to one at every point,
-/// so $C$ is not the constant one.
-///
+/// `anchor_prev`, `epoch` and `discriminant` are wires from `Step::Witness`,
+/// and `epoch` is range-checked. The circuit holds the opening of the output's
+/// contents $C$ at $\zeta$ different from one, so $C$ is not the constant one.
 /// `anchor_end` is the [stamp absorption](poseidon::anchor_next_stamp) of
 /// `anchor_prev`, `epoch` and the bridge hash of the step's last output slot,
-/// which is the slot of $C$. That one absorption is a stamp chain from
-/// `anchor_prev` to `anchor_end` that the prover knows, and $P = C$. The
-/// profile is the constant path of no sides, so [`QrIntake`]'s assertion holds
-/// as it does in [`QrSummaryIntake`].
+/// which holds $C$. That absorption is the chain, with $P = C$, and the
+/// profile is the constant path of no sides.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -553,18 +511,14 @@ impl Step<Pasta> for QrStampIntakeSeed {
 ///
 /// # Soundness
 ///
-/// The step reads no input. `anchor`, `epoch` and `discriminant` are wires
-/// from `Step::Witness`, and `epoch` is range-checked.
+/// `anchor`, `epoch` and `discriminant` are wires from `Step::Witness`, and
+/// `epoch` is range-checked. The output's contents are committed before the
+/// challenge and the circuit holds their opening at $\zeta$ equal to one, so
+/// they are the constant one. With `anchor` at both ends the chain has no
+/// absorptions, and $P = 1$ has no root.
 ///
-/// The output's contents are committed before the challenge. The circuit
-/// holds their opening at $\zeta$ equal to one, so the contents are the
-/// constant one.
-///
-/// The output has `anchor` at both ends, which is a stamp chain of no
-/// absorptions with $P = 1$. The constant one divides it, and $P$ has no root.
-/// [`QrIntake`]'s assertion holds for any `anchor` and any `epoch`. The step
-/// does not show that `epoch` has no stamp or that `anchor` belongs to it.
-/// [`QrBucketSeal`] absorbs both into its boundary digests.
+/// The step does not show that `epoch` has no stamp or that `anchor` belongs
+/// to it. [`QrBucketSeal`] absorbs both into its boundary digests.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
@@ -646,24 +600,19 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// # Soundness
 ///
-/// Both inputs are verified [`QrIntake`]s. Write $C_L$ and $C_R$ for their
-/// contents, and $P_L$ and $P_R$ for the products of the chains their provers
-/// know. The circuit holds `epoch`, `discriminant` and both elements of
-/// `profile` equal across the inputs, and holds the left `anchor_end` equal to
-/// the right `anchor_prev`. The left chain followed by the right chain is a
-/// stamp chain in `epoch` from the left `anchor_prev` to the right
-/// `anchor_end`, with product $P_L \cdot P_R$, and the prover knows it.
+/// Write $C_L$, $C_R$ for the inputs' contents and $P_L$, $P_R$ for the
+/// products of their chains. The circuit holds `epoch`, `discriminant` and
+/// both elements of `profile` equal across the inputs, and the left
+/// `anchor_end` equal to the right `anchor_prev`. The left chain followed by
+/// the right chain is then a chain between the output's anchors, with product
+/// $P_L \cdot P_R$.
 ///
-/// The two input contents and the output contents are fixed before the
-/// challenge. The circuit equates the output's opening at $\zeta$ with the
-/// product of the inputs' openings, so the output contents are $C_L \cdot
-/// C_R$.
-///
-/// $C_L \cdot C_R$ divides $P_L \cdot P_R$. A root of $P_L \cdot P_R$ is a
-/// root of $P_L$ or of $P_R$. When it is in the class of the shared profile at
-/// the shared discriminant, it is a root of $C_L$ or of $C_R$, and so of the
-/// product. This is what [`QrIntake`] asserts of the output. The argument does
-/// not need the two chains to have different roots.
+/// All three contents are fixed before the challenge. The circuit equates the
+/// output's opening at $\zeta$ with the product of the inputs', so the
+/// output's contents are $C_L \cdot C_R$, which divides $P_L \cdot P_R$. A
+/// root of $P_L \cdot P_R$ in the shared class is a root of $P_L$ or of $P_R$,
+/// so of $C_L$ or of $C_R$. The argument does not need the two chains to have
+/// different roots.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -758,20 +707,13 @@ impl Step<Pasta> for QrIntakeMerge {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`QrIntake`] with contents $C$. $C$ is in an
-/// input's slot and the output's two polynomials are committed before the
-/// challenge. The circuit equates $C(\zeta)$ with $\mathsf{Res}(\zeta) \cdot
-/// \mathsf{Non}(\zeta)$, so $C = \mathsf{Res} \cdot \mathsf{Non}$. It holds
-/// $C(\zeta)$ different from one, so $C$ is not the constant one.
-///
-/// The output copies the intake's six elements, so what [`QrIntake`] asserts
-/// of them and $C$ holds of them and $\mathsf{Res} \cdot \mathsf{Non}$.
+/// The input's contents $C$ are in an input slot and the output's two
+/// polynomials are committed before the challenge. The circuit equates
+/// $C(\zeta)$ with $\mathsf{Res}(\zeta) \cdot \mathsf{Non}(\zeta)$, so $C =
+/// \mathsf{Res} \cdot \mathsf{Non}$, and holds $C(\zeta)$ different from one,
+/// so $C$ is not the constant one. The intake's six elements are copied.
 /// `non_residue_hash` is the bridge hash of the step's last output slot, which
-/// holds $\mathsf{Non}$. These are the three assertions of
-/// [`QrIntakeSides`].
-///
-/// The step shows a factorization and classifies nothing. [`QrSideSelect`]
-/// and [`QrSideDescend`] show the side of one factor's roots.
+/// holds $\mathsf{Non}$.
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -868,18 +810,12 @@ impl Step<Pasta> for QrIntakeSplit {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`QrIntakeSides`]. The circuit computes $-(R_0 +
-/// d)$ from the input's `discriminant` and `depth`, opens the input's
-/// $\mathsf{Non}$ there and holds the opening nonzero. The point is not a root
-/// of $\mathsf{Non}$.
-///
-/// The output header is the input header's eight elements, unchanged. The
-/// input is the verified [`QrIntakeSides`] that [`QrSideSelection`] asserts.
-///
-/// The circuit opens both output slots at $\zeta$ and constrains neither
-/// opening. An opened output slot holds the polynomial the prover committed,
-/// and an unopened one would hold the constant one. The two hints are thereby
-/// in the output PCD's slots, with nothing shown about them.
+/// The circuit computes $-(R_0 + d)$ from the input header's `discriminant`
+/// and `depth`, opens the input's $\mathsf{Non}$ there and holds the opening
+/// nonzero. The output header is the input's eight elements, so the input is
+/// the [`QrIntakeSides`] that [`QrSideSelection`] asserts. The circuit opens
+/// both output slots at $\zeta$ and constrains neither opening, so each holds
+/// the hint the prover committed.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -959,55 +895,41 @@ impl Step<Pasta> for QrSideSelect {
 ///
 /// at the sibling's class multiplier $c$.
 ///
+/// Opens both sides, the interpolant, the quotient and the selected output
+/// once each at $\zeta$.
+///
 /// # Soundness
 ///
-/// The left input is a verified [`QrIntakeSides`] and the right input a
-/// verified [`QrSideSelection`]. The circuit holds their eight header
-/// elements equal. The two then carry one `non_residue_hash`, so the
-/// polynomial the selection asserts about is the left input's $\mathsf{Non}$,
-/// and one `discriminant` and `depth`, so the point is $-R$. Hence
-/// $\mathsf{Non}(-R) \neq 0$. The argument does not use the equality of the
-/// other four elements.
+/// The circuit holds the two inputs' eight header elements equal, and the
+/// argument uses `non_residue_hash`, `discriminant` and `depth` only. With one
+/// hash, the polynomial the [`QrSideSelection`] asserts about is the left
+/// input's $\mathsf{Non}$, and its point is $-R$, so $\mathsf{Non}(-R) \neq
+/// 0$.
 ///
-/// The circuit holds $b$ boolean and equal to the staged value, which fixes
-/// it before the challenge. $\mathsf{Res}$, $\mathsf{Non}$, $u$ and $h$ are
-/// in input slots, the output's contents are committed, and $R$ is a sum of
-/// input header fields. All are fixed before the challenge.
+/// The circuit holds $b$ boolean and equal to the staged value. With
+/// $\mathsf{Res}$, $\mathsf{Non}$, $u$ and $h$ in input slots, the output's
+/// contents committed and $R$ a sum of input header fields, all are fixed
+/// before the challenge.
 ///
 /// The circuit selects the child's and the sibling's openings at $\zeta$ by
 /// $b$. It equates the output contents' opening with the child's, so the
 /// output's contents are the child. It equates $u(\zeta)^2 - s(\zeta) \cdot
-/// h(\zeta)$ with $c \cdot (\zeta + R)$ for $c = 1 + (n - 1) \cdot b$, which
-/// is the non-residue $n$ when the sibling is $\mathsf{Non}$ and one when it
-/// is $\mathsf{Res}$. The identity above therefore holds. It is the
-/// [class decomposition](crate::collections::qr#class-decomposition) of the
-/// sibling. When $b = 0$ every root of $\mathsf{Res}$ takes the residue side
-/// at $R$. When $b = 1$ every root of $\mathsf{Non}$ other than $-R$ takes the
-/// non-residue side, and $-R$ is not a root. Either way no root of the
-/// sibling takes side $b$ at $R$.
+/// h(\zeta)$ with $c \cdot (\zeta + R)$ for $c = 1 + (n - 1) \cdot b$, the
+/// multiplier of the sibling's side, so the identity above holds. By the
+/// [class decomposition](crate::collections::qr#class-decomposition) and
+/// $\mathsf{Non}(-R) \neq 0$, no root of the sibling takes side $b$ at $R$.
 ///
 /// The output keeps the input's `epoch`, anchors and `discriminant`, so the
-/// chain the left input's prover knows, with product $P$, is a chain between
-/// the output's anchors. The output's profile is the input's path
-/// followed by $b$, by the gadget's `descend`. That last side is the side at
-/// depth $d$, which classifies at $R$. The left input asserts that
-/// $\mathsf{Res} \cdot \mathsf{Non}$ divides $P$ and has every root of $P$ in
-/// the parent's class. The child divides the product, so it divides $P$. A root
-/// of $P$ in the child's class is in the parent's class and takes side $b$ at
-/// $R$. It is a root of the product and not of the sibling, so it is a root of
-/// the child. This is what [`QrIntake`] asserts of the output.
-///
-/// The child may have roots of $P$ that take the sibling's side, because
-/// nothing is shown about the child's own roots. [`QrIntake`] allows for
-/// them.
+/// left input's chain, with product $P$, is the output's. Its profile is the
+/// input's path followed by $b$, by the gadget's `descend`, and depth $d$
+/// classifies at $R$. The child divides $\mathsf{Res} \cdot \mathsf{Non}$ and
+/// so $P$. A root of $P$ in the child's class is in the parent's class and
+/// takes side $b$ at $R$. It is a root of the product and not of the sibling,
+/// so it is a root of the child. Nothing is shown of the child's other roots.
 ///
 /// The circuit also holds $\mathsf{Non}(\zeta) - \mathsf{Res}(\zeta)$ nonzero,
-/// so the two sides are different polynomials. No step relies on it. When the
-/// two sides are one polynomial, the class identity still shows that none of
-/// its roots takes side $b$.
-///
-/// Opens both sides, the interpolant, the quotient and the selected output
-/// once each at $\zeta$.
+/// so the two sides are different polynomials. No step relies on it, since
+/// the class identity holds of the sibling either way.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -1161,27 +1083,17 @@ impl Step<Pasta> for QrSideDescend {
 /// - `contents_hash` is a [bridge hash](TachygramSetBridge) of the accumulator
 ///   of $C$.
 ///
-/// Each field determines what it stands for.
+/// Unlike an intake's, the two anchors determine the chain. `anchor_next`
+/// determines $a$ and $e + 1$, and `anchor_start` determines $e$. Take two
+/// stamp chains from `anchor_start` to $a$. Each anchor after the first
+/// determines the absorption behind it, so walking back from $a$ the two
+/// agree for as long as both run. A boundary digest and a stamp absorption
+/// have different tags, so no anchor after the first of either chain is
+/// `anchor_start`, and neither chain runs past the other's start. The header
+/// therefore determines the chain, its product $P$ and the class.
 ///
-/// - `anchor_next` stands for the end of the chain. A boundary digest
-///   determines the anchor and the epoch it absorbs, so it determines $a$ and
-///   $e + 1$.
-/// - `anchor_start` stands for the start of the chain. Take two stamp chains
-///   from `anchor_start` to $a$. Each anchor after the first determines the
-///   absorption behind it, so walking back from $a$ the two agree for as long
-///   as both run. A boundary digest and a stamp absorption have different tags,
-///   so no anchor after the first of either chain is `anchor_start`, and
-///   neither chain runs on past the other's start. The two are one chain.
-///   `anchor_start` and `anchor_next` therefore determine the chain, its number
-///   of absorptions and its product $P$.
-/// - `epoch` is absorbed by both boundary digests and by every stamp
-///   absorption, so either anchor determines it.
-/// - `discriminant` and `profile` stand for a class, as in [`QrIntake`].
-/// - `contents_hash` stands for $C$ and determines it. $C$ does not determine
-///   `contents_hash`, because one accumulator has many bridge hashes.
-/// - $C$ stands for the roots of $P$ in the class, as in [`QrIntake`].
-///
-/// The first slot is padding. No producer opens it.
+/// `contents_hash` determines $C$. $C$ does not determine `contents_hash`,
+/// because one accumulator has many bridge hashes.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -1289,30 +1201,23 @@ impl Header<Fp> for QrBucket {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`QrIntake`] with contents $C$ and epoch $e$.
-///
-/// - The gadget's `next` range-checks $e + 1$ and has no assignment at
-///   `EPOCH_MAX`. So $e$ is below `EPOCH_MAX` and the successor is the integer
-///   $e + 1$.
-/// - The circuit computes the [boundary digest](poseidon::anchor_next_epoch) of
-///   `anchor_final_prev` into $e$ and holds the intake's `anchor_prev` equal to
-///   it. `anchor_final_prev` is a wire from `Step::Witness`. The bucket's
-///   `anchor_start` is therefore a boundary digest into $e$ of an anchor the
-///   prover knows.
+/// - The gadget's `next` range-checks `epoch + 1` and has no assignment at
+///   `EPOCH_MAX`, so the intake's `epoch` is an integer $e$ below `EPOCH_MAX`
+///   and its successor is $e + 1$.
+/// - The circuit holds the intake's `anchor_prev` equal to the [boundary
+///   digest](poseidon::anchor_next_epoch) of `anchor_final_prev` into $e$.
+///   `anchor_final_prev` is a wire from `Step::Witness`.
 /// - `anchor_next` is the boundary digest circuit's output on the intake's
-///   `anchor_end` and $e + 1$.
+///   `anchor_end` and $e + 1$, so `anchor_end` is the anchor $a$ of
+///   [`QrBucket`].
 /// - The input's contents are in an input slot and the output's are committed
 ///   before the challenge. The circuit equates their openings at $\zeta$, so
-///   the output's contents are $C$. `contents_hash` is the bridge hash of the
-///   step's last output slot, which holds $C$.
+///   they are one polynomial. `contents_hash` is the bridge hash of the step's
+///   last output slot, which holds it.
 ///
-/// `discriminant` and `profile` are copied. With the intake's `anchor_end` as
-/// the anchor $a$, these are the four assertions of [`QrBucket`].
-///
-/// The step does not show that `anchor_final_prev` is the final anchor of
-/// any epoch, or that `anchor_end` is the final anchor of $e$. The boundary
-/// digests absorb both anchors, so `anchor_start` and `anchor_next` determine
-/// them.
+/// `discriminant` and `profile` are copied. The step does not show that
+/// `anchor_final_prev` is the final anchor of any epoch, or that `anchor_end`
+/// is the final anchor of $e$.
 ///
 /// # Caller contract
 ///
@@ -1416,9 +1321,6 @@ impl Step<Pasta> for QrBucketSeal {
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// The step takes a value, shows that the bucket's profile is the value's
-/// own, and opens the bucket's contents at the value for nonzero.
-///
 /// The emitted segment reads the value as a nullifier and takes the bucket's
 /// extent, `[anchor_start, anchor_next)`, with epochs `[epoch, epoch + 1)`.
 /// Its one member is the value at `epoch`. `anchor_next` is the boundary
@@ -1429,34 +1331,24 @@ impl Step<Pasta> for QrBucketSeal {
 ///
 /// # Soundness
 ///
-/// The input is a verified [`QrBucket`] with epoch $e$, discriminant $R_0$
-/// and contents $C$.
-///
 /// - `value` is a wire $x$ from `Step::Witness`. The circuit holds it nonzero
 ///   and equal to the staged value, which fixes it before the challenge.
-/// - [`enforce_sides_of`] holds the bucket's `profile` to the path of the first
-///   `depth` sides of $x$ at $R_0$, so $x$ is in the bucket's class.
-/// - The circuit opens $C$ at $x$ and holds the opening nonzero, so $x$ is not
-///   a root of $C$.
+/// - [`enforce_sides_of`](gadgets::qr::QrProfile::enforce_sides_of) holds the
+///   bucket's `profile` to the first `depth` sides of $x$ at the bucket's
+///   `discriminant`, so $x$ is in its class.
+/// - The circuit holds the opening of the bucket's contents at $x$ nonzero.
 /// - The output's sequence is committed before the challenge. The circuit
-///   equates its opening at $\zeta$ with $F_{e,\ x}(\zeta)$, computed from the
-///   input header's `epoch` and from $x$. The sequence is therefore the
+///   equates its opening at $\zeta$ with $F_{e,\ x}(\zeta)$ for $e$ the
+///   bucket's `epoch`, so the sequence is the
 ///   [encoding](crate::collections::indexed_multiset) of the one member $x$ at
 ///   index $e$.
-/// - `epoch_next` is the gadget's `next` of the bucket's `epoch`. It
-///   range-checks the sum, so `epoch_next` is the integer $e + 1$ and is at
-///   most `EPOCH_MAX`.
+/// - `epoch_next` is the gadget's `next` of `epoch`, which range-checks it, so
+///   it is the integer $e + 1$.
 ///
-/// The output copies the bucket's `anchor_start` and `anchor_next`. The input
-/// is then the bucket by which $x$ is
-/// [excluded](ArbitraryUnspent#injectivity) at $e$ between the output's two
-/// anchors, and the output is what [`ArbitraryUnspent`] asserts of a segment
-/// of the one epoch $e$.
-///
-/// The step does not show that $x$ is a nullifier.
+/// The two anchors are copied, so the input is the bucket by which $x$ is
+/// [excluded](ArbitraryUnspent#injectivity) at $e$ between them. The step
+/// does not show that $x$ is a nullifier.
 /// [`UnspentBind`](super::pool::UnspentBind) shows that.
-///
-/// [`enforce_sides_of`]: gadgets::qr::QrProfile::enforce_sides_of
 #[derive(Debug)]
 pub struct QrUnspentInit;
 

@@ -18,13 +18,8 @@ use crate::{
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.
 ///
-/// The two wires are a path only when something holds them to one. [`root`]
-/// is the path of no sides, [`descend`] builds a path from a path, and
-/// [`enforce_sides_of`] accepts only a path.
-///
-/// [`root`]: Self::root
-/// [`descend`]: Self::descend
-/// [`enforce_sides_of`]: Self::enforce_sides_of
+/// Allocation places no constraint, so the two wires are a
+/// [path](primitives::QrProfile#injectivity) only where a step shows it.
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
@@ -66,18 +61,14 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
         }
     }
 
-    /// The child profile on side `bit`. The parent's depth is checked below
-    /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
-    /// the new side.
+    /// The child profile on side `bit`.
     ///
     /// # Soundness
     ///
     /// The range check holds the parent's `depth` to an integer $d$ below
     /// `MAX_DEPTH`. The child has `depth` $d + 1$ and `bits` $2 \cdot
-    /// \mathsf{bits} + b$ for the boolean $b$. When the parent is a path, the
-    /// child is that path followed by the side $b$, in the encoding of
-    /// [`primitives::QrProfile`]. Its `bits` stay below $2^{d+1}$, so no sum
-    /// wraps.
+    /// \mathsf{bits} + b$. When the parent is a path, the child is that path
+    /// followed by $b$, and its `bits` stay below $2^{d+1}$.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
         self.depth
@@ -117,27 +108,18 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     ///
     /// # Soundness
     ///
-    /// $b_j$ is the [side](crate::collections::qr#sides) of $x$ at $R_0 + j$.
-    /// With $b_j = 1$ the root shows that $s_j$ is a square or zero. With
-    /// $b_j = 0$ the root and $s_j \neq 0$ show that $s_j$ is a non-residue.
-    /// The two cases exclude each other, so the constraints leave $b_j$ no
-    /// choice.
-    ///
-    /// The mask bits are boolean, so `depth` is an integer $d$ from $0$ to
-    /// `MAX_DEPTH`. Both sides of the second equation are integers below the
-    /// modulus. Among $d$ distinct positions the sum of the positions is at
-    /// least $d \cdot (d - 1)/2$, and only the first $d$ positions reach it.
-    /// The mask is therefore $d$ ones followed by zeros.
-    ///
-    /// Under that mask the fold doubles $a$ and adds $b_j$ at each of the
-    /// first $d$ positions and leaves $a$ unchanged after them. `bits` is
-    /// $\sum_{j < d} b_j \cdot 2^{d-1-j}$, which is below $2^{32}$.
-    ///
-    /// The profile's two wires are thus the
-    /// [encoding](primitives::QrProfile) of the path that the first $d$ sides
-    /// of $x$ make, and $x$ is in the class of this profile at $R_0$. The
-    /// gadget reads no challenge. It holds for whatever wires it is given as
-    /// `value` and `discriminant`.
+    /// With $b_j = 1$ the root [shows](crate::collections::qr#sides) that
+    /// $s_j$ is a square or zero, and with $b_j = 0$ the root and $s_j \neq 0$
+    /// show a non-residue, so $b_j$ is the side of $x$ at $R_0 + j$. The mask
+    /// bits are boolean, so `depth` is an integer $d$ from $0$ to `MAX_DEPTH`
+    /// and the second equation holds over the integers. Among $d$ distinct
+    /// positions the sum is at least $d \cdot (d - 1)/2$, and only the first
+    /// $d$ reach it, so the mask is $d$ ones followed by zeros. The fold then
+    /// doubles $a$ and adds $b_j$ at each of the first $d$ positions and
+    /// leaves it unchanged after. The profile is thus the
+    /// [path](primitives::QrProfile#injectivity) of the first $d$ sides of
+    /// $x$, and $x$ is in its class at $R_0$. The gadget reads no challenge
+    /// and holds for whatever wires it is given.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,

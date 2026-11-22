@@ -9,15 +9,13 @@
 //! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
 //! $R$, and every pair has one.
 //!
-//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`]. The product $n
-//! \cdot s$ is a square exactly when $s$ is zero or a non-residue.
+//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`].
 //!
 //! - A $y$ with $y^2 = x + R$ shows that $x$ takes the residue side.
 //! - A $y$ with $y^2 = n \cdot (x + R)$ shows that $x + R$ is zero or a
 //!   non-residue. Together with $x + R \neq 0$ it shows that $x$ takes the
 //!   non-residue side.
 //!
-//! A value other than $-R$ has a root for its own side and none for the other.
 //! The value $-R$ has the root zero under both equations and takes the residue
 //! side.
 //!
@@ -37,10 +35,6 @@
 //!
 //! The arguments use the identity only at the roots of $q$ in the field.
 //! They draw nothing from it about a value that is not a root of $q$.
-//!
-//! A prover with $q$ the product of $(X - x_i)$ over distinct values of one
-//! side takes $u$ to interpolate a root $y_i$ at each $x_i$. Then $u^2 - c
-//! \cdot (X + R)$ vanishes at every $x_i$, and $h$ is the quotient.
 //!
 //! The identity also reads over one value against many discriminants: with
 //! the $R_j$ as the roots of $q$ and $x$ as the shift, $u(R_j)^2 = c(x +

@@ -23,18 +23,13 @@ use crate::{
 ///
 /// # Injectivity
 ///
-/// $R_0$ stands for a rule that gives every field element a
-/// [side](crate::collections::qr#sides) at every depth. Write
-/// $\mathsf{side}_j(x)$ for the side of $x$ at $R_j$. It is a function of
-/// $x$, $R_0$ and $j$, so $R_0$ and a [`QrProfile`] of depth $d$ determine
-/// one class of values, those $x$ whose $\mathsf{side}_0(x), \dots,
-/// \mathsf{side}_{d-1}(x)$ are the profile's sides. A value is in one class of
-/// each depth.
-///
-/// Every element is a valid $R_0$, and no step constrains the choice. A step
-/// that starts an intake takes $R_0$ from its `Step::Witness`. Every later
-/// step copies it from an input header or holds two inputs' copies equal, and
-/// a step that tests a value classifies at the $R_0$ of the bucket it reads.
+/// $R_0$ gives every field element a [side](crate::collections::qr#sides) at
+/// every depth $j$, its side at $R_j$. $R_0$ and a [`QrProfile`] of depth $d$
+/// therefore determine one class of values, those whose first $d$ sides are
+/// the profile's, and a value is in one class of each depth. Every element is
+/// a valid $R_0$, and no step constrains the choice. A step takes it from
+/// `Step::Witness`, copies it or holds two inputs' copies equal, and a step
+/// that tests a value classifies at the $R_0$ of its bucket.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
 
@@ -54,10 +49,9 @@ impl QrDiscriminant {
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
 /// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and shift $s$.
 ///
-/// A hint. No step checks how it was built. `QrSideDescend` checks the
-/// [class decomposition](crate::collections::qr#class-decomposition) it
-/// enters with [`QrQuotientPoly`]. What that identity shows does not depend
-/// on how the two hints were built.
+/// A hint. No step checks how it was built, and what the
+/// [class decomposition](crate::collections::qr#class-decomposition) shows
+/// does not depend on it.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -111,21 +105,14 @@ pub struct QrQuotientCommit(EqAffine);
 /// # Injectivity
 ///
 /// A profile stands for a path, the sides $b_0, \dots, b_{d-1}$ taken at
-/// depths $0$ to $d - 1$, with $b_j = 1$ for the residue side. `depth` is $d$
-/// and
+/// depths $0$ to $d - 1$, with $b_j = 1$ for the residue side. `depth` is $d$,
+/// at most [`MAX_DEPTH`](Self::MAX_DEPTH), and `bits` is $\sum_{j < d} b_j
+/// \cdot 2^{d - 1 - j}$, an integer below $2^d$ in binary. Two paths of one
+/// length differ in `bits` and two of different lengths in `depth`. `bits`
+/// alone does not determine a path, because a path that starts on the
+/// non-residue side has leading zeros.
 ///
-/// $$
-///   \mathsf{bits} = \sum_{j < d} b_j \cdot 2^{d - 1 - j}.
-/// $$
-///
-/// A path has at most [`MAX_DEPTH`](Self::MAX_DEPTH) sides, so `bits` is an
-/// integer below $2^d$ and the sum is its binary expansion. Two paths of one
-/// length differ in `bits`, and two paths of different lengths differ in
-/// `depth`. `bits` alone does not determine a path, because a path that starts
-/// on the non-residue side has leading zeros.
-///
-/// The type holds any two integers. A profile with `depth` above
-/// [`MAX_DEPTH`](Self::MAX_DEPTH), or with `bits` at or above $2^d$, is no
+/// The type holds any two integers, and a pair outside those bounds is no
 /// path. The circuit gadget's `descend` builds a path from a path, and its
 /// `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
