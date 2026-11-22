@@ -82,18 +82,15 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// # Injectivity
     ///
     /// The circuit holds `slack + value` equal to `MAX_MONEY`. Both are
-    /// integers below $2^{51}$, so the equation holds over the integers and
-    /// `slack` is the only bit string for `MAX_MONEY - value`.
+    /// integers below $2^{51}$, so `slack` is the only bit string for
+    /// `MAX_MONEY - value`, and
     /// [`FEE_V_BASE`](struct@fixed_base::FEE_V_BASE) multiplied by it gives
-    /// $\[-v\]\mathcal{V}$.
+    /// $\[-v\]\mathcal{V}$. The blind digest is decomposed into 254 bits, its
+    /// only decomposition, and a digest that is zero or at least $2^{254}$
+    /// has no assignment.
     ///
-    /// The blind digest is decomposed into 254 bits, which are its only
-    /// decomposition. A digest that is zero or at least $2^{254}$ has no
-    /// assignment. The scalar is the digest's integer, as in the native
-    /// derivation.
-    ///
-    /// The result is a function of the note's four fields, and it determines
-    /// them. It is a [value commitment](fixed_base#value-commitments), so it
+    /// The result is a function of the note's four fields and determines
+    /// them. As a [value commitment](fixed_base#value-commitments) it
     /// determines $v$ and $r$. Blinds below $2^{254}$ that are equal as
     /// scalars are equal as elements, and the blind digest determines `pk`,
     /// `psi` and `rcm`.
@@ -118,15 +115,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// # Injectivity
     ///
     /// The result is [`R_BASE`](struct@fixed_base::R_BASE) multiplied by the
-    /// 254-bit decomposition of the blind digest, with nothing added. It is
-    /// the max fee commitment $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ at
-    /// $v = 0$. A digest that is zero or at least $2^{254}$ has no
-    /// assignment, and there is no other case without one.
-    ///
-    /// The point is a [value commitment](fixed_base#value-commitments) with
-    /// value zero, so it determines $r$. The blind digest determines `pk`,
-    /// `psi` and `rcm`, as in [`cv_feemax`](Self::cv_feemax), so the point
-    /// determines the note.
+    /// blind digest's 254-bit decomposition, with nothing added. Its only
+    /// case without an assignment is a digest that is zero or at least
+    /// $2^{254}$. It is the max fee commitment at $v = 0$ and determines the
+    /// note as [`cv_feemax`](Self::cv_feemax) does.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;

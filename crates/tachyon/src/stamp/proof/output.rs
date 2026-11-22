@@ -32,31 +32,23 @@ use crate::{
 /// # Injectivity
 ///
 /// [`OutputBind`] outputs this header. A verified `OutputHeader` asserts that
-/// its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ and an
-/// integer $r$ for which
+/// its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ with $v$
+/// an integer in `0..=MAX_MONEY`, and an integer $r$ with $0 < r < 2^{254}$.
 ///
-/// - $v$ is an integer in `0..=MAX_MONEY`,
-/// - `cm` is the [note commitment](crate::digest::poseidon::note_commitment) of
-///   the note and is nonzero,
-/// - `pad` is the [padding tachygram](crate::digest::poseidon::pad_tachygram)
-///   of the same note and is nonzero,
-/// - `cv` is $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ with $0 < r < 2^{254}$.
+/// - `cm` is the note's [note
+///   commitment](crate::digest::poseidon::note_commitment) and stands for the
+///   note, whose four fields it determines.
+/// - `pad` is the note's [padding
+///   tachygram](crate::digest::poseidon::pad_tachygram). It determines the same
+///   four fields under its own tag, so `cm` and `pad` determine each other.
+/// - `cv` is $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ and stands for the value,
+///   negated. It is a [value commitment](fixed_base#value-commitments), so it
+///   determines its opening.
 ///
-/// The assertion does not make $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a
-/// payment key. [`NoteSeed`](super::delegation::NoteSeed) holds both for a
-/// note that is spent. No step relies on `cm` or `pad` being nonzero.
-///
-/// Each field determines what it stands for.
-///
-/// - `cm` stands for the note. A note commitment determines the note's four
-///   fields.
-/// - `pad` stands for the same note. It determines the same four fields under
-///   its own tag, so `cm` and `pad` determine each other.
-/// - `cv` stands for the note's value, negated. It is a [value
-///   commitment](fixed_base#value-commitments), so it determines its opening,
-///   and the opening's value is $-v$ for the $v$ that `cm` and `pad` absorb.
-///
-/// Both slots are padding. `OutputBind` opens neither.
+/// `cm` and `pad` are nonzero, and no step relies on that. The assertion does
+/// not make $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a payment key.
+/// [`NoteSeed`](super::delegation::NoteSeed) holds both for a note that is
+/// spent.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -105,23 +97,16 @@ impl Header<Fp> for OutputHeader {
 ///
 /// # Soundness
 ///
-/// The step reads no input and no challenge. Its constraints relate wires of
-/// its own, and the output header is built from those wires.
-///
-/// - The value is the [amount](gadgets::value::Positive::from_bits) that 51 bit
-///   wires encode, held at most `MAX_MONEY`.
-/// - `cm` and `pad` are the outputs of the two digest circuits on one `rcm`
-///   wire, one `pk` wire, the value and one `psi` wire. Both outputs are held
-///   nonzero.
-/// - The blind is 254 bit wires with no other constraint.
-///   [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them gives the blind
-///   point, and a zero blind has no assignment.
-/// - `cv` is [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) multiplied by the
-///   value's 51 bit wires, added to the blind point. The committed value is
-///   therefore the one both digests absorb.
-///
-/// These are the equations [`OutputHeader`] asserts. `rcm`, `pk` and `psi`
-/// carry no other constraint.
+/// The step reads no input and no challenge, and builds the header from its
+/// own wires. One `rcm` wire, one `pk` wire, one `psi` wire and the value
+/// feed both digest circuits, whose outputs are held nonzero. The three
+/// wires carry no other constraint. The value is the
+/// [amount](gadgets::value::Positive::from_bits) that 51 bit wires encode, and
+/// [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) multiplied by those same wires
+/// is added to the blind point. The committed value is therefore the one both
+/// digests absorb. The blind is 254 bit wires with no other constraint, and
+/// [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them has no assignment
+/// at zero.
 #[derive(Debug)]
 pub struct OutputBind;
 

@@ -20,10 +20,8 @@ use crate::{constants::MAX_MONEY, pasta::Fp, value};
 ///
 /// # Injectivity
 ///
-/// The element stands for an integer in `0..=MAX_MONEY`. `MAX_MONEY` is below
-/// $2^{51}$, so the element is that integer and no other. The field is
-/// private and every constructor below forces the range, so each `Positive`
-/// of a satisfied circuit holds an amount.
+/// The element stands for an integer in `0..=MAX_MONEY`, below $2^{51}$ and
+/// the modulus. The field is private, and every constructor forces the range.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,

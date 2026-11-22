@@ -20,15 +20,11 @@ use crate::pasta::Fp;
 ///
 /// # Injectivity
 ///
-/// The bits stand for the integer $n = \sum_i 2^i b_i$, which is below
-/// $2^{BITS}$. A bit string is the binary expansion of its integer, so
-/// distinct bit strings are distinct integers.
-///
-/// No use has more than 254 bits, and $2^{254}$ is below both Pasta moduli.
-/// The integer is therefore one element of $\mathbb{F}_p$ and one scalar of
-/// $\mathbb{F}_q$, and distinct integers are distinct elements and distinct
-/// scalars. [`pack`](Self::pack) reads the bits as the element and a
-/// [fixed base](super::fixed_base) reads them as the scalar.
+/// The bits stand for the integer $n = \sum_i 2^i b_i$, of which they are
+/// the binary expansion. No use has more than 254 bits, and $2^{254}$ is
+/// below both Pasta moduli, so distinct bit strings are distinct elements of
+/// $\mathbb{F}_p$ for [`pack`](Self::pack) and distinct scalars of
+/// $\mathbb{F}_q$ for a [fixed base](super::fixed_base).
 #[derive(Gadget)]
 pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
     #[ragu(gadget)]
