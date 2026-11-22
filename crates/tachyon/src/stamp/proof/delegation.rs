@@ -47,22 +47,14 @@ use crate::{
 /// - `mk` is the [master key](poseidon::nf_master) of `note.psi` and
 ///   $\mathsf{nk}$,
 /// - `cm` is the [note commitment](poseidon::note_commitment) of `note`,
-/// - `note.rcm` is nonzero and `note.value` is an integer in `0..=MAX_MONEY`.
+/// - `note.value` is an integer in `0..=MAX_MONEY`,
+/// - `note.rcm` is nonzero, which no step relies on.
 ///
-/// No step relies on `note.rcm` being nonzero.
-///
-/// Each field determines what it stands for.
-///
-/// - `cm` stands for the note. A note commitment determines its four fields, so
-///   the header's `note` is the only opening of its `cm`.
-/// - `note.pk` stands for the note's owner. A payment key determines
-///   $\mathsf{ak}$ and $\mathsf{nk}$.
-/// - `note.value` is an integer below the modulus, so the element is that
-///   integer and no other.
-/// - `mk` stands for the note's nullifiers at every epoch. It is the digest of
-///   the $\psi$ and the $\mathsf{nk}$ that `cm` determines. `cm` therefore
-///   determines `mk`, and every verified `NoteSecret` of one `cm` has the same
-///   `mk`.
+/// `cm` stands for the note. It determines the four fields of `note`, the
+/// note's `pk` determines $\mathsf{ak}$ and $\mathsf{nk}$, and $\psi$ and
+/// $\mathsf{nk}$ determine `mk`. Every verified `NoteSecret` of one `cm`
+/// therefore has the same `mk`, which stands for the note's nullifiers at
+/// every epoch.
 ///
 /// `mk` does not determine `cm`. Two notes with one $\psi$ and one
 /// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their
@@ -121,9 +113,9 @@ impl Header<Fp> for NoteSecret {
 /// # Injectivity
 ///
 /// [`NullifierDerive`] and [`NullifierFuse`] output this header. A verified
-/// `NoteNullifiers` asserts that `epoch_start <= epoch_end <= EPOCH_MAX` as
-/// integers, that a verified [`NoteSecret`] carries this `cm` with a master
-/// key $\mathsf{mk}$, and that its [`NfSeqPoly`] is
+/// `NoteNullifiers` asserts that `epoch_start <= epoch_end` as integers, that
+/// its prover knows a verified [`NoteSecret`] with this `cm` and a master key
+/// $\mathsf{mk}$, and that its [`NfSeqPoly`] is
 ///
 /// $$
 ///   S(X) = \prod_{e} F_{e,\ \mathsf{nf}_e}(X)
@@ -134,21 +126,14 @@ impl Header<Fp> for NoteSecret {
 /// member $m$ at index $i$, and $\mathsf{nf}_e$ is the
 /// [nullifier](poseidon::nullifier_group) of $\mathsf{mk}$ at epoch $e$.
 ///
-/// - `cm` stands for the note whose nullifiers these are. `cm` determines
-///   $\mathsf{mk}$, and $\mathsf{mk}$ and $e$ determine $\mathsf{nf}_e$.
-/// - `epoch_start` and `epoch_end` are integers at most `EPOCH_MAX`. Every way
-///   of building the [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds
-///   its wire to that range, so both are in range in every circuit that holds
-///   this header. An equation between two epochs therefore holds over the
-///   integers, and the range holds the epochs from the first to the second and
-///   no others.
-/// - The three fields determine $S$. $S$ has one factor for each epoch of the
-///   range and no other factor. Each factor is irreducible. Epochs are within
-///   the encoding's index bound, so different epochs give different factors.
-///   $S$ therefore determines the tuples $(e, \mathsf{nf}_e)$, and a polynomial
-///   that divides $S$ is a scalar times the factors of some of those epochs.
-///
-/// The second slot is padding. No producer opens it.
+/// `cm` stands for the note whose nullifiers these are. It determines
+/// $\mathsf{mk}$ ([`NoteSecret`]), so the three fields determine $S$. Both
+/// epochs are [`EpochIndex`](gadgets::epoch::EpochIndex) gadgets, so an
+/// equation between two epochs holds over the integers. Epochs are within the
+/// encoding's index bound, so $S$ has one irreducible factor for each epoch of
+/// the range, all different, and no other factor. $S$ therefore determines the
+/// tuples $(e, \mathsf{nf}_e)$, and a polynomial that divides $S$ is a scalar
+/// times the factors of some of those epochs.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
@@ -202,20 +187,15 @@ impl Header<Fp> for NoteNullifiers {
 ///
 /// # Soundness
 ///
-/// The step reads no input and no challenge. Its constraints relate wires of
-/// its own, and the output header is built from those wires.
+/// The step reads no input and no challenge, and builds its output header from
+/// its own wires. `value` is allocated with a range check to `0..=MAX_MONEY`
+/// and `rcm` is held nonzero. $\mathsf{ak}$ is allocated as a point, which
+/// enforces the curve equation and has no assignment for the identity. One
+/// $\mathsf{nk}$ wire feeds the `pk` and `mk` digests, one $\psi$ wire feeds
+/// `mk` and `cm`, and the `pk` wire feeds `cm`. These are the equations
+/// [`NoteSecret`] asserts.
 ///
-/// - `value` is allocated with a range check to `0..=MAX_MONEY`.
-/// - `rcm` is held nonzero.
-/// - $\mathsf{ak}$ is allocated as a point, which enforces the curve equation.
-///   The identity has no assignment.
-/// - `pk`, `mk` and `cm` are the outputs of the three digest circuits on
-///   $(\mathsf{ak}, \mathsf{nk})$, on $(\psi, \mathsf{nk})$ and on the four
-///   note fields. One $\mathsf{nk}$ wire feeds `pk` and `mk`. One $\psi$ wire
-///   feeds `mk` and `cm`, and the `pk` wire feeds `cm`.
-///
-/// These are the equations [`NoteSecret`] asserts. The step does not show that
-/// `cm` was ever published.
+/// The step does not show that `cm` was ever published.
 /// [`SpendableInit`](super::spendable::SpendableInit) and
 /// [`QrSpendableInit`](super::spendable::QrSpendableInit) show that.
 #[derive(Debug)]
@@ -333,25 +313,18 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// # Soundness
 ///
-/// The left input is a verified [`NoteSecret`], so its `mk` is the master key
-/// of its `cm`, and both are fixed before the challenge. `epoch_start` is
-/// staged, so it is fixed before the challenge too.
+/// `mk` and `cm` come from the input header and `epoch_start` is staged, so
+/// all three are fixed before the challenge. The circuit packs `epoch_start`
+/// from the bits of the epoch width with the two lowest held to zero, so it is
+/// a multiple of four. `epoch_end` is `epoch_start + 15` and is range-checked,
+/// so the sum does not wrap.
 ///
-/// The circuit packs `epoch_start` from the bits of the epoch width with the
-/// two lowest held to zero. It is a multiple of four and at most `EPOCH_MAX`.
-/// `epoch_end` is `epoch_start + 15` and is range-checked, so the sum does
-/// not wrap and all sixteen epochs are in range.
-///
-/// Each of the four sponges absorbs `mk` and the first epoch of one group,
-/// `epoch_start + 4k`. Its four squeezes are the nullifiers of `mk` at that
-/// group's epochs. The sixteen nullifiers are digests of values fixed before
-/// the challenge, and each is paired with its own epoch as index.
-///
-/// The circuit multiplies the sixteen factors $F_{e,\ \mathsf{nf}_e}(\zeta)$
-/// and equates the product with the output sequence's opening at $\zeta$. The
-/// output sequence is committed before $\zeta$. It therefore equals the
-/// product of the sixteen factors, which is what [`NoteNullifiers`] asserts
-/// of the window. `cm` is copied from the input.
+/// Each of the four sponges absorbs `mk` and `epoch_start + 4k`, and its four
+/// squeezes are the nullifiers of `mk` at that group's epochs. The circuit
+/// pairs each nullifier with its epoch, multiplies the sixteen factors at
+/// $\zeta$ and equates the product with the output sequence's opening there.
+/// The factors and the sequence are fixed before $\zeta$, so the sequence is
+/// the product [`NoteNullifiers`] asserts.
 ///
 /// # Panics
 ///
@@ -487,18 +460,13 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// # Soundness
 ///
-/// Both inputs are verified [`NoteNullifiers`]. Their `cm` are held equal, so
-/// both sequences hold nullifiers of one master key. `left.epoch_end + 1` is
-/// held equal to `right.epoch_start`. Both epochs are integers at most
-/// `EPOCH_MAX`, so the equation holds over the integers and the right range
-/// starts on the epoch after the left range ends.
-///
-/// The two input sequences and the output sequence are committed before the
-/// challenge. The circuit equates the output's opening at $\zeta$ with the
-/// product of the inputs' openings, so the output sequence is the product of
-/// the input sequences. That product has one factor for each epoch of
-/// `left.epoch_start..=right.epoch_end`, which is the range on the output
-/// header.
+/// The inputs' `cm` are held equal, so both sequences hold nullifiers of one
+/// master key. `left.epoch_end + 1` is held equal to `right.epoch_start`, an
+/// equation over the integers, so the right range starts on the epoch after
+/// the left range ends. All three sequences are committed before the
+/// challenge, and the output's opening at $\zeta$ is held to the product of
+/// the inputs' openings. The output sequence therefore has one factor for each
+/// epoch of `left.epoch_start..=right.epoch_end`.
 ///
 /// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]

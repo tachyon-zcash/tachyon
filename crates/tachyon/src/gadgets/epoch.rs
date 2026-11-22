@@ -17,7 +17,9 @@ use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};
 
 /// A [`primitives::EpochIndex`] inside a circuit: an index in
 /// `0..=EPOCH_MAX`. `EPOCH_MAX + 1` is a power of two, so the bits of the
-/// epoch width bound it exactly.
+/// epoch width bound it exactly. Every way of building the gadget holds its
+/// wire to that range, so an equation between two indices holds over the
+/// integers.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,

@@ -23,9 +23,10 @@
 //! domains are distinct capacity elements.
 //!
 //! Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
-//! then determines its function and every element that function absorbed.
-//! Where an absorbed element is built from something else, such as a point,
-//! an integer, an unordered pair or an epoch, the function says below what
+//! then determines its function and every element that function absorbed, in
+//! order. An element that is the digest of two functions is a collision. A
+//! point is absorbed as its two affine coordinates, which determine it. Where
+//! an absorbed element is built from something else, the function says what
 //! the digest determines in turn.
 
 use core::array;
@@ -67,8 +68,7 @@ const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 ///
-/// The blind is the digest read as an integer, which is also the scalar. The
-/// digest determines $\mathsf{pk}$, $\psi$ and $\mathsf{rcm}$.
+/// The blind is the digest read as an integer, which is also the scalar.
 #[must_use]
 pub fn feemax_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     let [hash] = emulated(FEE_BLIND_DOMAIN, [pk, psi, rcm]);
@@ -81,9 +81,7 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee}, \mathsf{cm}_\mathsf{chg})$.
 ///
-/// A point other than the identity is its two affine coordinates, and `fee`
-/// is an integer below $2^{64}$, so the digest determines the fee commitment,
-/// the fee and the fee change commitment.
+/// `fee` is an integer below $2^{64}$ and enters as that integer.
 ///
 /// # Panics
 ///
@@ -116,7 +114,6 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 ///
 /// The pair is the root multiset of $X^2 - (t_1 + t_2) X + t_1 t_2$. The sum
 /// and product therefore determine the two tachygrams and not their order.
-/// The digest determines `cv`, `rk` and the unordered pair.
 ///
 /// # Panics
 ///
@@ -151,8 +148,6 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 ///   )
 /// $$
 ///
-/// A payment key determines $\mathsf{ak}$ and $\mathsf{nk}$.
-///
 /// # Panics
 ///
 /// Panics if `ak` is the identity.
@@ -178,9 +173,9 @@ const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 ///   )
 /// $$
 ///
-/// `value` is an integer below $2^{64}$ and enters as that integer, so a note
-/// commitment determines all four fields of its note. The circuit function
-/// absorbs whatever element it is given for $v$. The caller bounds it.
+/// `value` is an integer below $2^{64}$ and enters as that integer. The
+/// circuit function absorbs whatever element it is given for $v$, and the
+/// caller bounds it.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -197,8 +192,7 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// observer pair them off and recover the output count.
 ///
 /// The pad absorbs the same four elements as [`note_commitment`] under its
-/// own tag. A pad determines the note's four fields, and an element that is
-/// both a pad and a note commitment is a collision between the two tags.
+/// own tag.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -215,8 +209,8 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 ///   )
 /// $$
 ///
-/// A master key determines $\psi$ and $\mathsf{nk}$. It absorbs nothing else
-/// of the note, so notes that share both share the master key.
+/// The digest absorbs nothing else of the note, so notes that share $\psi$
+/// and $\mathsf{nk}$ share the master key.
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     let [hash] = emulated(NULLIFIER_MASTER_DOMAIN, [psi, nk]);
@@ -233,7 +227,7 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 ///
 /// The randomizer $\alpha$ is the digest read as an integer. A step
 /// decomposes it into 254 bits, so a digest at or above $2^{254}$ has no
-/// assignment. The digest determines $\theta$ and $\mathsf{cm}$.
+/// assignment.
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(SPEND_ALPHA_DOMAIN, [theta, cm]);
@@ -249,8 +243,7 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 /// $$
 ///
 /// The randomizer $\alpha$ is the digest read as an integer, as in
-/// [`alpha_spend`]. The digest determines $\theta$ and $\mathsf{cm}$, and its
-/// tag differs from the spend's.
+/// [`alpha_spend`].
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(OUTPUT_ALPHA_DOMAIN, [theta, cm]);
@@ -267,8 +260,7 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// `epoch_start`. The nullifier of epoch $e$ is squeeze $e \bmod 4$ of the
 /// group with $g = e - (e \bmod 4)$. The pair $(g,\ e \bmod 4)$ determines
 /// $e$, and the Poseidon assumption covers every squeeze position. A
-/// nullifier therefore determines $\mathsf{mk}$ and $e$, and an element that
-/// is both a nullifier and another digest of this module is a collision.
+/// nullifier therefore determines $\mathsf{mk}$ and $e$.
 ///
 /// The function absorbs whatever element it is given for $g$. The caller
 /// holds it to a multiple of four.
@@ -287,10 +279,6 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 ///     \mathsf{anchor},\ e,\ x(B),\ y(B)
 ///   )
 /// $$
-///
-/// The digest determines the previous anchor, the epoch and the bridge hash.
-/// Its tag differs from [`anchor_next_epoch`]'s, so an anchor that is both a
-/// stamp absorption and a boundary digest is a collision.
 ///
 /// # Panics
 ///
@@ -315,9 +303,7 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 /// The leaf absorbs the eight elements of a
 /// [`QrBucket`](crate::stamp::proof::qr::QrBucket) header in header order,
 /// with the profile as depth then bits and the bridge hash as its two
-/// coordinates. A leaf determines all eight. Its tag differs from
-/// [`evidence_tree_node`]'s, so an element that is both a leaf and a node is a
-/// collision.
+/// coordinates.
 ///
 /// # Panics
 ///
@@ -360,8 +346,6 @@ pub fn evidence_tree_leaf(
 ///     c_0,\ c_1,\ c_2,\ c_3
 ///   )
 /// $$
-///
-/// A node determines its four subtree roots and their order.
 #[must_use]
 pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
     let [hash] = emulated(EVIDENCE_NODE_DOMAIN, children);
@@ -380,8 +364,6 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 ///     \mathsf{anchor},\ e
 ///   )
 /// $$
-///
-/// The digest determines the previous anchor and the epoch it enters.
 #[must_use]
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     let [hash] = emulated(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch]);
