@@ -146,8 +146,9 @@ impl Header<Fp> for SpendHeader {
 /// are held nonzero.
 ///
 /// `cv` is [`V_BASE`](struct@fixed_base::V_BASE) multiplied by the 51-bit
-/// decomposition of the secret's value wire, added to the blind point. The
-/// blind is 254 bit wires with no other constraint, and
+/// decomposition of the secret's value wire, added to the blind point.
+/// [`NoteSecret`] asserts that the wire is the note's value in
+/// `0..=MAX_MONEY`. The blind is 254 bit wires with no other constraint, and
 /// [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them has no assignment
 /// at zero. The step reads no challenge. The output's `cm` and `anchor` are
 /// the lineage's wires and its `pk` is the secret's.

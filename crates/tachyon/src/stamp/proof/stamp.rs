@@ -120,7 +120,9 @@ impl Header<Fp> for Actions {
 /// [`FeeFuse`], [`FeeSeed`], [`StampMerge`], [`StampLift`] and
 /// [`StampUnmerge`] output this header. A verified `Stamp` asserts what a
 /// verified [`Actions`] asserts, except that the multiset of leaves may be
-/// empty and that a leaf may be a fee leaf, which has one tachygram. It does
+/// empty, with $A$ and $T$ the constant one, and that a leaf may be a fee
+/// leaf, which has one tachygram. It also asserts that `tachygram_set_bridge`
+/// is a [bridge hash](TachygramSetBridge) of the accumulator of $T$. It does
 /// not assert that a fee leaf is present, and [`StampUnmerge`] can remove
 /// every leaf.
 ///
@@ -144,12 +146,11 @@ impl Header<Fp> for Actions {
 ///   $\mathsf{cm}_\mathsf{chg}$, and $\mathsf{cm}_\mathsf{chg}$ determines
 ///   $\mathsf{rcm}$, $\mathsf{pk}$, $m - f$ and $\psi$, so $d$ determines the
 ///   note and the fee.
-/// - `tachygram_set_bridge` is a [bridge hash](TachygramSetBridge) of the
-///   accumulator of $T$ and determines it. Each step that outputs a `Stamp`
-///   writes its two bridge hash wires there, and the [Recursion
-///   assumption](super#assumptions) makes them a bridge hash of the accumulator
-///   in the step's last output slot, which holds $T$. The native verifier
-///   recomputes the field with
+/// - `tachygram_set_bridge` determines the accumulator of $T$. Each step that
+///   outputs a `Stamp` writes its two bridge hash wires there, and the
+///   [Recursion assumption](super#assumptions) makes them a bridge hash of the
+///   accumulator in the step's last output slot, which holds $T$. The native
+///   verifier recomputes the field with
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash). No step reads it.
 #[derive(Debug)]
 pub struct Stamp;
@@ -229,7 +230,8 @@ impl Header<Fp> for Stamp {
 /// assignment at zero.
 ///
 /// $d$ is held equal to a staged value, so it is fixed before $\zeta$ though
-/// $\theta$ is not. The circuit equates the action set's opening at $\zeta$
+/// $\theta$ is not. The leaf says only that some $\theta$ gives the staged
+/// digest. The circuit equates the action set's opening at $\zeta$
 /// with $\zeta - d$ and the tachygram set's with
 /// $(\zeta - \mathsf{cm})(\zeta - \mathsf{pad})$. Both polynomials are
 /// committed before $\zeta$ and the header's fields are fixed before it, so
@@ -1073,14 +1075,16 @@ impl Step<Pasta> for FeeFuse {
 /// value wire is held to zero and the fee is the constant zero, so the change
 /// is the note itself and $\mathsf{cm}_\mathsf{chg}$ is the commitment of
 /// the note's own four wires. $\mathsf{cv}_\mathsf{feemax}$ comes from
-/// [`cv_feemax_zero`](gadgets::note::Note::cv_feemax_zero). `pk`, `psi` and
-/// `rcm` are held equal to staged values, and of the three sets of bits only
-/// the blind bits remain.
+/// [`cv_feemax_zero`](gadgets::note::Note::cv_feemax_zero). The step stages
+/// `pk`, `psi` and `rcm` alone, each held equal to its wire, and of the
+/// three sets of bits only the blind bits remain.
 ///
 /// The circuit equates the action set's opening at $\zeta$ with $\zeta - d$
-/// and the tachygram set's with $\zeta - \mathsf{cm}_\mathsf{chg}$, so the
-/// two output polynomials are one fee leaf's. The output's `anchor` is a wire
-/// with no constraint.
+/// and the tachygram set's with $\zeta - \mathsf{cm}_\mathsf{chg}$. Both
+/// polynomials are committed before $\zeta$ and both roots are fixed before
+/// it, so by the [check at the challenge](super#checks-at-the-challenge)
+/// they are one fee leaf's. The output's `anchor` is a wire with no
+/// constraint.
 #[derive(Debug)]
 pub struct FeeSeed;
 

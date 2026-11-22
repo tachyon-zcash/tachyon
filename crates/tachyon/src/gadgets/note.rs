@@ -82,8 +82,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// # Injectivity
     ///
     /// The circuit holds `slack + value` equal to `MAX_MONEY`. Both are
-    /// integers below $2^{51}$, so `slack` is the only bit string for
-    /// `MAX_MONEY - value`, and
+    /// integers below $2^{51}$, so the equation holds over the integers and
+    /// `slack` is the only bit string for `MAX_MONEY - value`.
     /// [`FEE_V_BASE`](struct@fixed_base::FEE_V_BASE) multiplied by it gives
     /// $\[-v\]\mathcal{V}$. The blind digest is decomposed into 254 bits, its
     /// only decomposition, and a digest that is zero or at least $2^{254}$
