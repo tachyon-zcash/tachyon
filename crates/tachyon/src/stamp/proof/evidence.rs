@@ -578,7 +578,8 @@ impl Step<Pasta> for EvidenceTreeCap {
 ///
 /// The circuit starts from the input's `root`. At each level it allocates four
 /// elements, holds their node digest equal to the current element, and takes
-/// one of the four as the next, chosen by two boolean wires.
+/// one of the four as the next, chosen by two boolean wires from
+/// `Step::Witness` that nothing else constrains.
 ///
 /// A valid current element that equals a node digest is not known to be a
 /// leaf digest, so it is valid by the second rule of [`EvidenceTree`]. A node

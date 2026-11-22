@@ -9,13 +9,15 @@
 //! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
 //! $R$, and every pair has one.
 //!
-//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`].
+//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`], for which $n
+//! \cdot s$ is a square exactly when $s$ is zero or a non-residue.
 //!
 //! - A $y$ with $y^2 = x + R$ shows that $x$ takes the residue side.
 //! - A $y$ with $y^2 = n \cdot (x + R)$ shows that $x + R$ is zero or a
 //!   non-residue. Together with $x + R \neq 0$ it shows that $x$ takes the
 //!   non-residue side.
 //!
+//! A value other than $-R$ has a root for its own side and none for the other.
 //! The value $-R$ has the root zero under both equations and takes the residue
 //! side.
 //!

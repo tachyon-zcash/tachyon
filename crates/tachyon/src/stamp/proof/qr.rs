@@ -1079,21 +1079,23 @@ impl Step<Pasta> for QrSideDescend {
 /// knows an anchor $a$ for which
 ///
 /// - `epoch` is an integer $e$ below `EPOCH_MAX`,
-/// - `anchor_start` is a [boundary digest](poseidon::anchor_next_epoch) into
-///   $e$, and `anchor_next` is the boundary digest of $a$ into $e + 1$,
+/// - `anchor_start` is the [boundary digest](poseidon::anchor_next_epoch) into
+///   $e$ of an anchor the prover knows, and `anchor_next` is the boundary
+///   digest of $a$ into $e + 1$,
 /// - what [`QrIntake`] asserts holds of `(epoch, anchor_start, a, discriminant,
 ///   profile)` with $C$ as the contents,
 /// - `contents_hash` is a [bridge hash](TachygramSetBridge) of the accumulator
 ///   of $C$.
 ///
 /// Unlike an intake's, the two anchors determine the chain. `anchor_next`
-/// determines $a$ and $e + 1$, and `anchor_start` determines $e$. Take two
-/// stamp chains from `anchor_start` to $a$. Each anchor after the first
-/// determines the absorption behind it, so walking back from $a$ the two
-/// agree for as long as both run. A boundary digest and a stamp absorption
-/// have different tags, so no anchor after the first of either chain is
-/// `anchor_start`, and neither chain runs past the other's start. The header
-/// therefore determines the chain, its product $P$ and the class.
+/// determines $a$ and $e + 1$, and `anchor_start` determines $e$ and the
+/// anchor it absorbs. Take two stamp chains from `anchor_start` to $a$. Each
+/// anchor after the first determines the absorption behind it, so walking
+/// back from $a$ the two agree for as long as both run. A boundary digest and
+/// a stamp absorption have different tags, so no anchor after the first of
+/// either chain is `anchor_start`, and neither chain runs past the other's
+/// start. The header therefore determines the chain, its product $P$ and the
+/// class.
 ///
 /// `contents_hash` determines $C$. $C$ does not determine `contents_hash`,
 /// because one accumulator has many bridge hashes.
@@ -1209,7 +1211,8 @@ impl Header<Fp> for QrBucket {
 ///   and its successor is $e + 1$.
 /// - The circuit holds the intake's `anchor_prev` equal to the [boundary
 ///   digest](poseidon::anchor_next_epoch) of `anchor_final_prev` into $e$.
-///   `anchor_final_prev` is a wire from `Step::Witness`.
+///   `anchor_final_prev` is a wire from `Step::Witness`, so `anchor_start` is a
+///   boundary digest into $e$ of an anchor the prover knows.
 /// - `anchor_next` is the boundary digest circuit's output on the intake's
 ///   `anchor_end` and $e + 1$, so `anchor_end` is the anchor $a$ of
 ///   [`QrBucket`].
@@ -1220,7 +1223,8 @@ impl Header<Fp> for QrBucket {
 ///
 /// `discriminant` and `profile` are copied. The step does not show that
 /// `anchor_final_prev` is the final anchor of any epoch, or that `anchor_end`
-/// is the final anchor of $e$.
+/// is the final anchor of $e$. The boundary digests absorb both anchors, so
+/// `anchor_start` and `anchor_next` determine them.
 ///
 /// # Caller contract
 ///
