@@ -6,7 +6,8 @@
 //! An accumulator determines its polynomial, by the
 //! [Commitments assumption](crate::stamp::proof#assumptions), because no slot
 //! holds more than $2^{13}$ coefficients. The accumulator of a set polynomial
-//! therefore determines its members, by the [multiset] encoding. The types
+//! therefore determines its members, fewer than $2^{13}$ of them, by the
+//! [multiset] encoding. The types
 //! here hold any polynomial and any point, and a header that carries one says
 //! which polynomial its slot holds.
 //!
@@ -42,7 +43,8 @@ pub struct TachygramSetCommit(EqAffine);
 ///
 /// It commits to the accumulator's two coordinates under the nested
 /// generators and determines the accumulator, by the
-/// [Commitments assumption](crate::stamp::proof#assumptions). One accumulator
+/// [Commitments assumption](crate::stamp::proof#assumptions), and with it the
+/// polynomial. One accumulator
 /// has many bridge hashes. [`bridge_hash`](crate::bridge_hash::bridge_hash)
 /// computes the one an honest prover uses, and [`Anchor::next_stamp`] absorbs
 /// that one. A step reads its own as two wires that are not fixed before its

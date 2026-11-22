@@ -48,9 +48,10 @@ pub enum AnchorError {
 /// An anchor stands for the pool history that produced it, its entries in
 /// order. A digest determines its function and the elements it absorbed
 /// ([Poseidon](poseidon#injectivity)), so an anchor determines its last
-/// entry and the anchor before it. A stamp entry's bridge hash determines the
-/// accumulator and its polynomial
-/// ([`TachygramSetBridge`](super::TachygramSetBridge)).
+/// entry and the anchor before it. A stamp absorption determines the epoch
+/// and the bridge hash, and the bridge hash determines the accumulator and
+/// its polynomial ([`TachygramSetBridge`](super::TachygramSetBridge)). An
+/// epoch is an integer at most `EPOCH_MAX` and is absorbed as that integer.
 ///
 /// No later anchor of a history is the genesis value. A stamp absorption has
 /// the other tag, and a boundary digest of a history absorbs another epoch,
@@ -93,8 +94,9 @@ pub enum AnchorError {
 ///
 /// A boundary digest $\mathsf{ep}(a, e)$ that is a later anchor of a pool
 /// history is likewise that history's boundary entry into $e$, with $a$ the
-/// anchor behind it. One that is the genesis value is no entry. It has $a$
-/// and $e$ both zero, and nothing shows that zero is an anchor.
+/// anchor behind it. One that is the genesis value is no entry. It is the
+/// history's start, with $a$ and $e$ both zero, and nothing shows that zero
+/// is an anchor.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 

@@ -65,7 +65,9 @@ use crate::{
 /// [assertion](QrBucket#injectivity), its contents have every root in that
 /// class of the polynomials of its
 /// [stamp chain](Anchor#chains-in-a-step), so $v$ is a root of none of them.
-/// Its two bounds are boundary digests and determine that chain.
+/// Its two bounds are boundary digests and determine that chain, so every
+/// bucket with these three fields has the same one. $b'$ is the boundary
+/// digest of the chain's end into $e + 1$ and determines both.
 ///
 /// [`QrUnspentInit`](super::qr::QrUnspentInit), [`UnspentLift`] and
 /// [`UnspentFuse`] output this header. A verified `ArbitraryUnspent` asserts
@@ -82,7 +84,9 @@ use crate::{
 ///
 /// No step relies on $v_e$ being nonzero. $E$ has one factor for each epoch
 /// of the range and no other. An epoch is within the encoding's index bound,
-/// so $E$ determines each pair of an epoch and its value.
+/// so $E$ determines each pair of an epoch and its value. `anchor_next` is
+/// the last bucket's, so it determines `epoch_next` and the end of that
+/// bucket's chain.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -319,6 +323,9 @@ impl Header<Fp> for AnchorSpan {
 ///   below $2^{13}/p$, whichever of the two is drawn first. With $T$ challenges
 ///   and $Q$ digests the bound is $2^{13} \cdot T \cdot Q/p$. A check on values
 ///   fixed before the challenge has no factor $Q$.
+///
+/// Outside that probability $M$ is $X - a$, the set polynomial that
+/// [`AnchorSpan`] asserts for a chain of one absorption.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -512,10 +519,12 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// `left.anchor_next` equal to `right.anchor_start`. The epochs are integers,
 /// so the right half's epochs follow the left half's without a gap or an
 /// overlap, and its anchors continue the left half's from the shared one.
+/// Each value stays excluded at its own epoch between the same two anchors.
 /// The three sequences are committed before the challenge. The circuit
 /// equates the output's opening at $\zeta$ with the product of the inputs'
 /// openings, so the output sequence is the product of the input sequences.
-/// It has one factor for each epoch of `left.epoch_start..right.epoch_next`.
+/// It has one factor for each epoch of `left.epoch_start..right.epoch_next`,
+/// the range on the output header.
 ///
 /// Opens both input sequences and their product once each.
 #[derive(Debug)]
@@ -618,13 +627,15 @@ impl Step<Pasta> for UnspentFuse {
 /// it is in the class of the bucket's `profile` at the bucket's
 /// `discriminant`, and the circuit holds the opening of the bucket's contents
 /// at it nonzero. It is therefore [excluded](ArbitraryUnspent#injectivity)
-/// at the bucket's epoch between the bucket's two anchors.
+/// at the bucket's epoch between the bucket's two anchors, which extends the
+/// segment's anchors and values by one epoch.
 ///
 /// The circuit equates the output sequence's opening at $\zeta$ with the
 /// input sequence's opening times $F_{e,\ v}(\zeta)$, for $e$ the bucket's
 /// epoch and $v$ `value`. Both sequences are committed before $\zeta$, $e$
 /// is an input header field and $v$ is staged. The output sequence is
-/// therefore the input sequence times that one factor.
+/// therefore the input sequence times that one factor, with one factor for
+/// each epoch of the output header's range.
 ///
 /// Three committed polynomials, each opened once.
 #[derive(Debug)]
@@ -777,8 +788,10 @@ impl Step<Pasta> for UnspentLift {
 /// Each factor of $E$ is therefore a factor of $D$. Hence every epoch $e$ of
 /// the segment is an epoch of the derivation, and $v_e = n_e$.
 ///
-/// The step copies `cm` from the right input and the other four fields from
-/// the left.
+/// The segment has one tested value for each of its epochs, so the note's
+/// nullifier is excluded at every epoch of `epoch_start..epoch_next`, as
+/// [`NoteUnspent`] asserts. The step copies `cm` from the right input and the
+/// other four fields from the left.
 ///
 /// Opens the elapsed sequence, derivation and complement once each.
 #[derive(Debug)]
