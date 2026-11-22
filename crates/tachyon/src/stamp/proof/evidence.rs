@@ -58,7 +58,8 @@ use crate::{
 /// [determines what it absorbed](EvidenceTreeRoot#injectivity).
 /// [`EvidenceTreeOpen`] outputs a bucket with the header and contents of the
 /// bucket behind a leaf, so by induction on the step tree every leaf behind a
-/// valid element is a header that `QrBucketSeal` output.
+/// valid element is a header that
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) output.
 ///
 /// [`EvidenceTreeFuse`], [`EvidenceTreeCap`] and [`EvidenceTreeDescend`]
 /// output this header. A verified `EvidenceTree` asserts that `root` is valid

@@ -274,6 +274,9 @@ impl Header<Fp> for QrIntakeSides {
 /// every verified [`QrIntakeSides`] with this hash. The header asserts
 /// nothing about the two hints in its slots. They sit there so that they are
 /// fixed before the challenge of the step that reads them.
+///
+/// `Data` is the `Data` of [`QrIntakeSides`]. The suffix tells the two
+/// headers apart.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
