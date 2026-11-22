@@ -46,30 +46,18 @@ use crate::{
 /// - [`Summary::ACCUMULATED`] is the product $P_1 \cdots P_k$,
 /// - [`Summary::LAST_STAMP`] is $P_k$.
 ///
-/// No step relies on an absorption's polynomial differing from the constant
-/// one.
+/// `anchor_prev` is the prover's choice, and the assertion says nothing of
+/// what lies behind it. No step relies on an absorption's polynomial
+/// differing from the constant one.
 ///
-/// Each field and each polynomial determines what it stands for.
-///
-/// - `epoch` stands for the epoch every absorption of the chain absorbs. It is
-///   an integer at most `EPOCH_MAX`. Every way of building the
-///   [`EpochIndex`](gadgets::epoch::EpochIndex) gadget holds its wire to that
-///   range, so it is in range in every circuit that holds this header.
-///   `anchor_end` determines it.
-/// - `anchor_end` stands for the end of the chain. It is a stamp absorption, so
-///   it determines the chain's last absorption, and each anchor of the chain
-///   after the first determines the absorption behind it ([`Anchor`]).
-/// - `anchor_prev` is where the chain starts. [`SummarySeed`] takes it from its
-///   prover, so the assertion says nothing of what lies behind it.
-/// - [`Summary::ACCUMULATED`] stands for the roots of the chain's polynomials.
-///   It is their product and has no other factor, so a value is a root of it
-///   exactly when it is a root of some $P_i$. Where each $P_i$ is a [set
-///   polynomial](crate::collections::multiset), it is the set polynomial of the
-///   multiset sum of the stamps' tachygrams.
-/// - [`Summary::LAST_STAMP`] is the polynomial whose bridge hash the last
-///   absorption absorbs, and `anchor_end` determines it. It sits in the last
-///   slot because a step reads the bridge hash of that slot. No step reads it
-///   from an input.
+/// - `anchor_end` determines `epoch`, $P_k$ and each absorption behind it
+///   ([`Anchor`]).
+/// - [`Summary::ACCUMULATED`] has no factor other than the $P_i$, so a value is
+///   a root of it exactly when it is a root of some $P_i$. Where each $P_i$ is
+///   a [set polynomial](crate::collections::multiset), it is the set polynomial
+///   of the multiset sum of the stamps' tachygrams.
+/// - [`Summary::LAST_STAMP`] sits in the last slot because a step reads the
+///   bridge hash of that slot. No step reads it from an input.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
@@ -142,23 +130,12 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// The step reads no input. `anchor_prev` and `epoch` are wires of the
-/// prover's choice, and `epoch` is range-checked.
-///
-/// Both output polynomials are committed before the challenge. The circuit
-/// equates their openings at $\zeta$, so they are one polynomial $P$. It
-/// holds the opening away from one, so $P$ is not the constant one.
-///
-/// [`Summary::LAST_STAMP`] is the step's last output slot, so Ragu holds the
-/// bridge hash wires to a [bridge hash](crate::TachygramSetBridge) $B$ of the
-/// accumulator of $P$. `anchor_end` is the output of the
-/// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on
-/// `anchor_prev`, `epoch` and $B$. No identity at the challenge reads it.
-///
-/// These are a [stamp chain](Anchor#chains-in-a-step) of one absorption in
-/// `epoch`
-/// whose polynomial is both output polynomials, which is what [`Summary`]
-/// asserts with $k = 1$.
+/// The step [adds an absorption](Anchor#chains-in-a-step) of `anchor_prev`,
+/// `epoch` and the polynomial in [`Summary::LAST_STAMP`], with both wires the
+/// prover's choice. Both output polynomials are committed before the
+/// challenge. The circuit equates their openings at $\zeta$, so they are one
+/// polynomial, and holds the opening away from one, so it is not the constant
+/// one.
 ///
 /// [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] open once each at the
 /// challenge.
@@ -256,36 +233,22 @@ impl Step<Pasta> for SummarySeed {
 /// Extend the accumulator with the next stamp while the anchor absorbs the
 /// stamp's bridge hash.
 ///
-/// The left and output [`Summary::ACCUMULATED`] hold the accumulated sets;
-/// the output's [`Summary::LAST_STAMP`] holds the next stamp's tachygrams.
-/// Each is opened once.
+/// The left and output [`Summary::ACCUMULATED`] and the output's
+/// [`Summary::LAST_STAMP`] are opened once each.
 ///
 /// # Soundness
 ///
-/// The left input is a verified [`Summary`]. It asserts a
-/// [stamp chain](Anchor#chains-in-a-step) in its `epoch` from its
-/// `anchor_prev` to its `anchor_end`, and its [`Summary::ACCUMULATED`] is the
-/// product $A$ of the chain's polynomials.
+/// The step [adds an absorption](Anchor#chains-in-a-step) of the input's
+/// `anchor_end`, the input's `epoch` and the polynomial $P$ in the output's
+/// [`Summary::LAST_STAMP`]. This extends the input's chain by one absorption
+/// in the same epoch. The step copies `epoch` and `anchor_prev`, and it does
+/// not read the input's [`Summary::LAST_STAMP`].
 ///
-/// $A$ is fixed in the input PCD, and both output polynomials are committed
-/// before the challenge. The circuit equates the opening of the output's
-/// [`Summary::ACCUMULATED`] at $\zeta$ with $A(\zeta) \cdot P(\zeta)$, for
-/// $P$ the output's [`Summary::LAST_STAMP`]. The output's
-/// [`Summary::ACCUMULATED`] is therefore $A \cdot P$. The circuit holds
-/// $P(\zeta)$ away from one, so $P$ is not the constant one.
-///
-/// [`Summary::LAST_STAMP`] is the step's last output slot, so Ragu holds the
-/// bridge hash wires to a [bridge hash](crate::TachygramSetBridge) $B$ of the
-/// accumulator of $P$. The output `anchor_end` is the output of the
-/// [`anchor_next_stamp`](poseidon::anchor_next_stamp) circuit on the input's
-/// `anchor_end`, the input's `epoch` and $B$. No identity at the challenge
-/// reads it. The step copies `epoch` and `anchor_prev` from the input.
-///
-/// The input's chain with this absorption is a stamp chain in `epoch` from
-/// `anchor_prev` to the output `anchor_end`. Its polynomials multiply to the
-/// output's [`Summary::ACCUMULATED`] and its last is $P$, which is what
-/// [`Summary`] asserts. The step does not read the input's
-/// [`Summary::LAST_STAMP`].
+/// The input's [`Summary::ACCUMULATED`] $A$ is fixed in the input PCD, and
+/// both output polynomials are committed before the challenge. The circuit
+/// equates the opening of the output's [`Summary::ACCUMULATED`] at $\zeta$
+/// with $A(\zeta) \cdot P(\zeta)$, so that polynomial is $A \cdot P$. The
+/// circuit holds $P(\zeta)$ away from one, so $P$ is not the constant one.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 

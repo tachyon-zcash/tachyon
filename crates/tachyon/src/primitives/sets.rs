@@ -3,23 +3,17 @@
 //!
 //! # Injectivity
 //!
-//! A set polynomial is the [multiset] encoding of its members and determines
-//! them. An accumulator is the commitment to a polynomial under the host
-//! generators, without a blinding term. It determines its polynomial among
-//! those of at most $2^{13}$ coefficients, by the
-//! [Commitments assumption](crate::stamp::proof#assumptions), and no slot
-//! holds a longer one. The accumulator of a set polynomial therefore
-//! determines a multiset of fewer than $2^{13}$ members.
+//! An accumulator determines its polynomial, by the
+//! [Commitments assumption](crate::stamp::proof#assumptions), because no slot
+//! holds more than $2^{13}$ coefficients. The accumulator of a set polynomial
+//! therefore determines its members, by the [multiset] encoding. The types
+//! here hold any polynomial and any point, and a header that carries one says
+//! which polynomial its slot holds.
 //!
-//! The polynomial types below hold any polynomial, and the commitment types
-//! any point. A header that carries one says which polynomial its slot
-//! holds. [`FromIterator`] builds a set polynomial natively.
-//!
-//! The three kinds are built the same way and differ in what a member is.
-//! Nothing in an accumulator says which kind it is. A header's
-//! `OnlinePolyCommit` fixes the kind of each of its slots, and a step names
-//! the kind it opens, so a step reads a slot only as the kind its header
-//! declares.
+//! The three kinds differ only in what a member is, and nothing in an
+//! accumulator says which kind it is. A header's `OnlinePolyCommit` fixes the
+//! kind of each slot and a step names the kind it opens, so a step reads a
+//! slot only as the kind its header declares.
 
 use core::iter;
 
@@ -40,27 +34,19 @@ use crate::{
 };
 
 /// Accumulator of a tachygram set, the Pedersen commitment to its
-/// [`TachygramSetPoly`].
-///
-/// It determines the polynomial, and the tachygrams when the polynomial is a
-/// set polynomial, by the [module's Injectivity section](self#injectivity).
+/// [`TachygramSetPoly`] ([Injectivity](self#injectivity)).
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(EqAffine);
 
 /// Bridge hash of a tachygram accumulator: a Pallas point.
 ///
-/// A bridge hash of an accumulator is a commitment, under the nested
-/// generators, to a polynomial that holds the accumulator's two coordinates.
-/// It determines the accumulator, by the
-/// [Commitments assumption](crate::stamp::proof#assumptions), and with it the
-/// polynomial.
-///
-/// One accumulator has many bridge hashes.
-/// [`bridge_hash`](crate::bridge_hash::bridge_hash) computes the one an
-/// honest prover uses, and [`Anchor::next_stamp`] absorbs that one. A step
-/// reads the bridge hash of its own last output slot as two wires. Ragu holds
-/// them to a bridge hash of that slot's accumulator. They are not fixed
-/// before the step's challenge.
+/// It commits to the accumulator's two coordinates under the nested
+/// generators and determines the accumulator, by the
+/// [Commitments assumption](crate::stamp::proof#assumptions). One accumulator
+/// has many bridge hashes. [`bridge_hash`](crate::bridge_hash::bridge_hash)
+/// computes the one an honest prover uses, and [`Anchor::next_stamp`] absorbs
+/// that one. A step reads its own as two wires that are not fixed before its
+/// challenge.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetBridge(EpAffine);
 
@@ -101,18 +87,12 @@ impl Default for TachygramSetCommit {
 }
 
 /// Accumulator of a stamp's action-digest set, the Pedersen commitment to its
-/// [`ActionSetPoly`].
-///
-/// It determines the polynomial, and the digests when the polynomial is a
-/// set polynomial, by the [module's Injectivity section](self#injectivity).
+/// [`ActionSetPoly`] ([Injectivity](self#injectivity)).
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionSetCommit(EqAffine);
 
 /// Accumulator of an anchor span's member set, the Pedersen commitment to
-/// its [`AnchorSetPoly`].
-///
-/// It determines the polynomial, and the anchors when the polynomial is a
-/// set polynomial, by the [module's Injectivity section](self#injectivity).
+/// its [`AnchorSetPoly`] ([Injectivity](self#injectivity)).
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct AnchorSetCommit(EqAffine);
 
@@ -121,23 +101,22 @@ pub struct AnchorSetCommit(EqAffine);
 /// A member is a [`Tachygram`]. The set is one stamp's, or the multiset sum
 /// of several stamps' where a step multiplies their polynomials.
 ///
-/// The type itself holds any polynomial. A step that takes one from its
-/// prover as a stamp's does not show that it is a set polynomial. The step
-/// absorbs a bridge hash of its accumulator into an [`Anchor`], and an anchor
-/// of a pool history determines the accumulator of each stamp behind it.
+/// A step that takes one from its prover as a stamp's does not show that it
+/// is a set polynomial. The step absorbs a bridge hash of its accumulator
+/// into an [`Anchor`], and an anchor of a pool history determines the
+/// accumulator of each stamp behind it.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 
 /// Set polynomial of a stamp's action-digest set (members encoded as roots).
 ///
-/// A member is an [`ActionDigest`] or a fee digest. The type itself holds any
-/// polynomial.
+/// A member is an [`ActionDigest`] or a fee digest.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial<Fp, WalletRank>);
 
 /// Set polynomial of an anchor span's member set (members encoded as roots).
 ///
-/// A member is an [`Anchor`]. The type itself holds any polynomial.
+/// A member is an [`Anchor`].
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, WalletRank>);
 

@@ -11,24 +11,18 @@
 //!
 //! ## Injectivity
 //!
-//! $\mathbb{F}_p\[X\]$ factors uniquely, and each $X - m$ is monic and
-//! irreducible. A set polynomial therefore determines its factors with their
-//! multiplicities, and each factor determines its member. Two multisets with
-//! one set polynomial are equal.
+//! $\mathbb{F}_p\[X\]$ factors uniquely and each $X - m$ is monic and
+//! irreducible, so a set polynomial determines its members with their
+//! multiplicities. The product of two set polynomials is that of the multiset
+//! sum, a polynomial that divides one is a scalar times that of a
+//! sub-multiset, and $S(x) = 0$ exactly when $x$ is a member.
 //!
-//! - The product of two set polynomials is the set polynomial of the multiset
-//!   sum.
-//! - A polynomial that divides a set polynomial is a scalar times the set
-//!   polynomial of a sub-multiset.
-//! - $S(x) = 0$ exactly when $x$ is a member.
-//!
-//! A step holds such a polynomial only as a commitment in a slot, and no
-//! constraint makes a slot's polynomial a product of linear factors. What a
-//! step shows about a slot is about that polynomial's roots and factors. It
-//! is about a multiset once the polynomial is known to be a set polynomial.
-//! An identity at the challenge against factors computed in the circuit from
-//! values fixed before the challenge shows that. So does an accumulator that a
-//! verifier recomputes from published members.
+//! No constraint makes a slot's polynomial a product of linear factors. What
+//! a step shows about a slot is about that polynomial's roots and factors,
+//! and is about a multiset only once the polynomial is known to be a set
+//! polynomial. An identity at the challenge against factors computed from
+//! values fixed before the challenge shows that, as does an accumulator that
+//! a verifier recomputes from published members.
 
 extern crate alloc;
 
