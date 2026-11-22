@@ -41,19 +41,22 @@
 //!   that verifies can also produce the tree of steps that built it, with every
 //!   step's wires, and every circuit in the tree is satisfied. This is what
 //!   "its prover knows" means in a header's assertion. Each input a step reads
-//!   is a verified PCD of the header the step declares, and no two headers
-//!   share a suffix. A value a step opens is the value of the polynomial that
-//!   the step producing that slot committed. An output slot a step does not
-//!   open holds the constant one. The two bridge hash wires a step reads are a
+//!   is a verified PCD of the header the step declares. A header reaches a step
+//!   or a verifier as [`HEADER_SIZE`] elements that end in its suffix, and no
+//!   two headers share a suffix. A value a step opens is the value of the
+//!   polynomial that the step producing that slot committed. An output slot a
+//!   step does not open holds the constant one, and no step can open a slot its
+//!   header lists as `Padding`. The two bridge hash wires a step reads are a
 //!   bridge hash of the accumulator in that step's last output slot. Ragu holds
 //!   them to the slot, and no step circuit constrains them.
 //!
 //!   The tree holds the steps registered in [`new_application`], Ragu's
 //!   bootstrap step, which outputs the unit header, and Ragu's
 //!   rerandomization. Rerandomization outputs the header it reads with the same
-//!   fields and holds each polynomial equal to the input's. A header's
-//!   documentation therefore names only the registered steps that output it.
-//!   This application registers no decompression step.
+//!   fields and holds each output polynomial equal to the input's at its
+//!   challenge, so it preserves every assertion. A header's documentation
+//!   therefore names only the registered steps that output it. This
+//!   application registers no decompression step.
 //! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
 //!   triples of tag, absorbed elements of that number and squeeze position are
 //!   known that give the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed)

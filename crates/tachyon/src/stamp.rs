@@ -1224,13 +1224,16 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Soundness
     ///
-    /// An accepted stamp has what [`Stamp`] asserts, with exactly
-    /// `action_digests`, a multiset, as the digests of its leaves and the
-    /// polynomial of [`Self::tachygram_set`] as its tachygram set polynomial.
-    /// The stamp proof's two online commitments are compared with the two
-    /// accumulators. An accumulator determines its polynomial, and a
-    /// [set polynomial](crate::collections::multiset) determines its roots
-    /// with their multiplicities.
+    /// The PCD is verified as a [`Stamp`] whose `anchor` is [`Self::anchor`]
+    /// and whose bridge hash is the one [`bridge_hash`] computes from
+    /// [`Self::tachygram_set`]. The stamp proof's two online commitments are
+    /// compared with the action accumulator recomputed from `action_digests`,
+    /// a multiset, and with [`Self::tachygram_set`]. An accumulator determines
+    /// its polynomial, and a [set polynomial](crate::collections::multiset)
+    /// determines its roots with their multiplicities. An accepted stamp
+    /// therefore has what [`Stamp`] asserts at that anchor, with exactly
+    /// `action_digests` as the digests of its leaves and the polynomial of
+    /// [`Self::tachygram_set`] as its tachygram set polynomial.
     ///
     /// The caller confirms [`Self::tachygram_set`] against the covered
     /// bundles' pairs and fee changes and builds `action_digests` from their

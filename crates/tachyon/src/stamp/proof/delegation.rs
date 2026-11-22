@@ -113,7 +113,8 @@ impl Header<Fp> for NoteSecret {
 /// # Injectivity
 ///
 /// [`NullifierDerive`] and [`NullifierFuse`] output this header. A verified
-/// `NoteNullifiers` asserts that `epoch_start <= epoch_end` as integers, that
+/// `NoteNullifiers` asserts that `epoch_start <= epoch_end <= EPOCH_MAX` as
+/// integers, that
 /// its prover knows a verified [`NoteSecret`] with this `cm` and a master key
 /// $\mathsf{mk}$, and that its [`NfSeqPoly`] is
 ///
@@ -190,10 +191,10 @@ impl Header<Fp> for NoteNullifiers {
 /// The step reads no input and no challenge, and builds its output header from
 /// its own wires. `value` is allocated with a range check to `0..=MAX_MONEY`
 /// and `rcm` is held nonzero. $\mathsf{ak}$ is allocated as a point, which
-/// enforces the curve equation and has no assignment for the identity. One
-/// $\mathsf{nk}$ wire feeds the `pk` and `mk` digests, one $\psi$ wire feeds
-/// `mk` and `cm`, and the `pk` wire feeds `cm`. These are the equations
-/// [`NoteSecret`] asserts.
+/// enforces the curve equation and has no assignment for the identity. `pk`
+/// is the digest of $\mathsf{ak}$ and $\mathsf{nk}$, `mk` of $\psi$ and the
+/// same $\mathsf{nk}$ wire, and `cm` of `rcm`, that `pk` wire, `value` and the
+/// same $\psi$ wire. These are the equations [`NoteSecret`] asserts.
 ///
 /// The step does not show that `cm` was ever published.
 /// [`SpendableInit`](super::spendable::SpendableInit) and
@@ -317,14 +318,14 @@ impl Step<Pasta> for NoteSeed {
 /// all three are fixed before the challenge. The circuit packs `epoch_start`
 /// from the bits of the epoch width with the two lowest held to zero, so it is
 /// a multiple of four. `epoch_end` is `epoch_start + 15` and is range-checked,
-/// so the sum does not wrap.
+/// so the sum does not wrap and all sixteen epochs are at most `EPOCH_MAX`.
 ///
 /// Each of the four sponges absorbs `mk` and `epoch_start + 4k`, and its four
 /// squeezes are the nullifiers of `mk` at that group's epochs. The circuit
 /// pairs each nullifier with its epoch, multiplies the sixteen factors at
 /// $\zeta$ and equates the product with the output sequence's opening there.
 /// The factors and the sequence are fixed before $\zeta$, so the sequence is
-/// the product [`NoteNullifiers`] asserts.
+/// the product [`NoteNullifiers`] asserts. The output's `cm` is the input's.
 ///
 /// # Panics
 ///
@@ -466,7 +467,8 @@ impl Step<Pasta> for NullifierDerive {
 /// the left range ends. All three sequences are committed before the
 /// challenge, and the output's opening at $\zeta$ is held to the product of
 /// the inputs' openings. The output sequence therefore has one factor for each
-/// epoch of `left.epoch_start..=right.epoch_end`.
+/// epoch of `left.epoch_start..=right.epoch_end`, the range on the output
+/// header.
 ///
 /// Opens both input sequences and their concatenation once each.
 #[derive(Debug)]
