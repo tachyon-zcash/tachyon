@@ -2,6 +2,7 @@
 
 use core::{cmp, ops, ops::Neg as _};
 
+use corez::io::{self, Read, Write};
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use ragu::udon::{
     curve::{Affine as _, Projective as _},
@@ -51,6 +52,29 @@ impl Trapdoor {
     /// Generate a random trapdoor for an action.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
+    }
+
+    /// Read a trapdoor from its canonical 32-byte encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// field element.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut bytes = [0u8; 32];
+        reader.read_exact(&mut bytes)?;
+        let trapdoor = Fq::from_bytes(bytes)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Fq encoding"))?;
+        Ok(Self(trapdoor))
+    }
+
+    /// Write a trapdoor in its canonical 32-byte encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&self.0.to_bytes())
     }
 
     /// Commit to a given value with this trapdoor.

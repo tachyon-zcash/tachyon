@@ -6,6 +6,7 @@
 
 use core::{any::type_name, marker::PhantomData};
 
+use corez::io::{self, Read, Write};
 use derive_more::{Debug, Into};
 use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
@@ -14,6 +15,7 @@ use crate::{
     note,
     pasta::{Fp, Fq},
     primitives::Effect,
+    serialization::{read_fp, write_fp},
 };
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
@@ -39,6 +41,27 @@ impl ActionEntropy {
     #[must_use]
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
         Fp::from_bytes(bytes).map(Self)
+    }
+
+    /// Read action entropy from its canonical 32-byte encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// field element.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let entropy = read_fp(&mut reader)?;
+        Ok(Self(entropy))
+    }
+
+    /// Write action entropy in its canonical 32-byte encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        write_fp(&mut writer, &self.0)?;
+        Ok(())
     }
 
     /// Sample fresh per-action entropy.
