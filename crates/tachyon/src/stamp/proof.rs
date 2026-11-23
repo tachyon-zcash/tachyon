@@ -174,29 +174,26 @@
 //! argument here takes the party that made a stamp to be the party that
 //! proved its leaves.
 //!
-//! A bundle's signatures cover an action's `cv` and $\mathsf{rk}$. They
-//! cover neither the stamp, nor the fee, nor an action's tachygram pair, so
-//! only the leaves hold those in place, and a leaf is held by its wires.
+//! A bundle's signatures cover an action's `cv` and $\mathsf{rk}$ and the
+//! max fee commitment $\mathsf{cv}_\mathsf{feemax}$. They cover neither the
+//! stamp, nor the fee, nor an action's tachygram pair. The stamp's leaves
+//! fix those, and a leaf is proved from its wires.
 //!
-//! - A fee leaf comes only from [`FeeFuse`](stamp::FeeFuse) or
-//!   [`FeeSeed`](stamp::FeeSeed) with the max fee note as wires. A receiver
-//!   without that note can give a bundle no other fee leaf. A receiver that
-//!   learned the note could run `FeeFuse` twice over one action of its own at
-//!   the stamp's anchor, at the old fee and at a new fee up to the note's
-//!   value. Merging the second result into the stamp and unmerging the first
-//!   leaves the bundle's action leaves with the new fee leaf, and the bundle
-//!   verifies with the same signatures and another fee. The fee a wallet chose
-//!   below its signed maximum is therefore as safe as the max fee note is
-//!   secret.
+//! - The fee is applied after signing. The signatures bind the maximum through
+//!   $\mathsf{cv}_\mathsf{feemax}$, and the stamp's fee leaf fixes the fee and
+//!   the fee change. A fee leaf comes only from [`FeeFuse`](stamp::FeeFuse) or
+//!   [`FeeSeed`](stamp::FeeSeed) with the max fee note as wires, so a party
+//!   that holds the note's opening sets the fee anywhere up to the signed
+//!   maximum, and no other party can. To set it again on a stamp it holds, that
+//!   party runs `FeeFuse` twice over one action of its own at the stamp's
+//!   anchor, at the old fee and at the new one, merges the second result into
+//!   the stamp and unmerges the first.
 //! - A new action leaf for a published $\mathsf{rk}$ needs $\theta$ and `cm`
 //!   ([`Actions`](stamp::Actions#injectivity)). A party with every wire of a
 //!   spend can prove it again at a later epoch, with the same `cv` and
 //!   $\mathsf{rk}$ and another nullifier pair. Which pair a spend publishes,
 //!   and so the epoch its bundle can enter, is as safe as those wires are
-//!   secret.
-//!
-//! A party that proves for a signer holds these wires by design and can
-//! change both.
+//!   secret. A party that proves for a signer holds them by design.
 //!
 //! ### What a full proof shows
 //!
@@ -231,9 +228,9 @@
 //! signature, whose key is a wire of no step. The arguments about spends and
 //! balance stand on those assertions.
 //!
-//! Three things do rest on it, in both forms of the proof: a wallet's
-//! privacy, the fee below the signed maximum, and which pair a spend
-//! publishes, as above. The goal Ragu states is not enough for any of them. For
+//! Two things do rest on it, in both forms of the proof: a wallet's privacy,
+//! and which pair a spend publishes, as above. The goal Ragu states is not
+//! enough for either. For
 //! a `Stamp` the published bundles already determine the fee note, each output
 //! note, each spend's master key and value, and each value commitment's opening
 //! ([`Actions`](stamp::Actions#injectivity)). Every valid input shares them,

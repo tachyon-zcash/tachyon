@@ -365,10 +365,9 @@ Each gives a stamp that the step's own argument makes a verified `Stamp`, whoeve
 The party can also rerandomize the stamp and compress it.
 What it makes this way is another stamp around the same bundles, at a later anchor of the same epoch or in another aggregate, with the same `txid` for each transaction.
 
-A bundle's signatures cover neither its stamp, nor its fee, nor an action's tachygram pair, so only the stamp's leaves hold those in place.
-A fee leaf needs the max fee note. A party without that note can give a bundle no other fee.
-A party that learned the note could run `FeeFuse` twice over one action of its own, at the old fee and at a new fee up to the note's value. Merging the second result into the stamp and unmerging the first leaves the bundle's actions with the new fee leaf, and the bundle verifies with the same signatures and another fee.
-The fee a wallet chose below its signed maximum is therefore as safe as its max fee note is secret.
+A bundle's signatures cover neither its stamp, nor its fee, nor an action's tachygram pair. The stamp's leaves fix those.
+The fee is applied after signing, as [Dynamic Fee](./fee.md) describes. The signatures bind the maximum through the max fee commitment, and the stamp's fee leaf fixes the fee and the fee change.
+A fee leaf needs the max fee note, so a party that holds the note's opening sets the fee anywhere up to the signed maximum, and no other party can.
 A new action leaf for a published action needs the action's entropy and its note commitment. A party that learned everything a spend was proved from could prove it again at a later epoch, with the same value commitment and key and another nullifier pair.
 Which pair a spend publishes, and so the epoch its bundle can enter, is as safe as those values are secret.
 A party that proves for a signer holds these values by design.
@@ -380,8 +379,8 @@ The rest of the stamp proof is the output of rerandomization.
 Ragu's authors state a goal for it and not a theorem. Two rerandomized stamp proofs of the same header and polynomials are meant to be indistinguishable. They say that the joint hiding of the output remains unproved, that the argument for it has not been audited, and that Ragu does not provide zero knowledge.
 
 No header's assertion depends on hiding, and neither do the arguments above about spends and balance. Each holds of any stamp that verifies, whatever its holder learns, and a spend also needs the action signature.
-Three things do depend on it: the privacy of a wallet, the fee below the signed maximum, and which pair a spend publishes. They depend on it for the compressed stamp proof as much as for the uncompressed one, since the first is computed from the second.
-The stated goal is not enough for any of them. The published bundles already determine the fee note, every output note and every spend's master key and value, so every stamp proof for those bundles has them in common and the goal says nothing of them.
+Two things do depend on it: the privacy of a wallet, and which pair a spend publishes. They depend on it for the compressed stamp proof as much as for the uncompressed one, since the first is computed from the second.
+The stated goal is not enough for either. The published bundles already determine the fee note, every output note and every spend's master key and value, so every stamp proof for those bundles has them in common and the goal says nothing of them.
 What they need is that a rerandomized stamp proof could have been made from the published data, the bootstrap proof and fresh randomness alone. Ragu's authors do not state that property.
 
 If rerandomization failed to hide its input, a receiver could learn at most what that input holds. For a wallet's stamp the input is usually the output of its `FeeFuse` or `FeeSeed` step, which works over the max fee note and folds every step of the wallet's tree.
