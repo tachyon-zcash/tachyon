@@ -153,6 +153,13 @@ impl Header<Fp> for Actions {
 ///   accumulator in the step's last output slot, which holds $T$. The native
 ///   verifier recomputes the field with
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash). No step reads it.
+/// - $A$ and $T$ are the set polynomials of digests and tachygrams that the
+///   covered bundles publish. A verifier rebuilds both accumulators from the
+///   bundles' actions, pairs, fees and fee changes
+///   ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)), and
+///   an accumulator determines its polynomial. A stamp proof that carries $A$
+///   and $T$ in full therefore shows nothing of them that the bundles do not
+///   ([full proofs](super#full-proofs-between-parties)).
 #[derive(Debug)]
 pub struct Stamp;
 
