@@ -271,7 +271,6 @@ impl Step<Pasta> for NoteSeed {
             &mut (),
             witness.as_ref().map(|&(_, _, rcm, _)| Fp::from(rcm)),
         )?;
-        rcm.clone().enforce_nonzero(dr)?;
         let nk = Element::alloc(
             dr,
             &mut (),
