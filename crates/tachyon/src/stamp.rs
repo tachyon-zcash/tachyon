@@ -1242,8 +1242,9 @@ impl<P: Proof> ProofStamp<P> {
     /// bundles' pairs and fee changes and builds `action_digests` from their
     /// published descriptors, as
     /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)
-    /// does. The caller also holds the anchor to the consensus rules. This
-    /// method checks neither.
+    /// does. The caller also holds the anchor to the consensus rule, which
+    /// takes an end-of-block anchor of the canonical chain in the present
+    /// epoch or the immediately previous one. This method checks neither.
     ///
     /// # Errors
     ///
