@@ -1,8 +1,8 @@
 # Parameters
 
-The protocol's fixed parameters, with the code that defines each. Paths are
-relative to `crates/tachyon/src`. Values defined outside the crate come from
-Ragu at the pinned revision and from `zakura-udon` 0.1.0 (Udon).
+The protocol's fixed parameters, with the code that defines each.
+Paths are relative to `crates/tachyon/src`.
+Values defined outside the crate come from Ragu at the pinned revision and from `zakura-udon` 0.1.0 (Udon).
 
 ## Curves and fields
 
@@ -32,11 +32,11 @@ Ragu at the pinned revision and from `zakura-udon` 0.1.0 (Udon).
 | `BLOCK_MAX` | $2^{32} - 1$ | `constants.rs` |
 | `EPOCH_SIZE` | 4,096 blocks | `constants.rs` |
 | `EPOCH_MAX` | $2^{20} - 1$, `BLOCK_MAX / EPOCH_SIZE` rounded down | `constants.rs` |
-| Anchor recency and duplicate-tachygram window | 2 epochs, the present and immediately previous | [Anchor](./anchor.md), [Tachygrams](./tachygrams.md) |
+| Duplicate-tachygram window | 2 epochs, the present and immediately previous | [Tachygrams](./tachygrams.md) |
 
-`EPOCH_SIZE` must be a power of two. It is 64 under the `test-epoch-size`
-feature, which tests use, and `EPOCH_MAX` is then $2^{26} - 1$. Because
-`EPOCH_SIZE` divides $2^{32}$, the last epoch is full and ends at `BLOCK_MAX`.
+`EPOCH_SIZE` must be a power of two.
+It is 64 under the `test-epoch-size` feature, which tests use, and `EPOCH_MAX` is then $2^{26} - 1$.
+Because `EPOCH_SIZE` divides $2^{32}$, the last epoch is full and ends at `BLOCK_MAX`.
 
 ## Nullifiers and sets
 
@@ -60,19 +60,15 @@ feature, which tests use, and `EPOCH_MAX` is then $2^{26} - 1$. Because
 | S-box exponent | 5 | Udon `PALLAS_BASE` |
 | Rounds | 8 full, 56 partial | Udon `PALLAS_BASE` |
 
-Each hash is domain-separated as described in
-[Domain Separators](./domain-separators.md).
+Each hash is domain-separated as described in [Domain Separators](./domain-separators.md).
 
 ## Proof system
 
 | Parameter | Value | Defined in |
 | --------- | ----- | ---------- |
-| `ProductionRank` | rank 13, $2^{13}$ coefficients, $2^{11}$ gates | Ragu `ProductionRank` |
+| `WalletRank` | rank 13, $2^{13}$ coefficients, $2^{11}$ gates | Ragu `WalletRank` |
 | Tachygrams per stamp | at most $2^{13} - 1$ | `bundle.rs` |
 | Header size | 9 field elements, 8 of payload and 1 suffix | `stamp/proof.rs` |
 
-The tachygram cap follows from the rank, as the
-[stamp trailer](./bundle.md#stamp-trailer) explains: a set polynomial with $n$
-roots has $n + 1$ coefficients. A stamp covering $N$ actions across $B \geq 1$
-bundles publishes two tachygrams per action and one per bundle fee, so
-$2N + B \leq 2^{13} - 1$ and it covers at most 4,095 actions.
+The tachygram cap follows from the rank, as the [stamp trailer](./bundle.md#stamp-trailer) explains: a set polynomial with $n$ roots has $n + 1$ coefficients.
+A stamp covering $N$ actions across $B \geq 1$ bundles publishes two tachygrams per action and one per bundle fee, so $2N + B \leq 2^{13} - 1$ and it covers at most 4,095 actions.
