@@ -13,7 +13,8 @@
 //! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
 //! [`QrStampIntakeSeed`] from one unsummarized stamp, and
 //! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
-//! partitions an intake at its discriminant into [`QrIntakeSides`],
+//! partitions an intake at its discriminant into [`QrIntakeSides`], with
+//! non-residue and residue set polynomials $q_0$ and $q_1$.
 //! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
@@ -40,23 +41,23 @@ use super::{
     pool::{ArbitraryUnspent, ArbitraryUnspentOutput},
     summary::Summary,
 };
-pub use crate::collections::qr::classify;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     digest::poseidon,
     gadgets,
     pasta::{EpAffine, Fp},
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrDiscriminant, QrInterpolantPoly,
-        QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge, TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassRoot, QrDiscriminant,
+        QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetBridge,
+        TachygramSetPoly,
     },
 };
 
 /// Tachygrams under routing, complete for `profile` over the covered span.
 ///
 /// Covers stamp folds over `(anchor_prev, anchor_end]`.
-/// A split classifies at `discriminant.at(profile.depth)`. A builder keeps its
-/// intake headers unpublished until the epoch closes.
+/// A split classifies at `discriminant.at(profile.depth)`. A builder
+/// keeps its intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -219,6 +220,8 @@ impl Header<Fp> for QrIntakeSides {
 pub struct QrSideSelection;
 
 impl Header<Fp> for QrSideSelection {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, profile,
+    /// non_residue_hash)`
     type Data = <QrIntakeSides as Header<Fp>>::Data;
     type OnlinePolyCommit = (PolySlot<QrInterpolantPoly>, PolySlot<QrQuotientPoly>);
     type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
@@ -238,7 +241,8 @@ impl Header<Fp> for QrSideSelection {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`].
+/// `discriminant` is a free witness; see [Choosing the first
+/// discriminant](QrDiscriminant#choosing-the-first-discriminant).
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -247,7 +251,7 @@ impl Step<Pasta> for QrSummaryIntake {
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant)`
+    /// `(discriminant,)`
     type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(15);
@@ -327,8 +331,9 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [`QrDiscriminant`]. The contents are
-/// the stamp's tachygram set and open once; their bridge hash enters
+/// `discriminant` is a free witness; see [Choosing the first
+/// discriminant](QrDiscriminant#choosing-the-first-discriminant). The contents
+/// are the stamp's tachygram set and open once; their bridge hash enters
 /// `anchor_end`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
@@ -447,7 +452,8 @@ impl Step<Pasta> for QrStampIntakeSeed {
 /// digest of `anchor` into `epoch + 1`. The sealed bucket ends on the published
 /// entry anchor of `epoch + 1` only if `anchor` is both the entry anchor and
 /// the final anchor of `epoch`. That holds only when the epoch published no
-/// stamp. `discriminant` is a free witness. See [`QrDiscriminant`].
+/// stamp. `discriminant` is a free witness; see [Choosing the first
+/// discriminant](QrDiscriminant#choosing-the-first-discriminant).
 /// The contents open once at the challenge and are constrained to one.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
@@ -721,9 +727,9 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// The non-residue contents open once at $-R$; the two hint polynomials supply
-/// output commitments. [`QrSideDescend`] checks their class identity and
-/// rejects a split whose two sides are the same set.
+/// The non-residue set polynomial $q_0$ opens once at $-R$; the two hint
+/// polynomials supply output commitments. [`QrSideDescend`] checks their class
+/// identity and rejects a split whose two sides are the same set.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -792,27 +798,31 @@ impl Step<Pasta> for QrSideSelect {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// With $s$ the sibling, $u$ its interpolant and $h$ the quotient,
+/// For the sibling's set polynomial $q$, interpolant $u$ and quotient $h$,
+/// the class decomposition satisfies
 ///
 /// $$
-///   u(X)^2 - c \cdot (X + R) = s(X) \cdot h(X)
+///   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 /// $$
 ///
-/// at the sibling's class $c$ holds only if every root of $s$ takes that
-/// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
-/// split's product, every member of the extracted class is then in the
-/// child. A split whose two sides are the same set is rejected.
+/// The discriminant is $R = R_0 + j$ at parent depth $j$. For child bit $b$,
+/// the sibling's multiplier is $m = 1 + b(c - 1)$, with $c$ the fixed
+/// non-residue. A residue child has a non-residue sibling, so the multiplier
+/// is the opposite of the one used to check the queried class directly.
+/// The identity and the exceptional-value check attest the sibling's class:
+/// at every member $x_i$, the class root $r_i = u(x_i)$ satisfies
+/// $r_i^2 = m \cdot (x_i + R)$. The split's product then places every
+/// member of the extracted class in the child. Equal side openings are
+/// rejected.
 ///
 /// # Soundness
 ///
 /// The selection's metadata and non-residue bridge hash match the split.
-/// The framework fixes both inputs' polynomials and the side bit before the
-/// challenge. Every root of the sibling satisfies $u(x)^2 = c \cdot (x + R)$
-/// at the sibling's class $c$, and the split's product places every member of
-/// the other class in the child. The child may hold a stray member of the
-/// sibling's class; consumers open it nonzero, so a stray member cannot pass a
-/// value that is present. $R$ is read off the header, so a descent classifies
-/// at the same $R_0$ as every other step of the network. The parent's depth is
+/// The framework fixes both input headers, their online commitments, and the
+/// staged child bit before the challenge $\zeta$. The child may hold a stray
+/// member of the sibling's class; consumers open it nonzero, so a stray member
+/// cannot pass a value that is present. The discriminant $R$ is computed from
+/// $R_0$ and the parent depth in the header. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 ///
@@ -826,8 +836,8 @@ impl Step<Pasta> for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = QrSideSelection;
-    /// `(bit,)`
-    type Witness<'source> = (bool,);
+    /// `(class,)`
+    type Witness<'source> = (QrClass,);
 
     const INDEX: Index = Index::new(18);
     const NUM_STAGED: usize = 1;
@@ -838,13 +848,16 @@ impl Step<Pasta> for QrSideDescend {
         left: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let &(bit,) = witness;
-        let prepared = if bit {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
-        } else {
-            TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+        let &(class,) = witness;
+        let prepared = match class {
+            QrClass::NonResidue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::NON_RESIDUE)
+            },
+            QrClass::Residue => {
+                TachygramSetPoly::SLOT.copy_from(Prepared::new(), &left, QrIntakeSides::RESIDUE)
+            },
         };
-        Ok(prepared.stage([Fp::from(u64::from(bit))]))
+        Ok(prepared.stage([Fp::from(u64::from(class.bit()))]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -887,7 +900,7 @@ impl Step<Pasta> for QrSideDescend {
         {
             source.enforce_equal(dr, selected)?;
         }
-        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(bit,)| bit))?;
+        let bit = Boolean::alloc(dr, &mut (), witness.as_ref().map(|&(class,)| class.bit()))?;
         let discriminant_element = sides
             .intake
             .discriminant
@@ -937,7 +950,7 @@ impl Step<Pasta> for QrSideDescend {
                 anchor_prev,
                 anchor_end,
                 discriminant,
-                profile.descend(bit.value().take()),
+                profile.descend(QrClass::from_bit(bit.value().take())),
             )
         });
         Ok((
@@ -1082,9 +1095,10 @@ impl Header<Fp> for QrBucket {
 /// accepts. Consensus acknowledges every end-of-block anchor. Membership of an
 /// end-of-block anchor does not establish whole-epoch coverage.
 ///
-/// `discriminant` is prover-chosen and unchecked here. See [`QrDiscriminant`].
-/// The left and output contents open once each to preserve the contents and
-/// certify their bridge hash.
+/// The seal copies `discriminant`. See [Choosing the first
+/// discriminant](QrDiscriminant#choosing-the-first-discriminant). The left and
+/// output contents open once each to preserve the contents and certify their
+/// bridge hash.
 ///
 /// # Caller contract
 ///
@@ -1188,27 +1202,30 @@ impl Step<Pasta> for QrBucketSeal {
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// The step fixes the value's side at every discriminant of the epoch, matches
-/// the bucket's profile against the first `depth` of them, and opens the
-/// bucket at the value for nonzero. The `MAX_DEPTH` positions
+/// `path` gives the value's class at each of the 32 depths, its QR path. Its
+/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
+/// root witnessing class `j`, including positions past that prefix. The step
+/// also opens the bucket at the value for nonzero. The `MAX_DEPTH` positions
 /// $j = 0, 1, \dots$ index the progression, so position $j$
-/// classifies at $R_j = R_0 + j$. With $x$ the value and $s_j = x +
-/// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
+/// classifies at $R_j = R_0 + j$. With tachygram $x$, each position witnesses
+/// a class bit $b_j$ and class root $r_j$. The multiplier is
+/// $m_j = c - (c - 1)b_j$ for the fixed non-residue $c$. Unlike descent,
+/// this uses the queried class rather than its sibling.
 ///
 /// $$
-///   r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j,
+///   r_j^2 = m_j \cdot (x + R_j),
 ///   \qquad
-///   b_j = 0 \implies s_j \neq 0.
+///   b_j = 0 \implies x + R_j \neq 0.
 /// $$
 ///
-/// A mask $m_j$ selects the bucket's path through two sums and a fold,
+/// A mask $e_j$ selects the bucket's path through two sums and a fold,
 ///
 /// $$
-///   \sum_j m_j = \mathsf{depth},
+///   \sum_j e_j = \mathsf{depth},
 ///   \qquad
-///   \sum_j j \cdot m_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
+///   \sum_j j \cdot e_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
 ///   \qquad
-///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
+///   a_{j+1} = a_j + e_j \cdot (a_j + b_j),
 /// $$
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
@@ -1224,17 +1241,18 @@ impl Step<Pasta> for QrBucketSeal {
 ///
 /// # Soundness
 ///
-/// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c \cdot
-/// s_j$ is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero
+/// Since $c$ is a non-residue, for nonzero $x + R_j$ exactly one of
+/// $x + R_j$ and $c \cdot (x + R_j)$ is a square, fixing $b_j$. For
+/// $x + R_j = 0$ the nonzero
 /// rule forces the residue side, where [`QrSideSelect`] files the exceptional
 /// value. Among boolean vectors of weight `depth` only the leading positions
 /// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
-/// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to. `value` is a free witness. The challenge absorbs
-/// it, so the sequence identity fixes the one member to it;
+/// the bucket's `discriminant`, so the exclusion holds for the
+/// network the bucket belongs to. `value` is a free witness. The challenge
+/// $\zeta$ binds it, so the sequence identity fixes the one member to it;
 /// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
 /// note's genuine derivation.
 ///
@@ -1248,9 +1266,10 @@ impl Step<Pasta> for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence)`
+    /// `(value, path, roots, mask, sequence)`
     type Witness<'source> = (
         Tachygram,
+        [QrClass; QrProfile::MAX_DEPTH],
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
@@ -1259,16 +1278,20 @@ impl Step<Pasta> for QrUnspentInit {
     const INDEX: Index = Index::new(19);
     const NUM_STAGED: usize = 1;
 
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named witness operands"
+    )]
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let sequence = &witness.3;
+        let (value, _path, _roots, _mask, sequence) = witness;
         Ok(NfSeqPoly::SLOT
             .poly(Prepared::new(), sequence)
-            .stage([Fp::from(witness.0)]))
+            .stage([Fp::from(*value)]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1303,8 +1326,9 @@ impl Step<Pasta> for QrUnspentInit {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|&(_, classes, ..)| classes),
-            witness.as_ref().map(|&(_, _, mask, _)| mask),
+            witness.as_ref().map(|&(_, path, ..)| path),
+            witness.as_ref().map(|&(_, _, roots, ..)| roots),
+            witness.as_ref().map(|&(_, _, _, mask, _)| mask),
         )?;
         let epoch_next_element = bucket.epoch.next(dr)?;
         #[expect(

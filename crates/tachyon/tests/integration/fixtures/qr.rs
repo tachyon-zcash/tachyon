@@ -10,8 +10,8 @@ use ragu::{
 };
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetBridge,
-    TachygramSetPoly,
+    Anchor, EpochIndex, EvidenceTreeRoot, QrClass, QrDiscriminant, QrProfile, QrQuotientPoly,
+    Tachygram, TachygramSetBridge, TachygramSetPoly,
     constants::EVIDENCE_TREE_ARITY,
     nullifier::Nullifier,
     pasta::{EpAffine, Fp},
@@ -37,8 +37,8 @@ pub(crate) const QR_DEPTHS: [u32; 4] = [0, 1, 31, u32::BITS];
 /// An exhaustive scan upward from 1, one Jacobi symbol per integer, found
 /// them.
 ///
-/// A change to `QrDiscriminant::at` or `qr::classify` would invalidate the
-/// two constants, and the assertions here would fail.
+/// A change to `QrDiscriminant::at` or `QrDiscriminant::classify` would
+/// invalidate the two constants, and the assertions here would fail.
 pub(crate) fn qr_profile_triplet() -> [Fp; 3] {
     let discriminant = shared_discriminant();
     let absent = Fp::from(1_915_239_271u64) - Fp::from(discriminant);
@@ -159,33 +159,61 @@ impl QrIntakeEntry {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        kept: [bool; N],
+        kept: [QrClass; N],
     ) -> [Self; N] {
         let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *self.pcd.data();
-        let (residue, non_residue) =
-            self.members.iter().copied().partition(|&member| {
-                qr::classify(Fp::from(member), discriminant.at(profile.depth)).0
-            });
-        self.split_with_factors(
-            rng,
-            app,
-            kept,
-            &[(non_residue, Fp::ONE), (residue, Fp::ONE)],
-        )
+        let split = discriminant.at(profile.depth).split(&self.members);
+        let (sides, ()) = app
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                witness::qr_intake_split((*self.pcd.data(), ()), &split),
+                self.pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        kept.map(|child| {
+            let (selection, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideSelect,
+                    witness::qr_side_select((*sides.data(), ()), &split, child),
+                    sides.clone(),
+                    app.bootstrap_proof().clone().carry::<()>(()),
+                )
+                .unwrap();
+            let (pcd, ()) = app
+                .fuse(
+                    rng,
+                    qr::QrSideDescend,
+                    witness::qr_side_descend((*sides.data(), *selection.data()), child),
+                    sides.clone(),
+                    selection,
+                )
+                .unwrap();
+            Self {
+                pcd,
+                members: split.members(child).collect(),
+            }
+        })
     }
 
     /// Explicit factors in non-residue/residue order, including their scalar
     /// factors.
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named components of each factor"
+    )]
     pub(crate) fn split_with_factors<RNG: CryptoRng, const N: usize>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        kept: [bool; N],
+        kept: [QrClass; N],
         factors: &[(Vec<Tachygram>, Fp); 2],
     ) -> [Self; N] {
         let polynomials = factors
             .each_ref()
-            .map(|factor| scaled_qr_contents(&factor.0, factor.1));
+            .map(|(members, scale)| scaled_qr_contents(members, *scale));
         let (sides, ()) = app
             .fuse(
                 rng,
@@ -196,27 +224,36 @@ impl QrIntakeEntry {
             )
             .unwrap();
 
-        kept.map(|side| {
-            let sibling = &factors[usize::from(!side)];
-            let (interpolant, quotient) =
-                witness::qr_side_select((*sides.data(), ()), &sibling.0, side);
+        kept.map(|child| {
+            let [non_residue_factor, residue_factor] = factors.each_ref();
+            let (sibling, child_factor) = match child {
+                QrClass::NonResidue => (residue_factor, non_residue_factor),
+                QrClass::Residue => (non_residue_factor, residue_factor),
+            };
+            let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) =
+                *sides.data();
+            let (sibling_members, sibling_scale) = sibling;
+            let split = discriminant.at(profile.depth).split(sibling_members);
+            assert_eq!(split.members(child).len(), 0);
+            let (interpolant, quotient) = split.class_decomposition(child.sibling()).unwrap();
             let mut scaled_quotient: Polynomial<Fp, WalletRank> = quotient.into();
-            scaled_quotient.scale(sibling.1.invert().unwrap());
+            scaled_quotient.scale(sibling_scale.invert().unwrap());
             let (selection, ()) = app
                 .fuse(
                     rng,
                     qr::QrSideSelect,
-                    (interpolant, scaled_quotient.into()),
+                    (interpolant, QrQuotientPoly::from(scaled_quotient)),
                     sides.clone(),
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )
                 .unwrap();
-            let members = factors[usize::from(side)].0.clone();
+            let (child_members, _child_scale) = child_factor;
+            let members = child_members.clone();
             let (pcd, ()) = app
                 .fuse(
                     rng,
                     qr::QrSideDescend,
-                    witness::qr_side_descend((*sides.data(), *selection.data()), side),
+                    witness::qr_side_descend((*sides.data(), *selection.data()), child),
                     sides.clone(),
                     selection,
                 )
@@ -510,11 +547,12 @@ impl EvidenceTreeEntry {
 }
 
 pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
-    let mut profile = QrProfile::ROOT;
-    for level in 0..depth {
-        profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
-    }
-    profile
+    let first = value + Fp::from(discriminant);
+    let bits = (0..depth).fold(0, |bits, level| {
+        let shifted = first + Fp::from(u64::from(level));
+        (bits << 1) | u32::from(shifted.sqrt().is_some())
+    });
+    QrProfile { depth, bits }
 }
 
 impl QrBucketEntry {

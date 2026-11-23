@@ -45,16 +45,16 @@ fn verify_side(
 fn the_decomposition_holds_on_both_sides() {
     let rng = &mut StdRng::seed_from_u64(23);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
-        .take(600)
+    for class in [Fp::ONE, QUADRATIC_NON_RESIDUE] {
+        let inverse = class.invert().unwrap();
+        let points: Vec<_> = iter::repeat_with(|| {
+            let root = Fp::random(|bytes| rng.fill_bytes(bytes));
+            (root.square() * inverse - discriminant, root)
+        })
+        .take(300)
         .collect();
-    let (residue, non_residue) = split(values, discriminant);
-    for (points, class) in [
-        (&residue, class_multiplier(true)),
-        (&non_residue, class_multiplier(false)),
-    ] {
-        let (u, h) = decomposition(points, class, discriminant).unwrap();
-        verify_side(points, class, discriminant, &u, &h);
+        let (u, h) = decomposition(points.iter().copied(), class, discriminant).unwrap();
+        verify_side(&points, class, discriminant, &u, &h);
     }
 }
 
@@ -63,7 +63,7 @@ fn an_all_zero_side_takes_the_vanishing_polynomial() {
     let rng = &mut StdRng::seed_from_u64(35);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
     let points = [(-discriminant, Fp::ZERO)];
-    let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+    let (u, h) = decomposition(points, Fp::ONE, discriminant).unwrap();
     assert_eq!(dense(&u), [discriminant, Fp::ONE]);
-    verify_side(&points, class_multiplier(true), discriminant, &u, &h);
+    verify_side(&points, Fp::ONE, discriminant, &u, &h);
 }
