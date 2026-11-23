@@ -100,10 +100,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         fixed_base::R_BASE.mul(dr, &blind_bits)
     }
 
-    /// Derives the note commitment from the supplied fields.
+    /// Derives the note commitment and enforces that `rcm` is nonzero.
     ///
-    /// Does not bound `value` or check `rcm` nonzero.
+    /// Does not bound `value`.
     pub(crate) fn commitment(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        self.rcm.clone().enforce_nonzero(dr)?;
         poseidon::circuit::note_commitment(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }
 
