@@ -503,14 +503,14 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 ### Rerandomization at trust boundaries
 
-Whoever builds a stamp rerandomizes it before the stamp leaves them.
+Whoever releases a stamp must rerandomize it first, but rerandomization alone does not establish zero knowledge or unlinkability for current stamp proofs.
 A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
 Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
 Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
-The implementation rerandomizes where it builds a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize their `Stamp` PCD, and `ProofStamp::compress` is a separate call.
-It rerandomizes no other PCD.
+`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Stamp` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
+The implementation rerandomizes no other PCD.
 
 ## Simple transaction
 
