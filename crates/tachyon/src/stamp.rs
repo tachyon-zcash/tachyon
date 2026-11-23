@@ -33,7 +33,7 @@ use proof::{
 use ragu::{
     Rank as _, WalletRank,
     pasta::Pasta,
-    pcd::serialization,
+    pcd,
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
@@ -131,16 +131,16 @@ pub trait Proof: sealed::Sealed {
     ///
     /// # Errors
     ///
-    /// Returns [`serialization::Error`] if the proof has no encoding.
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>>;
+    /// Returns [`pcd::serialization::Error`] if the proof has no encoding.
+    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>>;
 
     /// Decode a proof from its Ragu encoding.
     ///
     /// # Errors
     ///
-    /// Returns [`serialization::Error`] if the bytes do not encode this proof
-    /// type.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>
+    /// Returns [`pcd::serialization::Error`] if the bytes do not encode this
+    /// proof type.
+    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>>
     where
         Self: Sized;
 
@@ -163,11 +163,11 @@ impl Proof for Uncompressed {
         Self::encoded_len()
     }
 
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
+    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>> {
         self.to_bytes()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>> {
         Self::from_bytes(bytes)
     }
 
@@ -197,11 +197,11 @@ impl Proof for Compressed {
         Self::encoded_len::<WalletRank>()
     }
 
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
+    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>> {
         self.to_bytes()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>> {
         Self::from_bytes(bytes)
     }
 
