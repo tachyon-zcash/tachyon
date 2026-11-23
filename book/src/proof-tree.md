@@ -215,7 +215,7 @@ This section states the consensus rules the proof system relies on, and derives 
 
 ### Assumptions
 
-- **Recursion.** The proof system is an argument of knowledge. The parties that together produce a PCD that verifies can produce the tree of steps that built it, with every step's wires, and every circuit in the tree is satisfied. A party that extends a stamp it received knows the wires of the steps it ran and no others.
+- **Recursion.** The proof system is an argument of knowledge. The parties that together produce a PCD that verifies can produce the tree of steps that built it, with every step's wires, and every circuit in the tree is satisfied. The arguments credit a party that extends a PCD it received with the steps it ran and with nothing beneath them.
 - **Poseidon.** Each tagged hash absorbs a fixed number of elements. No two distinct triples of tag, absorbed elements and squeeze position are known that give the same element. `AnchorSpanSeed` alone needs more, and its argument models the stamp absorption digest as a random function.
 - **Commitments.** No discrete-log relation is known among the commitment generators, the two value commitment generators included. An accumulator then determines its polynomial, a bridge hash determines its accumulator, and a value commitment determines its opening.
 - **Challenge.** A step's challenge is modelled as a random oracle output over everything committed before it.
@@ -358,27 +358,34 @@ Rule 5 puts each bundle under one stamp, in the one block that holds the bundle.
 ### A full stamp proof between parties
 
 A stamp is compressed once, for its block. Before that it passes between wallets and aggregators rerandomized and uncompressed, as [Rerandomization at trust boundaries](#rerandomization-at-trust-boundaries) describes.
-A compressed stamp proof can only be verified, because the proof framework cannot decompress a proof whose header names polynomials.
+A compressed stamp proof can only be verified, because Ragu cannot decompress a stamp proof, whose header names polynomials.
 
-A party that holds the uncompressed stamp proof can lift it with `StampLift`, merge it with `StampMerge`, unmerge it with `StampUnmerge`, rerandomize it and compress it.
-No other step reads a `Stamp`.
-Each of these gives a stamp that the step's own argument makes a verified `Stamp`, whoever runs the step, and every argument of this section is about any stamp that consensus accepts.
-The party cannot change what a covered bundle publishes. A fee leaf needs the max fee note, so the fee, the fee change and the action pairs stay as the bundle's author proved them, and the bundle's signatures do not cover the stamp.
-What the party can make is another stamp around the same bundles, at a later anchor of the same epoch or in another aggregate, with the same `txid` for each transaction.
+A party that holds the uncompressed stamp proof can lift it with `StampLift`, merge it with `StampMerge` and unmerge it with `StampUnmerge`. No other step reads a `Stamp`.
+Each gives a stamp that the step's own argument makes a verified `Stamp`, whoever runs the step, and every argument of this section is about any stamp that consensus accepts.
+The party can also rerandomize the stamp and compress it.
+What it makes this way is another stamp around the same bundles, at a later anchor of the same epoch or in another aggregate, with the same `txid` for each transaction.
+
+A bundle's signatures cover neither its stamp nor its fee, so only the stamp's leaves hold a bundle's published data in place.
+A new action leaf for a published action needs the action's entropy and its note commitment.
+A fee leaf needs the max fee note. A party without that note can give a bundle no other fee.
+A party that learned the note could prove the bundle's fee leaf at any fee up to the note's value, exchange it for the one in the stamp with a merge and an unmerge, and publish the bundle with the same signatures and another fee.
+The fee a wallet chose below its signed maximum is therefore as safe as its max fee note is secret.
 
 An uncompressed stamp proof holds its two polynomials in full. They are the set polynomials of the digests and tachygrams of the covered bundles, which rule 2 has the verifier rebuild from published data, so they show nothing that the bundles do not.
-It also holds the commitments of the proof framework's bootstrap proof, which is the same for every party on one build and identifies the build.
+It also holds the commitments of Ragu's bootstrap proof. The default one is shared by the wallets of one release and platform and identifies that group, in the compressed stamp proof as well.
 
 The rest of the stamp proof is the output of rerandomization.
-The authors of the proof framework state a goal for it and not a theorem. Two rerandomized stamp proofs of the same header and polynomials are meant to be indistinguishable, and that the output hides the stamp proof it was made from remains unproved.
-They claim no hiding for a stamp proof that was not rerandomized.
+Ragu's authors state a goal for it and not a theorem. Two rerandomized stamp proofs of the same header and polynomials are meant to be indistinguishable. They say that the joint hiding of the output remains unproved, that the argument for it has not been audited, and that Ragu does not provide zero knowledge.
 
-No argument of this section depends on hiding. Each holds of any stamp that verifies, whatever its holder learns, and a spend also needs the action signature.
-The privacy of a wallet does depend on it, for the compressed stamp proof as much as for the uncompressed one, since the first is computed from the second.
-If rerandomization failed to hide its input, a receiver could learn at most what that input holds. For a wallet's stamp the input is the output of its `FeeFuse` or `FeeSeed` step, which works over the max fee note.
-For an aggregate it is a merge, a lift or an unmerge of stamps that were already public.
+No header's assertion depends on hiding, and neither do the arguments above about spends and balance. Each holds of any stamp that verifies, whatever its holder learns, and a spend also needs the action signature.
+Two things do depend on it: the privacy of a wallet, and the fee below the signed maximum. They depend on it for the compressed stamp proof as much as for the uncompressed one, since the first is computed from the second.
+The stated goal is not enough for either. The published bundles already determine the fee note, every output note and every spend's master key and value, so every stamp proof for those bundles has them in common and the goal says nothing of them.
+What they need is that a rerandomized stamp proof could have been made from the published data, the bootstrap proof and fresh randomness alone. Ragu's authors do not state that property.
 
-A party therefore lets a stamp proof leave only after rerandomization, draws its randomness from a source no other party can predict, keeps the default bootstrap proof, and verifies a stamp before it extends it.
+If rerandomization failed to hide its input, a receiver could learn at most what that input holds. For a wallet's stamp the input is usually the output of its `FeeFuse` or `FeeSeed` step, which works over the max fee note and folds every step of the wallet's tree.
+For an aggregator it is a merge, a lift or an unmerge of stamps it received, or its own `FeeSeed` step.
+
+A party therefore lets a stamp proof leave only after rerandomization, draws its randomness from a source no other party can predict, uses the bootstrap proof its release shares and never one of its own, and verifies a stamp before it extends it.
 
 ### What the stamp proof leaves to others
 
