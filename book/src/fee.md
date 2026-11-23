@@ -21,6 +21,7 @@ The fee is local to the Tachyon bundle, and only its maximum is signed.
 ## Max Fee Note
 
 Every bundle carries one max fee note, an opening $(\pk, \feemax, \psi, \rcm)$.
+The fee steps require a nonzero trapdoor $\rcm$ in this opening.
 Its value $\feemax$ is the maximum fee and may be zero, and its payment key
 $\pk$ owns the fee change note. The bundle publishes only its value commitment
 
