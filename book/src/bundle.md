@@ -15,20 +15,20 @@ Before block inclusion, Tachyon shielded data is recursively 'aggregated' in a c
 
 **Tachygrams** are 32-byte field elements representing either nullifiers or note commitments. The consensus protocol does not need to distinguish between nullifiers and note commitments, and treats them identically.[^tachygram]
 
-[^tachygram]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the design rationale behind unified tachyactions and tachygrams.
+[^tachygram]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the design rationale behind unified actions and tachygrams.
 [^ragu]: See the Ragu [book](https://tachyon.z.cash/ragu/).
 [^redpallas]: See [RedDSA](https://zips.z.cash/protocol/protocol.pdf#concretereddsa) in the Zcash Protocol Specification.
 
-### Tachyactions
+### Actions
 
-Each **tachyaction** indistinguishably represents either the creation or destruction of a note.
+Each **action** indistinguishably represents either the creation or destruction of a note.
 
-- A tachyaction with a commitment tachygram proves a note is created.
-- A tachyaction with a nullifier tachygram proves a note is destroyed.
+- An action with a commitment tachygram proves a note is created.
+- An action with a nullifier tachygram proves a note is destroyed.
 
-Each tachyaction is cryptographically bound to a pair of tachygrams. The pair is in the bundle body's `vActionTachygramsTachyon`, at the action's position.
+Each action is cryptographically bound to a pair of tachygrams. The pair is in the bundle body's `vActionTachygramsTachyon`, at the action's position.
 
-Each tachyaction contains:
+Each action contains:
 
 - `cv` - a 32-byte homomorphic commitment to the note's created or destroyed value
 - `rk` - a 32-byte randomized public key
@@ -36,9 +36,9 @@ Each tachyaction contains:
 
 The action digest binds `cv`, `rk`, and the pair through its sum and product. The signature signs the effecting descriptor `(cv, rk)` through the transaction sighash; the pair is authorization data. The wire separates descriptors, signatures, and pairs into effecting, signing, and proving sections of the body.
 
-### Tachystamp
+### Stamp
 
-The **tachystamp** carries a recursive stamp proof that all covered tachyactions and fees follow the protocol rules. Each released stamp proof is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries).
+The **stamp** carries a recursive stamp proof that all covered actions and fees follow the protocol rules. A stamp is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries) before it is compressed, and compressed before it goes on the [wire](#stamp-trailer).
 
 It contains:
 
@@ -70,7 +70,7 @@ where
 
 ## Bundle Structure
 
-A Tachyon bundle collects tachyactions with authorization data:
+A Tachyon bundle collects actions with authorization data:
 
 - `actions` - the effecting action descriptors `(cv, rk)`
 - `action_auth` - one `(signature, tachygram pair)` tuple per action, in the same order
@@ -90,31 +90,31 @@ flowchart LR
 classDef signature fill:#fa807240
 classDef optional fill:#d3d3d340,stroke-dasharray: 5 5
 
-style tachyaction1 fill:#7fffd440,stroke:black
-style tachyaction2 fill:#7fffd440,stroke:black
-style tachyaction3 fill:#7fffd440,stroke:black
-style tachyaction_vec fill:#7fffd440,stroke:black
+style action1 fill:#7fffd440,stroke:black
+style action2 fill:#7fffd440,stroke:black
+style action3 fill:#7fffd440,stroke:black
+style action_vec fill:#7fffd440,stroke:black
 
 style stamp_proof fill:#da70d640
 style anchor fill:#f0fff040
 
-style tachystamp fill:#7fff0040
+style stamp_trailer fill:#7fff0040
 
 subgraph shielded_data["Bundle"]
 
-    subgraph tachyaction_vec[" "]
+    subgraph action_vec[" "]
 
-        subgraph tachyaction1["tachyaction"]
+        subgraph action1["action"]
             cv1["cv"]
             rk1["rk"]
         end
 
-       subgraph tachyaction2["tachyaction"]
+       subgraph action2["action"]
             cv2["cv"]
             rk2["rk"]
         end
 
-       subgraph tachyaction3["tachyaction"]
+       subgraph action3["action"]
             cv3["cv"]
             rk3["rk"]
         end
@@ -128,7 +128,7 @@ subgraph shielded_data["Bundle"]
         fee
     end
 
-    subgraph tachystamp["stamp trailer"]
+    subgraph stamp_trailer["stamp trailer"]
         tachygram_set
         adjuncts
         anchor@{shape: odd}

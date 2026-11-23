@@ -503,11 +503,17 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 ### Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its PCD before releasing a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge`, and `ProofStamp::lift` each call Ragu's `rerandomize` step on the `Stamp` PCD they built. Intermediate PCDs that stay inside the wallet, such as `NoteSecret`, `NoteSpendable`, a derivation window, or an `ArbitraryUnspent` segment, are not rerandomized.
+A stamp is rerandomized before it is compressed, it is compressed before it goes on the wire, and it goes on the wire at every trust boundary.
 
-Stamps cross trust boundaries when a wallet publishes an autonome to the mempool and when an aggregator publishes a merged, lifted, or unmerged stamp while retaining the input stamps. Rerandomization is required at each handoff.
+A stamp crosses a trust boundary when the party that built it gives it to anyone else: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
+It crosses as a [stamp trailer](./bundle.md#stamp-trailer), whose `proofTachyon` is the compressed stamp proof.
 
-A stripped adjunct in a block carries no stamp proof bytes, though mempool observers may already hold its stamped relay version.
+Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
+It acts on the uncompressed stamp proof, so it comes first: an aggregator that [decompresses](./aggregation.md#merge-to-produce-aggregate) stamps to lift or merge them rerandomizes the stamp it built and then compresses it.
+
+The implementation rerandomizes where it builds a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize their `Stamp` PCD, and `ProofStamp::compress` is a separate call.
+It rerandomizes no other PCD.
+Under the [stopgap](./bundle.md#stamp-trailer), a stamp outside a block goes on the wire rerandomized and uncompressed, and is compressed once, for the block.
 
 ## Simple transaction
 
