@@ -33,7 +33,7 @@ use proof::{
 use ragu::{
     Rank as _, WalletRank,
     pasta::Pasta,
-    pcd,
+    pcd::serialization,
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
@@ -49,7 +49,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{EpAffine, EqAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
-    serialization,
+    serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
 };
@@ -131,16 +131,16 @@ pub trait Proof: sealed::Sealed {
     ///
     /// # Errors
     ///
-    /// Returns [`pcd::serialization::Error`] if the proof has no encoding.
-    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>>;
+    /// Returns [`serialization::Error`] if the proof has no encoding.
+    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>>;
 
     /// Decode a proof from its Ragu encoding.
     ///
     /// # Errors
     ///
-    /// Returns [`pcd::serialization::Error`] if the bytes do not encode this
+    /// Returns [`serialization::Error`] if the bytes do not encode this
     /// proof type.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>>
+    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>
     where
         Self: Sized;
 
@@ -163,11 +163,11 @@ impl Proof for Uncompressed {
         Self::encoded_len()
     }
 
-    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>> {
+    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
         self.to_bytes()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
         Self::from_bytes(bytes)
     }
 
@@ -197,11 +197,11 @@ impl Proof for Compressed {
         Self::encoded_len::<WalletRank>()
     }
 
-    fn to_bytes(&self) -> Result<Vec<u8>, pcd::serialization::Error<'static>> {
+    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
         self.to_bytes()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, pcd::serialization::Error<'_>> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
         Self::from_bytes(bytes)
     }
 
@@ -269,7 +269,7 @@ impl<P: Proof> ProofStamp<P> {
         let tachygram_set = TachygramSetCommit::read(&mut reader)?;
 
         let adjuncts = {
-            let n_adjuncts = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            let n_adjuncts = usize::try_from(read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
             if n_adjuncts + 1 > WalletRank::num_coeffs() - 1 {
@@ -294,7 +294,7 @@ impl<P: Proof> ProofStamp<P> {
         };
 
         let proof = {
-            let proof_len = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            let proof_len = usize::try_from(read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             if proof_len > P::encoded_len() {
                 return Err(io::Error::new(
@@ -325,7 +325,7 @@ impl<P: Proof> ProofStamp<P> {
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         self.anchor.write(&mut writer)?;
         self.tachygram_set.write(&mut writer)?;
-        serialization::write_compactsize(
+        write_compactsize(
             &mut writer,
             u64::try_from(self.adjuncts.len()).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "adjunct count exceeds u64")
@@ -338,7 +338,7 @@ impl<P: Proof> ProofStamp<P> {
             .proof
             .to_bytes()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        serialization::write_compactsize(
+        write_compactsize(
             &mut writer,
             u64::try_from(proof.len()).map_err(|_err| {
                 io::Error::new(
