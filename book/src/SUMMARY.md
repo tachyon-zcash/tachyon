@@ -32,6 +32,7 @@
 
 - [Transaction Identifiers](transaction-identifiers.md)
 - [Domain Separators](domain-separators.md)
+- [Parameters](parameters.md)
 
 ## ZIPs
 
