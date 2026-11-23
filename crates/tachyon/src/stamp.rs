@@ -364,9 +364,7 @@ impl<P: Proof> ProofStamp<P> {
 /// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
-    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
-    anchor: Anchor,
+    actions: ActionsPlan,
     max_fee_note: Note,
     fee: value::Positive,
     fee_change_note: Note,
@@ -387,19 +385,11 @@ impl Plan {
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
-        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
-        let fee_change_note = Note {
-            value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
-                .expect("fee should not exceed max fee"),
-            ..max_fee_note
-        };
         Self {
-            spends,
-            outputs,
-            anchor,
+            actions: ActionsPlan::new(spends, outputs, anchor),
             max_fee_note,
             fee,
-            fee_change_note,
+            fee_change_note: max_fee_note.derive_fee_change(fee),
         }
     }
 
@@ -439,10 +429,6 @@ impl Plan {
         clippy::type_complexity,
         reason = "each spend's secret, spendable and spans; the stamp and its authorization data"
     )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "proves, lifts and merges every planned action"
-    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -462,25 +448,137 @@ impl Plan {
         ),
         ProveError,
     > {
-        let change = Tachygram::from(self.fee_change_note.commitment());
+        let anchor = self.actions.anchor;
+        let spend_inputs = spend_pcds
+            .into_iter()
+            .map(|(secret, spendable, spans)| (*pak, secret, spendable, spans))
+            .collect();
+        if let Some((actions, digests, tachygrams)) =
+            self.actions.prove_merged(rng, app, spend_inputs)?
+        {
+            return actions
+                .prove_fee(rng, app, self.max_fee_note, self.fee, &digests, &tachygrams)
+                .map_err(ProveError::ProofFailed);
+        }
 
-        // Each entry pairs leaf stamp components with the descriptor of its
-        // covered action; merges concatenate both.
+        let change = Tachygram::from(self.fee_change_note.commitment());
+        let (pcd, ()) = app
+            .seed(
+                rng,
+                FeeSeed,
+                witness::fee_seed(((), ()), self.max_fee_note, anchor),
+            )
+            .map_err(ProveError::ProofFailed)?;
+        let stamp = ProofStamp::autonome(rng, app, pcd, BTreeSet::from([change]))
+            .map_err(ProveError::ProofFailed)?;
+        Ok((stamp, BTreeMap::new(), change, self.fee))
+    }
+}
+
+/// Some or all of a bundle's planned actions, to be proven at one anchor
+/// without a fee. Built by [`crate::bundle::Plan::actions_plan`].
+#[derive(Clone, Debug)]
+pub struct ActionsPlan {
+    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+    anchor: Anchor,
+}
+
+impl ActionsPlan {
+    pub(crate) const fn new(
+        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+        outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+        anchor: Anchor,
+    ) -> Self {
+        Self {
+            spends,
+            outputs,
+            anchor,
+        }
+    }
+
+    /// Prove and merge the planned actions, then rerandomize the proof.
+    /// `spend_inputs` pairs with the planned spends by position; each spend
+    /// supplies its own proof authorizing key.
+    ///
+    /// # Errors
+    ///
+    /// - [`ProveError::MissingPcd`] if the spend inputs do not match the
+    ///   planned spends, or a spend does not reach the plan's anchor.
+    /// - [`ProveError::ProofFailed`] if Ragu cannot construct the proof.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no planned actions or an output note has a zero
+    /// `rcm`.
+    #[expect(
+        clippy::type_complexity,
+        reason = "each spend's key, secret, spendable and spans"
+    )]
+    pub fn prove<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        spend_inputs: Vec<(
+            ProofAuthorizingKey,
+            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
+        )>,
+    ) -> Result<ProvenActions, ProveError> {
+        #[expect(clippy::expect_used, reason = "the part must contain an action")]
+        let (
+            ProvenActions {
+                anchor,
+                pairs,
+                proof,
+            },
+            ..,
+        ) = self
+            .prove_merged(rng, app, spend_inputs)?
+            .expect("the part must contain an action");
+        let (proof, anchor) = app
+            .rerandomize(proof.carry::<Actions>(anchor), rng)
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
+        Ok(ProvenActions {
+            anchor,
+            pairs,
+            proof: Box::new(proof),
+        })
+    }
+
+    #[expect(
+        clippy::type_complexity,
+        reason = "each spend's key, secret, spendable and spans; the proof and its sets"
+    )]
+    fn prove_merged<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        spend_inputs: Vec<(
+            ProofAuthorizingKey,
+            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
+        )>,
+    ) -> Result<Option<(ProvenActions, BTreeSet<ActionDigest>, BTreeSet<Tachygram>)>, ProveError>
+    {
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
-        if self.spends.len() != spend_pcds.len() {
+        if self.spends.len() != spend_inputs.len() {
             return Err(ProveError::MissingPcd(
                 format!(
                     "cannot prove {} spend actions with {} spendbind inputs",
                     self.spends.len(),
-                    spend_pcds.len(),
+                    spend_inputs.len(),
                 )
                 .into(),
             ));
         }
 
-        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
-            self.spends.into_iter().zip(spend_pcds).enumerate()
+        for (index, ((desc, theta, rcv), (pak, secret_pcd, spendable_pcd, spans))) in
+            self.spends.into_iter().zip(spend_inputs).enumerate()
         {
             let reached = spans
                 .last()
@@ -504,23 +602,25 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof, pair) =
-                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)
+                ProofStamp::prove_spend(rng, app, theta, bind_pcd, pak)
                     .map_err(ProveError::ProofFailed)?;
-            let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
+            let mut actions_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for span in spans {
-                stamp_pcd = app
-                    .fuse(rng, ActionLift, (), stamp_pcd, span)
+                actions_pcd = app
+                    .fuse(rng, ActionLift, (), actions_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
 
-            let (proof, anchor) = stamp_pcd.into_parts();
+            let (proof, anchor) = actions_pcd.into_parts();
             entries.push((
-                BTreeMap::from([(desc, pair)]),
+                ProvenActions {
+                    anchor,
+                    pairs: BTreeMap::from([(desc, pair)]),
+                    proof: Box::new(proof),
+                },
                 digests,
                 tachygrams,
-                anchor,
-                Box::new(proof),
             ));
         }
 
@@ -529,107 +629,148 @@ impl Plan {
                 ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)
                     .map_err(ProveError::ProofFailed)?;
             entries.push((
-                BTreeMap::from([(desc, pair)]),
+                ProvenActions {
+                    anchor,
+                    pairs: BTreeMap::from([(desc, pair)]),
+                    proof,
+                },
                 digests,
                 tachygrams,
-                anchor,
-                proof,
             ));
         }
 
-        let (pcd, descriptors, mut tachygrams) = match entries
+        entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
-                let (left_desc, left_digests, left_tachygrams, left_anchor, left_proof) = acc?;
-                let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
-                    next?;
-
-                let left_pcd = left_proof.carry::<Actions>(left_anchor);
-                let right_pcd = right_proof.carry::<Actions>(right_anchor);
+                let (left, left_digests, left_tachygrams) = acc?;
+                let (right, right_digests, right_tachygrams) = next?;
 
                 let merged_digests: BTreeSet<ActionDigest> =
                     left_digests.union(&right_digests).copied().collect();
                 let merged_tachygrams: BTreeSet<Tachygram> =
                     left_tachygrams.union(&right_tachygrams).copied().collect();
 
-                let (pcd, ()) = app
-                    .fuse(
-                        rng,
-                        ActionMerge,
-                        witness::action_merge(
-                            (*left_pcd.data(), *right_pcd.data()),
-                            ActionSetPoly::from_iter(merged_digests.clone()),
-                            TachygramSetPoly::from_iter(merged_tachygrams.clone()),
-                        ),
-                        left_pcd,
-                        right_pcd,
-                    )
+                let merged = left
+                    .prove_merge(rng, app, right, &merged_digests, &merged_tachygrams)
                     .map_err(ProveError::ProofFailed)?;
 
-                let merged_descs = left_desc.into_iter().chain(right_desc).collect();
-
-                Ok((
-                    merged_descs,
-                    merged_digests,
-                    merged_tachygrams,
-                    *pcd.data(),
-                    Box::new(pcd.proof().clone()),
-                ))
+                Ok((merged, merged_digests, merged_tachygrams))
             })
-            .transpose()?
-        {
-            None => {
-                let (pcd, ()) = app
-                    .seed(
-                        rng,
-                        FeeSeed,
-                        witness::fee_seed(((), ()), self.max_fee_note, self.anchor),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
-                (pcd, BTreeMap::new(), BTreeSet::new())
-            },
-            Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
-                let (pcd, ()) = app
-                    .fuse(
-                        rng,
-                        FeeFuse,
-                        witness::fee_fuse(
-                            (anchor, ()),
-                            self.max_fee_note,
-                            self.fee,
-                            &digests,
-                            &tachygrams,
-                        ),
-                        merged_proof.carry::<Actions>(anchor),
-                        app.bootstrap_proof().clone().carry::<()>(()),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
-                (pcd, descriptors, tachygrams)
-            },
-        };
+            .transpose()
+    }
+}
 
-        let (proof, (_, anchor)) = app
-            .rerandomize(pcd, rng)
-            .map_err(ProveError::ProofFailed)?
-            .into_parts();
+/// Some of a bundle's actions proven at an anchor, before the fee.
+#[derive(Clone, Debug)]
+pub struct ProvenActions {
+    /// The anchor at which the actions are proven.
+    pub anchor: Anchor,
+    /// The tachygram pairs of the proven actions, keyed by descriptor.
+    pub pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+    /// The uncompressed [`Actions`] proof.
+    #[debug(skip)]
+    pub proof: Box<Uncompressed>,
+}
+
+impl ProvenActions {
+    /// Merge two parts at one anchor covering disjoint actions with
+    /// [`ActionMerge`]. Successful construction does not guarantee that the
+    /// result verifies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu::Error`] if a proof-system step fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cv` or `rk` is the identity in a hand-built descriptor.
+    pub fn merge<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        right: Self,
+    ) -> Result<Self, ragu::Error> {
+        let (mut digests, mut tachygrams) = self.sets();
+        let (right_digests, right_tachygrams) = right.sets();
+        digests.extend(right_digests);
+        tachygrams.extend(right_tachygrams);
+        self.prove_merge(rng, app, right, &digests, &tachygrams)
+    }
+
+    pub(crate) fn sets(&self) -> (BTreeSet<ActionDigest>, BTreeSet<Tachygram>) {
+        let mut digests = BTreeSet::new();
+        let mut tachygrams = BTreeSet::new();
+        for (desc, &pair) in &self.pairs {
+            digests.insert(desc.digest(pair));
+            tachygrams.extend([pair.0, pair.1]);
+        }
+        (digests, tachygrams)
+    }
+
+    fn prove_merge<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        right: Self,
+        digests: &BTreeSet<ActionDigest>,
+        tachygrams: &BTreeSet<Tachygram>,
+    ) -> Result<Self, ragu::Error> {
+        let left_pcd = self.proof.carry::<Actions>(self.anchor);
+        let right_pcd = right.proof.carry::<Actions>(right.anchor);
+        let (pcd, ()) = app.fuse(
+            rng,
+            ActionMerge,
+            witness::action_merge(
+                (*left_pcd.data(), *right_pcd.data()),
+                digests.iter().copied().collect(),
+                tachygrams.iter().copied().collect(),
+            ),
+            left_pcd,
+            right_pcd,
+        )?;
+
+        let (proof, anchor) = pcd.into_parts();
+        Ok(Self {
+            anchor,
+            pairs: self.pairs.into_iter().chain(right.pairs).collect(),
+            proof: Box::new(proof),
+        })
+    }
+
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp and its authorization data"
+    )]
+    pub(crate) fn prove_fee<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        max_fee_note: Note,
+        fee: value::Positive,
+        digests: &BTreeSet<ActionDigest>,
+        tachygrams: &BTreeSet<Tachygram>,
+    ) -> Result<
+        (
+            ProofStamp<Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+            value::Positive,
+        ),
+        ragu::Error,
+    > {
+        let change = Tachygram::from(max_fee_note.derive_fee_change(fee).commitment());
+        let (pcd, ()) = app.fuse(
+            rng,
+            FeeFuse,
+            witness::fee_fuse((self.anchor, ()), max_fee_note, fee, digests, tachygrams),
+            self.proof.carry::<Actions>(self.anchor),
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )?;
+        let mut tachygrams = tachygrams.clone();
         tachygrams.insert(change);
-        let tachygram_set = tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit();
-        Ok((
-            ProofStamp {
-                anchor,
-                tachygram_set,
-                adjuncts: BTreeSet::new(),
-                proof: Box::new(proof),
-            },
-            descriptors,
-            change,
-            self.fee,
-        ))
+        let stamp = ProofStamp::autonome(rng, app, pcd, tachygrams)?;
+        Ok((stamp, self.pairs, change, fee))
     }
 }
 
@@ -681,6 +822,24 @@ pub struct ProofStamp<P: Proof> {
 }
 
 impl ProofStamp<Uncompressed> {
+    fn autonome<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &App<'_>,
+        pcd: ragu::Pcd<Pasta, WalletRank, Stamp>,
+        tachygrams: BTreeSet<Tachygram>,
+    ) -> Result<Self, ragu::Error> {
+        let (proof, (_, anchor)) = app.rerandomize(pcd, rng)?.into_parts();
+        Ok(Self {
+            anchor,
+            tachygram_set: tachygrams
+                .into_iter()
+                .collect::<TachygramSetPoly>()
+                .commit(),
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(proof),
+        })
+    }
+
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof, pair)`. The proof is not rerandomized.
     ///
