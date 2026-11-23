@@ -658,9 +658,9 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// proof's output slots against the covered actions and
 /// [`Self::tachygram_set`].
 ///
-/// Lifting, merging and unmerging take an [`Uncompressed`] proof, which a
-/// stamp keeps until [`Self::compress`] runs once, for the block. A stamp
-/// with either proof type can be read, written and verified.
+/// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
+/// proof. [`Self::compress`] produces a stamp with a [`Compressed`] proof.
+/// A stamp with either proof type can be read, written and verified.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
     /// The historic pool state for which this stamp is valid.

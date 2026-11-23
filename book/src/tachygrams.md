@@ -53,13 +53,13 @@ This set is the atomic unit which folds into pool state to contribute to the anc
 
 ## Consensus validation
 
-Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. Consensus also enforces [anchor recency and chain membership](./anchor.md#intra-block-state-vs-end-of-block-anchor), and checks that every member of the union is absent from every block of the current epoch and the immediately preceding epoch. A duplicate within that two-epoch window is rejected.
+Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. Consensus also enforces [anchor recency and chain membership](./anchor.md#intra-block-state-vs-end-of-block-anchor). It rejects a member already seen in the epoch of the block publishing the stamp or in the previous epoch. This includes members seen in earlier stamps in the same block.
 
 The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
 
-A stamp's anchor lies in the current or immediately preceding epoch and may have been advanced within its epoch via `ActionLift` or `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in that anchor's epoch. Consensus therefore scans every block of both epochs, not just blocks after the anchor.
+A stamp's anchor lies in the current or immediately preceding epoch and may have been advanced within its epoch via `ActionLift` or `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in that anchor's epoch. The duplicate check therefore includes tachygrams published before the anchor.
 
-A spend publishes a nullifier for the current epoch and one for the next epoch[^nullifiers-pair]. The next-epoch nullifier published in epoch $e$ is the present-epoch nullifier that any later spend of the same note would have to publish in epoch $e+1$. Including the previous epoch in the check catches that collision.
+A spend anchored in epoch $e$ publishes the nullifiers for $e$ and $e+1$[^nullifiers-pair], even if the stamp is mined in $e+1$. A spend of the same note anchored in $e+1$ shares the nullifier for $e+1$. The duplicate check catches that collision within the publication window.
 
 [^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 

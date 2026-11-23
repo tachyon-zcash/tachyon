@@ -120,7 +120,7 @@ Consensus and sync services publish spans as an epoch progresses.
 A wallet lifts its stamp along the published spans to the end of the latest one.
 For the stamps published after that, it builds its own span.
 
-On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor including its fee change, the anchor, and the stamp proof.
+On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 
 After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
@@ -597,7 +597,7 @@ A query walks back down.
 At each level it takes a node's four elements from its prover, requires their node digest to equal the element it holds, and selects one of the four by two bits.
 A deeper tree takes a longer chain of descents.
 `EvidenceTreeOpen` takes the leaf's epoch, anchors and first discriminant from the tree, and its profile and contents from its prover.
-To check the replayed leaf, it recomputes the leaf digest from those fields and the bridge hash of the bucket's contents polynomial, requires it to equal the root reached by descent, and emits the `QrBucket`.
+To check the replayed leaf, it recomputes the leaf digest from those fields and the bridge hash of the commitment to the bucket's contents polynomial, requires it to equal the root reached by descent, and emits the `QrBucket`.
 `EvidenceTreeFuse` and `EvidenceTreeCap` emit node digests, so an open follows a descent.
 `QrUnspentInit`, `UnspentLift` and `QrSpendableInit` read a replayed bucket as they read a sealed one.
 The leaf digest's tag $\texttt{Tachyon-QrBucket}$ differs from the node digest's.
@@ -689,15 +689,14 @@ The documentation of `Stamp` in the crate says what a stamp asserts.
 
 ## Rerandomization at trust boundaries
 
-Whoever builds a stamp rerandomizes it before the stamp leaves them.
+Whoever releases a stamp must rerandomize it first, but rerandomization alone does not establish zero knowledge or unlinkability for current stamp proofs.
 A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
 Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
-What crosses these boundaries is a rerandomized stamp with its stamp proof uncompressed, since a stamp is [compressed](./bundle.md#stamp-trailer) once, for the block.
 Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
-The implementation rerandomizes where it builds a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize their `Stamp` PCD, and `ProofStamp::compress` is a separate call.
-It rerandomizes no other PCD.
+`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Stamp` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
+The implementation rerandomizes no other PCD.
 
 ## Simple transaction
 
