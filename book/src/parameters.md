@@ -2,7 +2,7 @@
 
 The protocol's fixed parameters, with the code that defines each.
 Paths are relative to `crates/tachyon/src`.
-Values defined outside the crate come from Ragu at the pinned revision and from `zakura-udon` 0.1.0 (Udon).
+Values defined outside the crate come from Ragu at the pinned revision and from `zakura-udon` 0.3.0 (Udon).
 
 ## Curves and fields
 
