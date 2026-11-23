@@ -17,7 +17,7 @@ Lake re-elaborates the module that runs the check only when one of its imports c
 also re-runs `Tachyon/Axioms.lean` directly after the build. That catches a new file nothing
 imports on a cached build.
 
-It follows ragu's `Ragu.Meta.EndpointCensus` and its axiom check (ragu `origin/main` 5d225645), but
+It follows ragu's `Ragu.Meta.EndpointCensus` and its axiom check (ragu `origin/main` 7914b3b8), but
 tachyon's budget is Lean's standard three for every declaration, and tachyon has no executables
 and no `native_decide`. So it checks every declaration instead of discovering endpoints by name, and
 it doesn't import CompElliptic's checker. Like ragu's, it guards against drift, not against a

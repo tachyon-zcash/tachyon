@@ -123,8 +123,8 @@ accepting a stamp, and the double-spend theorems take `BundleCovered` with a `St
 
 ### Source correspondence at pinned main
 
-The maintenance audit against main `8919018e6bd07e3c65c86a3ea735cf09c88c5ac7`, with Ragu pinned at
-`5d225645e6ddce482bcbb2cb6540a7a58a83b5a8`, is a one-time manual source comparison at those pinned
+The maintenance audit against main `68dc1731408d0aa5bbd299325416a0ef5e3f71b6`, with Ragu pinned at
+`7914b3b86037e1fb0795a3ffd0cbf9198c2ade92`, is a one-time manual source comparison at those pinned
 commits, with no automated drift detection and not an extraction or equivalence proof. The relevant
 correspondence is:
 
@@ -339,7 +339,7 @@ choices that no theorem here discharges.
   as polynomials, abstracts the O1 bridge hash by its bound opening, and reads checks as identities.
   Merge checks L0 * R0 = O0 and L1 * R1 = O1; unmerge checks R0 * O0 = L0 and R1 * O1 = L1.
   Ragu's pinned bridge-stage source warns that binding to O1 does not itself force the unique
-  unblinded digest recomputed natively. Rust reconstructs that canonical digest for published stamp
+  zero-alpha digest recomputed natively. Rust reconstructs that canonical digest for published stamp
   verification and native chain advancement. The model assumes the canonical composition; it does
   not prove that these boundary checks close every intermediate bridge encoding in a proof tree.
   The QR steps rely on the same binding: each in-step anchor fold absorbs the slot polynomial its
