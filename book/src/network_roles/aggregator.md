@@ -72,10 +72,10 @@ Every match has to come out of $W$ before $W$ can be published, because consensu
 What comes out is the bundle as it was merged into $W$, at the fee $W$ holds.
 The bundle in the block may use a different fee, and its stamp may cover other bundles.
 In the crate today, the block's compressed stamp cannot serve as a divisor.
-The divisor is an uncompressed stamp in hand that covers exactly what $W$ holds.
+The divisor must be an uncompressed stamp at the same anchor as $W$. For every bundle it removes, the action pairs, fee and fee change commitment must match the version in $W$.
 
 The simple case is a block that includes $X$ as an autonome.
-The cached stamp of $X$ divides $W$:
+The cached stamp of $X$ divides $W$ if it meets those conditions:
 
 $$
 Q = \frac{W}{\operatorname{stamp}(X)}, \qquad Q \text{ covers } A \text{ and } Y.
@@ -85,16 +85,18 @@ $Q$ replaces $A$'s stamp and building continues.
 The next publication covers $A$ and $Y$.
 
 In general there are three cases, decided by one question.
-Is there a stamp in hand that covers exactly the bundles to remove?
+Is there a matching divisor in hand that covers exactly the bundles to remove?
 
 - **Easy.** Yes. Divide once.
 - **Medium.** No, but one can be built by merging stamps you hold or can derive. Build it and divide. Another route is to merge into $W$ a stamp for whatever the block's aggregate covers beyond $W$, and then divide by that aggregate's stamp if you have it in uncompressed form.
 - **Hard.** Neither. Divide out a larger input you kept that contains the mined bundles, losing its unmined bundles with it, or rebuild from cached autonomes and the inputs that are still good.
 
+The table assumes each stamp used for division matches the anchor and bundle versions in the dividend.
+
 | Merged into $W$ | Block includes | Case |
 | --- | --- | --- |
 | autonome $X$ | $X$ as an autonome | easy, divide by $X$ |
-| autonomes $X, Y, Z$ | an aggregate covering exactly $X, Y, Z$ | easy, divide by that aggregate if cached, or by $X$, $Y$ and $Z$ |
+| autonomes $X, Y, Z$ | an aggregate covering exactly $X, Y, Z$ | easy if that aggregate is cached; otherwise medium, merge $X$, $Y$ and $Z$ and divide |
 | aggregate $G$ | $G$ unchanged | easy, divide by $G$ |
 | aggregate $G$ | $X$, one of $G$'s adjuncts, as an autonome | easy, divide by $X$ |
 | aggregate $G$ | $G$ and all it covers, inside a larger aggregate | easy, divide by $G$ |
