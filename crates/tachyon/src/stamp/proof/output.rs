@@ -46,11 +46,10 @@ use crate::{
 ///   determines its opening.
 ///
 /// `cm` and `pad` are nonzero, so neither is a root at zero
-/// ([zero tachygrams](super#zero-tachygrams)). The assertion does not make
-/// $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a payment key.
-/// [`NoteSeed`](super::delegation::NoteSeed) holds both for a note that is
-/// spent, so an output with a zero $\mathsf{rcm}$ is a note that is
-/// [never spent](super::delegation::NoteSecret#zero-commitment-trapdoor).
+/// ([zero tachygrams](super#zero-tachygrams)). The commitment trapdoor
+/// $\mathsf{rcm}$ is also nonzero. The assertion does not make $\mathsf{pk}$
+/// a payment key; [`NoteSeed`](super::delegation::NoteSeed) proves that for
+/// a note that is spent.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -101,8 +100,9 @@ impl Header<Fp> for OutputHeader {
 ///
 /// The step reads no input and no challenge, and builds the header from its
 /// own wires. One `rcm` wire, one `pk` wire, one `psi` wire and the value
-/// feed both digest circuits, whose outputs are held nonzero. The three
-/// wires carry no other constraint. The value is the
+/// feed both digest circuits, whose outputs are held nonzero. The commitment
+/// circuit holds `rcm` nonzero; `pk` and `psi` carry no other constraint.
+/// The value is the
 /// [amount](gadgets::value::Positive::from_bits) that 51 bit wires encode, and
 /// [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) multiplied by those same wires
 /// is added to the blind point. The committed value is therefore the one both

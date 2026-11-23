@@ -394,7 +394,6 @@ A party therefore lets a stamp proof leave only after rerandomization, draws its
 - **Balance.** The stamp proof shows that each value commitment commits to its note's value. The binding signature shows that the commitments of a bundle sum to its value balance, as [Authorization](./authorization.md) and [Dynamic Fee](./fee.md) describe. The sum is over the integers. A stamp covers fewer than $2^{13}$ leaves and each value is at most `MAX_MONEY`, so no sum of a bundle's values reaches the group order.
 - **Authorization.** The stamp proof shows that a spend's randomized key is built on the note's spend validating key. The action signature shows that the signer holds the matching signing key.
 - **Reused nullifier trapdoors.** Two notes with one $\psi$ and one nullifier key have the same nullifiers, and spending one makes the other unspendable[^nullifiers]. Avoiding the reuse is the wallet's task.
-- **Zero commitment trapdoors.** `NoteSeed` holds a spent note's commitment trapdoor nonzero. `OutputBind`, `FeeFuse` and `FeeSeed` do not, so a note with a zero trapdoor can be output or left as fee change and can never be spent. A recipient checks the trapdoor before it credits a note.
 - **Anchors without a spend.** A stamp with no spend leaf verifies at any anchor its prover chooses. Rule 3 still applies to it.
 - **The discriminant.** A bucket's exclusion holds under whichever first discriminant its builder chose.
 
@@ -630,6 +629,7 @@ A stamp commits to two multisets, an action-digest set and a tachygram set[^tach
 
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, and rejects a value above `MAX_MONEY`.
 It holds each of the two nonzero.
+`OutputBind` also requires a nonzero commitment trapdoor `rcm`, as `NoteSeed` does for a spent note and `FeeFuse` and `FeeSeed` do for fee change.
 [Tachygrams](./tachygrams.md) says why the pad is derived from the note's opening.
 Beside the pair the `OutputHeader` carries the value commitment
 

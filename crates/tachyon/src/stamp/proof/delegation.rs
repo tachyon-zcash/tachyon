@@ -63,21 +63,16 @@ use crate::{
 ///
 /// # Zero commitment trapdoor
 ///
-/// [`NoteSeed`] alone outputs this header and alone holds `rcm` nonzero,
+/// [`NoteSeed`] alone outputs this header and holds `rcm` nonzero,
 /// the rule that [`Note::commitment`] enforces natively. `cm` determines
 /// `rcm`, so a note whose `rcm` is zero has no `NoteSecret`, and
 /// [`SpendBind`](super::spend::SpendBind) cannot spend it.
 ///
 /// [`OutputBind`](super::output::OutputBind),
 /// [`FeeFuse`](super::stamp::FeeFuse) and [`FeeSeed`](super::stamp::FeeSeed)
-/// commit to a note and do not hold its `rcm` nonzero. A prover who skips the
-/// native check can output a note with a zero `rcm`, or leave one as fee
-/// change. The stamp verifies and the bundle balances, and the note's value
-/// stays in the pool with no way to spend it. The loss falls on whoever takes
-/// that note as payment, and on the owner of a fee change note whose max fee
-/// note another party chose. A recipient checks that `rcm` is nonzero before
-/// it credits a note, and before it calls [`Note::commitment`] on an opening
-/// it was sent, which panics on zero.
+/// also require a nonzero `rcm` when they derive the output or fee change
+/// commitment. A recipient still checks an unverified opening before it calls
+/// [`Note::commitment`], which panics on a zero `rcm`.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
