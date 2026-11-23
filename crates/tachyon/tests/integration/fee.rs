@@ -12,6 +12,7 @@ use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
+    note,
     pasta::Fp,
     stamp::{
         self, Proof as _, ProofStamp,
@@ -162,6 +163,51 @@ fn fee_fuse_binds_its_sets() {
             "{expected}"
         );
     }
+}
+
+#[test]
+fn fee_fuse_and_fee_seed_reject_zero_rcm() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let max_fee_note = wallet.random_note(300);
+    let anchor = PoolSim::shared().mint_anchor();
+    let left = fee_less_output_bundle(app, max_fee_note);
+    let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
+    let action_tachygrams = left
+        .action_auth
+        .iter()
+        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .collect();
+    let zero_rcm = note::CommitmentTrapdoor::from(Fp::ZERO);
+
+    let mut fuse_witness = witness::fee_fuse(
+        (anchor, ()),
+        max_fee_note,
+        value::Positive::try_from(120).unwrap(),
+        &action_digests,
+        &action_tachygrams,
+    );
+    fuse_witness.0.rcm = zero_rcm;
+    let fuse = app.fuse(
+        rng,
+        FeeFuse,
+        fuse_witness,
+        left.stamp.proof.carry::<Actions>(anchor),
+        app.bootstrap_proof().clone().carry::<()>(()),
+    );
+    let Err(ragu::Error::InvalidWitness(fuse_error)) = fuse else {
+        panic!("FeeFuse: expected InvalidWitness, got {:?}", fuse.err());
+    };
+    assert_eq!(fuse_error.to_string(), "division by zero");
+
+    let mut seed_witness = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
+    seed_witness.0.rcm = zero_rcm;
+    let seed = app.seed(rng, FeeSeed, seed_witness);
+    let Err(ragu::Error::InvalidWitness(seed_error)) = seed else {
+        panic!("FeeSeed: expected InvalidWitness, got {:?}", seed.err());
+    };
+    assert_eq!(seed_error.to_string(), "division by zero");
 }
 
 #[test]
