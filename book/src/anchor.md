@@ -4,11 +4,11 @@ An anchor is an $\mathbb{F}_p$ element produced by a Poseidon hash chain, repres
 
 Each stamp and each epoch transition produces a new pool state, but consensus acknowledges only pool states that represent the end of a block.
 
-These end-of-block states are anchors.
+These end-of-block states are the anchors a stamp can use.
 
 The anchor advances by two kinds of transition. Both absorb an epoch index. A stamp absorption absorbs the epoch of the block that contains the stamp. A validator reads that epoch from the block height. A boundary digest absorbs the epoch being entered. The two transitions hash under different Poseidon domains (`Tachyon-AnchorSt` and `Tachyon-AnchorEp`), so the domain identifies a transition as a stamp absorption or a boundary digest.
 
-A block that publishes no stamp leaves the anchor unchanged, unless the block starts a new epoch. An anchor identifies a position in the sequence of stamp absorptions and boundary digests.
+The first block of a new epoch applies the boundary digest before absorbing any stamps. If that block publishes no stamp, its end-of-block anchor is the boundary digest itself. Any other block that publishes no stamp leaves the anchor unchanged.
 
 ## Stamp absorption
 
@@ -38,7 +38,7 @@ $$
 
 The two transitions differ in their Poseidon domain and in which epoch they absorb. A stamp absorption absorbs the epoch it sits in. A boundary digest absorbs the epoch being entered. A stamp absorption producing the same value as a boundary digest is a Poseidon collision across the two domains. A step can therefore check that an anchor is a boundary digest. Consensus membership of the eventual spend anchor binds the lineage to published epoch boundaries.
 
-Two positions at the boundary have names. The **entry anchor** of $e$ is the first anchor of $e$ in the accepted chain: $H_\mathsf{ep}(\mathsf{final}(e-1), e)$ for $e \geq 1$, and $H_\mathsf{ep}(0, 0)$ for $e = 0$. The **final anchor** of $e$ is the last anchor inside $e$, which equals the entry anchor when $e$ published no stamp. The **crossing** is the boundary digest $\mathsf{final}(e) \to \mathsf{entry}(e+1)$ joining them.
+Two positions at the boundary have names. The **entry anchor** of $e$ is the starting state of its first block: $H_\mathsf{ep}(\mathsf{final}(e-1), e)$ for $e \geq 1$, and $H_\mathsf{ep}(0, 0)$ for $e = 0$. The **final anchor** of $e$ is the end-of-block anchor of its last block, which equals the entry anchor when $e$ published no stamp. The **crossing** is the boundary digest $\mathsf{final}(e) \to \mathsf{entry}(e+1)$ joining them.
 
 $H_\mathsf{ep}(x, e)$ is a boundary digest for any $x$. For $e \geq 1$, the entry anchor of $e$ is the boundary digest of $\mathsf{final}(e-1)$ into $e$. A step that checks that an anchor is a boundary digest into $e$ has not checked that it is the entry anchor of $e$.
 

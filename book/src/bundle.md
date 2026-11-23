@@ -236,7 +236,7 @@ Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hSta
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
-`proofTachyon` holds the compressed stamp proof in a block and the uncompressed stamp proof before the block. Both use the same `tachyonBundleState == 0x01` layout, and `sizeProofTachyon` is the length of the one present. A stamp is compressed once, for the block. Until then it travels uncompressed, because [lifting](./proof-tree.md#stamp-anchor), [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take the uncompressed stamp proof.
+In the crate today, a stamped block item carries a compressed proof in `proofTachyon`. The crate uses the same trailer for an uncompressed proof when [lifting](./proof-tree.md#stamp-anchor), [merging or unmerging](./aggregation.md#merge-to-produce-aggregate) a stamp.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 
