@@ -15,7 +15,7 @@ Tachyon notes are simple: a note carries only its recipient, value, and two trap
 | $\mathsf{pk}$ | $\mathbb{F}_p$ | recipient's payment key[^keys] |
 | $v$ | integer | value in zatoshi, $0 \leq v \leq 2.1 \times 10^{15}$ (`MAX_MONEY`) |
 | $\psi$ | $\mathbb{F}_p$ | nullifier trapdoor[^nullifiers] |
-| $\mathsf{rcm}$ | $\mathbb{F}_p$ | note commitment trapdoor |
+| $\mathsf{rcm}$ | $\mathbb{F}_p$ | nonzero note commitment trapdoor |
 
 ## Commitment
 

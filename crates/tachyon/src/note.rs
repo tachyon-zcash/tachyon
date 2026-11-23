@@ -75,7 +75,7 @@ pub struct Note {
     /// The nullifier trapdoor ($\psi$).
     pub psi: nullifier::Trapdoor,
 
-    /// Note commitment trapdoor ($rcm$).
+    /// Note commitment trapdoor ($rcm$), which must be nonzero.
     pub rcm: CommitmentTrapdoor,
 }
 
