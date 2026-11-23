@@ -529,16 +529,16 @@ impl ActionsPlan {
         #[expect(clippy::expect_used, reason = "the part must contain an action")]
         let (
             ProvenActions {
-                anchor,
+                anchor: merged_anchor,
                 pairs,
-                proof,
+                proof: merged_proof,
             },
             ..,
         ) = self
             .prove_merged(rng, app, spend_inputs)?
             .expect("the part must contain an action");
         let (proof, anchor) = app
-            .rerandomize(proof.carry::<Actions>(anchor), rng)
+            .rerandomize(merged_proof.carry::<Actions>(merged_anchor), rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         Ok(ProvenActions {
@@ -703,7 +703,7 @@ impl ProvenActions {
         let mut tachygrams = BTreeSet::new();
         for (desc, &pair) in &self.pairs {
             digests.insert(desc.digest(pair));
-            tachygrams.extend([pair.0, pair.1]);
+            tachygrams.extend(<[Tachygram; 2]>::from(pair));
         }
         (digests, tachygrams)
     }
@@ -767,9 +767,9 @@ impl ProvenActions {
             self.proof.carry::<Actions>(self.anchor),
             app.bootstrap_proof().clone().carry::<()>(()),
         )?;
-        let mut tachygrams = tachygrams.clone();
-        tachygrams.insert(change);
-        let stamp = ProofStamp::autonome(rng, app, pcd, tachygrams)?;
+        let mut stamp_tachygrams = tachygrams.clone();
+        stamp_tachygrams.insert(change);
+        let stamp = ProofStamp::autonome(rng, app, pcd, stamp_tachygrams)?;
         Ok((stamp, self.pairs, change, fee))
     }
 }

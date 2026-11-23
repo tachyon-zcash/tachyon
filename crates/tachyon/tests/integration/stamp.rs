@@ -396,17 +396,17 @@ fn action_merge_rejects_different_anchors() {
     let pair_b = right.pairs[&desc_b];
     let digests = ActionSetPoly::from_iter([desc_a.digest(pair_a), desc_b.digest(pair_b)]);
     let tachygrams = TachygramSetPoly::from_iter([pair_a.0, pair_a.1, pair_b.0, pair_b.1]);
-    let left = left.proof.carry::<Actions>(left.anchor);
-    let right = right.proof.carry::<Actions>(right.anchor);
-    assert!(app.verify_uncompressed(&left, &mut *rng).unwrap());
-    assert!(app.verify_uncompressed(&right, &mut *rng).unwrap());
+    let left_pcd = left.proof.carry::<Actions>(left.anchor);
+    let right_pcd = right.proof.carry::<Actions>(right.anchor);
+    assert!(app.verify_uncompressed(&left_pcd, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&right_pcd, &mut *rng).unwrap());
     let (forged, ()) = app
         .fuse(
             rng,
             ActionMerge,
-            witness::action_merge((*left.data(), *right.data()), digests, tachygrams),
-            left,
-            right,
+            witness::action_merge((*left_pcd.data(), *right_pcd.data()), digests, tachygrams),
+            left_pcd,
+            right_pcd,
         )
         .unwrap();
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
