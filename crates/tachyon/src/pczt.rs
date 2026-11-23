@@ -19,7 +19,7 @@ pub use prover::{
     ProveField,
 };
 use ragu::{
-    Pcd, ProductionRank, Rank as _,
+    Pcd, Rank as _, WalletRank,
     pasta::Pasta,
     udon::{curve::Affine as _, field::Field as _},
 };
@@ -104,9 +104,9 @@ pub struct SpendWitness {
 #[derive(Clone, Debug)]
 #[debug("SpendLineage(..)")]
 pub struct SpendLineage {
-    secret: Box<Pcd<Pasta, ProductionRank, delegation::NoteSecret>>,
-    spendable: Box<Pcd<Pasta, ProductionRank, spendable::NoteSpendable>>,
-    spans: Vec<Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+    secret: Box<Pcd<Pasta, WalletRank, delegation::NoteSecret>>,
+    spendable: Box<Pcd<Pasta, WalletRank, spendable::NoteSpendable>>,
+    spans: Vec<Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
 }
 
 /// Hints for reviewing an output.
@@ -241,7 +241,7 @@ pub struct Plan {
 }
 
 fn max_actions() -> usize {
-    (ProductionRank::num_coeffs() - 2).div_euclid(2)
+    (WalletRank::num_coeffs() - 2).div_euclid(2)
 }
 
 fn memo_fits(len: usize) -> bool {
@@ -964,9 +964,9 @@ impl SpendLineage {
     /// Supply the predecessor proofs for a spend.
     #[must_use]
     pub fn new(
-        secret: Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-        spendable: Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-        spans: Vec<Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        secret: Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+        spendable: Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+        spans: Vec<Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Self {
         Self {
             secret: Box::new(secret),
@@ -977,19 +977,19 @@ impl SpendLineage {
 
     /// The note secret.
     #[must_use]
-    pub const fn secret(&self) -> &Pcd<Pasta, ProductionRank, delegation::NoteSecret> {
+    pub const fn secret(&self) -> &Pcd<Pasta, WalletRank, delegation::NoteSecret> {
         &self.secret
     }
 
     /// The spendable proof.
     #[must_use]
-    pub const fn spendable(&self) -> &Pcd<Pasta, ProductionRank, spendable::NoteSpendable> {
+    pub const fn spendable(&self) -> &Pcd<Pasta, WalletRank, spendable::NoteSpendable> {
         &self.spendable
     }
 
     /// The spans from the spendable anchor to the proving target.
     #[must_use]
-    pub fn spans(&self) -> &[Pcd<Pasta, ProductionRank, pool::AnchorSpan>] {
+    pub fn spans(&self) -> &[Pcd<Pasta, WalletRank, pool::AnchorSpan>] {
         &self.spans
     }
 }

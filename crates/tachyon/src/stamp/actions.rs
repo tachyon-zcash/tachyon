@@ -8,8 +8,8 @@ use ragu::udon::field::Field as _;
 
 use super::{
     ActionDigest, ActionEntropy, ActionLift, ActionMerge, Actions, Anchor, App, Box, CryptoRng,
-    Debug, Display, Error, FeeFuse, FeeSeed, Fp, Note, Pasta, ProductionRank, ProofAuthorizingKey,
-    ProofStamp, Stamp, Tachygram, TachygramSetCommit, Uncompressed, Vec, action, delegation, pool,
+    Debug, Display, Error, FeeFuse, FeeSeed, Fp, Note, Pasta, ProofAuthorizingKey, ProofStamp,
+    Stamp, Tachygram, TachygramSetCommit, Uncompressed, Vec, WalletRank, action, delegation, pool,
     spend, spendable, value, witness,
 };
 
@@ -28,9 +28,9 @@ pub(super) struct SpendInput {
     theta: ActionEntropy,
     rcv: value::Trapdoor,
     pak: ProofAuthorizingKey,
-    secret: ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-    spendable: ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-    spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+    secret: ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+    spendable: ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+    spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
 }
 
 /// The action descriptors and their witnesses at one anchor, without a fee.
@@ -85,9 +85,9 @@ impl ActionsPlan {
         app: &App<'_>,
         spend_pcds: Vec<(
             ProofAuthorizingKey,
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ActionsProof, ActionsProveError> {
         let spends = Self::check_spends(self.spends, spend_pcds, self.anchor)
@@ -127,9 +127,9 @@ impl ActionsPlan {
         spend_rows: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
         spend_pcds: Vec<(
             ProofAuthorizingKey,
-            ragu::Pcd<Pasta, ProductionRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, ProductionRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
+            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
+            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
         anchor: Anchor,
     ) -> Result<Vec<SpendInput>, Box<dyn error::Error + Send + Sync>> {
@@ -296,7 +296,7 @@ impl ActionsProof {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
@@ -308,7 +308,7 @@ impl ActionsProof {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let mut pcd = self.proof.carry::<Actions>(self.anchor);
         for span in spans {
@@ -522,7 +522,7 @@ impl AutonomeParts {
     fn finish<RNG: CryptoRng>(
         rng: &mut RNG,
         app: &App<'_>,
-        pcd: ragu::Pcd<Pasta, ProductionRank, Stamp>,
+        pcd: ragu::Pcd<Pasta, WalletRank, Stamp>,
         tachygram_set: TachygramSetCommit,
     ) -> Result<ProofStamp<Uncompressed>, ragu::Error> {
         let (proof, (_, anchor)) = app.rerandomize(pcd, rng)?.into_parts();

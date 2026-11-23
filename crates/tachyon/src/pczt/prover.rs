@@ -1,7 +1,7 @@
 use alloc::{collections::BTreeSet, vec, vec::Vec};
 
 use derive_more::{Display, Error};
-use ragu::{Pcd, ProductionRank, pasta::Pasta};
+use ragu::{Pcd, WalletRank, pasta::Pasta};
 use rand_core::CryptoRng;
 
 use super::{
@@ -242,7 +242,7 @@ impl Bundle {
         index: usize,
         rng: &mut RNG,
         app: &App<'_>,
-        spans: Vec<Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<(), LiftActionsProofError> {
         let proof = self
             .actions_proofs
