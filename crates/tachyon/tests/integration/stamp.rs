@@ -14,15 +14,15 @@ use ragu::{WalletRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action, bundle,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram,
+    TachygramSetPoly, action, bundle, effect,
     entropy::ActionEntropy,
     fee,
     stamp::{
         self, ProveError,
         proof::{
             App,
-            stamp::{Stamp, StampMerge},
+            stamp::{ActionMerge, Actions, Stamp, StampMerge},
         },
     },
     value, witness,
@@ -285,6 +285,131 @@ fn plan_prove_lifts_a_spend_along_spans() {
         .digest(cm_change)])
         .collect();
     assert!(!forged.verify_proof(rng, app, digests).unwrap());
+}
+
+#[test]
+fn bundle_verifies_with_two_spend_authorities() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let alice = WalletSim::random(rng);
+    let bob = WalletSim::random(rng);
+    let alice_note = alice.random_note(500);
+    let bob_note = bob.random_note(700);
+    let pool = PoolSim::genesis_with(vec![vec![
+        alice_note.commitment().into(),
+        bob_note.commitment().into(),
+    ]]);
+    let alice_spendable = alice.spendable_init(app, &pool, &alice_note, pool.height());
+    let bob_spendable = bob.spendable_init(app, &pool, &bob_note, pool.height());
+
+    let alice_spend = action::Plan::spend(
+        alice_note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| alice.pak.ak.derive_action_public(&alpha),
+    );
+    let bob_spend = action::Plan::spend(
+        bob_note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| bob.pak.ak.derive_action_public(&alpha),
+    );
+    let output = output_plan(rng, alice.random_note(1190));
+    let plan = bundle::Plan::new(
+        vec![alice_spend, bob_spend],
+        vec![output],
+        alice.random_note(10),
+    );
+
+    let left = plan
+        .actions_plan(
+            pool.anchor(),
+            &BTreeSet::from([alice_spend.descriptor(), output.descriptor()]),
+        )
+        .prove(
+            rng,
+            app,
+            vec![(
+                alice.pak,
+                alice.note_secret(app, alice_note),
+                alice_spendable,
+                vec![],
+            )],
+        )
+        .unwrap();
+    let right = plan
+        .actions_plan(pool.anchor(), &BTreeSet::from([bob_spend.descriptor()]))
+        .prove(
+            rng,
+            app,
+            vec![(
+                bob.pak,
+                bob.note_secret(app, bob_note),
+                bob_spendable,
+                vec![],
+            )],
+        )
+        .unwrap();
+    let actions = left.merge(rng, app, right).unwrap();
+    let proof = plan
+        .apply_fee(rng, app, actions, value::Positive::try_from(5u64).unwrap())
+        .unwrap();
+
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let (mut authorized, _) = plan
+        .sign(rng, &sighash, &alice.sk.derive_auth_private())
+        .unwrap();
+    let alpha = bob_spend
+        .theta
+        .randomizer::<effect::Spend>(bob_note.commitment());
+    let bob_sig = bob
+        .sk
+        .derive_auth_private()
+        .derive_action_private(&alpha)
+        .sign(rng, &sighash);
+    authorized.insert(bob_spend.descriptor(), bob_sig);
+    let signatures = plan.apply_signatures(rng, &sighash, authorized).unwrap();
+    let bundle = plan.assemble(signatures, proof);
+    bundle.verify(rng, app, &sighash, &[]).unwrap();
+}
+
+#[test]
+fn action_merge_rejects_different_anchors() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let output_a = output_plan(rng, wallet.random_note(100));
+    let output_b = output_plan(rng, wallet.random_note(200));
+    let plan = bundle::Plan::new(vec![], vec![output_a, output_b], wallet.random_note(0));
+    let desc_a = output_a.descriptor();
+    let desc_b = output_b.descriptor();
+    let left = plan
+        .actions_plan(Anchor::default(), &BTreeSet::from([desc_a]))
+        .prove(rng, app, vec![])
+        .unwrap();
+    let right = plan
+        .actions_plan(Anchor::random(rng), &BTreeSet::from([desc_b]))
+        .prove(rng, app, vec![])
+        .unwrap();
+
+    let pair_a = left.pairs[&desc_a];
+    let pair_b = right.pairs[&desc_b];
+    let digests = ActionSetPoly::from_iter([desc_a.digest(pair_a), desc_b.digest(pair_b)]);
+    let tachygrams = TachygramSetPoly::from_iter([pair_a.0, pair_a.1, pair_b.0, pair_b.1]);
+    let left = left.proof.carry::<Actions>(left.anchor);
+    let right = right.proof.carry::<Actions>(right.anchor);
+    assert!(app.verify_uncompressed(&left, &mut *rng).unwrap());
+    assert!(app.verify_uncompressed(&right, &mut *rng).unwrap());
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            ActionMerge,
+            witness::action_merge((*left.data(), *right.data()), digests, tachygrams),
+            left,
+            right,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
