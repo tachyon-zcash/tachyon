@@ -53,7 +53,7 @@ This set is the atomic unit which folds into pool state to contribute to the anc
 
 ## Consensus validation
 
-Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. It also checks that every member is absent from every earlier stamp of the current epoch and the immediately preceding epoch, including earlier stamps of the same block. A duplicate within that two-epoch window is rejected.
+Consensus derives the union from the covered bundles, rejects any member repeated within it, and checks its commitment against the stamp's carried commitment. Consensus also enforces [anchor recency and chain membership](./anchor.md#intra-block-state-vs-end-of-block-anchor), and checks that every member of the union is absent from every earlier stamp of the current epoch and the immediately preceding epoch, including earlier stamps of the same block. A duplicate within that two-epoch window is rejected.
 
 A spend anchored at epoch $a$ publishes $\mathsf{nf}_a$ and $\mathsf{nf}_{a+1}$ and its spendable lineage proves $\mathsf{nf}_x$ unpublished in each epoch $x$ from the note's creation up to $a$ excluding $a$ itself. Anchor recency requires a stamp published in epoch $p$ to anchor at epoch $p$ or its predecessor[^anchor].
 
@@ -71,7 +71,7 @@ $$
 
 by recency, so the two spends share $\mathsf{nf}_{a_1}$ or $\mathsf{nf}_{a_1+1}$ within the two-epoch window[^nullifiers-pair].
 
-Scanning earlier stamps of the current epoch catches a second spend anchored in the same epoch as the first, because neither lineage covers its own anchor epoch. Including the preceding epoch catches the cases where recency places the two publications in consecutive epochs, whether both spends anchor in $e$ with the second published in the next epoch or the first anchors in $e$ and is published in the next epoch while the second anchors in that epoch and is published one epoch later.
+Scanning every earlier stamp of the current epoch, not just those after the anchor, catches a second spend anchored in the same epoch as the first, because neither lineage covers its own anchor epoch. Including the preceding epoch catches the cases where recency places the two publications in consecutive epochs, whether both spends anchor in $e$ with the second published in the next epoch or the first anchors in $e$ and is published in the next epoch while the second anchors in that epoch and is published one epoch later.
 
 [^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 

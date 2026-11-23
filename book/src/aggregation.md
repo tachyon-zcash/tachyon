@@ -40,20 +40,25 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-Before the block, a stamp's wire format carries the full proof, so aggregators can lift and merge decoded stamps directly.
-A block carries each aggregate with its proof compressed, which is smaller but can no longer be lifted or merged.
+A stamp's wire format carries the stamp proof compressed for bandwidth efficiency.
+Aggregators decompress the stamps they receive to a form they can lift and merge, and recompress the merged stamp to broadcast.
+A compressed stamp proof keeps the commitments to the stamp's action set and tachygram set polynomials, and not the polynomials.
+Lifting and merging need the polynomials, so the aggregator rebuilds both sets from the covered bundles' public data and continues from the compressed stamp.
+
+The implementation does not decompress yet.
+As a stopgap until it can, a stamp outside a block carries the stamp proof uncompressed in the same [trailer layout](./bundle.md#stamp-trailer), aggregators lift and merge those stamps directly, and a stamp is compressed once, for the block.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 1. Select transactions
-2. Deserialize and validate stamps
+2. Deserialize, validate and decompress stamps
 3. Match/update anchors
 4. Merge stamps
    - Merge tachygrams (exclusive sets)
    - Merge proofs
    - List the `txid` of the one transaction the absorbed stamp covers without listing
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
-6. Compress the merged stamp for the block
+6. Compress and serialize the merged stamp
 7. Publish aggregate transaction with its [adjunct list](#adjunct-list)
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
