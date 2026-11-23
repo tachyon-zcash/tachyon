@@ -156,11 +156,8 @@
 //!
 //! ## Full proofs between parties
 //!
-//! A stamp is compressed once, for its block. Until then it passes between
-//! wallets and aggregators as a full proof that `Application::rerandomize`
-//! returned. A compressed stamp proof can only be verified. The standard
-//! profile has no decompression, and Ragu's decompression refuses an
-//! application whose headers name polynomials.
+//! In this crate, lifting, merging and unmerging take an uncompressed stamp.
+//! The crate can verify a compressed stamp proof but cannot decompress it.
 //!
 //! ### What a receiver can produce
 //!

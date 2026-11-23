@@ -357,8 +357,8 @@ Rule 5 puts each bundle under one stamp, in the one block that holds the bundle.
 
 ### A full stamp proof between parties
 
-A stamp is compressed once, for its block. Before that it passes between wallets and aggregators rerandomized and uncompressed, as [Rerandomization at trust boundaries](#rerandomization-at-trust-boundaries) describes.
-A compressed stamp proof can only be verified, because Ragu cannot decompress a stamp proof, whose header names polynomials.
+In the crate today, `Plan::prove` returns an uncompressed stamp. The crate can compress its proof but cannot decompress it.
+The [aggregation chapter](./aggregation.md#merge-to-produce-aggregate) states the intended publication rule.
 
 A party that holds the uncompressed stamp proof can lift it with `StampLift`, merge it with `StampMerge` and unmerge it with `StampUnmerge`. No other step reads a `Stamp`.
 Each gives a stamp that the step's own argument makes a verified `Stamp`, whoever runs the step, and every argument of this section is about any stamp that consensus accepts.
