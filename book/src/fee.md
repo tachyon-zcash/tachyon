@@ -1,8 +1,9 @@
 # Dynamic Fee
 
-A wallet signs a maximum fee once. A prover chooses the fee at or below that
-maximum and can change it without another signature. The difference returns to
-the wallet as a fee change note.
+A wallet signs a maximum fee once. A prover with the max fee note opening and
+the bundle's proving inputs can choose any fee up to that maximum and prove it
+without another signature. A published stamp alone is not enough to change the
+fee. The difference returns to the wallet as a fee change note.
 
 Each Tachyon bundle has its own fee. The signatures bind the maximum, not the
 fee itself.
@@ -10,7 +11,8 @@ fee itself.
 ## Terms
 
 - **Max fee note**: the note whose value $\feemax$ sets the maximum fee. It is
-  published only as its value commitment `cvFeeMaxTachyon` and is never spent.
+  represented by its value commitment `cvFeeMaxTachyon`, not published as a
+  separate spendable output.
 - **Fee change note**: the spendable note that returns the unspent portion of
   the maximum fee to the max fee note's owner. Its commitment $\cm_\chg$ is
   published as `cmChangeTachyon` in the bundle body's proving section.
@@ -88,7 +90,8 @@ $$
 
 Its [note commitment](./notes.md#commitment) $\cm_\chg$ is published as a
 [tachygram](./tachygrams.md). A fee equal to the maximum leaves a zero-valued
-fee change note, which still has its tachygram.
+fee change note, which still has its tachygram. At zero fee, the fee change
+note has the same opening as the max fee note.
 
 ## Fee Steps
 
