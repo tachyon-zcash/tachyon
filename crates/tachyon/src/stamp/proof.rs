@@ -39,7 +39,7 @@ pub mod summary;
 
 use alloc::boxed::Box;
 
-use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank, pasta::Pasta};
+use ragu::{AcceleratedProver, Application, ApplicationBuilder, WalletRank, pasta::Pasta};
 
 use crate::pasta;
 
@@ -49,7 +49,7 @@ pub const HEADER_SIZE: usize = 9;
 
 /// The Tachyon Ragu application, with accelerated proving and reference
 /// verification kernels.
-pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>;
+pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>;
 
 /// Builds the Tachyon application with the baked setup.
 ///
@@ -60,9 +60,8 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, Accel
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
+    ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?

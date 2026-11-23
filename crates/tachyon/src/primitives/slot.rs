@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 
 use derive_more::Debug;
 use ragu::{
-    Polynomial, ProductionRank,
+    Polynomial, WalletRank,
     header::{Has, Header, OnlinePoly},
     step::{HeaderInput, Prepared},
     udon::field::Field as _,
@@ -32,7 +32,7 @@ impl<P, W> PolySlot<P, W> {
     where
         O: Header<Fp>,
         O::OnlinePolyCommit: Has<Self, I>,
-        P: AsRef<Polynomial<Fp, ProductionRank>>,
+        P: AsRef<Polynomial<Fp, WalletRank>>,
     {
         let mut coefficients = polynomial.as_ref().iter_coeffs().collect::<Vec<_>>();
         coefficients.truncate(

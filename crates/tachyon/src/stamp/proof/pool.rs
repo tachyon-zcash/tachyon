@@ -27,7 +27,7 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-    udon::{curve::Projective as _, field::Field as _},
+    udon::field::Field as _,
 };
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
@@ -37,8 +37,8 @@ use crate::{
     gadgets, note,
     pasta::Fp,
     primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetPoly,
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassRoot, QrProfile,
+        Tachygram, TachygramSetPoly,
     },
 };
 
@@ -280,7 +280,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
             witness.0.into(),
             witness.1.into(),
-            bridge_hash(witness.2.commit().as_ref().to_affine()),
+            bridge_hash(witness.2.commit().into()),
         ));
         let stamp = &witness.2;
         let prepared =
@@ -540,6 +540,10 @@ impl Step<Pasta> for UnspentFuse {
 /// segment's bound to the bucket's `anchor_next`. One step per epoch, where
 /// [`QrUnspentInit`](super::qr::QrUnspentInit) then [`UnspentFuse`] takes two.
 ///
+/// `path` gives the value's class at each of the 32 depths, its QR path. Its
+/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
+/// root witnessing class `j`, including positions past that prefix.
+///
 /// # Soundness
 ///
 /// The framework fixes the input and output polynomials and `value` before
@@ -560,9 +564,10 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, extended_seq)`
+    /// `(value, path, roots, mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
+        [QrClass; QrProfile::MAX_DEPTH],
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
@@ -571,16 +576,20 @@ impl Step<Pasta> for UnspentLift {
     const INDEX: Index = Index::new(24);
     const NUM_STAGED: usize = 1;
 
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named witness operands"
+    )]
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let extended_seq = &witness.3;
+        let (value, _path, _roots, _mask, extended_seq) = witness;
         Ok(NfSeqPoly::SLOT
             .poly(Prepared::new(), extended_seq)
-            .stage([Fp::from(witness.0)]))
+            .stage([Fp::from(*value)]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -622,8 +631,9 @@ impl Step<Pasta> for UnspentLift {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|&(_, classes, ..)| classes),
-            witness.as_ref().map(|&(_, _, mask, _)| mask),
+            witness.as_ref().map(|&(_, path, ..)| path),
+            witness.as_ref().map(|&(_, _, roots, ..)| roots),
+            witness.as_ref().map(|&(_, _, _, mask, _)| mask),
         )?;
         #[expect(
             clippy::indexing_slicing,
