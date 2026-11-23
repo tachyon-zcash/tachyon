@@ -28,6 +28,8 @@ mod fixtures;
 #[cfg(test)]
 mod proof;
 #[cfg(test)]
+mod publication;
+#[cfg(test)]
 mod qr;
 #[cfg(test)]
 mod stamp;

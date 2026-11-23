@@ -19,12 +19,13 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::error;
+use core::{error, iter};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
     App, output,
+    publication::{PublishedStamp, StampBindActionSet, StampBindings, StampPublish},
     stamp::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
         StampLift, StampMerge, StampUnmerge,
@@ -680,7 +681,122 @@ pub struct ProofStamp<P: Proof> {
     pub proof: Box<P>,
 }
 
+/// A compressed, padded wallet statement and its coverage metadata. The
+/// historical block and relay codecs do not consume this publication.
+#[derive(Clone, Debug)]
+pub struct WalletPublication {
+    /// Historic reference, checked as part of the public statement.
+    pub anchor: Anchor,
+    /// Commitment to the covered action pairs and fee changes.
+    pub tachygram_set: TachygramSetCommit,
+    /// Other transactions covered by the proof; the host is implicit.
+    pub adjuncts: BTreeSet<[u8; 32]>,
+    /// A Standard wallet-rank compression of [`PublishedStamp`].
+    #[debug(skip)]
+    pub proof: Box<Compressed>,
+}
+
+impl WalletPublication {
+    /// Verifies the host signature and the publication against the actual
+    /// signed bodies. `resolve` supplies the body for each listed txid. The
+    /// caller checks each adjunct's signatures against its own sighash and
+    /// enforces anchor eligibility and unique assignment outside the proof.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unresolved adjunct, invalid coverage or signature,
+    /// non-padding slots, or a failed proof of the reconstructed anchor and
+    /// both bridges.
+    pub fn verify<'body>(
+        &self,
+        wallet: &proof::WalletPublicationApp,
+        host: &crate::Bundle<StrippedStamp>,
+        sighash: &[u8; 32],
+        mut resolve: impl FnMut(&[u8; 32]) -> Option<&'body crate::Bundle<StrippedStamp>>,
+    ) -> Result<TachygramSetCommit, crate::VerificationError> {
+        use crate::{VerificationError, VerifyCoverageError};
+        if self.adjuncts.len() >= WalletRank::num_coeffs() - 1 {
+            return Err(VerificationError::Coverage(
+                VerifyCoverageError::WrongTachygramSet,
+            ));
+        }
+        let bodies = self
+            .adjuncts
+            .iter()
+            .map(|id| {
+                resolve(id).ok_or(VerificationError::Coverage(
+                    VerifyCoverageError::MissingAdjunct,
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Decoding uses one count for both vectors. Hand-built bodies must
+        // meet that same condition before signature and coverage checks zip them.
+        if iter::once(host)
+            .chain(bodies.iter().copied())
+            .any(|body| body.actions.len() != body.action_auth.len())
+        {
+            return Err(VerificationError::Coverage(
+                VerifyCoverageError::ActionCountMismatch,
+            ));
+        }
+        host.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+        let (digests, tachygrams) = host
+            .covered_sets(&bodies, self.tachygram_set)
+            .map_err(VerificationError::Coverage)?;
+        let app = wallet.application();
+        let padding = EqAffine::from(TachygramSetCommit::default());
+        if self.proof.online_commitments() != [padding, padding] {
+            return Err(VerificationError::Disproved);
+        }
+        let actions = ActionSetPoly::from_iter(digests).commit();
+        let header = StampBindings {
+            anchor: self.anchor,
+            portable_tachygrams: bridge_hash(tachygrams.into()).into(),
+            actions: bridge_hash(actions.into()).into(),
+        };
+        if app
+            .verify_compressed(&self.proof.as_ref().clone().carry::<PublishedStamp>(header))
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(tachygrams)
+        } else {
+            Err(VerificationError::Disproved)
+        }
+    }
+}
+
 impl ProofStamp<Uncompressed> {
+    /// Publishes a fee-bearing working proof built with `wallet.application()`.
+    /// Binding and padding erase both named slots; rerandomization with
+    /// fresh cryptographic randomness and the shared verified bootstrap
+    /// replaces witness-bearing proof state before compression exposes its
+    /// commitments and evaluations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a proof-system error if a boundary step or compression fails.
+    pub fn publish<R: CryptoRng>(
+        self,
+        rng: &mut R,
+        wallet: &proof::WalletPublicationApp,
+    ) -> Result<WalletPublication, ragu::Error> {
+        let app = wallet.application();
+        let bridge = bridge_hash(self.tachygram_set.into()).into();
+        let stamp = self.proof.carry::<Stamp>((bridge, self.anchor));
+        let unit = app.bootstrap_proof().clone().carry::<()>(());
+        let (bound, ()) = app.fuse(rng, StampBindActionSet, (), stamp, unit.clone())?;
+        let (padded, ()) = app.fuse(rng, StampPublish, (), bound, unit)?;
+        let refreshed = app.rerandomize(padded, &mut *rng)?;
+        let (compressed, _) = app.compress(&refreshed, rng)?.into_parts();
+        Ok(WalletPublication {
+            anchor: self.anchor,
+            tachygram_set: self.tachygram_set,
+            adjuncts: self.adjuncts,
+            proof: Box::new(compressed),
+        })
+    }
+
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof, pair)`. The proof is not rerandomized.
     ///

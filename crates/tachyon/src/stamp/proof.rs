@@ -31,6 +31,7 @@ pub mod delegation;
 pub mod evidence;
 pub mod output;
 pub mod pool;
+pub mod publication;
 pub mod qr;
 pub mod spend;
 pub mod spendable;
@@ -61,6 +62,69 @@ pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, Accelerat
 ///
 /// Returns an error if step registration or application finalization fails.
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
+    working_steps()?.finalize(pasta::baked()).map(Box::new)
+}
+
+/// Builds the wallet publication registry. Use this builder to provision a
+/// common bootstrap for this exact configuration. A wallet installs the
+/// shared proof with [`WalletPublicationApp::new`].
+///
+/// # Errors
+///
+/// Returns an error if any step cannot be registered.
+pub fn publication_builder() -> Result<
+    ApplicationBuilder<'static, Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>,
+    ragu::Error,
+> {
+    working_steps()?
+        .register(publication::StampBindActionSet)?
+        .register(publication::StampPublish)?
+        .register(publication::StampRestoreActionSet)?
+        .register(publication::StampRestoreTachygramSet)
+}
+
+/// The wallet publication application, with its shared bootstrap verified.
+pub struct WalletPublicationApp(Box<App<'static>>);
+
+impl WalletPublicationApp {
+    /// Installs and verifies the network's shared bootstrap before it is used
+    /// as the public right child in rerandomization. The caller must obtain
+    /// this proof from shared configuration (or check its pinned digest);
+    /// validity alone does not establish that wallets use the same proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if setup or bootstrap verification fails.
+    pub fn new<R: rand_core::CryptoRng>(
+        rng: &mut R,
+        shared_bootstrap: super::Uncompressed,
+    ) -> Result<Self, ragu::Error> {
+        let app = Box::new(
+            publication_builder()?
+                .with_bootstrap(shared_bootstrap)?
+                .finalize(pasta::baked())?,
+        );
+        let bootstrap = app.bootstrap_proof().clone().carry::<()>(());
+        if !app.verify_compressed(&app.compress(&bootstrap, rng)?)? {
+            return Err(ragu::Error::Initialization(
+                "invalid wallet publication bootstrap".into(),
+            ));
+        }
+        Ok(Self(app))
+    }
+
+    /// The registered wallet application for building compatible stamps and
+    /// history.
+    #[must_use]
+    pub const fn application(&self) -> &App<'static> {
+        &self.0
+    }
+}
+
+fn working_steps() -> Result<
+    ApplicationBuilder<'static, Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>,
+    ragu::Error,
+> {
     ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
@@ -100,7 +164,5 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
         .register(stamp::StampUnmerge)?
-        .register(qr::QrSideSelect)?
-        .finalize(pasta::baked())
-        .map(Box::new)
+        .register(qr::QrSideSelect)
 }

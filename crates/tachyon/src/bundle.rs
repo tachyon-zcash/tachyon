@@ -294,6 +294,12 @@ pub enum VerifyCoverageError {
     /// stamp does not cover exactly this bundle and these adjuncts as given.
     #[display("tachygrams do not reproduce the set commitment")]
     WrongTachygramSet,
+    /// The caller could not resolve a listed adjunct's signed body by txid.
+    #[display("missing listed adjunct")]
+    MissingAdjunct,
+    /// A signed body lacks a signature and tachygram pair for every action.
+    #[display("action descriptor and authorization counts differ")]
+    ActionCountMismatch,
 }
 
 /// Errors during bundle verification.
@@ -762,59 +768,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         &self,
         adjuncts: &[&Bundle<StrippedStamp>],
     ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
-        let n_actions =
-            self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
-        let n_fees = 1 + adjuncts.len();
-
-        // A set polynomial with n roots has n + 1 coefficients, so no
-        // commitment matches a larger set.
-        if 2 * n_actions + n_fees > WalletRank::num_coeffs() - 1 {
-            return Err(VerifyCoverageError::WrongTachygramSet);
-        }
-
-        let covered = iter::once((&self.actions, &self.action_auth, self.fee, self.fee_auth))
-            .chain(
-                adjuncts
-                    .iter()
-                    .map(|adj| (&adj.actions, &adj.action_auth, adj.fee, adj.fee_auth)),
-            );
-
-        let mut covered_descriptors = BTreeSet::new();
-        let mut fee_entries = BTreeSet::new();
-        let mut covered_tachygrams = BTreeSet::new();
-        let mut digests = Vec::new();
-
-        for (actions, action_auth, fee_descriptor, cm_change) in covered {
-            for (&descriptor, &(_, pair)) in actions.iter().zip(action_auth) {
-                if !covered_descriptors.insert(descriptor) {
-                    return Err(VerifyCoverageError::DuplicateActions);
-                }
-                for tachygram in <[Tachygram; 2]>::from(pair) {
-                    if !covered_tachygrams.insert(tachygram) {
-                        return Err(VerifyCoverageError::DuplicateTachygrams);
-                    }
-                }
-                digests.push(descriptor.digest(pair));
-            }
-            if !fee_entries.insert(<[u8; 40]>::from(fee_descriptor)) {
-                return Err(VerifyCoverageError::DuplicateFees);
-            }
-            if !covered_tachygrams.insert(cm_change) {
-                return Err(VerifyCoverageError::DuplicateTachygrams);
-            }
-            digests.push(fee_descriptor.digest(cm_change));
-        }
-
-        let tachygram_set = covered_tachygrams
-            .into_iter()
-            .collect::<TachygramSetPoly>()
-            .commit();
-
-        if self.stamp.tachygram_set != tachygram_set {
-            return Err(VerifyCoverageError::WrongTachygramSet);
-        }
-
-        Ok((digests, tachygram_set))
+        self.covered_sets(adjuncts, self.stamp.tachygram_set)
     }
 
     /// Verify the stamp's proof against the given action digests, which
@@ -887,6 +841,66 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 }
 
 impl<S: StampState> Bundle<S> {
+    pub(crate) fn covered_sets(
+        &self,
+        adjuncts: &[&Bundle<StrippedStamp>],
+        expected_tachygrams: TachygramSetCommit,
+    ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
+        let n_actions =
+            self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
+        let n_fees = 1 + adjuncts.len();
+
+        // A set polynomial with n roots has n + 1 coefficients, so no
+        // commitment matches a larger set.
+        if 2 * n_actions + n_fees > WalletRank::num_coeffs() - 1 {
+            return Err(VerifyCoverageError::WrongTachygramSet);
+        }
+
+        let covered = iter::once((&self.actions, &self.action_auth, self.fee, self.fee_auth))
+            .chain(
+                adjuncts
+                    .iter()
+                    .map(|adj| (&adj.actions, &adj.action_auth, adj.fee, adj.fee_auth)),
+            );
+
+        let mut covered_descriptors = BTreeSet::new();
+        let mut fee_entries = BTreeSet::new();
+        let mut covered_tachygrams = BTreeSet::new();
+        let mut digests = Vec::new();
+
+        for (actions, action_auth, fee_descriptor, cm_change) in covered {
+            for (&descriptor, &(_, pair)) in actions.iter().zip(action_auth) {
+                if !covered_descriptors.insert(descriptor) {
+                    return Err(VerifyCoverageError::DuplicateActions);
+                }
+                for tachygram in <[Tachygram; 2]>::from(pair) {
+                    if !covered_tachygrams.insert(tachygram) {
+                        return Err(VerifyCoverageError::DuplicateTachygrams);
+                    }
+                }
+                digests.push(descriptor.digest(pair));
+            }
+            if !fee_entries.insert(<[u8; 40]>::from(fee_descriptor)) {
+                return Err(VerifyCoverageError::DuplicateFees);
+            }
+            if !covered_tachygrams.insert(cm_change) {
+                return Err(VerifyCoverageError::DuplicateTachygrams);
+            }
+            digests.push(fee_descriptor.digest(cm_change));
+        }
+
+        let tachygram_set = covered_tachygrams
+            .into_iter()
+            .collect::<TachygramSetPoly>()
+            .commit();
+
+        if expected_tachygrams != tachygram_set {
+            return Err(VerifyCoverageError::WrongTachygramSet);
+        }
+
+        Ok((digests, tachygram_set))
+    }
+
     /// Borrow this bundle as a trait object.
     #[must_use]
     pub fn as_dyn(&self) -> &Bundle<dyn StampState>

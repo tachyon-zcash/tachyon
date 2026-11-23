@@ -1,4 +1,4 @@
-//! The bridge hash of a tachygram set commitment, computed natively.
+//! The wallet-basis bridge hash of a set commitment, computed natively.
 //!
 //! `Anchor::next_stamp` is reached from step code and needs the bridge hash
 //! without an application. Ragu's `bridge_hash::digest` computes it from the
@@ -9,7 +9,7 @@ use ragu::{AcceleratedProver, Cycle as _, WalletRank, pasta::Pasta, pcd::bridge_
 
 use crate::pasta::{self, EpAffine, EqAffine};
 
-/// Computes the bridge hash of a tachygram set commitment.
+/// Computes the bridge hash of a wallet-rank set commitment.
 ///
 /// # Panics
 ///
@@ -23,7 +23,7 @@ pub(crate) fn bridge_hash(commitment: EqAffine) -> EpAffine {
         commitment,
         Pasta::nested_generators(pasta::baked()),
     )
-    .expect("tachygram set commitment is not the identity")
+    .expect("set commitment is not the identity")
 }
 
 #[cfg(test)]

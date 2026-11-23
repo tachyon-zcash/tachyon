@@ -38,6 +38,35 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ## Aggregation Process
 
+### Wallet publication (separate proof registry)
+
+The library can also build a wallet-rank `PublishedStamp`. A wallet proves its
+actions and fee in the publication registry, moves the action polynomial into
+the last slot (`StampBindActionSet`), then pads both slots (`StampPublish`). It
+rerandomizes that full proof with fresh randomness and the registry's shared,
+verified bootstrap before compressing it. Even a zero-action bundle binds a
+fee digest and a change tachygram.
+
+The public statement encodes the historical anchor followed by the tachygram
+and action bridge points, each as `x, y`. A point has no set tag: its position,
+the authenticated header suffix, and the constraints of every step that can
+write that header give it meaning. The wallet verifier reconstructs both
+points from the host and listed bodies, checks the trailer commitment, and
+requires both online commitments to be the commitment to one. Starting from
+the **full** padded proof, two wallet-rank steps can restore and check the
+polynomials, one at a time. This registry is independent of the block verifier
+and does not change public relay or the transaction encoding.
+
+| Wallet step | Output | Online slots (0, 1) | Registered gates |
+| --- | --- | --- | ---: |
+| 39 `StampBindActionSet` | `StampActionSet` | padding, actions | 16 |
+| 40 `StampPublish` | `PublishedStamp` | padding, padding | 18 |
+| 41 `StampRestoreActionSet` | `StampActionSet` | padding, actions | 18 |
+| 42 `StampRestoreTachygramSet` | `Stamp` | actions, tachygrams | 18 |
+
+These are the complete step-circuit floor plans at wallet rank, including
+Ragu's step adapter and the application-wide staging reservation.
+
 ### Merge to produce Aggregate
 
 Before the block, a stamp's wire format carries the full proof, so aggregators can lift and merge decoded stamps directly.

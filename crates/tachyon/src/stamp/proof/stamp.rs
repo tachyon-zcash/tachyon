@@ -77,6 +77,9 @@ impl Header<Fp> for Actions {
 /// The polynomials are an [`ActionSetPoly`] and a [`TachygramSetPoly`].
 /// `tachygram_set_bridge` holds the bridge hash of the [`TachygramSetPoly`].
 /// [`StampMerge`] enforces both output sets as input products.
+/// [`StampUnmerge`] subtracts a certified divisor in both columns. In the
+/// publication registry, [`super::publication::StampRestoreTachygramSet`]
+/// restores the two columns of one published lineage at its original anchor.
 ///
 /// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
 /// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
@@ -631,7 +634,7 @@ impl Step<Pasta> for StampLift {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
         let right_encoded =
             Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
         let AnchorSpanOutput {
@@ -650,19 +653,26 @@ impl Step<Pasta> for StampLift {
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
-        // The output tachygram set copies the left one, so the output's bridge
-        // hash is the left stamp's.
+        // Report the bridge actually emitted, without assuming that equal
+        // polynomials require every accepted stage to encode the same point.
+        let tachygram_set_bridge = [
+            oracles.bridge_hash().x().clone(),
+            oracles.bridge_hash().y().clone(),
+        ];
+        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
         let data = D::just(|| {
-            let (stamp_bridge, _) = left.take();
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let point = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
             let (_, span_anchor_end) = right.take();
-            (stamp_bridge, span_anchor_end)
+            (point.into(), span_anchor_end)
         });
         let encoded = Encoded::from_gadget(StampOutput {
             anchor: anchor_end,
-            tachygram_set_bridge: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            tachygram_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
