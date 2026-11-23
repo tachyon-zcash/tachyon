@@ -498,8 +498,8 @@ impl Plan {
 
     /// Apply `fee` to proven actions with `FeeFuse` and rerandomize the stamp.
     /// Returns the proving data for [`Self::assemble`].
-    /// Check a received part with [`stamp::ProvenActions::verify`] against the
-    /// intended anchor and [`Self::descriptors`] before applying the fee.
+    /// Accept a received part with [`stamp::ActionsContribution::accept`]
+    /// against the intended anchor and [`Self::descriptors`].
     ///
     /// # Errors
     ///
@@ -529,8 +529,9 @@ impl Plan {
         ),
         ragu::Error,
     > {
-        let (digests, tachygrams) = actions.sets();
-        actions.prove_fee(rng, app, self.max_fee_note, fee, &digests, &tachygrams)
+        let contribution = actions.into_contribution();
+        let (digests, tachygrams) = contribution.sets();
+        contribution.prove_fee(rng, app, self.max_fee_note, fee, &digests, &tachygrams)
     }
 
     /// Derive the binding signing key, which is the scalar sum of value

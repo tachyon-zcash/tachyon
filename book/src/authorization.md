@@ -184,7 +184,7 @@ Each path consumes the same action plans but produces a different component of t
 
 Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
 
-Before combining a contribution or applying the fee, the receiver checks it with `ProvenActions::verify`, supplying the assigned descriptors and anchor. The check binds the reported pairs to both proof commitments and verifies the pre-fee `Actions` proof. A successful merge alone does not verify its inputs.
+A prover exports its rerandomized part with `ProvenActions::into_contribution`. Before merging or applying the fee, the receiver calls `ActionsContribution::accept` with the assigned descriptors and anchor. Acceptance binds the reported pairs to both proof commitments, verifies the pre-fee `Actions` proof and rerandomizes it with the receiver's randomness. Only then does the receiver have a `ProvenActions` it can use or forward.
 
 ```mermaid
 flowchart LR
