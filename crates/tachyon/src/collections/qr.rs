@@ -1,7 +1,9 @@
 //! # Quadratic-residue classification
 //!
-//! A value $x$ takes the residue side at a discriminant $R$ when $x + R$ is a
-//! square or zero, and the non-residue side otherwise.
+//! A value $x$ takes the residue side at a discriminant $R$ iff $x + R$ is a
+//! square or zero, and the non-residue side otherwise. A class root $r$
+//! attests its class by $r^2 = m \cdot (x + R)$, with multiplier $m = 1$ on
+//! the residue side and $m = c$ on the other, for a fixed non-residue $c$.
 //!
 //! ## Sides
 //!
@@ -9,38 +11,36 @@
 //! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
 //! $R$, and every pair has one.
 //!
-//! A root shows a side. Let $n$ be [`QUADRATIC_NON_RESIDUE`], for which $n
-//! \cdot s$ is a square exactly when $s$ is zero or a non-residue.
+//! $c$ is [`QUADRATIC_NON_RESIDUE`], for which $c \cdot s$ is a square exactly
+//! when $s$ is zero or a non-residue.
 //!
-//! - A $y$ with $y^2 = x + R$ shows that $x$ takes the residue side.
-//! - A $y$ with $y^2 = n \cdot (x + R)$ shows that $x + R$ is zero or a
-//!   non-residue. Together with $x + R \neq 0$ it shows that $x$ takes the
-//!   non-residue side.
+//! - A class root with $m = 1$ shows that $x$ takes the residue side.
+//! - A class root with $m = c$ shows that $x + R$ is zero or a non-residue.
+//!   Together with $x + R \neq 0$ it shows that $x$ takes the non-residue side.
 //!
 //! A value other than $-R$ has a root for its own side and none for the other.
-//! The value $-R$ has the root zero under both equations and takes the residue
-//! side.
 //!
 //! ## Class decomposition
 //!
-//! Take polynomials $q$, $u$ and $h$ and a class multiplier $c$, which is $1$
-//! for the residue side and $n$ for the non-residue side. If
+//! Let $q_0$ and $q_1$ be the non-residue and residue set polynomials.
+//! For one side's set polynomial $q$, the interpolant satisfies
+//! $u(x_i) = r_i$ with $r_i^2 = m \cdot (x_i + R)$. The decomposition satisfies
 //!
 //! $$
-//!   u(X)^2 - c \cdot (X + R) = q(X) \cdot h(X)
+//!   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 //! $$
 //!
-//! then $u(x)^2 = c \cdot (x + R)$ at every root $x$ of $q$. With $c = 1$
-//! every root of $q$ takes the residue side. With $c = n$ every root of $q$
-//! other than $-R$ takes the non-residue side, and $q(-R) \neq 0$ rules that
-//! one out.
+//! Conversely, take any polynomials $q$, $u$ and $h$ that satisfy the
+//! identity. Then $u(x)^2 = m \cdot (x + R)$ at every root $x$ of $q$. With
+//! $m = 1$ every root of $q$ takes the residue side. With $m = c$ every root
+//! of $q$ other than $-R$ takes the non-residue side.
+//!
+//! The exceptional value $-R$ satisfies the identity with root $0$ under
+//! either multiplier. The condition $q_0(-R) \neq 0$ keeps it on the residue
+//! side.
 //!
 //! The arguments use the identity only at the roots of $q$ in the field.
 //! They draw nothing from it about a value that is not a root of $q$.
-//!
-//! The identity also reads over one value against many discriminants: with
-//! the $R_j$ as the roots of $q$ and $x$ as the shift, $u(R_j)^2 = c(x +
-//! R_j)$ at each.
 
 extern crate alloc;
 
@@ -58,94 +58,40 @@ use ragu::{
 
 use crate::pasta::Fp;
 
-/// The least quadratic non-residue of the Pallas base field, $n = 5$. Distinct
+/// The least quadratic non-residue of the Pallas base field, $c = 5$. Distinct
 /// from the cubic non-residue the sequence encoding uses.
 ///
-/// The Legendre symbol is multiplicative, so $n \cdot s$ is a square exactly
+/// The Legendre symbol is multiplicative, so $c \cdot s$ is a square exactly
 /// when $s$ is zero or a non-residue.
 pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000005"
 ));
 
-/// The class multiplier $c$ of a side: $1$ on the residue side, the quadratic
-/// non-residue otherwise.
-pub(crate) const fn class_multiplier(side: bool) -> Fp {
-    if side { Fp::ONE } else { QUADRATIC_NON_RESIDUE }
-}
-
-/// Classify $v$ at the discriminant $R$: the residue-side bit, set iff $v +
-/// R$ is a square or zero, and a root with $\mathsf{root}^2 = c \cdot (v + R)$
-/// at that side's [`class_multiplier`].
-///
-/// # Panics
-///
-/// Panics if neither character branch has a root. The character is
-/// multiplicative and the multiplier is a non-residue, so exactly one branch
-/// always does, and this is unreachable.
-#[must_use]
-pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
-    let shifted = value + discriminant;
-    if let Some(root) = shifted.sqrt() {
-        return (true, root);
-    }
-    // The character is multiplicative and n is a non-residue, so exactly
-    // one of the two character branches has a root.
-    let root = (QUADRATIC_NON_RESIDUE * shifted).sqrt();
-    #[expect(
-        clippy::expect_used,
-        reason = "one of the two character branches always has a root"
-    )]
-    (false, root.expect("non-residue branch has a root"))
-}
-
-/// One side's points $(x_i, y_i)$, each $y_i$ the root of $x_i$ on that side.
-pub(crate) type ClassificationPoints = Vec<(Fp, Fp)>;
-
-/// Split values by side at `discriminant`, returning the residue-side then
-/// the non-residue-side points.
-#[must_use]
-pub(crate) fn split(
-    values: impl IntoIterator<Item = Fp>,
-    discriminant: Fp,
-) -> (ClassificationPoints, ClassificationPoints) {
-    let mut residue = Vec::new();
-    let mut non_residue = Vec::new();
-    for value in values {
-        let (bit, root) = classify(value, discriminant);
-        if bit {
-            residue.push((value, root));
-        } else {
-            non_residue.push((value, root));
-        }
-    }
-    (residue, non_residue)
-}
-
-/// Class decomposition $(u, h)$ of `points` at class multiplier $c$ and shift
-/// $s$:
+/// Class decomposition $(u, h)$ of `points` at class multiplier $m$ and
+/// discriminant $R$:
 ///
 /// $$
-///   u(X)^2 - c \cdot (X + s) = q(X) \cdot h(X),
+///   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X),
 /// $$
 ///
 /// with $q$ the abscissas as roots and $u$ interpolating the points. An empty
 /// side takes $u = 1$ and an all-zero side takes $u = q$, so neither
 /// polynomial is zero.
 ///
-/// Returns `None` when two abscissas coincide or a point $(x, y)$ does not
-/// satisfy $y^2 = c \cdot (x + s)$.
+/// Returns `None` when two abscissas coincide or a point $(x, r)$ satisfies
+/// $r^2 \neq m \cdot (x + R)$.
 #[must_use]
 #[expect(
     clippy::expect_used,
     reason = "the buffers and FFT domain fit each operation and udon writes a monic divisor"
 )]
 pub(crate) fn decomposition(
-    points: &[(Fp, Fp)],
-    class: Fp,
-    shift: Fp,
+    points: impl IntoIterator<Item = (Fp, Fp)>,
+    multiplier: Fp,
+    discriminant: Fp,
 ) -> Option<(Polynomial<Fp, WalletRank>, Polynomial<Fp, WalletRank>)> {
-    let (abscissas, values): (Vec<_>, Vec<_>) = points.iter().copied().unzip();
-    let len = points.len();
+    let (abscissas, values): (Vec<_>, Vec<_>) = points.into_iter().unzip();
+    let len = abscissas.len();
     let mut interpolant_coeffs = if len == 0 {
         vec![Fp::ONE]
     } else {
@@ -176,7 +122,7 @@ pub(crate) fn decomposition(
         interpolant_coeffs.clone_from(&vanishing);
     }
 
-    let translate = [class * shift, class];
+    let translate = [multiplier * discriminant, multiplier];
     let dividend_len = (2 * interpolant_coeffs.len() - 1).max(translate.len());
     let domain = Fp::domain(dividend_len.next_power_of_two().trailing_zeros())
         .expect("the square fits the FFT domain");

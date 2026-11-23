@@ -215,7 +215,12 @@ Every QR header carries it, and the discriminants progress by one from it
 
 $$R_j = R_0 + j \quad (j = 0, \ldots, 31)$$
 
-A value takes the residue side at depth $j$ when its sum with $R_j$ is a square or zero.
+A value $x$ takes the residue side at a discriminant $R$ when their sum is a square or zero, and the non-residue side otherwise.
+A class root $r$ shows the class of a value by the class equation
+
+$$r^2 = m \cdot (x + R)$$
+
+where the multiplier $m$ is one for the residue class and a fixed non-residue $c$ for the other.
 A profile is the string of sides on the path to a bucket.
 Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed throughput.
 The 32-position register is a width, and no security level rests on its size[^balance].
@@ -226,36 +231,48 @@ The documentation of `QrDiscriminant` in the crate says what a bucket's exclusio
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero.
 `QrStampIntakeSeed` starts one from a single stamp, as `SummarySeed` starts a summary.
 `QrEmptyIntakeSeed` starts one whose contents are the constant one and which runs from an anchor to itself, for an epoch that published no stamp.
-`QrIntakeMerge` joins two intakes of one epoch, discriminant and profile when the first's `anchor_end` is the second's `anchor_prev`, and its contents are the product of theirs.
+`QrIntakeMerge` joins two intakes with the same epoch, first discriminant and profile when the first's `anchor_end` is the second's `anchor_prev`, and its contents are the product of theirs.
 
 `QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
-It opens its input and its two output polynomials once each at $\zeta$ and checks that the contents are the product of the two sides.
+The two sides' set polynomials are $q_0$ for non-residue and $q_1$ for residue.
+The split opens its input and its two output polynomials once each at $\zeta$ and checks that the contents are the product of the two sides.
 It rejects contents that open to one there, so an empty intake is sealed without a split.
-It puts the residue polynomial and the non-residue polynomial $q_0$ in the two `TachygramSetPoly` slots of `QrIntakeSides`, `RESIDUE` and `NON_RESIDUE`, and records the bridge hash of the non-residue polynomial in the header.
+It puts the two sides in the `NON_RESIDUE` and `RESIDUE` slots of `QrIntakeSides`, each a `TachygramSetPoly`, and records the bridge hash of $q_0$ in the header.
 The split checks the product and classifies nothing.
-`QrSideSelect` and `QrSideDescend` check the sides at the discriminant of the intake's depth
+`QrSideSelect` and `QrSideDescend` check the classes at the discriminant of the intake's depth
 
 $$R = R_0 + \mathsf{depth}$$
 
+Both compute it from the `discriminant` and the `depth` in their input header, and neither hashes or stages it separately.
+
 `QrSideSelect` copies the split's header fields, the bridge hash included, and places the interpolant and the quotient in the `QrInterpolantPoly` and `QrQuotientPoly` slots of `QrSideSelection`.
-It opens the split's non-residue polynomial at $-R$ and requires the opening to be nonzero
+It opens $q_0$ at the exceptional value $-R$ and requires the opening to be nonzero
 
 $$q_0(-R) \neq 0$$
 
-The value $-R$ takes the residue side, and this check holds it apart from the roots of the non-residue polynomial.
+The exceptional value has zero for its class root under either multiplier and takes the residue side.
 The two hints are polynomials of the prover's choice.
 The step opens each once at $\zeta$ without a constraint, which keeps the committed hint in its output slot.
 
 `QrSideDescend` takes the split and the selection as inputs and requires their eight header elements to be equal.
-Its bit is staged, and it chooses the child, the sibling and the class multiplier.
-The child is the residue polynomial when the bit is set and the non-residue polynomial otherwise, and the sibling is the other one.
-The multiplier $c$ is one for a residue sibling and the fixed quadratic non-residue for a non-residue sibling.
+It takes the child's `class` from its prover and stages it as a bit $b$ that is set for the residue class.
+The bit chooses the child and therefore the sibling.
+The child is $q_1$ when the bit is set and $q_0$ otherwise, and the sibling is the other one.
+The sibling's multiplier is
+
+$$m = 1 + b(c - 1)$$
+
+A residue child has a non-residue sibling, so this is the opposite of the multiplier that checks a queried class directly.
 The step opens both sides of the split and both hints of the selection once each at $\zeta$ and selects the sibling's opening by the bit.
-With $s$ for the sibling, $u$ for the interpolant and $h$ for the quotient it checks
+With $q$ for the sibling's set polynomial, $u$ for the interpolant and $h$ for the quotient it checks
 
-$$u(X)^2 - c \cdot (X + R) = s(X) \cdot h(X)$$
+$$u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$$
 
-It also requires the openings of the two sides to differ.
+An honest interpolant takes each member $x_i$ of the sibling to a class root $r_i$ of that member
+
+$$u(x_i) = r_i \qquad r_i^2 = m \cdot (x_i + R)$$
+
+The step also requires the openings of the two sides to differ.
 The output `QrIntake` holds the child as its contents, with one opening at $\zeta$ that checks the copy, and its profile is the parent's followed by the bit.
 Each descent requires the parent's depth to be below 32.
 No constraint is placed on the child's own roots, so a child may hold roots that take the sibling's side.
@@ -275,31 +292,32 @@ The seal computes the boundary digest of the intake's `anchor_end` into the next
 $$\mathsf{anchor\_start} = H_\mathsf{ep}(\mathsf{anchor\_final\_prev}, \mathsf{epoch}) \qquad \mathsf{anchor\_next} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1)$$
 
 The entry anchor of epoch zero is the first of these with zero for both arguments.
-The seal copies the intake's discriminant, profile and contents, and records the bridge hash of the contents as `contents_hash`.
+The seal copies the first discriminant $R_0$ from the intake with the profile and the contents, and records the bridge hash of the contents as `contents_hash`.
+The only value it takes from its prover is `anchor_final_prev`.
 It has no assignment at the final epoch, which has no epoch after it.
-It checks nothing about the discriminant, which every routing step copies and every merge requires equal.
 Every bucket starts at the seal, and `EvidenceTreeOpen` replays a bucket that a tree holds.
 The documentation of `QrBucket` in the crate says what a bucket asserts.
 
-`QrUnspentInit` takes a nonzero value $x$ from its prover and stages it.
-At each of the 32 positions it also takes a side $b_j$ with a root $r_j$ and a mask bit $m_j$ from its prover.
-With $s_j$ for the shifted value and $c$ for the non-residue it requires
+`QrUnspentInit` takes a nonzero tachygram $x$ from its prover and stages it.
+It also takes the `path` of $x$ and its `roots`, which are a class bit $b_j$ and a class root $r_j$ at each of the 32 positions, with a mask bit $e_j$ at each.
+The multiplier is that of the queried class itself, where a descent uses the sibling's.
+The checks at each position are
 
-$$s_j = x + R_0 + j \qquad r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j \qquad b_j = 0 \implies s_j \neq 0$$
+$$m_j = c - (c - 1)b_j \qquad r_j^2 = m_j \cdot (x + R_j) \qquad b_j = 0 \implies x + R_j \neq 0$$
 
-Each $b_j$ is then the side that $x$ takes at its depth, and a zero shifted value is on the residue side.
+Each class bit is then the class that $x$ has at its depth, and a zero shifted value is in the residue class.
 The mask selects the bucket's depth $d$ as a prefix, and a running value $a_j$ that starts at zero compares the bucket's sides with the value's
 
-$$\sum_j m_j = d \qquad 2 \sum_j j \cdot m_j = d \cdot (d - 1) \qquad a_{j+1} = a_j + m_j \cdot (a_j + b_j) \qquad a_{32} = \mathsf{bits}$$
+$$\sum_j e_j = d \qquad 2 \sum_j j \cdot e_j = d \cdot (d - 1) \qquad a_{j+1} = a_j + e_j \cdot (a_j + b_j) \qquad a_{32} = \mathsf{bits}$$
 
 Positions past $d$ are classified and compared with nothing.
-The step opens the bucket's contents at $x$ and requires a nonzero result.
+The step reads the bucket's contents from its input slot, opens them at $x$ and requires a nonzero result.
 The emitted `ArbitraryUnspent` takes the bucket's two anchors, with epochs `[epoch, epoch + 1)`.
 Its `elapsed` is the indexed factor of the one member $x$ at the bucket's epoch, which the step checks at $\zeta$ against the sequence its prover committed.
 The sequence and the bucket's contents are the two polynomials the step opens.
 Segments of consecutive epochs meet on the earlier bucket's `anchor_next`, and `UnspentFuse` composes them directly.
 The step treats $x$ as an arbitrary value, and `UnspentBind` relates it to a note.
-The documentation of the profile gadget in the crate says why these constraints leave each side and the mask no choice.
+The documentation of the profile gadget in the crate says why these constraints leave each class bit and the mask no choice.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, which is that epoch's QR segment after `UnspentBind`.
@@ -310,12 +328,12 @@ The documentation of `NoteSpendable` in the crate names the result the lineage f
 
 ### Scaled splits: observed behavior and limits
 
-A scaled split multiplies the non-residue factor by a nonzero scale $k$ and divides the residue factor by it.
+For a nonzero scale $k$ a scaled split replaces the non-residue and residue set polynomials $q_0$ and $q_1$ with the scaled polynomials $kq_0$ and $q_1/k$ in turn.
 The product and the roots stay the same, and a scale other than one changes the commitments.
 The characterization tests in `crates/tachyon/tests/integration/qr.rs` record these cases.
 
 - `QrIntakeSplit` accepts reciprocal factors, whose product is unchanged. Its empty-intake check rejects contents that open to one. It does not reject every polynomial without roots. After routing into a side that is the constant $1/7$ a further split into the constants $11$ and $1/77$ passes.
-- `QrSideSelect` checks a nonzero opening at the exceptional value, which a nonzero scale preserves. In `QrSideDescend` a sibling scaled by $k$ with its quotient divided by $k$ preserves the class identity. The equal-opening check rejects two identical monic sides of a doubled member $m$ and accepts the sides $7(X-m)$ and $(X-m)/7$ in the tested case, where the selected child holds $m$ under the profile of the opposite class.
+- `QrSideSelect` checks a nonzero opening at the exceptional value, which a nonzero scale preserves. In `QrSideDescend` a sibling scaled by $k$ with its quotient divided by $k$ preserves the class identity. The equal-opening check rejects two identical monic sides of a doubled member $x$ and accepts the sides $7(X-x)$ and $(X-x)/7$ in the tested case, where the selected child holds $x$ under the profile of the opposite class.
 - `QrBucketSeal` and evidence admission accept the tested scaled buckets. `EvidenceTreeOpen` requires the exact leaf. It rejects a replay with a different scale, because the leaf digest absorbs the bridge hash of the contents.
 - The tested `QrUnspentInit` and `QrSpendableInit` queries distinguish zero from nonzero, which scaling leaves unchanged. Exclusion through `UnspentBind`, inclusion, and `SpendBind` give matching answers for the compared scaled and monic buckets. Exclusions under the wrong profile still reject. A monic split with a stray member gives the same queried outcomes as the scaled duplicate split.
 
@@ -389,7 +407,7 @@ A query walks back down.
 `EvidenceTreeDescend` covers four levels.
 At each level it takes a node's four elements from its prover, requires their node digest to equal the element it holds, and selects one of the four by two bits.
 A deeper tree takes a longer chain of descents.
-`EvidenceTreeOpen` takes the leaf's epoch, anchors and discriminant from the tree, and its profile and contents from its prover.
+`EvidenceTreeOpen` takes the leaf's epoch, anchors and first discriminant from the tree, and its profile and contents from its prover.
 It requires the root it holds to equal the leaf digest of those fields and of the bridge hash of the contents, and emits the `QrBucket`.
 `EvidenceTreeFuse` and `EvidenceTreeCap` emit node digests, so an open follows a descent.
 `QrUnspentInit`, `UnspentLift` and `QrSpendableInit` read a replayed bucket as they read a sealed one.
@@ -605,15 +623,15 @@ flowchart LR
 ```mermaid
 flowchart LR
   bucket_e((QrBucket))
-  w_init[/value, classes, mask, sequence/]
+  w_init[/value, path, roots, mask, sequence/]
   s_init[QrUnspentInit]
   bucket_next((QrBucket))
-  w_next[/value, classes, mask, sequence/]
+  w_next[/value, path, roots, mask, sequence/]
   s_next[QrUnspentInit]
   w_ufuse[/combined_elapsed_seq/]
   s_ufuse[UnspentFuse]
   bucket_after((QrBucket))
-  w_ulift[/value, classes, mask, extended_seq/]
+  w_ulift[/value, path, roots, mask, extended_seq/]
   s_ulift[UnspentLift]
   unspent_out((ArbitraryUnspent))
 
@@ -671,9 +689,9 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | QrIntakeMerge | QrIntake | QrIntake | merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | non_residue, residue | QrIntakeSides |
 | QrSideSelect | QrIntakeSides | — | interpolant, quotient | QrSideSelection |
-| QrSideDescend | QrIntakeSides | QrSideSelection | bit | QrIntake |
+| QrSideDescend | QrIntakeSides | QrSideSelection | class | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
-| QrUnspentInit | QrBucket | — | value, classes, mask, sequence | ArbitraryUnspent |
+| QrUnspentInit | QrBucket | — | value, path, roots, mask, sequence | ArbitraryUnspent |
 | EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |
 | EvidenceTreePairFuse | EvidenceTree | EvidenceTree | — | EvidenceTreePair |
 | EvidenceTreeFuse | EvidenceTreePair | EvidenceTreePair | — | EvidenceTree |
@@ -681,7 +699,7 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | EvidenceTreeDescend | EvidenceTree | — | path | EvidenceTree |
 | EvidenceTreeOpen | EvidenceTree | — | profile, contents | QrBucket |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | combined_elapsed_seq | ArbitraryUnspent |
-| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, extended_seq | ArbitraryUnspent |
+| UnspentLift | ArbitraryUnspent | QrBucket | value, path, roots, mask, extended_seq | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | complement_seq | NoteUnspent |
 | NoteSeed | — | — | value, psi, rcm, pak | NoteSecret |
 | NullifierDerive | NoteSecret | — | epoch_start, seq | NoteNullifiers |

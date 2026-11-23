@@ -12,7 +12,7 @@ use ragu::{
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, QrClassRoot},
+    primitives::{self, QrClass, QrClassRoot},
 };
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
@@ -86,22 +86,24 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// Each of the `MAX_DEPTH` positions $j$ allocates a side $b_j$, a root
-    /// $r_j$ and a mask bit $m_j$. With $x$ the value, $R_0$ the discriminant,
-    /// $s_j = x + R_0 + j$ and $n$ the fixed non-residue, the constraints are
+    /// `path` is the value's class at each of the 32 depths, its path.
+    /// `roots` gives the class root witnessing each step of the path.
+    ///
+    /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
+    /// with $R_j = R_0 + j$ from `discriminant` and multiplier
+    /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
+    /// non-residue is $c$. Unlike descent, which checks the sibling's class,
+    /// this check uses the queried class itself. A zero shifted value cannot
+    /// claim the non-residue class. The mask $e_j$ must be a prefix of
+    /// `depth` ones, and the selected classes must pack to `bits`. The
+    /// constraints that hold them to that are
     ///
     /// $$
-    ///   r_j^2 = \bigl(n - (n - 1) \cdot b_j\bigr) \cdot s_j,
+    ///   \sum_j e_j = \mathsf{depth},
     ///   \qquad
-    ///   b_j = 0 \implies s_j \neq 0,
-    /// $$
-    ///
-    /// $$
-    ///   \sum_j m_j = \mathsf{depth},
+    ///   2 \sum_j j \cdot e_j = \mathsf{depth} \cdot (\mathsf{depth} - 1),
     ///   \qquad
-    ///   2 \sum_j j \cdot m_j = \mathsf{depth} \cdot (\mathsf{depth} - 1),
-    ///   \qquad
-    ///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
+    ///   a_{j+1} = a_j + e_j \cdot (a_j + b_j),
     /// $$
     ///
     /// with $a_0 = 0$ and the last $a$ equal to `bits`.
@@ -109,26 +111,26 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// # Soundness
     ///
     /// With $b_j = 1$ the root [shows](crate::collections::qr#sides) that
-    /// $s_j$ is a square or zero, and with $b_j = 0$ the root and $s_j \neq 0$
-    /// show a non-residue, so $b_j$ is the side of $x$ at $R_0 + j$. The mask
-    /// bits are boolean, so `depth` is an integer $d$ from $0$ to `MAX_DEPTH`
-    /// and the second equation holds over the integers. Among $d$ distinct
-    /// positions the sum is at least $d \cdot (d - 1)/2$, and only the first
-    /// $d$ reach it, so the mask is $d$ ones followed by zeros. The fold then
-    /// doubles $a$ and adds $b_j$ at each of the first $d$ positions and
-    /// leaves it unchanged after, so `bits` is $\sum_{j < d} b_j \cdot
+    /// $x + R_j$ is a square or zero, and with $b_j = 0$ the root and $x + R_j
+    /// \neq 0$ show a non-residue, so $b_j$ is the side of $x$ at $R_j$. The
+    /// mask bits are boolean, so `depth` is an integer $d$ from $0$ to
+    /// `MAX_DEPTH` and the second equation holds over the integers. Among $d$
+    /// distinct positions the sum is at least $d \cdot (d - 1)/2$, and only
+    /// the first $d$ reach it, so the mask is $d$ ones followed by zeros. The
+    /// fold then doubles $a$ and adds $b_j$ at each of the first $d$ positions
+    /// and leaves it unchanged after, so `bits` is $\sum_{j < d} b_j \cdot
     /// 2^{d-1-j}$, which is below $2^{32}$ and does not wrap. The profile is
-    /// thus the
-    /// [path](primitives::QrProfile#injectivity) of the first $d$ sides of
-    /// $x$, and $x$ is in its class at $R_0$. The gadget reads no challenge
-    /// and holds for whatever wires it is given.
+    /// thus the [path](primitives::QrProfile#injectivity) of the first $d$
+    /// sides of $x$, and $x$ is in its class at $R_0$. The gadget reads no
+    /// challenge and holds for whatever wires it is given.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
-        classes: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
+        path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
+        roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
         let mut shifted = value.add(dr, discriminant);
@@ -142,12 +144,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].0),
+                path.as_ref().map(|classes| classes[position].bit()),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].1),
+                roots.as_ref().map(|values| Fp::from(values[position])),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;
