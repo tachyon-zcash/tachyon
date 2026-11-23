@@ -31,16 +31,14 @@ Each tachyaction is cryptographically bound to a pair of tachygrams. The pair is
 Each tachyaction contains:
 
 - `cv` - a 32-byte homomorphic commitment to the note's created or destroyed value
-- `rk` - a 32-byte public key[^ragu-rerandomization]
+- `rk` - a 32-byte randomized public key
 - `sig` - a 64-byte RedPallas[^redpallas] signature by `rk` over the transaction sighash
 
 The action digest binds `cv`, `rk`, and the pair through its sum and product. The signature signs the effecting descriptor `(cv, rk)` through the transaction sighash; the pair is authorization data. The wire separates descriptors, signatures, and pairs into effecting, signing, and proving sections of the body.
 
-[^ragu-rerandomization]: Ragu's [proof rerandomization](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization) conceals private proof inputs by selecting new unrelated proof inputs that verify identically.
-
 ### Tachystamp
 
-The **tachystamp** is a recursive zero-knowledge proof that all related tachyactions follow the correct rules.
+The **tachystamp** carries a recursive stamp proof that all covered tachyactions and fees follow the protocol rules. Each released stamp proof is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries).
 
 It contains:
 
@@ -238,9 +236,9 @@ Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hSta
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
-Consensus carries `Compressed` proofs in [block items](./aggregation.md), and `Uncompressed` proofs use the same `tachyonBundleState == 0x01` layout while stamps are [merged](./aggregation.md#merge-to-produce-aggregate) and [lifted](./proof-tree.md#spending) outside consensus.
+`proofTachyon` is the compressed stamp proof, in the mempool and in a block. An aggregator [decompresses](./aggregation.md#merge-to-produce-aggregate) a stamp to [lift](./proof-tree.md#spending) or merge it. The implementation does not decompress yet. As a stopgap until it can, a stamp outside a block carries the uncompressed stamp proof in the same `tachyonBundleState == 0x01` layout, with the uncompressed length in `sizeProofTachyon`, and only block items carry the compressed one.
 
-[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. Its definition is the same for both proof forms.
+[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. Under the stopgap, an uncompressed stamp proof enters the same way.
 
 ### Stripped trailer
 

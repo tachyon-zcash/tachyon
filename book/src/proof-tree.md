@@ -407,7 +407,7 @@ A query walks back down.
 At each level it takes a node's four elements from its prover, requires their node digest to equal the element it holds, and selects one of the four by two bits.
 A deeper tree takes a longer chain of descents.
 `EvidenceTreeOpen` takes the leaf's epoch, anchors and first discriminant from the tree, and its profile and contents from its prover.
-It requires the root it holds to equal the leaf digest of those fields and of the bridge hash of the contents, and emits the `QrBucket`.
+To check the replayed leaf, it recomputes the leaf digest from those fields and the bridge hash of the bucket's contents polynomial, requires it to equal the root reached by descent, and emits the `QrBucket`.
 `EvidenceTreeFuse` and `EvidenceTreeCap` emit node digests, so an open follows a descent.
 `QrUnspentInit`, `UnspentLift` and `QrSpendableInit` read a replayed bucket as they read a sealed one.
 The leaf digest's tag $\texttt{Tachyon-QrBucket}$ differs from the node digest's.
@@ -485,9 +485,9 @@ It takes the merged sets from its prover and checks, for each set, that the merg
 A divisor need not be a stamp that was merged into the dividend.
 Any `Stamp` at the same anchor whose digests are among the dividend's divides it, and a quotient may have no leaf.
 The documentation of `StampUnmerge` in the crate says why the quotient holds the remaining leaves and their tachygrams.
-`FeeFuse` turns `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
-Its fee digest absorbs the same fee change commitment that it adds to the tachygram set.
-`FeeSeed` computes the same digest and fee change for a bundle with no actions, at a zero fee, and its two sets are those singletons.
+[`FeeFuse`](./fee.md#fee-steps) turns `Actions` into a `Stamp` by multiplying each set polynomial by its linear fee factor.
+Its fee digest absorbs the same fee change commitment that the step adds to the tachygram set.
+`FeeSeed` computes the same digest and fee change for a bundle with no actions, at a zero fee, and its two set polynomials are those two linear factors.
 
 `OutputAction` and `FeeSeed` take their anchor from the prover.
 `SpendAction` copies the anchor of its `SpendHeader`, which `SpendBind` copies from the spendable, and `FeeFuse` copies the anchor of its `Actions`.
@@ -498,22 +498,11 @@ The documentation of `Stamp` in the crate says what a stamp asserts.
 
 ## Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its PCD before releasing it.
-`Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built.
+Every stamp-producing operation rerandomizes its PCD before releasing a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge`, and `ProofStamp::lift` each call Ragu's `rerandomize` step on the `Stamp` PCD they built. Intermediate PCDs that stay inside the wallet, such as `NoteSecret`, `NoteSpendable`, a derivation window, or an `ArbitraryUnspent` segment, are not rerandomized.
 
-A PCD's proof holds polynomials computed from the private inputs of the step that built it, and it embeds the commitments of the PCDs that step read.
-A proof and the PCDs it was built from therefore share group elements, even when their headers reveal nothing.
-The stamp proof a wallet publishes is built step by step from the PCDs the wallet holds, and an aggregator that merges two stamps holds both of them.
+Stamps cross trust boundaries when a wallet publishes an autonome to the mempool and when an aggregator publishes a merged, lifted, or unmerged stamp while retaining the input stamps. Rerandomization is required at each handoff.
 
-A stamp leaves the process that built it at these points.
-A wallet hands an autonome to the p2p network.
-An aggregator hands a merged stamp onward and keeps the inputs it merged.
-
-Rerandomization produces a new PCD of the same header with the same polynomials in its slots.
-Its purpose is that a released stamp proof cannot be linked to the PCDs it was built from, or to a later release from the same PCDs.
-Ragu's documentation says that its rerandomization does not provide this today, because the output still embeds the input's commitments.
-
-PCDs that stay inside a wallet, such as a derivation window or a `NoteSpendable`, are not rerandomized.
+A stripped adjunct in a block carries no stamp proof bytes, though mempool observers may already hold its stamped relay version.
 
 ## Simple transaction
 

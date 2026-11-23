@@ -657,8 +657,11 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// proof's output slots against the covered actions and
 /// [`Self::tachygram_set`].
 ///
-/// Only the uncompressed proof type supports lifting, merging and
-/// unmerging. Compressed stamps support reading, writing and verification.
+/// A stamp travels with a [`Compressed`] proof. Lifting, merging and
+/// unmerging take an [`Uncompressed`] one, which an aggregator gets by
+/// decompressing. The crate does not decompress yet: as a stopgap until it
+/// can, an uncompressed stamp is read and written like a compressed one, and
+/// [`Self::compress`] runs once, for the block.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
     /// The historic pool state for which this stamp is valid.
@@ -674,7 +677,7 @@ pub struct ProofStamp<P: Proof> {
     /// proof nor a signature binds it; it enters only `hStampTachyon`.
     pub adjuncts: BTreeSet<[u8; 32]>,
 
-    /// The full or compressed Ragu proof.
+    /// The stamp's Ragu proof.
     #[debug(skip)]
     pub proof: Box<P>,
 }
