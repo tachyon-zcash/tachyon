@@ -90,12 +90,11 @@
 //! whole trailer is read. The standalone stamp reader checks
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
-//! `proofTachyon` is a [`Compressed`](stamp::Compressed) proof, which an
-//! aggregator decompresses to lift or merge the stamp. The crate does not
-//! decompress yet. As a stopgap until it can,
-//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
-//! uncompressed length outside a block, and a block item, [`TachyonBundle`],
-//! carries the compressed proof.
+//! A block item, [`TachyonBundle`], carries a
+//! [`Compressed`](stamp::Compressed) proof in `proofTachyon`. Before the
+//! block, `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with
+//! the uncompressed length, while its stamp can still be lifted, merged and
+//! unmerged.
 //!
 //! ## Stripped stamp
 //!
