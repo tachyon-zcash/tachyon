@@ -15,8 +15,9 @@
 //! and each of the next three reads the next rate element of the same state.
 //! No function here squeezes more than four.
 //!
-//! The sponge does not record how many elements it absorbed, so an input and
-//! the same input followed by zeros give one digest. Each tag here belongs to
+//! The sponge does not record how many elements it absorbed, so an input with
+//! a short last block and the same input with zeros filling that block give
+//! one digest. Each tag here belongs to
 //! one function, and that function absorbs a fixed number of elements. Two
 //! inputs to one function therefore differ in an absorbed element, and two
 //! functions differ in the tag. A domain is below $2^{128}$, so distinct

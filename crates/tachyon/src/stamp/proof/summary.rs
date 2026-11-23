@@ -47,8 +47,8 @@ use crate::{
 /// - [`Summary::LAST_STAMP`] is $P_k$.
 ///
 /// `anchor_prev` is the prover's choice, and the assertion says nothing of
-/// what lies behind it. No step relies on an absorption's polynomial
-/// differing from the constant one.
+/// what lies behind it. No $P_i$ is the constant one, as in a pool history,
+/// where [`Anchor::next_stamp`] rejects the empty set.
 ///
 /// - `anchor_end` determines `epoch`, $P_k$ and each absorption behind it
 ///   ([`Anchor`]).

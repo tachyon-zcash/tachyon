@@ -113,6 +113,40 @@
 //!
 //! An opening at any other point is the committed polynomial's value at that
 //! point. A zero opening shows that the point is a root.
+//!
+//! ## Zero tachygrams
+//!
+//! A [set polynomial](crate::collections::multiset) records a root and not
+//! what the root was published as. A zero tachygram is the factor $X$ whether
+//! it was meant as a note commitment, a padding tachygram, a nullifier or a
+//! fee change commitment. The circuit that derives a tachygram holds it
+//! nonzero. [`OutputBind`](output::OutputBind) holds the commitment and the
+//! padding tachygram, [`SpendBind`](spend::SpendBind) both nullifiers, and
+//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) the fee change
+//! commitment. Every tachygram of a leaf of a verified
+//! [`Stamp`](stamp::Stamp) is therefore nonzero, and zero is a root of no
+//! tachygram set polynomial that a verifier recomputes from published
+//! members.
+//!
+//! The arguments tell the four kinds apart by their tags. A padding tachygram
+//! or a nullifier equal to a note commitment is a Poseidon collision, and so
+//! are two notes with one commitment. At zero the collision is two preimages
+//! of zero, each found without the other. The Poseidon assumption excludes
+//! it like any other collision. The constraints exclude it without the
+//! assumption, because no step that derives a tachygram has an assignment at
+//! zero.
+//!
+//! Without the constraints, a prover who knows one note whose padding
+//! tachygram is zero and a second note whose commitment is zero outputs the
+//! first. The stamp's polynomial then has the root zero.
+//! [`SpendableInit`](spendable::SpendableInit) opens it at the second note's
+//! commitment for zero, and the second note is spent though no output
+//! created it and no binding signature balanced its value. A zero nullifier
+//! gives the same root from a spend. In the other direction, a zero
+//! commitment or padding tachygram is a root at the nullifier of any note
+//! whose nullifier is zero at that epoch. The exclusion of that nullifier
+//! then fails though the note is unspent, and a spend that publishes it
+//! repeats a tachygram.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

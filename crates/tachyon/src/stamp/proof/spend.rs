@@ -48,7 +48,9 @@ use crate::{
 ///   determine the pair. A nullifier determines its master key and its epoch,
 ///   so the pair determines $e$, which is not a field. It does not determine
 ///   `cm`, because notes that share $\psi$ and $\mathsf{nk}$ share
-///   $\mathsf{mk}$. Both are nonzero, and no step relies on that.
+///   $\mathsf{mk}$. Both are nonzero, so neither is a root at zero, where a
+///   note with a zero commitment would be shown published ([zero
+///   tachygrams](super#zero-tachygrams)).
 /// - `anchor` stands for the pool history at which [`NoteSpendable`] shows the
 ///   note spendable.
 /// - `pk` stands for the note's owner. `cm` determines it, and it determines
@@ -193,7 +195,8 @@ impl Step<Pasta> for SpendBind {
         let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
-        // Both nullifiers are held nonzero. No step relies on it.
+        // A zero nullifier is the root that shows a note with a zero
+        // commitment published, so both are held nonzero.
         nf_current.clone().enforce_nonzero(dr)?;
         nf_next.clone().enforce_nonzero(dr)?;
 
