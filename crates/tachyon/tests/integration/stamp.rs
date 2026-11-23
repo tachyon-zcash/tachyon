@@ -337,8 +337,18 @@ fn bundle_verifies_with_two_spend_authorities() {
             )],
         )
         .unwrap();
-    let right = plan
-        .actions_plan(pool.anchor(), &BTreeSet::from([bob_spend.descriptor()]))
+    let mut bob_plan_bytes = Vec::new();
+    bob_spend.descriptor().write(&mut bob_plan_bytes).unwrap();
+    bob_spend.theta.write(&mut bob_plan_bytes).unwrap();
+    bob_spend.rcv.write(&mut bob_plan_bytes).unwrap();
+    pool.anchor().write(&mut bob_plan_bytes).unwrap();
+
+    let mut bob_plan_reader = bob_plan_bytes.as_slice();
+    let descriptor = action::Descriptor::read(&mut bob_plan_reader).unwrap();
+    let theta = ActionEntropy::read(&mut bob_plan_reader).unwrap();
+    let rcv = value::Trapdoor::read(&mut bob_plan_reader).unwrap();
+    let anchor = Anchor::read(&mut bob_plan_reader).unwrap();
+    let bob_actions = stamp::ActionsPlan::new(vec![(descriptor, theta, rcv)], vec![], anchor)
         .prove(
             rng,
             app,
@@ -350,6 +360,28 @@ fn bundle_verifies_with_two_spend_authorities() {
             )],
         )
         .unwrap();
+
+    let mut bob_actions_bytes = Vec::new();
+    bob_actions.anchor.write(&mut bob_actions_bytes).unwrap();
+    for (desc, (first, second)) in bob_actions.pairs {
+        desc.write(&mut bob_actions_bytes).unwrap();
+        first.write(&mut bob_actions_bytes).unwrap();
+        second.write(&mut bob_actions_bytes).unwrap();
+    }
+    bob_actions_bytes.extend(bob_actions.proof.to_bytes().unwrap());
+
+    let mut bob_actions_reader = bob_actions_bytes.as_slice();
+    let right = stamp::ProvenActions {
+        anchor: Anchor::read(&mut bob_actions_reader).unwrap(),
+        pairs: BTreeMap::from([(
+            action::Descriptor::read(&mut bob_actions_reader).unwrap(),
+            (
+                Tachygram::read(&mut bob_actions_reader).unwrap(),
+                Tachygram::read(&mut bob_actions_reader).unwrap(),
+            ),
+        )]),
+        proof: Box::new(stamp::Uncompressed::from_bytes(bob_actions_reader).unwrap()),
+    };
     let actions = left.merge(rng, app, right).unwrap();
     let proof = plan
         .apply_fee(rng, app, actions, value::Positive::try_from(5u64).unwrap())

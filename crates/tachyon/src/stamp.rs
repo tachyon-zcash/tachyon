@@ -476,7 +476,8 @@ impl Plan {
 }
 
 /// Some or all of a bundle's planned actions, to be proven at one anchor
-/// without a fee. Built by [`crate::bundle::Plan::actions_plan`].
+/// without a fee. Built with [`Self::new`] or
+/// [`crate::bundle::Plan::actions_plan`].
 #[derive(Clone, Debug)]
 pub struct ActionsPlan {
     spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
@@ -485,7 +486,9 @@ pub struct ActionsPlan {
 }
 
 impl ActionsPlan {
-    pub(crate) const fn new(
+    /// Plan these actions at `anchor` from the same tuples as [`Plan::new`].
+    #[must_use]
+    pub const fn new(
         spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
         outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
@@ -510,7 +513,7 @@ impl ActionsPlan {
     ///
     /// # Panics
     ///
-    /// Panics if an output note has a zero `rcm`.
+    /// Panics if the plan has no actions or an output note has a zero `rcm`.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's key, secret, spendable and spans"
@@ -528,7 +531,7 @@ impl ActionsPlan {
     ) -> Result<ProvenActions, ProveError> {
         #[expect(
             clippy::expect_used,
-            reason = "actions_plan selects at least one action"
+            reason = "a part to prove must have at least one action"
         )]
         let (
             ProvenActions {
@@ -539,7 +542,7 @@ impl ActionsPlan {
             ..,
         ) = self
             .prove_merged(rng, app, spend_inputs)?
-            .expect("actions_plan selects at least one action");
+            .expect("a part to prove must have at least one action");
         let (proof, anchor) = app
             .rerandomize(merged_proof.carry::<Actions>(merged_anchor), rng)
             .map_err(ProveError::ProofFailed)?
