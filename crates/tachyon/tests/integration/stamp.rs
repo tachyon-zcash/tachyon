@@ -361,28 +361,7 @@ fn bundle_verifies_with_two_spend_authorities() {
         )
         .unwrap();
 
-    let mut bob_actions_bytes = Vec::new();
-    bob_actions.anchor.write(&mut bob_actions_bytes).unwrap();
-    for (desc, (first, second)) in bob_actions.pairs {
-        desc.write(&mut bob_actions_bytes).unwrap();
-        first.write(&mut bob_actions_bytes).unwrap();
-        second.write(&mut bob_actions_bytes).unwrap();
-    }
-    bob_actions_bytes.extend(bob_actions.proof.to_bytes().unwrap());
-
-    let mut bob_actions_reader = bob_actions_bytes.as_slice();
-    let right = stamp::ProvenActions {
-        anchor: Anchor::read(&mut bob_actions_reader).unwrap(),
-        pairs: BTreeMap::from([(
-            action::Descriptor::read(&mut bob_actions_reader).unwrap(),
-            (
-                Tachygram::read(&mut bob_actions_reader).unwrap(),
-                Tachygram::read(&mut bob_actions_reader).unwrap(),
-            ),
-        )]),
-        proof: Box::new(stamp::Uncompressed::from_bytes(bob_actions_reader).unwrap()),
-    };
-    let actions = left.merge(rng, app, right).unwrap();
+    let actions = left.merge(rng, app, bob_actions).unwrap();
     let proof = plan
         .apply_fee(rng, app, actions, value::Positive::try_from(5u64).unwrap())
         .unwrap();
