@@ -5,17 +5,14 @@
 //! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
-//! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`:
-//! both bounds are entry anchors, and `anchor_next` belongs to the epoch after
-//! the segment. An [`AnchorSpan`] covers `[anchor_start, anchor_end]`, both
-//! endpoints included. Its `members` commit to the anchors in
-//! `(anchor_start, anchor_end]`.
+//! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`.
+//! An [`AnchorSpan`] covers `[anchor_start, anchor_end]`, and its members are
+//! the anchors in `(anchor_start, anchor_end]`.
 //!
-//! Anchor advances are single-level: every fold absorbs the containing
-//! block's epoch and one stamp's tachygram-set commitment into the running
-//! [`Anchor`] via [`Anchor::next_stamp`]. There is no per-block hash domain;
-//! block alignment is a consensus convention, with validators checking that
-//! anchor endpoints belong to the published per-block anchor sequence.
+//! An [`Anchor`] advances by a stamp absorption or by a boundary digest, and
+//! no digest marks a block. Block alignment is a consensus convention, with
+//! validators checking that anchor endpoints belong to the published
+//! per-block anchor sequence.
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
@@ -27,7 +24,7 @@ use ragu::{
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
-    udon::{curve::Projective as _, field::Field as _},
+    udon::field::Field as _,
 };
 
 use super::{delegation::NoteNullifiers, qr::QrBucket};
@@ -37,39 +34,59 @@ use crate::{
     gadgets, note,
     pasta::Fp,
     primitives::{
-        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetPoly,
+        Anchor, AnchorSetPoly, EpochIndex, NfSeqPoly, PolySlot, QrClass, QrClassRoot, QrProfile,
+        Tachygram, TachygramSetPoly,
     },
 };
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///
 /// The tested values are arbitrary field elements until [`UnspentBind`]
-/// attributes them to a note's derivation. No step producing one touches a
+/// shows that they are a note's nullifiers. No step producing one touches a
 /// note, `cm`, or `mk`, so the segment is safe to delegate.
 ///
 /// A segment covers whole epochs, half-open on both axes:
-/// `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`.
-/// `anchor_start` is the entry anchor of `epoch_start`, and `anchor_next` is
-/// the entry anchor of `epoch_next`. It starts at
+/// `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`. It starts at
 /// [`QrUnspentInit`](super::qr::QrUnspentInit) over one epoch's [`QrBucket`],
 /// [`UnspentLift`] appends the next epoch's bucket, and [`UnspentFuse`] joins
-/// segments on a shared boundary. Each producer takes an anchor bound and its
-/// epoch from the same bucket or the same half, and
-/// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
+/// segments on a shared boundary.
 ///
-/// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
-/// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
-/// to test, or [`SpendBind`](super::spend::SpendBind)'s once a spendable rests
-/// on `anchor_next`.
+/// `epoch_next`'s nullifier is the next segment's to test, or
+/// [`SpendBind`](super::spend::SpendBind)'s once a spendable rests on
+/// `anchor_next`.
 ///
-/// Every producer maintains the provenance [`UnspentBind`]'s completeness
-/// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
-/// because `QrUnspentInit` and [`UnspentLift`] encode their member from the
-/// bucket's own epoch. Each epoch carries exactly one member: `QrUnspentInit`
-/// pins its one member by its challenge identity, `UnspentLift` adds exactly
-/// one at `epoch_next` by its, and [`UnspentFuse`]'s identity determines the
-/// combined polynomial exactly, so the property composes by induction.
+/// # Injectivity
+///
+/// A value $v$ is *excluded at* epoch $e$ *between* anchors $b$ and $b'$ when
+/// the prover knows a verified [`QrBucket`] with `epoch` $e$, `anchor_start`
+/// $b$ and `anchor_next` $b'$, for which $v$ is in the
+/// [class](crate::QrDiscriminant#injectivity) of its `profile` at its
+/// `discriminant` and its contents do not vanish at $v$. By the bucket's
+/// [assertion](QrBucket#injectivity), its contents have every root in that
+/// class of the polynomials of its
+/// [stamp chain](Anchor#chains-in-a-step), so $v$ is a root of none of them.
+/// Its two bounds are boundary digests and determine that chain, so every
+/// bucket with these three fields has the same one. $b'$ is the boundary
+/// digest of the chain's end into $e + 1$ and determines both.
+///
+/// [`QrUnspentInit`](super::qr::QrUnspentInit), [`UnspentLift`] and
+/// [`UnspentFuse`] output this header. A verified `ArbitraryUnspent` asserts
+/// that `epoch_start < epoch_next <= EPOCH_MAX` as integers
+/// ([`EpochIndex`](gadgets::epoch::EpochIndex)), and that its prover knows an
+/// anchor $b_e$ for each epoch $e$ of `epoch_start..=epoch_next`, the first
+/// `anchor_start` and the last `anchor_next`, and a nonzero value $v_e$ for
+/// each epoch $e$ of `epoch_start..epoch_next` for which
+///
+/// - $v_e$ is excluded at $e$ between $b_e$ and $b_{e+1}$,
+/// - the [`NfSeqPoly`] is $E(X) = \prod_{e} F_{e,\ v_e}(X)$, with $F_{i,m}$ the
+///   [indexed multiset](crate::collections::indexed_multiset)'s encoding of
+///   member $m$ at index $i$.
+///
+/// No step relies on $v_e$ being nonzero. $E$ has one factor for each epoch
+/// of the range and no other. An epoch is within the encoding's index bound,
+/// so $E$ determines each pair of an epoch and its value. `anchor_next` is
+/// the last bucket's, so it determines `epoch_next` and the end of that
+/// bucket's chain.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -83,14 +100,6 @@ pub struct ArbitraryUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_next: Element<'dr, D>,
 }
 
-/// # Injectivity
-///
-/// `epoch_start` and `epoch_next` are integers. `anchor_start` and
-/// `anchor_next` bind the boundary digests into those epochs and their
-/// histories. The header binds the epochs exactly and the anchors under
-/// Poseidon. It binds the stamp sets in the anchors' histories under host and
-/// nested discrete log as well. See
-/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for ArbitraryUnspent {
     /// `(anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (Anchor, EpochIndex, EpochIndex, Anchor);
@@ -134,7 +143,25 @@ impl Header<Fp> for ArbitraryUnspent {
 }
 
 /// A note proven unspent across a span: an [`ArbitraryUnspent`] whose values
-/// [`UnspentBind`] has attributed to the note's genuine derivation.
+/// [`UnspentBind`] has shown to be the note's nullifiers.
+///
+/// # Injectivity
+///
+/// [`UnspentBind`] outputs this header. A verified `NoteUnspent` asserts
+/// that `epoch_start < epoch_next <= EPOCH_MAX` as integers, and that its
+/// prover knows a verified [`NoteNullifiers`] that carries this `cm` and an
+/// anchor $b_e$ for each epoch $e$ of `epoch_start..=epoch_next`, the first
+/// `anchor_start` and the last `anchor_next`. At every epoch $e$ of
+/// `epoch_start..epoch_next`, the nullifier of `cm` at $e$ is
+/// [excluded](ArbitraryUnspent#injectivity) between $b_e$ and $b_{e+1}$.
+///
+/// `cm` determines its master key
+/// ([`NoteSecret`](super::delegation::NoteSecret)), and the master key and
+/// $e$ determine the [nullifier](poseidon::nullifier_group), so the five
+/// fields determine every tested value. The assertion says nothing of the
+/// polynomial in the [`NfSeqPoly`] slot. [`UnspentBind`] commits the quotient
+/// of the note's derived sequence by the tested values there, for its
+/// identity, and no step reads it.
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 
@@ -149,13 +176,6 @@ pub struct NoteUnspentOutput<'dr, D: Driver<'dr>> {
     pub anchor_next: Element<'dr, D>,
 }
 
-/// # Injectivity
-///
-/// `cm` binds the note. The other four elements bind what
-/// [`ArbitraryUnspent`]'s bind. The header binds the note and the anchors
-/// under Poseidon and the epochs exactly. It binds the stamp sets in the
-/// anchors' histories under host and nested discrete log as well. See
-/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteUnspent {
     /// `(cm, anchor_start, epoch_start, epoch_next, anchor_next)`
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
@@ -205,23 +225,37 @@ impl Header<Fp> for NoteUnspent {
 
 /// An anchor path with a commitment to the anchors inside it.
 ///
-/// The members polynomial has one root for each stamp folded into the span. The
-/// root is the anchor that fold produces. `anchor_end` is a member and
-/// `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
-/// advance a stamp's anchor. A spendable's anchor advances through
-/// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
+/// The members polynomial has one root for each stamp absorbed in the span.
+/// The root is the anchor that stamp gives.
+/// [`StampLift`](super::stamp::StampLift) and
+/// [`ActionLift`](super::stamp::ActionLift) use spans to advance an anchor. A
+/// spendable's anchor advances through [`ArbitraryUnspent`], whose steps prove
+/// the note's nullifiers absent.
 ///
-/// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
-/// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt` domain.
-/// Entering the next epoch takes [`Anchor::next_epoch`], which hashes under
-/// `Tachyon-AnchorEp`. Among the proof steps, only
-/// [`QrBucketSeal`](super::qr::QrBucketSeal) computes it. Consensus also
-/// rejects a tachygram published twice within two epochs. That check catches a
-/// tachygram already published earlier in the epoch a stamp is lifted across.
+/// # Injectivity
 ///
-/// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
-/// is not tied to the published chain. Consensus ties it when it checks the
-/// anchor of the stamp that [`super::stamp::StampLift`] outputs.
+/// [`AnchorSpanSeed`] and [`AnchorSpanFuse`] output this header. A verified
+/// `AnchorSpan` asserts that its prover knows a
+/// [stamp chain](Anchor#chains-in-a-step) of $k \geq 1$ absorptions from
+/// `anchor_start` to `anchor_end`, and that its [`AnchorSetPoly`] is
+/// $M(X) = \prod_{i=1}^{k} (X - a_i)$ over the chain's anchors after
+/// `anchor_start`.
+///
+/// `anchor_start` and each absorption's epoch are the prover's choice. The
+/// assertion does not make the epochs equal, and it says nothing of what lies
+/// behind `anchor_start`. No step relies on an absorption's polynomial
+/// differing from the constant one.
+///
+/// $M$ is a [set polynomial](crate::collections::multiset), so it determines
+/// those anchors and has no other root. A stamp chain leads from each root to
+/// `anchor_end`, and `anchor_end` determines each absorption behind it
+/// ([`Anchor`]). None of those anchors is a boundary digest. A span whose
+/// `anchor_end` is an anchor of a pool history is therefore a run of that
+/// history's stamp entries with no boundary among them.
+///
+/// The second slot holds the stamp's polynomial where [`AnchorSpanSeed`]
+/// outputs the header, for its bridge hash, and the constant one where
+/// [`AnchorSpanFuse`] does. No step reads it.
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
@@ -231,11 +265,6 @@ pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
     pub anchor_end: Element<'dr, D>,
 }
 
-/// # Injectivity
-///
-/// `anchor_start` and `anchor_end` each bind their history. The header binds
-/// both anchors under Poseidon and the stamp sets in their histories under host
-/// and nested discrete log. See [header injectivity](super#header-injectivity).
 impl Header<Fp> for AnchorSpan {
     /// `(anchor_start, anchor_end)`
     type Data = (Anchor, Anchor);
@@ -266,17 +295,37 @@ impl Header<Fp> for AnchorSpan {
 
 /// Start an [`AnchorSpan`] from one stamp.
 ///
-/// The step folds the stamp's bridge hash into `anchor_start`.
+/// The step absorbs the stamp's bridge hash into `anchor_start`.
 /// The span's only member is the resulting anchor.
 ///
 /// # Soundness
 ///
-/// `epoch` is a free witness. Consensus computes each fold with the epoch of
-/// the block that contains the stamp. A span built with a different epoch
-/// holds anchors that are not on the published chain.
+/// The step [adds an absorption](Anchor#chains-in-a-step) $a$ of
+/// `anchor_start`, `epoch` and the stamp polynomial, with both wires the
+/// prover's choice. The circuit holds the stamp polynomial's opening at
+/// $\zeta$ away from one, so it is not the constant one.
 ///
-/// The circuit requires the stamp polynomial not to open to one, so an empty
-/// stamp has no proof.
+/// The circuit equates the member polynomial's opening at $\zeta$ with
+/// $\zeta - a$. The member polynomial $M$ is committed before $\zeta$, but
+/// $a$ is not fixed before $\zeta$, because none of the three values it
+/// absorbs is. This is the one step whose identity at the challenge reads a
+/// root that is not fixed before the challenge, and the identity alone does
+/// not give $M = X - a$.
+///
+/// - If $M$ is $X - c$ for a constant $c$, the constraint reads $a = c$, so $M$
+///   is $X - a$.
+/// - Otherwise $X - M(X)$ is not constant and has degree below $2^{13}$, and
+///   the constraint requires $a$ to equal its value at $\zeta$. Collision
+///   resistance does not exclude that. This case models the stamp absorption
+///   digest as a random function, as the [Poseidon
+///   assumption](crate::stamp::proof#assumptions) says of this step. One
+///   challenge and one digest output then meet the constraint with probability
+///   below $2^{13}/p$, whichever of the two is drawn first. With $T$ challenges
+///   and $Q$ digests the bound is $2^{13} \cdot T \cdot Q/p$. A check on values
+///   fixed before the challenge has no factor $Q$.
+///
+/// Outside that probability $M$ is $X - a$, the set polynomial that
+/// [`AnchorSpan`] asserts for a chain of one absorption.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -300,7 +349,7 @@ impl Step<Pasta> for AnchorSpanSeed {
         let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
             witness.0.into(),
             witness.1.into(),
-            bridge_hash(witness.2.commit().as_ref().to_affine()),
+            bridge_hash(witness.2.commit().into()),
         ));
         let stamp = &witness.2;
         let prepared =
@@ -356,8 +405,8 @@ impl Step<Pasta> for AnchorSpanSeed {
                 oracles.bridge_hash().y().clone(),
             ],
         )?;
-        // The span's one member is the fold just computed, so a member chosen
-        // after the challenge takes a preimage of the fold.
+        // The span's one member is the stamp absorption just computed. Its
+        // inputs are not fixed before the challenge; see the step's Soundness.
         let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
         let member_factor = z.sub(dr, &anchor);
         members.enforce_equal(dr, &member_factor)?;
@@ -380,14 +429,15 @@ impl Step<Pasta> for AnchorSpanSeed {
 /// Concatenate two [`AnchorSpan`]s with
 /// `left.anchor_end == right.anchor_start`.
 ///
-/// The shared anchor is a member of the left span and not of the right span.
-/// The two member sets are therefore disjoint, and the combined members
-/// polynomial is the product of the two.
-///
 /// # Soundness
 ///
-/// The product check opens both member polynomials and their product at a
-/// challenge that absorbs all three commitments.
+/// `left.anchor_end` is held equal to `right.anchor_start`, so the two chains
+/// are one from `left.anchor_start` to `right.anchor_end`. The three member
+/// polynomials are committed before the challenge. The
+/// circuit equates the output's opening at $\zeta$ with the product of the
+/// inputs' openings, so the output polynomial is the product of the input
+/// polynomials. It has one factor for each anchor of the joined chain after
+/// `left.anchor_start`. The step does not open the output's second slot.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -461,12 +511,22 @@ impl Step<Pasta> for AnchorSpanFuse {
     }
 }
 
-/// Compose two [`ArbitraryUnspent`] lineages meeting at an entry anchor.
+/// Compose two [`ArbitraryUnspent`] lineages meeting at a boundary digest.
 ///
-/// The halves meet at one boundary: `left.anchor_next == right.anchor_start`
-/// and `left.epoch_next == right.epoch_start`. The left half holds members
-/// below that epoch and the right half from it, so the combined sequence is
-/// their product.
+/// # Soundness
+///
+/// The circuit holds `left.epoch_next` equal to `right.epoch_start` and
+/// `left.anchor_next` equal to `right.anchor_start`. The epochs are integers,
+/// so the right half's epochs follow the left half's without a gap or an
+/// overlap, and its anchors continue the left half's from the shared one.
+/// Each value stays excluded at its own epoch between the same two anchors.
+/// The three sequences are committed before the challenge. The circuit
+/// equates the output's opening at $\zeta$ with the product of the inputs'
+/// openings, so the output sequence is the product of the input sequences.
+/// It has one factor for each epoch of `left.epoch_start..right.epoch_next`,
+/// the range on the output header.
+///
+/// Opens both input sequences and their product once each.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -553,23 +613,33 @@ impl Step<Pasta> for UnspentFuse {
 /// Append one epoch to an [`ArbitraryUnspent`] from that epoch's
 /// [`QrBucket`].
 ///
-/// The bucket starts on the segment's excluded bound: `anchor_next` and
-/// `epoch_next` are the bucket's `anchor_start` and `epoch`. The step tests one
-/// value against the bucket as [`QrUnspentInit`](super::qr::QrUnspentInit)
-/// does, appends it to `elapsed` as the member at `epoch_next`, and moves the
-/// segment's bound to the bucket's `anchor_next`. One step per epoch, where
-/// [`QrUnspentInit`](super::qr::QrUnspentInit) then [`UnspentFuse`] takes two.
+/// One step per epoch, where [`QrUnspentInit`](super::qr::QrUnspentInit) then
+/// [`UnspentFuse`] takes two.
+///
+/// `path` gives the value's class at each of the 32 depths, its QR path. Its
+/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
+/// root witnessing class `j`, including positions past that prefix.
 ///
 /// # Soundness
 ///
-/// The framework fixes the input and output polynomials and `value` before
-/// the challenge. The identity
-/// $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
-/// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
-/// plus exactly that member. The member's epoch is `epoch_next`, which
-/// advances by one, so `extended` keeps one member per epoch in
-/// `[epoch_start, epoch_next)`. `value` is free until
-/// [`UnspentBind`] forces it against the note's derivation.
+/// The circuit holds the segment's `epoch_next` and `anchor_next` equal to
+/// the bucket's `epoch` and `anchor_start`. It outputs the successor of the
+/// bucket's epoch, range-checked, and the bucket's `anchor_next`. `value` is
+/// a wire of the prover's choice, held nonzero and equal to the
+/// staged value, so it is fixed before the challenge.
+/// [`enforce_sides_of`](gadgets::qr::QrProfile::enforce_sides_of) shows that
+/// it is in the class of the bucket's `profile` at the bucket's
+/// `discriminant`, and the circuit holds the opening of the bucket's contents
+/// at it nonzero. It is therefore [excluded](ArbitraryUnspent#injectivity)
+/// at the bucket's epoch between the bucket's two anchors, which extends the
+/// segment's anchors and values by one epoch.
+///
+/// The circuit equates the output sequence's opening at $\zeta$ with the
+/// input sequence's opening times $F_{e,\ v}(\zeta)$, for $e$ the bucket's
+/// epoch and $v$ `value`. Both sequences are committed before $\zeta$, $e$
+/// is an input header field and $v$ is staged. The output sequence is
+/// therefore the input sequence times that one factor, with one factor for
+/// each epoch of the output header's range.
 ///
 /// Three committed polynomials, each opened once.
 #[derive(Debug)]
@@ -580,9 +650,10 @@ impl Step<Pasta> for UnspentLift {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = QrBucket;
-    /// `(value, classes, mask, extended_seq)`
+    /// `(value, path, roots, mask, extended_seq)`
     type Witness<'source> = (
         Tachygram,
+        [QrClass; QrProfile::MAX_DEPTH],
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
@@ -591,16 +662,20 @@ impl Step<Pasta> for UnspentLift {
     const INDEX: Index = Index::new(24);
     const NUM_STAGED: usize = 1;
 
+    #[expect(
+        clippy::pattern_type_mismatch,
+        reason = "borrow the named witness operands"
+    )]
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let extended_seq = &witness.3;
+        let (value, _path, _roots, _mask, extended_seq) = witness;
         Ok(NfSeqPoly::SLOT
             .poly(Prepared::new(), extended_seq)
-            .stage([Fp::from(witness.0)]))
+            .stage([Fp::from(*value)]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -642,8 +717,9 @@ impl Step<Pasta> for UnspentLift {
             dr,
             &value_element,
             &bucket.discriminant,
-            witness.as_ref().map(|&(_, classes, ..)| classes),
-            witness.as_ref().map(|&(_, _, mask, _)| mask),
+            witness.as_ref().map(|&(_, path, ..)| path),
+            witness.as_ref().map(|&(_, _, roots, ..)| roots),
+            witness.as_ref().map(|&(_, _, _, mask, _)| mask),
         )?;
         #[expect(
             clippy::indexing_slicing,
@@ -699,33 +775,34 @@ impl Step<Pasta> for UnspentLift {
     }
 }
 
-/// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a note's genuine
-/// nullifiers, by divisibility into the derivation's sequence.
+/// Show that an [`ArbitraryUnspent`]'s tested values are a note's nullifiers,
+/// by divisibility into the note's derived sequence.
 ///
-/// Consumes any [`NoteNullifiers`], `elapsed` covering
-/// `[epoch_start, epoch_next)`, one member per epoch:
-///
-/// `nf_seq` factors as
-///
-/// $$
-///   \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)
-/// $$
-///
-/// The complement holds the derivation's members outside the lineage: epochs
-/// below it, and the epochs it runs ahead of the exclusion evidence, since a
-/// spend publishes two nullifiers while the lineage stops at published
-/// evidence.
+/// Consumes any [`NoteNullifiers`]. The output polynomial is the complement,
+/// the derivation's members outside the lineage: epochs below it, and the
+/// epochs it runs ahead of the exclusion evidence, since a spend publishes
+/// two nullifiers while the lineage stops at published evidence.
 ///
 /// # Soundness
 ///
-/// `elapsed` is a subsequence of the derivation, so every one of its members
-/// is a genuine derived pair and coverage is a conclusion of the identity.
+/// Write $E$ for the segment's sequence, $D$ for the derivation's and $Q$ for
+/// the output polynomial. $E$ and $D$ are fixed in the input PCDs, and $Q$ is
+/// committed before the challenge. The circuit equates $D(\zeta)$ with
+/// $E(\zeta) \cdot Q(\zeta)$, so $E$ divides $D$.
 ///
-/// Completeness rides `elapsed`'s provenance invariants, so every epoch of
-/// `[epoch_start, epoch_next)` was tested with its own genuine nullifier.
+/// $E$ is the product of the factors $F_{e,\ v_e}$ over the segment's epochs,
+/// and $D$ of the factors $F_{e,\ n_e}$ over the derivation's, with $n_e$ the
+/// note's nullifier at $e$. Every index is an epoch, so each factor is
+/// irreducible and determines its tuple
+/// ([indexed multiset](crate::collections::indexed_multiset#injectivity)).
+/// Each factor of $E$ is therefore a factor of $D$. Hence every epoch $e$ of
+/// the segment is an epoch of the derivation, and $v_e = n_e$.
 ///
-/// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
-/// the validated [`NoteUnspent`].
+/// The segment has one tested value for each of its epochs, so the note's
+/// nullifier is excluded at every epoch of `epoch_start..epoch_next`, as
+/// [`NoteUnspent`] asserts. The step copies `cm` from the right input and the
+/// other four fields from the left.
+///
 /// Opens the elapsed sequence, derivation and complement once each.
 #[derive(Debug)]
 pub struct UnspentBind;

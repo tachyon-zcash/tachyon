@@ -5,9 +5,10 @@ use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
-    Cycle as _, Polynomial, ProductionRank,
+    Cycle as _, Polynomial, WalletRank,
     pasta::Pasta,
     udon::{
+        curve::Projective as _,
         exec::{ExecutionOptions, SerialExecutor},
         fft::{Domain, Expansion, Transform},
         field::Field as _,
@@ -18,18 +19,27 @@ use crate::{
     collections::indexed_multiset,
     nullifier::Nullifier,
     pasta,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
     primitives::{EpochIndex, PolySlot},
 };
 
 /// Pedersen commitment to a nullifier sequence.
+///
+/// The commitment determines its [`NfSeqPoly`], by the
+/// [Commitments assumption](crate::stamp::proof#assumptions).
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct NfSeqCommit(Eq);
+pub struct NfSeqCommit(EqAffine);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
-#[derive(AsRef, Clone, Debug, From, Into)]
-pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
+///
+/// A member is a nullifier indexed by its epoch. A product of member
+/// encodings determines the multiset of its members, by the
+/// [indexed multiset](crate::collections::indexed_multiset)'s Injectivity
+/// section. The type itself holds any polynomial. A header that carries one
+/// says which product it is.
+#[derive(AsRef, Clone, Debug, Into)]
+pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 
 impl NfSeqPoly {
     /// Names this polynomial in a header that carries one.
@@ -47,19 +57,11 @@ impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the sequence polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
-}
-
-impl Default for NfSeqPoly {
-    fn default() -> Self {
-        Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
+        NfSeqCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 

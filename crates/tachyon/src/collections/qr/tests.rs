@@ -7,7 +7,7 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::collections::multiset;
 
-fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
+fn dense(poly: &Polynomial<Fp, WalletRank>) -> Vec<Fp> {
     let mut coeffs = poly.iter_coeffs().collect::<Vec<_>>();
     let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
     coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
@@ -18,8 +18,8 @@ fn verify_side(
     points: &[(Fp, Fp)],
     class: Fp,
     shift: Fp,
-    u: &Polynomial<Fp, ProductionRank>,
-    h: &Polynomial<Fp, ProductionRank>,
+    u: &Polynomial<Fp, WalletRank>,
+    h: &Polynomial<Fp, WalletRank>,
 ) {
     let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
     let [u_degree, q_degree, h_degree] = [u, &q, h].map(|poly| {
@@ -45,16 +45,16 @@ fn verify_side(
 fn the_decomposition_holds_on_both_sides() {
     let rng = &mut StdRng::seed_from_u64(23);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let values: Vec<Fp> = iter::repeat_with(|| Fp::random(|bytes| rng.fill_bytes(bytes)))
-        .take(600)
+    for class in [Fp::ONE, QUADRATIC_NON_RESIDUE] {
+        let inverse = class.invert().unwrap();
+        let points: Vec<_> = iter::repeat_with(|| {
+            let root = Fp::random(|bytes| rng.fill_bytes(bytes));
+            (root.square() * inverse - discriminant, root)
+        })
+        .take(300)
         .collect();
-    let (residue, non_residue) = split(values, discriminant);
-    for (points, class) in [
-        (&residue, class_multiplier(true)),
-        (&non_residue, class_multiplier(false)),
-    ] {
-        let (u, h) = decomposition(points, class, discriminant).unwrap();
-        verify_side(points, class, discriminant, &u, &h);
+        let (u, h) = decomposition(points.iter().copied(), class, discriminant).unwrap();
+        verify_side(&points, class, discriminant, &u, &h);
     }
 }
 
@@ -63,7 +63,7 @@ fn an_all_zero_side_takes_the_vanishing_polynomial() {
     let rng = &mut StdRng::seed_from_u64(35);
     let discriminant = Fp::random(|bytes| rng.fill_bytes(bytes));
     let points = [(-discriminant, Fp::ZERO)];
-    let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+    let (u, h) = decomposition(points, Fp::ONE, discriminant).unwrap();
     assert_eq!(dense(&u), [discriminant, Fp::ONE]);
-    verify_side(&points, class_multiplier(true), discriminant, &u, &h);
+    verify_side(&points, Fp::ONE, discriminant, &u, &h);
 }

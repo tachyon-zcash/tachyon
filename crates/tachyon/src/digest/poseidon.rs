@@ -5,6 +5,29 @@
 //! A tagged hash starts from a zero rate and the capacity element
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
 //! absorbs only its data. Every Tachyon Poseidon hash is tagged this way.
+//!
+//! # Injectivity
+//!
+//! The permutation has width five and the sponge has rate four. The sponge
+//! adds each block of four absorbed elements into the rate and permutes, and
+//! a last block of fewer than four is added with zeros in the missing
+//! positions. The first squeeze reads rate element zero of the final state,
+//! and each of the next three reads the next rate element of the same state.
+//! No function here squeezes more than four.
+//!
+//! The sponge does not record how many elements it absorbed, so an input and
+//! the same input followed by zeros give one digest. Each tag here belongs to
+//! one function, and that function absorbs a fixed number of elements. Two
+//! inputs to one function therefore differ in an absorbed element, and two
+//! functions differ in the tag. A domain is below $2^{128}$, so distinct
+//! domains are distinct capacity elements.
+//!
+//! Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
+//! then determines its function and every element that function absorbed, in
+//! order. An element that is the digest of two functions is a collision. A
+//! point is absorbed as its two affine coordinates, which determine it. Where
+//! an absorbed element is built from something else, the function says what
+//! the digest determines in turn.
 
 use core::array;
 
@@ -44,6 +67,8 @@ const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 /// The feemax blind, the trapdoor of $\mathsf{cv}_\mathsf{feemax}$,
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
+///
+/// The blind is the digest read as an integer, which is also the scalar.
 #[must_use]
 pub fn feemax_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     let [hash] = emulated(FEE_BLIND_DOMAIN, [pk, psi, rcm]);
@@ -55,6 +80,8 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// A fee digest, $d_\mathsf{fee} = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}(
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee}, \mathsf{cm}_\mathsf{chg})$.
+///
+/// `fee` is an integer below $2^{64}$ and enters as that integer.
 ///
 /// # Panics
 ///
@@ -77,6 +104,16 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from `cv`, `rk` and the unordered tachygram pair,
 /// absorbing the pair's sum and product.
+///
+/// $$
+///   d = \mathsf{Poseidon}_\texttt{Tachyon-ActionDg}(
+///     x(\mathsf{cv}),\ y(\mathsf{cv}),\ x(\mathsf{rk}),\ y(\mathsf{rk}),\
+///     t_1 + t_2,\ t_1 \cdot t_2
+///   )
+/// $$
+///
+/// The pair is the root multiset of $X^2 - (t_1 + t_2) X + t_1 t_2$. The sum
+/// and product therefore determine the two tachygrams and not their order.
 ///
 /// # Panics
 ///
@@ -105,6 +142,12 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 ///
+/// $$
+///   \mathsf{pk} = \mathsf{Poseidon}_\texttt{Tachyon-PkDerive}(
+///     x(\mathsf{ak}),\ y(\mathsf{ak}),\ \mathsf{nk}
+///   )
+/// $$
+///
 /// # Panics
 ///
 /// Panics if `ak` is the identity.
@@ -123,6 +166,16 @@ pub fn payment_key(ak: EpAffine, nk: Fp) -> Fp {
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 
 /// Derives a note commitment from note fields.
+///
+/// $$
+///   \mathsf{cm} = \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(
+///     \mathsf{rcm},\ \mathsf{pk},\ v,\ \psi
+///   )
+/// $$
+///
+/// `value` is an integer below $2^{64}$ and enters as that integer. The
+/// circuit function absorbs whatever element it is given for $v$, and the
+/// caller bounds it.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -137,6 +190,9 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// The preimage is the note opening rather than the commitment: both values are
 /// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
 /// observer pair them off and recover the output count.
+///
+/// The pad absorbs the same four elements as [`note_commitment`] under its
+/// own tag.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -152,6 +208,9 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 ///     \psi,\ \mathsf{nk}
 ///   )
 /// $$
+///
+/// The digest absorbs nothing else of the note, so notes that share $\psi$
+/// and $\mathsf{nk}$ share the master key.
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     let [hash] = emulated(NULLIFIER_MASTER_DOMAIN, [psi, nk]);
@@ -165,6 +224,10 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
+///
+/// The randomizer $\alpha$ is the digest read as an integer. A step
+/// decomposes it into 254 bits, so a digest at or above $2^{254}$ has no
+/// assignment.
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(SPEND_ALPHA_DOMAIN, [theta, cm]);
@@ -178,6 +241,9 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
+///
+/// The randomizer $\alpha$ is the digest read as an integer, as in
+/// [`alpha_spend`].
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(OUTPUT_ALPHA_DOMAIN, [theta, cm]);
@@ -188,6 +254,16 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
 /// Derives the group of consecutive epoch nullifiers starting at the
 /// group-aligned epoch `epoch_start` from the note's master key.
+///
+/// The group is the first `PoseidonFp::RATE` squeezes of
+/// $\mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ g)$, for $g$ =
+/// `epoch_start`. The nullifier of epoch $e$ is squeeze $e \bmod 4$ of the
+/// group with $g = e - (e \bmod 4)$. The pair $(g,\ e \bmod 4)$ determines
+/// $e$, and the Poseidon assumption covers every squeeze position. A
+/// nullifier therefore determines $\mathsf{mk}$ and $e$.
+///
+/// The function absorbs whatever element it is given for $g$. The caller
+/// holds it to a multiple of four.
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     emulated(NULLIFIER_DOMAIN, [mk, epoch_start])
@@ -197,6 +273,12 @@ const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-AnchorSt";
 
 /// Advances the anchor with the stamp's epoch and tachygram-set bridge hash,
 /// absorbing the point's affine coordinates.
+///
+/// $$
+///   \mathsf{anchor}' = \mathsf{Poseidon}_\texttt{Tachyon-AnchorSt}(
+///     \mathsf{anchor},\ e,\ x(B),\ y(B)
+///   )
+/// $$
 ///
 /// # Panics
 ///
@@ -217,6 +299,11 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
 /// Digests a sealed bucket's metadata and contents bridge hash into a leaf,
 /// absorbing the point's affine coordinates.
+///
+/// The leaf absorbs the eight elements of a
+/// [`QrBucket`](crate::stamp::proof::qr::QrBucket) header in header order,
+/// with the profile as depth then bits and the bridge hash as its two
+/// coordinates.
 ///
 /// # Panics
 ///
@@ -252,7 +339,7 @@ pub fn evidence_tree_leaf(
     hash
 }
 
-/// Folds four subtree roots into their parent node of a evidence tree.
+/// Folds four subtree roots into their parent node of an evidence tree.
 ///
 /// $$
 ///   \mathsf{node} = \mathsf{Poseidon}_\texttt{Tachyon-EvidNode}(
@@ -271,6 +358,12 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 ///
 /// Produces the entry anchor of `epoch` when `anchor_prev` is the final
 /// anchor of the epoch before.
+///
+/// $$
+///   \mathsf{anchor}' = \mathsf{Poseidon}_\texttt{Tachyon-AnchorEp}(
+///     \mathsf{anchor},\ e
+///   )
+/// $$
 #[must_use]
 pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     let [hash] = emulated(ANCHOR_EPOCH_DOMAIN, [anchor_prev, epoch]);

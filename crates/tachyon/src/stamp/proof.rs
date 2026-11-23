@@ -14,129 +14,105 @@
 //! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
 //! `EvidenceTreeOpen`.
 //!
-//! Steps relate polynomials through their openings at the challenge
-//! $\zeta$, which the framework derives after committing every polynomial a
-//! step opens. A product or root identity that holds at $\zeta$ therefore holds
-//! as a polynomial identity, except with probability about
-//! $\mathrm{deg}/|\mathbb{F}_p|$ (Schwartz-Zippel). The identity says which
-//! polynomials it relates only through their commitments, so each step grounds
-//! its operands in an input or output header, and each root it checks is fixed
-//! before $\zeta$. A commitment that is only witnessed, or threaded onward
-//! unchanged, binds nothing until a public input, a header or a consensus check
-//! fixes it.
+//! # Soundness
 //!
-//! # Header injectivity
+//! A header field or an online polynomial stands for something else, such as
+//! a note, a pool history or a multiset. The argument for it says what it
+//! stands for, which constraints force that, and why nothing else gives the
+//! same value. Each argument sits on the item it is about and cites the items
+//! below it.
 //!
-//! Ragu requires every header's `encode` to be injective in its `Data`, since
-//! verifiers bind a PCD's data by recomputing the encoding natively. Each
-//! `Data` component here takes elements of its own in a fixed order and number.
-//! Integers (`EpochIndex`, a note's value, `QrProfile`'s `depth` and `bits`)
-//! lie below $2^{64}$ and embed in $\mathbb{F}_p$ exactly. A point encodes as
-//! its affine $(x, y)$; the identity has none, and `encode` rejects it.
+//! - A digest, an encoding or a gadget states what its output determines.
+//! - A header states, under **Injectivity**, what every verified PCD of that
+//!   header asserts and what each field and polynomial stands for.
+//! - A step states, under **Soundness**, which constraints give the output
+//!   header's assertion.
 //!
-//! A header binds what its elements stand for when derived as their types
-//! describe. The producing steps establish those derivations; each `Header`
-//! implementation states what its encoding binds and under which assumptions.
+//! An assertion is about one header's fields and slots and the other verified
+//! PCDs it names. It says nothing about the published chain.
+//!
+//! A value *determines* a thing when two different things for one value give
+//! a Poseidon collision or a discrete-log relation that the assumptions below
+//! say nobody can produce.
 //!
 //! ## Assumptions
 //!
-//! - **Poseidon.** Each hash in `digest::poseidon` starts its sponge from its
-//!   own 16-byte tag in the capacity and absorbs a fixed-length array of
-//!   elements, with no length absorbed. Fixed width separates inputs under one
-//!   tag; tags separate hashes. The assumption is that no one finds two
-//!   distinct triples of tag, input and squeeze position with equal outputs.
-//! - **Host discrete log.** A slot commitment is an unblinded Pedersen vector
-//!   commitment to a polynomial's coefficients over the Vesta host generators;
-//!   it binds the coefficients unless someone knows a discrete-log relation
-//!   among those generators.
-//! - **Nested discrete log.** A bridge hash $B$ commits to the coordinates of a
-//!   step's second slot commitment $O_1$ over the Pallas nested generators
-//!   (honestly $x(O_1) \cdot G_i + y(O_1) \cdot G_j$; Ragu accepts other bridge
-//!   hashes too). Every accepted bridge hash binds $O_1$ unless someone knows a
-//!   discrete-log relation among the nested generators.
-//! - **Value discrete log.** Under the Orchard `z.cash:Orchard-cv` generators
-//!   $\mathcal{V}$ and $\mathcal{R}$, $\[v\]\mathcal{V} +
-//!   \[\mathsf{rcv}\]\mathcal{R}$ hides $v$ perfectly and binds $v$ unless
-//!   someone knows $\log_{\mathcal{V}} \mathcal{R}$.
+//! - **Recursion.** Ragu is an argument of knowledge. Whoever produces a PCD
+//!   that verifies can also produce the tree of steps that built it, with every
+//!   step's wires, and every circuit in the tree is satisfied. This is what
+//!   "its prover knows" means in a header's assertion. Each input a step reads
+//!   is a verified PCD of the header the step declares. A header reaches a step
+//!   or a verifier as [`HEADER_SIZE`] elements that end in its suffix, and no
+//!   two headers share a suffix. A value a step opens is the value of the
+//!   polynomial that the step producing that slot committed. An output slot a
+//!   step does not open holds the constant one, and no step can open a slot its
+//!   header lists as `Padding`. The two bridge hash wires a step reads are a
+//!   bridge hash of the accumulator in that step's last output slot. Ragu holds
+//!   them to the slot, and no step circuit constrains them.
 //!
-//! ## Element bindings
+//!   The tree holds the steps registered in [`new_application`], Ragu's
+//!   bootstrap step, which outputs the unit header, and Ragu's
+//!   rerandomization. Rerandomization outputs the header it reads with the same
+//!   fields and holds each output polynomial equal to the input's at its
+//!   challenge, so it preserves every assertion. A header's documentation
+//!   therefore names only the registered steps that output it. This
+//!   application registers no decompression step.
+//! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
+//!   triples of tag, absorbed elements of that number and squeeze position are
+//!   known that give the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed)
+//!   alone needs more. Its argument models the stamp absorption digest as a
+//!   random function, and it says so.
+//! - **Commitments.** No discrete-log relation is known among the generators of
+//!   either curve, nor between the value commitment generators $\mathcal{V}$
+//!   and $\mathcal{R}$. An accumulator is the sum $\sum_j c_j G_j$ of host
+//!   generators weighted by a polynomial's coefficients, without a blinding
+//!   term. It determines its polynomial among those of at most $2^{13}$
+//!   coefficients. A bridge hash commits to an accumulator's two coordinates
+//!   under the nested generators and determines the accumulator. One
+//!   accumulator has many bridge hashes, and
+//!   [`bridge_hash`](crate::bridge_hash) computes the one an honest prover
+//!   uses.
+//! - **Challenge.** Ragu squeezes a step's challenge from a transcript and
+//!   models that hash as a random oracle. The challenge is then uniform and
+//!   independent of everything the transcript absorbed before it.
 //!
-//! ### Plain values
+//! ## Native encodings
 //!
-//! - **`QrProfile`**: a path of `depth` sides. `QrProfile::descend` shifts each
-//!   new side into the low bit of `bits`, so `(depth, bits)` is the path
-//!   exactly.
-//! - **`QrDiscriminant`**: the free $R_0$ a network classifies from; stands for
-//!   itself.
+//! Ragu's verifier recomputes a header's elements from its native `Data` and
+//! runs no constraint, so two `Data` values of one header must never encode
+//! alike ([`Header`](ragu::header::Header)). Every header here gives each
+//! part of its `Data` elements of its own, in a fixed order and number. Two
+//! `Data` values then encode alike only if some part does, and no part does.
 //!
-//! ### Notes, keys and nullifiers (Poseidon)
+//! - An epoch, a note value and each half of a profile are native integers, at
+//!   most `EPOCH_MAX`, `MAX_MONEY` and $2^{32} - 1$. Each encodes as that
+//!   integer in one element, below the modulus. No header packs two of them
+//!   into one element.
+//! - A value commitment and a bridge hash are points. A point encodes as its
+//!   two affine coordinates, which determine it. The identity has no
+//!   coordinates, and encoding it fails.
+//! - Every other part wraps one field element and encodes as it.
 //!
-//! - **`PaymentKey`**: `poseidon::payment_key` (`Tachyon-PkDerive`) on affine
-//!   `ak` and `nk` binds `(ak, nk)`. `NoteSeed` derives `pk` in-circuit; an
-//!   output's `pk` is the recipient's and binds the pair the recipient derived
-//!   it from.
-//! - **`NoteMasterKey`**: `poseidon::nf_master` (`Tachyon-NfMaster`) on $(\psi,
-//!   \mathsf{nk})$ binds both.
-//! - **`note::Commitment` and output `pad`**: `poseidon::note_commitment`
-//!   (`Tachyon-CmDerive`) and `poseidon::pad_tachygram` (`Tachyon-CmOutPad`) on
-//!   $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ each bind the note, and their tags
-//!   keep pads apart from note commitments.
-//! - **`Nullifier`**: for epoch $e$, entry $e \bmod 4$ of the four elements
-//!   `poseidon::nullifier_group` (`Tachyon-NfDerive`) squeezes from `mk` and
-//!   $e-(e \bmod 4)$. Group start and entry index determine $e$, binding `mk`
-//!   and $e$.
+//! ## Checks at the challenge
 //!
-//! ### Value commitments (value discrete log)
+//! Ragu draws a step's challenge $\zeta$ after it has committed the step's
+//! output polynomials and staged values, and after both input proofs are
+//! fixed. Input header fields, input polynomials, output polynomials, staged
+//! values and constants are fixed before $\zeta$. A digest computed in the
+//! circuit is fixed before $\zeta$ when every element it absorbs is. Any other
+//! wire is the prover's choice with $\zeta$ in hand, the bridge hash and the
+//! output header's fields included.
 //!
-//! - **`value::Commitment`**: $\[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$
-//!   at a spend and $\[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$ at an
-//!   output. Values in `0..=MAX_MONEY` are distinct in $\mathbb{F}_q$ and the
-//!   header's `SUFFIX` gives the sign, binding $v$.
+//! A step that equates two expressions in openings at $\zeta$ equates two
+//! polynomials at a random point. When everything in them is fixed before
+//! $\zeta$, the polynomials are equal unless $\zeta$ is a root of their
+//! difference. A product of two slots has degree below $2^{14}$, so one
+//! attempt at one step meets a root with probability below $2^{14}/p$, and the
+//! bound adds over the steps of a tree and a prover's attempts. Each step says
+//! why the values its identities read are fixed.
 //!
-//! ### Sets and evidence trees (Poseidon, host and nested discrete log)
-//!
-//! - **`TachygramSetBridge`**: a bridge hash binding $O_1$, which binds its
-//!   polynomial. Unique factorization fixes the root multiset of $\prod_i (X -
-//!   t_i)$, and nonzero scaling leaves the roots unchanged, so equal bridge
-//!   hashes give equal sets. Equal sets can have different bridge hashes: an
-//!   in-circuit bridge hash need not be the honest one, and a QR bucket can
-//!   hold a scaled polynomial (the book's "Scaled splits").
-//! - **`EvidenceTreeRoot`**: a leaf (`poseidon::evidence_tree_leaf`, hashing a
-//!   bucket's epoch, two anchors, discriminant, profile and two contents
-//!   bridge-hash coordinates, eight elements under `Tachyon-QrBucket`) or a
-//!   node (`poseidon::evidence_tree_node`, hashing four subtree roots under
-//!   `Tachyon-EvidNode`). Tag and width separate leaves from nodes, so a root
-//!   binds the whole tree, its shape and every bucket under Poseidon, plus each
-//!   bucket's contents under host and nested discrete log. Where a bucket's
-//!   anchors lie on the consensus chain, it binds the stamp sets in their
-//!   histories too.
-//!
-//! ### Anchor histories
-//!
-//! An `Anchor` is either a **stamp fold** (`poseidon::anchor_next_stamp`,
-//! hashing `(anchor_prev, epoch, x(B), y(B))` under `Tachyon-AnchorSt`) or a
-//! **boundary digest** (`poseidon::anchor_next_epoch`, hashing `(anchor_prev,
-//! epoch)` under `Tachyon-AnchorEp`). Under Poseidon, each fold binds its
-//! inputs and, by its tag, which fold it is. An anchor on the consensus chain
-//! binds the history of stamp bridge hashes and epoch crossings back to genesis
-//! (and, under host and nested discrete log, every stamp's set) by induction on
-//! the fold count:
-//!
-//! - **Base.** Genesis is $\mathsf{Poseidon}_{\texttt{Tachyon-AnchorEp}}(0,
-//!   0)$. Stamp folds have another tag; `Anchor::next_epoch` rejects epoch $0$,
-//!   so boundary digests enter an epoch $\ge 1$ with input $\ne (0, 0)$.
-//!   Reproducing genesis is a Poseidon collision.
-//! - **Step.** Two non-empty histories reaching the same anchor have equal
-//!   final outputs, hence under Poseidon the same tag, inputs and previous
-//!   anchor; dropping the final fold leaves shorter histories at that previous
-//!   anchor. Repeating this, neither history can hit genesis first, since the
-//!   other would reach genesis via a fold, contradicting the base case; thus
-//!   both have the same length and folds.
-//!
-//! `Anchor::next_stamp` folds the honest bridge hash; an anchor folded
-//! in-circuit from another bridge hash lies off the consensus chain. Some steps
-//! take an anchor as a free witness. Such an anchor stands for a pool state
-//! only when consensus accepts it or an anchor folded from it.
+//! An opening at any other point is the committed polynomial's value at that
+//! point. A zero opening shows that the point is a root.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 
@@ -152,7 +128,7 @@ pub mod summary;
 
 use alloc::boxed::Box;
 
-use ragu::{AcceleratedProver, Application, ApplicationBuilder, ProductionRank, pasta::Pasta};
+use ragu::{AcceleratedProver, Application, ApplicationBuilder, WalletRank, pasta::Pasta};
 
 use crate::pasta;
 
@@ -162,7 +138,7 @@ pub const HEADER_SIZE: usize = 9;
 
 /// The Tachyon Ragu application, with accelerated proving and reference
 /// verification kernels.
-pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>;
+pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>;
 
 /// Builds the Tachyon application with the baked setup.
 ///
@@ -173,9 +149,8 @@ pub type App<'app> = Application<'app, Pasta, ProductionRank, HEADER_SIZE, Accel
 /// # Errors
 ///
 /// Returns an error if step registration or application finalization fails.
-#[expect(clippy::large_stack_frames, reason = "builder chain; runs once")]
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE, AcceleratedProver>::new()
+    ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?

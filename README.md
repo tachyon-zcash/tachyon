@@ -50,6 +50,11 @@ A stamp's adjuncts are the other bundles it covers, listed by transaction id.
 `merge` combines two stamps into one, and `unmerge` divides one back out.
 `strip` removes the stamp from a bundle that another stamp covers.
 
+`compress` gives the stamp the compressed proof it travels with. An aggregator
+is meant to decompress the stamps it receives, merge them, and compress the
+result. The crate cannot decompress yet, so as a stopgap `merge` and `unmerge`
+take stamps that were never compressed.
+
 In the crate, an action's `cv` and `rk` form an `action::Descriptor`, and its
 signature and tachygrams sit beside it in `Bundle::action_auth`. The book's
 [Bundles](book/src/bundle.md) chapter explains every field.

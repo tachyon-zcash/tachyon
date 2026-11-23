@@ -7,13 +7,21 @@ use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
-    primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
+    primitives::{
+        Element, allocator::Allocator, comparison::GadgetEquals, decompose_n, enforce_le_bits,
+        io::Write,
+    },
 };
 
 use super::uint::Uint;
 use crate::{constants::MAX_MONEY, pasta::Fp, value};
 
 /// A [`value::Positive`] inside a circuit: an amount in `0..=MAX_MONEY`.
+///
+/// # Injectivity
+///
+/// The element stands for an integer in `0..=MAX_MONEY`, below $2^{51}$ and
+/// the modulus. The field is private, and every constructor forces the range.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,
@@ -33,6 +41,9 @@ impl<'dr, D: Driver<'dr>> Deref for Positive<'dr, D> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     /// Allocates `value` and bounds it to `0..=MAX_MONEY`.
+    ///
+    /// The check decomposes the element into 51 bits and compares their
+    /// integer with `MAX_MONEY`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
@@ -40,31 +51,44 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         value: DriverValue<D, value::Positive>,
     ) -> Result<Self> {
         let element = Element::alloc(dr, allocator, value.map(u64::from).map(Fp::from))?;
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &element)?
-            .enforce_max(dr, MAX_MONEY)?;
+        element.enforce_le::<{ MAX_MONEY.bit_width() as usize }>(
+            dr,
+            &mut (),
+            Fp::from(MAX_MONEY),
+        )?;
         Ok(Self { element })
     }
 
     /// The amount `bits` encodes, bounded by `MAX_MONEY`.
+    ///
+    /// The bound is on the integer of the bits and the element is their
+    /// packing, so `bits` is the amount's only 51-bit decomposition. A fixed
+    /// base multiplied by `bits` is multiplied by the amount.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_bits(
         dr: &mut D,
         bits: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
     ) -> Result<Self> {
-        bits.enforce_max(dr, MAX_MONEY)?;
+        enforce_le_bits(dr, bits.bits(), Fp::from(MAX_MONEY))?;
         Ok(Self {
             element: bits.pack(dr)?,
         })
     }
 
     /// The amount `MAX_MONEY - slack`, with `slack` bounded by `MAX_MONEY`.
+    ///
+    /// `slack` is at most `MAX_MONEY` as an integer, so the difference does
+    /// not wrap. The amount and `slack` determine each other.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_slack(
         dr: &mut D,
         slack: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
     ) -> Result<Self> {
+        let maximum = Fp::from(MAX_MONEY);
+        enforce_le_bits(dr, slack.bits(), maximum)?;
+        let packed_slack = slack.pack(dr)?;
         Ok(Self {
-            element: slack.enforce_max(dr, MAX_MONEY)?.pack(dr)?,
+            element: Element::constant(dr, maximum).sub(dr, &packed_slack),
         })
     }
 
@@ -74,17 +98,21 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         Ok(Self { element })
     }
 
-    /// `(part, self - part)`. Both fit the width of `MAX_MONEY` and sum to
-    /// `self`, so neither wraps and both are amounts.
+    /// `(part, self - part)`.
+    ///
+    /// `part` is the packing of 51 bits with no other constraint, and
+    /// `self - part` is held to 51 bits. Two integers below $2^{51}$ sum to
+    /// less than the modulus, so their sum is `self` over the integers. Both
+    /// are then in `0..=self`, and both are amounts.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;
         let rest = self.element.sub(dr, &packed);
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &rest)?;
+        decompose_n::<_, { MAX_MONEY.bit_width() as usize }>(dr, &mut (), &rest)?;
         Ok((Self { element: packed }, Self { element: rest }))
     }
 
-    /// The amount's bits.
+    /// The amount's bits, its only 51-bit decomposition.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn to_bits(
         &self,

@@ -5,13 +5,7 @@ use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
-    primitives::{
-        Element, GadgetExt as _, Point,
-        allocator::Allocator,
-        decompose,
-        io::Write,
-        vec::{ConstLen, FixedVec},
-    },
+    primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
 };
 
 use crate::{
@@ -24,6 +18,9 @@ use crate::{
 
 /// The fields of a native [`Note`](crate::note::Note) inside a circuit, in
 /// note commitment order.
+///
+/// `value` is an [amount](Positive). `rcm`, `pk` and `psi` are elements with
+/// no constraint of their own.
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
@@ -78,8 +75,25 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         poseidon::circuit::feemax_blind(dr, &self.pk, &self.psi, &self.rcm)
     }
 
-    /// The max fee commitment, `cv_feemax`, multiplying the bits of `slack`,
-    /// which this ties to `MAX_MONEY - value`.
+    /// The max fee commitment $\mathsf{cv}_\mathsf{feemax} =
+    /// \[-v\]\mathcal{V} + \[r\]\mathcal{R}$, for this note's value $v$ and
+    /// its [feemax blind](Self::derive_feemax_blind) $r$.
+    ///
+    /// # Injectivity
+    ///
+    /// The circuit holds `slack + value` equal to `MAX_MONEY`. Both are
+    /// integers below $2^{51}$, so the equation holds over the integers and
+    /// `slack` is the only bit string for `MAX_MONEY - value`.
+    /// [`FEE_V_BASE`](struct@fixed_base::FEE_V_BASE) multiplied by it gives
+    /// $\[-v\]\mathcal{V}$. The blind digest is decomposed into 254 bits, its
+    /// only decomposition, and a digest that is zero or at least $2^{254}$
+    /// has no assignment.
+    ///
+    /// The result is a function of the note's four fields and determines
+    /// them. As a [value commitment](fixed_base#value-commitments) it
+    /// determines $v$ and $r$. Blinds below $2^{254}$ that are equal as
+    /// scalars are equal as elements, and the blind digest determines `pk`,
+    /// `psi` and `rcm`.
     pub(crate) fn cv_feemax(
         &self,
         dr: &mut D,
@@ -90,19 +104,27 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         let blind = self.derive_feemax_blind(dr)?;
         // The blind's 254 bits recompose to it, so they are its canonical
         // bits; a blind at or above 2^254 has no proof.
-        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        let blind_bits = decompose_n::<_, 254>(dr, &mut (), &blind)?;
         let blind_point = fixed_base::R_BASE.mul(dr, &blind_bits)?;
         fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
 
     /// Enforces a zero `value` and returns the max fee commitment for it: the
     /// blind term alone, with no value term.
+    ///
+    /// # Injectivity
+    ///
+    /// The result is [`R_BASE`](struct@fixed_base::R_BASE) multiplied by the
+    /// blind digest's 254-bit decomposition, with nothing added. Its only
+    /// case without an assignment is a digest that is zero or at least
+    /// $2^{254}$. It is the max fee commitment at $v = 0$ and determines the
+    /// note as [`cv_feemax`](Self::cv_feemax) does.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;
         // The blind's 254 bits recompose to it, so they are its canonical
         // bits; a blind at or above 2^254 has no proof.
-        let blind_bits = FixedVec::<_, ConstLen<254>>::try_from(decompose(dr, &mut (), &blind)?)?;
+        let blind_bits = decompose_n::<_, 254>(dr, &mut (), &blind)?;
         fixed_base::R_BASE.mul(dr, &blind_bits)
     }
 
@@ -119,3 +141,6 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         poseidon::circuit::pad_tachygram(dr, &self.rcm, &self.pk, &self.value, &self.psi)
     }
 }
+
+#[cfg(test)]
+mod tests;

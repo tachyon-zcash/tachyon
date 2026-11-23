@@ -11,7 +11,6 @@ use alloc::collections::BTreeSet;
 use ragu::{header::Header, pasta::Pasta, step::Step};
 
 use crate::{
-    collections,
     constants::EVIDENCE_TREE_ARITY,
     entropy::ActionEntropy,
     fee,
@@ -20,8 +19,8 @@ use crate::{
     nullifier::Nullifier,
     pasta::Fp,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetPoly, effect,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
+        QrDiscriminant, QrProfile, QrSplit, Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -218,7 +217,7 @@ pub fn summary_advance(
     )
 }
 
-/// Prepare the witness for [`QrSummaryIntake`]: `(discriminant)`.
+/// Prepare the witness for [`QrSummaryIntake`]: `(discriminant,)`.
 #[must_use]
 pub const fn qr_summary_intake(
     (_left, _right): (StepLeft<QrSummaryIntake>, StepRight<QrSummaryIntake>),
@@ -272,63 +271,58 @@ pub fn qr_intake_merge(
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
+///
+/// `split` must be the intake's members split at
+/// `discriminant.at(profile.depth)`. This helper does not check the members or
+/// discriminant. The step checks the factors' product against the intake and
+/// requires a non-unit intake opening.
+///
+/// # Panics
+///
+/// Panics if either side's set polynomial exceeds the coefficient capacity
+/// of `WalletRank`.
 #[must_use]
 pub fn qr_intake_split(
-    (left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
-    members: &[Tachygram],
+    (_left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
+    split: &QrSplit,
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = left;
-    let (residue, non_residue) = collections::qr::split(
-        members.iter().copied().map(Fp::from),
-        discriminant.at(profile.depth),
-    );
-    (
-        non_residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-        residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-    )
+    split.factors()
 }
 
 /// Prepare the witness for [`QrSideSelect`]: `(interpolant, quotient)`.
 ///
+/// `split` must be the intake's members split at
+/// `discriminant.at(profile.depth)`. This helper prepares hints for the sibling
+/// of `child` without checking the members or discriminant. [`QrSideSelect`]
+/// checks the exceptional opening; [`QrSideDescend`] checks the sibling
+/// identity at the header's own discriminant plus depth.
+///
 /// # Panics
 ///
-/// Panics if the sibling's decomposition does not exist due to repeated
-/// members.
+/// Panics if a sibling member repeats or the sibling exceeds the class
+/// decomposition capacity of `WalletRank`.
 #[must_use]
 pub fn qr_side_select(
-    (left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
-    members: &[Tachygram],
-    side: bool,
+    (_left, _right): (StepLeft<QrSideSelect>, StepRight<QrSideSelect>),
+    split: &QrSplit,
+    child: QrClass,
 ) -> StepWitness<'static, QrSideSelect> {
-    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue_hash) = left;
-    let (residue, non_residue) = collections::qr::split(
-        members.iter().copied().map(Fp::from),
-        discriminant.at(profile.depth),
-    );
-    let sibling = if side { &non_residue } else { &residue };
-    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
-    let (interpolant, quotient) = collections::qr::decomposition(
-        sibling,
-        collections::qr::class_multiplier(!side),
-        discriminant.at(profile.depth),
-    )
-    .expect("members of a split are distinct");
-    (interpolant.into(), quotient.into())
+    #[expect(
+        clippy::expect_used,
+        reason = "repeated or over-rank sibling members are invalid input"
+    )]
+    split
+        .class_decomposition(child.sibling())
+        .expect("sibling has a repeated member or exceeds WalletRank")
 }
 
-/// Prepare the witness for [`QrSideDescend`]: `(bit,)`.
+/// Prepare the witness for [`QrSideDescend`]: `(class,)`.
 #[must_use]
 pub const fn qr_side_descend(
     (_left, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
-    bit: bool,
+    child: QrClass,
 ) -> StepWitness<'static, QrSideDescend> {
-    (bit,)
+    (child,)
 }
 
 /// Prepare the witness for [`QrBucketSeal`]: `(anchor_final_prev)`.
@@ -343,8 +337,11 @@ pub const fn qr_bucket_seal(
     (anchor_final_prev,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
+/// Prepare the witness for [`QrUnspentInit`]: `(value, path, roots, mask,
 /// sequence)`.
+///
+/// `path` gives the value's class at each of the 32 depths, its QR path.
+/// `roots` gives the class root witnessing each step of the path.
 ///
 /// # Panics
 ///
@@ -356,9 +353,11 @@ pub fn qr_unspent_init(
     value: Tachygram,
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = left;
+    let (path, roots) = discriminant.classify_path(value);
     (
         value,
-        QrClassRoot::along(Fp::from(value), discriminant),
+        path,
+        roots,
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )
@@ -390,8 +389,11 @@ pub const fn evidence_tree_open(
     (profile, contents)
 }
 
-/// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
+/// Prepare the witness for [`UnspentLift`]: `(value, path, roots, mask,
 /// extended_seq)`.
+///
+/// `path` gives the value's class at each of the 32 depths, its QR path.
+/// `roots` gives the class root witnessing each step of the path.
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
@@ -404,9 +406,11 @@ pub fn unspent_lift(
     let (_, epoch_start, ..) = left;
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _) = right;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
+    let (path, roots) = discriminant.classify_path(value);
     (
         value,
-        QrClassRoot::along(Fp::from(value), discriminant),
+        path,
+        roots,
         profile.depth_mask(),
         elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
     )

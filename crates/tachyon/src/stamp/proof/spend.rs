@@ -24,14 +24,39 @@ use crate::{
     value,
 };
 
-/// Header binding a spend to its lineage note, epoch nullifier pair and value
-/// commitment.
+/// A spend's note, epoch nullifier pair, pool anchor, payment key and value
+/// commitment (wallet-only).
 ///
 /// Carries the note commitment `cm`, the lineage's nullifier and its
 /// neighbour `(nf_current, nf_next)` derived from the note's master key, the
 /// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
+///
+/// # Injectivity
+///
+/// [`SpendBind`] outputs this header. A verified `SpendHeader` asserts that a
+/// verified [`NoteSpendable`] carries `cm`, `anchor` and an epoch $e$ below
+/// `EPOCH_MAX`, and that a verified [`NoteSecret`] carries `cm` and `pk`,
+/// with a value $v$ and a master key $\mathsf{mk}$.
+///
+/// - `cm` stands for the spent note. It determines the note's four fields, and
+///   with them $\mathsf{mk}$ ([`NoteSecret`]).
+/// - `nf_current` and `nf_next` are the
+///   [nullifiers](crate::digest::poseidon::nullifier_group) of $\mathsf{mk}$ at
+///   $e$ and at $e + 1$, and stand for the note's spend at $e$. `cm` and $e$
+///   determine the pair. A nullifier determines its master key and its epoch,
+///   so the pair determines $e$, which is not a field. It does not determine
+///   `cm`, because notes that share $\psi$ and $\mathsf{nk}$ share
+///   $\mathsf{mk}$. Both are nonzero, and no step relies on that.
+/// - `anchor` stands for the pool history at which [`NoteSpendable`] shows the
+///   note spendable.
+/// - `pk` stands for the note's owner. `cm` determines it, and it determines
+///   $\mathsf{ak}$ and $\mathsf{nk}$.
+/// - `cv` is $\[v\]\mathcal{V} + \[r\]\mathcal{R}$ for an integer $r$ that the
+///   prover knows, with $0 < r < 2^{254}$, and stands for the value. It is a
+///   [value commitment](fixed_base#value-commitments), so it determines its
+///   opening.
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -46,15 +71,6 @@ pub struct SpendHeaderOutput<'dr, D: Driver<'dr>, C: EndomorphismAffine<Base = D
     pub cv: Point<'dr, D, C>,
 }
 
-/// # Injectivity
-///
-/// `cm` binds the spent note. `nf_current` and `nf_next` bind the note's `mk`
-/// and their two epochs. `anchor` binds its history. `pk` binds the owner's
-/// `(ak, nk)`. `cv` binds the note's value. The header binds the note, its
-/// owner's key pair, the nullifiers' epochs and the anchor under Poseidon. It
-/// binds the value under value discrete log, and the stamp sets in the
-/// anchor's history under host and nested discrete log. See
-/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for SpendHeader {
     /// `(cm, nf_current, nf_next, anchor, pk, cv)`
     type Data = (
@@ -115,18 +131,27 @@ impl Header<Fp> for SpendHeader {
 /// action-producing step to publish, with the note's `pk` and
 /// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Two permutations (the pair) and two scalar multiplications (`cv`).
+/// Two permutations (the pair) and two scalar multiplications (`cv`). Two
+/// sponges run whether or not $e$ and $e + 1$ share a group.
 ///
 /// # Soundness
 ///
-/// [`NoteSeed`](super::delegation::NoteSeed) proves that the input master key,
-/// commitment and note belong together. The spendable proof supplies the epoch;
-/// the circuit checks that it and its successor are in range, and selects each
-/// nullifier by the epoch's constrained low bits. The nullifier pair,
-/// payment key and value all come from these proved inputs. Only the value
-/// commitment's blinding scalar `rcv` is freely chosen.
+/// The circuit holds the `cm` wires of its two inputs equal, so the secret's
+/// value, `pk` and `mk` are those of the lineage's note, which `cm`
+/// determines. [`EpochIndex::next`](crate::gadgets::epoch::EpochIndex::next)
+/// range-checks the lineage's epoch wire $e$ and the wire $e + 1$, so the sum
+/// does not wrap and $e$ is below `EPOCH_MAX`.
+/// [`derive_nullifier`](crate::gadgets::master::NoteMasterKey::derive_nullifier)
+/// on the secret's `mk` wire returns that key's nullifier at each, and both
+/// are held nonzero.
 ///
-/// Two sponges run whether or not $e$ and $e + 1$ share a group.
+/// `cv` is [`V_BASE`](struct@fixed_base::V_BASE) multiplied by the 51-bit
+/// decomposition of the secret's value wire, added to the blind point.
+/// [`NoteSecret`] asserts that the wire is the note's value in
+/// `0..=MAX_MONEY`. The blind is 254 bit wires with no other constraint, and
+/// [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them has no assignment
+/// at zero. The step reads no challenge. The output's `cm` and `anchor` are
+/// the lineage's wires and its `pk` is the secret's.
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -168,7 +193,7 @@ impl Step<Pasta> for SpendBind {
         let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
-        // A zero nullifier would collide with the note's own cm tachygram.
+        // Both nullifiers are held nonzero. No step relies on it.
         nf_current.clone().enforce_nonzero(dr)?;
         nf_next.clone().enforce_nonzero(dr)?;
 

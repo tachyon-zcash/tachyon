@@ -26,10 +26,43 @@ use crate::{
     primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly},
 };
 
-/// Wallet's spendable position, certified up to this point in every
-/// coordinate.
+/// Wallet's spendable position: a note, the epoch its nullifiers are tested up
+/// to, and the anchor of that position.
 ///
-/// `cm` keeps the spent value from drifting to a different same-`mk` note.
+/// # Injectivity
+///
+/// [`SpendableInit`], [`QrSpendableInit`] and [`SpendableLift`] output this
+/// header. A verified `NoteSpendable` asserts that `epoch_current` is an
+/// integer at most `EPOCH_MAX`, that its prover knows a verified
+/// [`NoteNullifiers`] that carries this `cm`, and one of two things.
+///
+/// - **Creation.** The prover knows a [stamp chain](Anchor#chains-in-a-step) of
+///   one absorption in `epoch_current` that ends at `anchor`. The absorption's
+///   polynomial is the header's [`TachygramSetPoly`], and `cm` is a root of it.
+/// - **Lineage.** The prover knows an epoch $e_0$ below `epoch_current` and an
+///   anchor $b_e$ for each epoch $e$ from $e_0$ to `epoch_current`, with
+///   `anchor` the last of them. It knows a verified [`QrBucket`] with `epoch`
+///   $e_0$, `anchor_start` $b_{e_0}$ and `anchor_next` $b_{e_0+1}$, and `cm` is
+///   a root of its contents. At every epoch $e$ from $e_0$ to the one before
+///   `epoch_current`, the nullifier of `cm` at $e$ is
+///   [excluded](super::pool::ArbitraryUnspent#injectivity) between $b_e$ and
+///   $b_{e+1}$. The header's [`TachygramSetPoly`] is the constant one.
+///
+/// In the lineage form, the bucket's contents divide the product of the
+/// polynomials of its stamp chain, so `cm` is a root of one of them. The
+/// bucket that excludes the nullifier at $e_0$ has the same three fields and
+/// so the same chain, by the bucket's [assertion](QrBucket#injectivity).
+///
+/// - `cm` determines the note and its master key
+///   ([`NoteSecret`](super::delegation::NoteSecret)). Notes that share a master
+///   key share their nullifiers, so the header carries `cm`, and
+///   [`SpendBind`](super::spend::SpendBind) compares it with the `cm` of its
+///   `NoteSecret`.
+/// - `anchor` is a stamp absorption in the creation form and a boundary digest
+///   in the lineage form. The two have different tags, so one anchor is of one
+///   form. In both it absorbs `epoch_current` and so determines it, and in the
+///   creation form it determines the polynomial, which no step reads from an
+///   input.
 #[derive(Clone, Debug)]
 pub struct NoteSpendable;
 
@@ -41,12 +74,6 @@ pub struct NoteSpendableOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
 }
 
-/// # Injectivity
-///
-/// `cm` binds the note, and `epoch_current` is an integer. `anchor` binds its
-/// history. The header binds the note and the anchor under Poseidon and the
-/// stamp sets in the anchor's history under host and nested discrete log. See
-/// [header injectivity](super#header-injectivity).
 impl Header<Fp> for NoteSpendable {
     /// `(cm, epoch_current, anchor)`
     type Data = (note::Commitment, EpochIndex, Anchor);
@@ -83,23 +110,19 @@ impl Header<Fp> for NoteSpendable {
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
 /// Wallet-only, one-child over any [`NoteNullifiers`], which supplies `cm`.
-/// `cm` is proven among the creation stamp's tachygrams, and the post-cm
-/// anchor folds from a free-witnessed predecessor.
 ///
 /// # Soundness
 ///
-/// `anchor_prev`, `creation_epoch` and the creation set close through
-/// consensus anchor membership: the fold absorbs the epoch and the creation
-/// set's bridge hash
-/// $B$, a genuine chain node is `H(prev || epoch || x(B) || y(B))` under the
-/// stamp domain, and preimage resistance forces all three once the eventual
-/// spend's anchor is consensus-checked, a wrong epoch landing off the published
-/// sequence.
+/// The step copies `cm` from its input and
+/// [adds an absorption](Anchor#chains-in-a-step) of `anchor_prev`,
+/// `creation_epoch` and the creation polynomial, with both wires the prover's
+/// choice. The circuit opens the creation polynomial at `cm` and holds the
+/// value to zero, so `cm` is a root of it and it is not the constant one. The
+/// step reads no challenge.
 ///
-/// The step tests no exclusion. The spendable sits immediately after the
-/// creation stamp, so the only stamp it covers is the one creating the note,
-/// and a spend inside that stamp would need an anchor folding in the stamp's
-/// own tachygrams.
+/// The step tests no exclusion, and the creation form asserts none. A spend
+/// from this form relies on the consensus rule that rejects a tachygram
+/// published twice within two epochs.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -159,10 +182,8 @@ impl Step<Pasta> for SpendableInit {
                 .as_ref()
                 .map(|&(_, _, creation_epoch)| creation_epoch),
         )?;
-        // The anchor immediately after the creation stamp, computed in-circuit
-        // so the proof certifies the fold of the epoch and the stamp's bridge hash;
-        // consensus membership of the eventual spend anchor binds the rest
-        // (see the step doc).
+        // The anchor immediately after the creation stamp: the stamp absorption
+        // of the prover's `anchor_prev`, the epoch and the step's bridge hash.
         let anchor = poseidon::circuit::anchor_next_stamp(
             dr,
             &previous,
@@ -200,22 +221,23 @@ impl Step<Pasta> for SpendableInit {
 ///
 /// The `NoteUnspent` is the epoch's QR segment bound to the note
 /// ([`QrUnspentInit`](super::qr::QrUnspentInit) then
-/// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
-/// absence of the note's nullifier arrive on its header. This step adds the
-/// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable on
-/// the segment's `(epoch_next, anchor_next)`: the entry anchor of the epoch
-/// after the bucket's, which [`QrBucketSeal`](super::qr::QrBucketSeal)
-/// computed.
+/// [`UnspentBind`](super::pool::UnspentBind)). This step adds the membership
+/// of `cm` in the bucket and emits the spendable on the segment's
+/// `(epoch_next, anchor_next)`.
 ///
 /// # Soundness
 ///
-/// Membership needs no profile. Every bucket divides the epoch's stamp
-/// polynomials, root through split and merge, so a root of any bucket is a
-/// tachygram published in the bucket's span. The two extents coincide by
-/// equality at both ends: `anchor_next` is emitted and reaches consensus
-/// through the lineage, so the stamp commitments absorbed across the span are
-/// the published ones. Without that equality a bucket over invented stamps
-/// onto the real entry anchor would pass the opening.
+/// The circuit holds the bucket's `epoch`, `anchor_start` and `anchor_next`
+/// equal to the segment's `epoch_start`, `anchor_start` and `anchor_next`,
+/// and the successor of the bucket's epoch, range-checked, equal to the
+/// segment's `epoch_next`. The epochs are integers, so the segment covers the
+/// bucket's epoch and no other, and its one exclusion lies between the
+/// bucket's two anchors.
+///
+/// The circuit opens the bucket's contents at the segment's `cm` and holds
+/// the value to zero, so `cm` is a root of the contents. The bucket's profile
+/// plays no part. This is the lineage form with $e_0$ the bucket's epoch. The
+/// step opens no output slot.
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
@@ -285,25 +307,24 @@ impl Step<Pasta> for QrSpendableInit {
 
 /// Advance the spendable over one [`NoteUnspent`] segment.
 ///
-/// Wallet-only, witness-free. The segment's near end must share the
-/// lineage's epoch (`unspent.epoch_start == spendable.epoch_current`) and hand
-/// off in anchor space (`unspent.anchor_start == spendable.anchor`). `cm`
-/// threads through, and the lineage moves to the segment's far boundary
-/// `(epoch_next, anchor_next)`.
-///
-/// The segment may span any number of epochs. Every segment opens on an entry
-/// anchor, so only a lineage resting on one can lift: a [`QrSpendableInit`]
-/// spendable, or one already lifted. A [`SpendableInit`] spendable spends in
-/// its creation epoch.
+/// Wallet-only, witness-free. The lineage moves to the segment's far boundary
+/// `(epoch_next, anchor_next)`. The segment may span any number of epochs. A
+/// [`SpendableInit`] spendable cannot lift, and spends in its creation epoch.
 ///
 /// # Soundness
 ///
-/// [`UnspentBind`](super::pool::UnspentBind) makes every member of the segment
-/// the genuine nullifier of `cm` at its epoch, so equal `cm` and `epoch_start`
-/// fix the member the segment starts on. No nullifier needs comparing.
+/// The circuit holds the two `cm` equal, the spendable's `epoch_current`
+/// equal to the segment's `epoch_start`, and the spendable's `anchor` equal
+/// to the segment's `anchor_start`. The left input is in the lineage form. The
+/// segment's `anchor_start` is a bucket's `anchor_start`, which is a boundary
+/// digest. A creation anchor is a stamp absorption, and an element that is both
+/// is a collision between the two tags.
 ///
-/// The lineage then rests on the entry anchor of `epoch_next`, certified for
-/// every epoch before it. The spend's anchor epoch is consensus's to scan.
+/// Equal `cm` make the segment's tested values nullifiers of the spendable's
+/// note, and the segment's epochs and anchors continue the spendable's. The
+/// exclusions therefore run from $e_0$ to the epoch before the segment's
+/// `epoch_next`, and the input's bucket still holds `cm`. The step opens no
+/// output slot and reads no challenge.
 #[derive(Debug)]
 pub struct SpendableLift;
 

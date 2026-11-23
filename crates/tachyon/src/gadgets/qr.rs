@@ -9,15 +9,17 @@ use ragu::{
     udon::field::Field as _,
 };
 
-use super::uint::Uint;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, QrClassRoot},
+    primitives::{self, QrClass, QrClassRoot},
 };
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
 /// sides taken and those sides as bits.
+///
+/// Allocation places no constraint, so the two wires are a
+/// [path](primitives::QrProfile#injectivity) only where a step shows it.
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
@@ -29,7 +31,7 @@ pub struct QrProfile<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
-    /// Allocates a header's profile.
+    /// Allocates a header's profile as two wires, without a constraint.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -59,15 +61,22 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
         }
     }
 
-    /// The child profile on side `bit`. The parent's depth is checked below
-    /// [`MAX_DEPTH`](primitives::QrProfile::MAX_DEPTH), leaving a position for
-    /// the new side.
+    /// The child profile on side `bit`.
+    ///
+    /// # Soundness
+    ///
+    /// The range check holds the parent's `depth` to an integer $j$ below
+    /// `MAX_DEPTH`. The child has `depth` $j + 1$ and `bits` $2 \cdot
+    /// \mathsf{bits} + b$. When the parent is a path, the child is that path
+    /// followed by $b$, and its `bits` stay below $2^{j+1}$, so no sum wraps.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
-        Uint::<_, { primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>::from_element(
-            dr,
-            &self.depth,
-        )?;
+        self.depth
+            .enforce_lt::<{ primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>(
+                dr,
+                &mut (),
+                Fp::from(primitives::QrProfile::MAX_DEPTH as u64),
+            )?;
         let one = Element::constant(dr, Fp::ONE);
         Ok(Self {
             depth: self.depth.add(dr, &one),
@@ -77,18 +86,51 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// At each discriminant $d_i$ of the progression from `discriminant`, the
-    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
-    /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
-    /// non-residue side. The depth mask must be a prefix of `depth` ones, and
-    /// the selected sides must pack to `bits`.
+    /// `path` is the value's class at each of the 32 depths, its path.
+    /// `roots` gives the class root witnessing each step of the path.
+    ///
+    /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
+    /// with $R_j = R_0 + j$ from `discriminant` and multiplier
+    /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
+    /// non-residue is $c$. Unlike descent, which checks the sibling's class,
+    /// this check uses the queried class itself. A zero shifted value cannot
+    /// claim the non-residue class. The mask $e_j$ must be a prefix of
+    /// `depth` ones, and the selected classes must pack to `bits`. The
+    /// constraints that hold them to that are
+    ///
+    /// $$
+    ///   \sum_j e_j = \mathsf{depth},
+    ///   \qquad
+    ///   2 \sum_j j \cdot e_j = \mathsf{depth} \cdot (\mathsf{depth} - 1),
+    ///   \qquad
+    ///   a_{j+1} = a_j + e_j \cdot (a_j + b_j),
+    /// $$
+    ///
+    /// with $a_0 = 0$ and the last $a$ equal to `bits`.
+    ///
+    /// # Soundness
+    ///
+    /// With $b_j = 1$ the root [shows](crate::collections::qr#sides) that
+    /// $x + R_j$ is a square or zero, and with $b_j = 0$ the root and $x + R_j
+    /// \neq 0$ show a non-residue, so $b_j$ is the side of $x$ at $R_j$. The
+    /// mask bits are boolean, so `depth` is an integer $d$ from $0$ to
+    /// `MAX_DEPTH` and the second equation holds over the integers. Among $d$
+    /// distinct positions the sum is at least $d \cdot (d - 1)/2$, and only
+    /// the first $d$ reach it, so the mask is $d$ ones followed by zeros. The
+    /// fold then doubles $a$ and adds $b_j$ at each of the first $d$ positions
+    /// and leaves it unchanged after, so `bits` is $\sum_{j < d} b_j \cdot
+    /// 2^{d-1-j}$, which is below $2^{32}$ and does not wrap. The profile is
+    /// thus the [path](primitives::QrProfile#injectivity) of the first $d$
+    /// sides of $x$, and $x$ is in its class at $R_0$. The gadget reads no
+    /// challenge and holds for whatever wires it is given.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
-        classes: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
+        path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
+        roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
         let mut shifted = value.add(dr, discriminant);
@@ -102,12 +144,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].0),
+                path.as_ref().map(|classes| classes[position].bit()),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].1),
+                roots.as_ref().map(|values| Fp::from(values[position])),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;

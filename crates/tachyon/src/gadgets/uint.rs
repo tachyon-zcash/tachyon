@@ -8,7 +8,7 @@ use ragu::{
     gadgets::Gadget,
     maybe::Maybe as _,
     primitives::{
-        Boolean, Element, GadgetExt as _, multipack,
+        Boolean, Element, decompose_n, multipack,
         vec::{ConstLen, FixedVec},
     },
     udon::field::Field,
@@ -16,8 +16,15 @@ use ragu::{
 
 use crate::pasta::Fp;
 
-/// A value held as `BITS` little-endian Boolean bits, so it is below
-/// $2^{BITS}$.
+/// An integer held as `BITS` little-endian Boolean wires $b_i$.
+///
+/// # Injectivity
+///
+/// The bits stand for the integer $n = \sum_i 2^i b_i$, of which they are
+/// the binary expansion. No use has more than 254 bits, and $2^{254}$ is
+/// below both Pasta moduli, so distinct bit strings are distinct elements of
+/// $\mathbb{F}_p$ for [`pack`](Self::pack) and distinct scalars of
+/// $\mathbb{F}_q$ for a [fixed base](super::fixed_base).
 #[derive(Gadget)]
 pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
     #[ragu(gadget)]
@@ -25,9 +32,13 @@ pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
-    /// Allocates the low `BITS` bits of `value`, an element of either Pasta
-    /// field. The bits are free: a caller whose value may be wider binds them
-    /// to it, as [`from_element`](Self::from_element) does.
+    /// Allocates `BITS` Boolean wires and assigns them the low bits of
+    /// `value`, an element of either Pasta field.
+    ///
+    /// No constraint relates the bits to `value` or to another wire. A caller
+    /// that needs them to be a certain integer constrains
+    /// [`pack`](Self::pack)'s output or uses
+    /// [`from_element`](Self::from_element).
     pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
         let bits = value.map(|element| element.to_le_bits());
         Ok(Self {
@@ -43,27 +54,23 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
     }
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
+    ///
+    /// The width is at most 254, so the packing does not wrap. The bits are
+    /// the only string of this width whose integer is `element`, and an
+    /// element at or above $2^{BITS}$ has no assignment.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
-        let uint = Self::alloc(dr, element.value().map(Clone::clone))?;
-        uint.pack(dr)?.enforce_equal(dr, element)?;
-        Ok(uint)
+        Ok(Self {
+            bits: decompose_n(dr, &mut (), element)?,
+        })
     }
 
-    /// The value the bits encode.
+    /// The element $\sum_i 2^i b_i$, a linear combination of the bit wires.
     pub(crate) fn pack(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         Ok(single_packed_element(multipack(dr, &self.bits)?))
     }
 
     pub(crate) const fn bits(&self) -> &FixedVec<Boolean<'dr, D>, ConstLen<BITS>> {
         &self.bits
-    }
-
-    /// Bounds the value to `0..=maximum` and returns `maximum - value`, which
-    /// fits the same width: the two sum to `maximum`, so neither wraps.
-    pub(crate) fn enforce_max(&self, dr: &mut D, maximum: u64) -> Result<Self> {
-        let packed = self.pack(dr)?;
-        let slack = Element::constant(dr, Fp::from(maximum)).sub(dr, &packed);
-        Self::from_element(dr, &slack)
     }
 }
 

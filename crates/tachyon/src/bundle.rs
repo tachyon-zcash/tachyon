@@ -90,9 +90,12 @@
 //! whole trailer is read. The standalone stamp reader checks
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
-//! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
+//! `proofTachyon` is a [`Compressed`](stamp::Compressed) proof, which an
+//! aggregator decompresses to lift or merge the stamp. The crate does not
+//! decompress yet. As a stopgap until it can,
 //! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
-//! uncompressed length while stamps are merged and lifted outside consensus.
+//! uncompressed length outside a block, and a block item, [`TachyonBundle`],
+//! carries the compressed proof.
 //!
 //! ## Stripped stamp
 //!
@@ -112,7 +115,7 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use ragu::{
-    ProductionRank, Rank as _,
+    Rank as _, WalletRank,
     pasta::Pasta,
     udon::{curve::Affine as _, field::Field as _},
 };
@@ -654,7 +657,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         adjuncts: &[&Bundle<dyn StampState>],
-        spans: Vec<ragu::Pcd<Pasta, ProductionRank, pool::AnchorSpan>>,
+        spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
@@ -699,8 +702,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 
     fn read_proof_body<R: Read>(reader: R) -> io::Result<Self> {
         let bundle = Self::read_body(reader)?;
-        if 2 * bundle.actions.len() + bundle.stamp.adjuncts.len() + 1
-            > ProductionRank::num_coeffs() - 1
+        if 2 * bundle.actions.len() + bundle.stamp.adjuncts.len() + 1 > WalletRank::num_coeffs() - 1
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -769,7 +771,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 
         // A set polynomial with n roots has n + 1 coefficients, so no
         // commitment matches a larger set.
-        if 2 * n_actions + n_fees > ProductionRank::num_coeffs() - 1 {
+        if 2 * n_actions + n_fees > WalletRank::num_coeffs() - 1 {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
@@ -919,7 +921,7 @@ impl<S: StampState> Bundle<S> {
 
         // A bundle's two tachygrams per action and its fee change are roots of
         // one set polynomial, which has one more coefficient than roots.
-        if 2 * n_actions + 1 > ProductionRank::num_coeffs() - 1 {
+        if 2 * n_actions + 1 > WalletRank::num_coeffs() - 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many actions",
