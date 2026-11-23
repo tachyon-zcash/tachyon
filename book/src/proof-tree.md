@@ -507,7 +507,6 @@ Whoever builds a stamp rerandomizes it before the stamp leaves them.
 A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
 Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
-What crosses these boundaries is a rerandomized stamp with its stamp proof uncompressed, since a stamp is [compressed](./bundle.md#stamp-trailer) once, for the block.
 Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
 The implementation rerandomizes where it builds a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize their `Stamp` PCD, and `ProofStamp::compress` is a separate call.

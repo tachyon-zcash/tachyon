@@ -40,9 +40,9 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-A stamp is compressed once, for the block.
-Before the block, a stamp travels with its stamp proof uncompressed, from a wallet to an aggregator and from one aggregator to the next, so whoever receives it can lift, merge or unmerge it directly.
-A block carries each stamp with its stamp proof compressed in the same [trailer layout](./bundle.md#stamp-trailer), which is smaller and can no longer be lifted, merged or unmerged.
+The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. The crate does not implement this yet because the pinned Ragu version lacks the support Tachyon stamps need.
+
+In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -55,7 +55,6 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
    - List the `txid` of the one transaction the absorbed stamp covers without listing
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
 6. Publish aggregate transaction with its [adjunct list](#adjunct-list)
-7. Compress the stamp when the aggregate goes into a block
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 

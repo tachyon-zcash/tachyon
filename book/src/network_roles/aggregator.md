@@ -71,7 +71,7 @@ Every match has to come out of $W$ before $W$ can be published, because consensu
 
 What comes out is the bundle as it was merged into $W$, at the fee $W$ holds.
 The bundle in the block may use a different fee, and its stamp may cover other bundles.
-The block's stamp is compressed and cannot divide.
+In the crate today, the block's compressed stamp cannot serve as a divisor.
 The divisor is an uncompressed stamp in hand that covers exactly what $W$ holds.
 
 The simple case is a block that includes $X$ as an autonome.
@@ -88,7 +88,7 @@ In general there are three cases, decided by one question.
 Is there a stamp in hand that covers exactly the bundles to remove?
 
 - **Easy.** Yes. Divide once.
-- **Medium.** No, but one can be built by merging stamps you hold or can derive. Build it and divide. Another route is to merge into $W$ a stamp for whatever the block's aggregate covers beyond $W$, and then divide by that aggregate's stamp as cached from the mempool.
+- **Medium.** No, but one can be built by merging stamps you hold or can derive. Build it and divide. Another route is to merge into $W$ a stamp for whatever the block's aggregate covers beyond $W$, and then divide by that aggregate's stamp if you have it in uncompressed form.
 - **Hard.** Neither. Divide out a larger input you kept that contains the mined bundles, losing its unmined bundles with it, or rebuild from cached autonomes and the inputs that are still good.
 
 | Merged into $W$ | Block includes | Case |
