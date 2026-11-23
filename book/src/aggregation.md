@@ -40,8 +40,9 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-Before the block, a stamp's wire format carries the full proof, so aggregators can lift and merge decoded stamps directly.
-A block carries each aggregate with its proof compressed, which is smaller but can no longer be lifted or merged.
+The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. The crate does not implement this yet because the pinned Ragu version lacks the support Tachyon stamps need.
+
+In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -53,8 +54,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
    - Merge proofs
    - List the `txid` of the one transaction the absorbed stamp covers without listing
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
-6. Compress the merged stamp for the block
-7. Publish aggregate transaction with its [adjunct list](#adjunct-list)
+6. Publish aggregate transaction with its [adjunct list](#adjunct-list)
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
@@ -93,20 +93,20 @@ flowchart LR
 
     subgraph pool["Mempool"]
         subgraph mp1["Autonome 1"]
-            mp1_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp1_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp1_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp1_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp2["Autonome 2"]
-            mp2_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp2_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp2_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp2_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp3["Autonome 3"]
-            mp3_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp3_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp3_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp3_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp4["Autonome 4"]
-            mp4_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp4_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp4_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp4_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
     end
 
@@ -124,23 +124,23 @@ flowchart LR
         direction LR
 
         subgraph bk0["Aggregate"]
-            bk0_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            bk0_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
 
         bk0 ~~~ invisible
 
         subgraph invisible[" "]
             subgraph bk1["Adjunct 1"]
-                bk1_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk1_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk2["Adjunct 2"]
-                bk2_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk2_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk3["Adjunct 3"]
-                bk3_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk3_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk4["Adjunct 4"]
-                bk4_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk4_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
         end
     end

@@ -90,9 +90,9 @@
 //! whole trailer is read. The standalone stamp reader checks
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
-//! Consensus carries [`Compressed`](stamp::Compressed) proofs, and
-//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout with the
-//! uncompressed length while stamps are merged and lifted outside consensus.
+//! In this crate, a stamped block item, [`TachyonBundle`], carries a
+//! [`Compressed`](stamp::Compressed) proof in `proofTachyon`.
+//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout.
 //!
 //! ## Stripped stamp
 //!
