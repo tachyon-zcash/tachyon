@@ -916,7 +916,8 @@ impl Step<Pasta> for QrSideSelect {
 /// hash, the polynomial the [`QrSideSelection`] asserts about is the left
 /// input's $q_0$, and its point is $-R$, so $q_0(-R) \neq 0$.
 ///
-/// The circuit holds $b$ boolean and equal to the staged value. With $q_0$,
+/// $b$ is the bit of the `class` in `Step::Witness`, the prover's choice. The
+/// circuit holds it boolean and equal to the staged value. With $q_0$,
 /// $q_1$, $u$ and $h$ in input slots, the output's contents committed and $R$
 /// a sum of input header fields, all are fixed before the challenge.
 ///

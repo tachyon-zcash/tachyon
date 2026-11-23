@@ -11,12 +11,10 @@
 //! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
 //! $R$, and every pair has one.
 //!
-//! $c$ is [`QUADRATIC_NON_RESIDUE`], for which $c \cdot s$ is a square exactly
-//! when $s$ is zero or a non-residue.
-//!
 //! - A class root with $m = 1$ shows that $x$ takes the residue side.
-//! - A class root with $m = c$ shows that $x + R$ is zero or a non-residue.
-//!   Together with $x + R \neq 0$ it shows that $x$ takes the non-residue side.
+//! - A class root with $m = c$ shows that $x + R$ is zero or a non-residue, by
+//!   the product rule on [`QUADRATIC_NON_RESIDUE`]. Together with $x + R \neq
+//!   0$ it shows that $x$ takes the non-residue side.
 //!
 //! A value other than $-R$ has a root for its own side and none for the other.
 //!
@@ -61,8 +59,8 @@ use crate::pasta::Fp;
 /// The least quadratic non-residue of the Pallas base field, $c = 5$. Distinct
 /// from the cubic non-residue the sequence encoding uses.
 ///
-/// The Legendre symbol is multiplicative, so $c \cdot s$ is a square exactly
-/// when $s$ is zero or a non-residue.
+/// The Legendre symbol is multiplicative, so $c \cdot (x + R)$ is a square
+/// exactly when $x + R$ is zero or a non-residue.
 pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000005"
 ));

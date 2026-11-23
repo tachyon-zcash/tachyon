@@ -250,13 +250,12 @@ It opens $q_0$ at the exceptional value $-R$ and requires the opening to be nonz
 
 $$q_0(-R) \neq 0$$
 
-The exceptional value has zero for its class root under either multiplier and takes the residue side.
+The exceptional value has zero for its class root under either multiplier and takes the residue side. The nonzero opening holds it apart from the roots of $q_0$.
 The two hints are polynomials of the prover's choice.
 The step opens each once at $\zeta$ without a constraint, which keeps the committed hint in its output slot.
 
 `QrSideDescend` takes the split and the selection as inputs and requires their eight header elements to be equal.
 It takes the child's `class` from its prover and stages it as a bit $b$ that is set for the residue class.
-The bit chooses the child and therefore the sibling.
 The child is $q_1$ when the bit is set and $q_0$ otherwise, and the sibling is the other one.
 The sibling's multiplier is
 
@@ -272,7 +271,7 @@ An honest interpolant takes each member $x_i$ of the sibling to a class root $r_
 
 $$u(x_i) = r_i \qquad r_i^2 = m \cdot (x_i + R)$$
 
-The step also requires the openings of the two sides to differ.
+The step also requires the openings of the two sides to differ, which rejects canonical sides of the same set.
 The output `QrIntake` holds the child as its contents, with one opening at $\zeta$ that checks the copy, and its profile is the parent's followed by the bit.
 Each descent requires the parent's depth to be below 32.
 No constraint is placed on the child's own roots, so a child may hold roots that take the sibling's side.

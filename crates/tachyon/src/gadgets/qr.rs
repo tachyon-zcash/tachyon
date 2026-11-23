@@ -65,10 +65,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     ///
     /// # Soundness
     ///
-    /// The range check holds the parent's `depth` to an integer $d$ below
-    /// `MAX_DEPTH`. The child has `depth` $d + 1$ and `bits` $2 \cdot
+    /// The range check holds the parent's `depth` to an integer $j$ below
+    /// `MAX_DEPTH`. The child has `depth` $j + 1$ and `bits` $2 \cdot
     /// \mathsf{bits} + b$. When the parent is a path, the child is that path
-    /// followed by $b$, and its `bits` stay below $2^{d+1}$, so no sum wraps.
+    /// followed by $b$, and its `bits` stay below $2^{j+1}$, so no sum wraps.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
         self.depth

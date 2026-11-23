@@ -85,10 +85,10 @@ impl QrClass {
 /// every depth $j$, its side at $R_0 + j$, a sum in the field. $R_0$ and a
 /// [`QrProfile`] of depth $d$ therefore determine one class of values, those
 /// whose first $d$ sides are the profile's, and a value is in one class of
-/// each depth. Every element is a valid $R_0$, and no step constrains the
-/// choice. A step that starts an intake takes it from `Step::Witness`, every
-/// later step carries it as the section above says, and a step that tests a
-/// value classifies at the $R_0$ of its bucket.
+/// each depth. Every element is a valid $R_0$. A step that starts an intake
+/// takes it from `Step::Witness`, every later step copies it from an input
+/// header or holds two inputs' copies equal, and a step that tests a value
+/// classifies at the $R_0$ of its bucket.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
