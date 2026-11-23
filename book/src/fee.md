@@ -23,7 +23,9 @@ fee itself.
 ## Max Fee Note
 
 Every bundle has one max fee note with the opening $(\pk, \feemax, \psi, \rcm)$
-and the fields of a [note](./notes.md). The maximum fee can be zero. Its
+and the fields of a [note](./notes.md).
+The fee steps require a nonzero trapdoor $\rcm$ in this opening.
+The maximum fee can be zero. Its
 payment key $\pk$ owns the fee change note. The bundle publishes only the max
 fee note's value commitment:
 

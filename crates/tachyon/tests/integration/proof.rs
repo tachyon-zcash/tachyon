@@ -344,6 +344,36 @@ fn spend_rejects_invalid_note() {
 }
 
 #[test]
+fn note_seed_and_output_bind_reject_zero_rcm() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = Note {
+        pk: user.pak.derive_payment_key(),
+        value: value::Positive::try_from(500).unwrap(),
+        psi: nullifier::Trapdoor::random(rng),
+        rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
+    };
+
+    let seed = app.seed(
+        rng,
+        delegation::NoteSeed,
+        (note.value, note.psi, note.rcm, user.pak),
+    );
+    let Err(ragu::Error::InvalidWitness(seed_error)) = seed else {
+        panic!("NoteSeed: expected InvalidWitness, got {:?}", seed.err());
+    };
+    assert_eq!(seed_error.to_string(), "division by zero");
+
+    let rcv = value::Trapdoor::random(rng);
+    let bind = app.seed(rng, output::OutputBind, (note, rcv));
+    let Err(ragu::Error::InvalidWitness(bind_error)) = bind else {
+        panic!("OutputBind: expected InvalidWitness, got {:?}", bind.err());
+    };
+    assert_eq!(bind_error.to_string(), "division by zero");
+}
+
+#[test]
 fn step_accepts_zero_value_note() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);

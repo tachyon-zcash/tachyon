@@ -469,7 +469,7 @@ The note's age never becomes public. The lineage carries only its current epoch,
 ### Stamp construction {#stamp-construction}
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
-`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded. Deriving the pad from the note opening hides which member is the commitment and whether the action is an output[^tachygrams].
+`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. It requires a nonzero trapdoor $\mathsf{rcm}$ and nonzero tachygrams. Deriving the pad from the note opening hides which member is the commitment and whether the action is an output[^tachygrams].
 Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
 `OutputAction` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
 `SpendAction` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, then the action verification key and action digest, and emits `Actions` whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
@@ -515,17 +515,15 @@ Consensus verifies the published [anchor's end-of-block membership and recency](
 
 ### Rerandomization at trust boundaries
 
-A stamp is rerandomized before it is compressed, it is compressed before it goes on the wire, and it goes on the wire at every trust boundary.
-
-A stamp crosses a trust boundary when the party that built it gives it to anyone else: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
-It crosses as a [stamp trailer](./bundle.md#stamp-trailer), whose `proofTachyon` is the compressed stamp proof.
+Whoever builds a stamp rerandomizes it before the stamp leaves them.
+A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
 Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
-It acts on the uncompressed stamp proof, so it comes first: an aggregator that [decompresses](./aggregation.md#merge-to-produce-aggregate) stamps to lift or merge them rerandomizes the stamp it built and then compresses it.
+What crosses these boundaries is a rerandomized stamp with its stamp proof uncompressed, since a stamp is [compressed](./bundle.md#stamp-trailer) once, for the block.
+Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
 The implementation rerandomizes where it builds a stamp: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize their `Stamp` PCD, and `ProofStamp::compress` is a separate call.
 It rerandomizes no other PCD.
-Under the [stopgap](./bundle.md#stamp-trailer), a stamp outside a block goes on the wire rerandomized and uncompressed, and is compressed once, for the block.
 
 ## Simple transaction
 

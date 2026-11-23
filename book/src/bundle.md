@@ -38,7 +38,7 @@ The action digest binds `cv`, `rk`, and the pair through its sum and product. Th
 
 ### Stamp
 
-The **stamp** carries a recursive stamp proof that all covered actions and fees follow the protocol rules. A stamp is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries) before it is compressed, and compressed before it goes on the [wire](#stamp-trailer).
+The **stamp** carries a recursive stamp proof that all covered actions and fees follow the protocol rules. Whoever builds a stamp [rerandomizes](./proof-tree.md#rerandomization-at-trust-boundaries) it before it leaves them.
 
 It contains:
 
@@ -236,9 +236,9 @@ Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hSta
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
-`proofTachyon` is the compressed stamp proof, in the mempool and in a block. An aggregator [decompresses](./aggregation.md#merge-to-produce-aggregate) a stamp to [lift](./proof-tree.md#stamp-anchor) or merge it. The implementation does not decompress yet. As a stopgap until it can, a stamp outside a block carries the uncompressed stamp proof in the same `tachyonBundleState == 0x01` layout, with the uncompressed length in `sizeProofTachyon`, and only block items carry the compressed one.
+`proofTachyon` holds the compressed stamp proof in a block and the uncompressed stamp proof before the block. Both use the same `tachyonBundleState == 0x01` layout, and `sizeProofTachyon` is the length of the one present. A stamp is compressed once, for the block. Until then it travels uncompressed, because [lifting](./proof-tree.md#stamp-anchor), [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take the uncompressed stamp proof.
 
-[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. Under the stopgap, an uncompressed stamp proof enters the same way.
+[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 
 ### Stripped trailer
 
