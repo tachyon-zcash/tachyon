@@ -22,7 +22,7 @@ use zcash_tachyon::{
         self, ProveError,
         proof::{
             App,
-            stamp::{ActionMerge, Actions, Stamp, StampMerge},
+            stamp::{Actions, Stamp, StampMerge},
         },
     },
     value, witness,
@@ -367,6 +367,8 @@ fn bundle_verifies_with_two_spend_authorities() {
         .derive_auth_private()
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
+    // `sign` signs every spend with one key, so replace the signature for Bob's
+    // spend.
     authorized.insert(bob_spend.descriptor(), bob_sig);
     let signatures = plan.apply_signatures(rng, &sighash, authorized).unwrap();
     let bundle = plan.assemble(signatures, proof);
@@ -392,24 +394,13 @@ fn action_merge_rejects_different_anchors() {
         .prove(rng, app, vec![])
         .unwrap();
 
-    let pair_a = left.pairs[&desc_a];
-    let pair_b = right.pairs[&desc_b];
-    let digests = ActionSetPoly::from_iter([desc_a.digest(pair_a), desc_b.digest(pair_b)]);
-    let tachygrams = TachygramSetPoly::from_iter([pair_a.0, pair_a.1, pair_b.0, pair_b.1]);
-    let left_pcd = left.proof.carry::<Actions>(left.anchor);
-    let right_pcd = right.proof.carry::<Actions>(right.anchor);
+    let left_pcd = left.proof.clone().carry::<Actions>(left.anchor);
+    let right_pcd = right.proof.clone().carry::<Actions>(right.anchor);
     assert!(app.verify_uncompressed(&left_pcd, &mut *rng).unwrap());
     assert!(app.verify_uncompressed(&right_pcd, &mut *rng).unwrap());
-    let (forged, ()) = app
-        .fuse(
-            rng,
-            ActionMerge,
-            witness::action_merge((*left_pcd.data(), *right_pcd.data()), digests, tachygrams),
-            left_pcd,
-            right_pcd,
-        )
-        .unwrap();
-    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
+    let merged = left.merge(rng, app, right).unwrap();
+    let merged_pcd = merged.proof.carry::<Actions>(merged.anchor);
+    assert!(!app.verify_uncompressed(&merged_pcd, &mut *rng).unwrap());
 }
 
 #[test]

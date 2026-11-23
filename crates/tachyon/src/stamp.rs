@@ -499,7 +499,8 @@ impl ActionsPlan {
 
     /// Prove and merge the planned actions, then rerandomize the proof.
     /// `spend_inputs` pairs with the planned spends by position; each spend
-    /// supplies its own proof authorizing key.
+    /// supplies its own proof authorizing key. Spans advance each spend's
+    /// anchor as in [`Plan::prove`].
     ///
     /// # Errors
     ///
@@ -509,8 +510,7 @@ impl ActionsPlan {
     ///
     /// # Panics
     ///
-    /// Panics if there are no planned actions or an output note has a zero
-    /// `rcm`.
+    /// Panics if an output note has a zero `rcm`.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's key, secret, spendable and spans"
@@ -526,7 +526,10 @@ impl ActionsPlan {
             Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
     ) -> Result<ProvenActions, ProveError> {
-        #[expect(clippy::expect_used, reason = "the part must contain an action")]
+        #[expect(
+            clippy::expect_used,
+            reason = "actions_plan selects at least one action"
+        )]
         let (
             ProvenActions {
                 anchor: merged_anchor,
@@ -536,7 +539,7 @@ impl ActionsPlan {
             ..,
         ) = self
             .prove_merged(rng, app, spend_inputs)?
-            .expect("the part must contain an action");
+            .expect("actions_plan selects at least one action");
         let (proof, anchor) = app
             .rerandomize(merged_proof.carry::<Actions>(merged_anchor), rng)
             .map_err(ProveError::ProofFailed)?

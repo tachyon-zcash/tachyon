@@ -234,7 +234,7 @@ flowchart LR
         subgraph prover["each prover"]
             leaf@{ shape: st-rect, label: "action leaf" }
             merge_leaves((ActionMerge))
-            part@{ shape: st-rect, label: "Actions parts" }
+            part@{ shape: st-rect, label: "Actions part" }
         end
         merge_parts((ActionMerge))
         actions[Actions]

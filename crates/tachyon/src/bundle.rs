@@ -462,7 +462,7 @@ impl Plan {
     ///
     /// # Panics
     ///
-    /// Panics if a descriptor names no action of the plan.
+    /// Panics if `descriptors` is empty or names an action outside the plan.
     #[must_use]
     pub fn actions_plan(
         &self,
@@ -470,8 +470,8 @@ impl Plan {
         descriptors: &BTreeSet<action::Descriptor>,
     ) -> stamp::ActionsPlan {
         assert!(
-            descriptors.is_subset(&self.descriptors()),
-            "selected descriptors must name planned actions"
+            !descriptors.is_empty() && descriptors.is_subset(&self.descriptors()),
+            "select at least one descriptor, all from planned actions"
         );
         let spends = self
             .spends
