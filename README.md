@@ -50,6 +50,9 @@ A stamp's adjuncts are the other bundles it covers, listed by transaction id.
 `merge` combines two stamps into one, and `unmerge` divides one back out.
 `strip` removes the stamp from a bundle that another stamp covers.
 
+In the crate today, `merge` and `unmerge` take uncompressed stamps.
+`compress` produces a stamp with a compressed proof.
+
 In the crate, an action's `cv` and `rk` form an `action::Descriptor`, and its
 signature and tachygrams sit beside it in `Bundle::action_auth`. The book's
 [Bundles](book/src/bundle.md) chapter explains every field.

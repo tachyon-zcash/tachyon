@@ -82,7 +82,7 @@ Consensus and sync services publish spans as an epoch progresses.
 A wallet lifts its stamp along the published spans to the end of the latest one.
 For the stamps published after that, it builds its own span.
 
-On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor including its fee change, the anchor, and the stamp proof.
+On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 
 After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
@@ -382,7 +382,7 @@ Every bucket of one network shares all four.
 The builder keeps the buckets' polynomials, the tree, and one proof for the root, and drops the per-bucket proofs.
 
 A query walks back down. `EvidenceTreeDescend` witnesses one node's four children per level, checks they hash to the node it holds, and selects among them on two side bits; the levels per step are fixed, so a deeper tree takes a longer chain of descents.
-`EvidenceTreeOpen` then takes the leaf's epoch, anchors and first discriminant from the tree, witnesses its profile and contents, checks the leaf digest against the root it has reached, and emits the `QrBucket` the leaf stands for. Only a descent emits a tree whose root is a leaf digest, so every open follows one. `QrUnspentInit` and `QrSpendableInit` consume it unchanged.
+`EvidenceTreeOpen` then takes the leaf's epoch, anchors and first discriminant from the tree, witnesses its profile and contents, and emits the `QrBucket` the leaf stands for. To check the replayed leaf, it recomputes the leaf digest using the bridge hash of the commitment to the bucket's contents polynomial and requires it to equal the root reached by descent. Only a descent emits a tree whose root is a leaf digest, so every open follows one. `QrUnspentInit` and `QrSpendableInit` consume it unchanged.
 Binding the profile into the leaf is what makes the replay safe: a real bucket's contents presented under the tested value's own profile would pass the fold and open nonzero, proving exclusion for a value published in a different bucket.
 Leaf and node digests use different domains, $\texttt{Tachyon-QrBucket}$ and $\texttt{Tachyon-EvidNode}$, so no path can stop one level short and present a node as a bucket.
 
@@ -492,7 +492,8 @@ The work splits as follows, each stamp step also opening its action-set and tach
 Every stamp's action set polynomial is a product of linear factors, one per action or fee digest, and its tachygram set polynomial is the product over exactly those digests' tachygrams.
 Unique factorization makes the division exact: the divisor's digests are a sub-multiset of the dividend's. Each digest determines its tachygrams by Poseidon collision resistance, so the tachygram quotient holds exactly the remaining digests' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note). Its fee digest absorbs the same fee change commitment that it adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
+
+[`FeeFuse`](./fee.md#fee-steps) transforms `Actions` into a `Stamp` by multiplying each set polynomial by its linear fee factor. Its fee digest absorbs the same fee change commitment that the step adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
 
 ### Stamp anchor
 
@@ -502,13 +503,14 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 ### Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
+Whoever releases a stamp must rerandomize it first, but rerandomization alone does not establish zero knowledge or unlinkability for current stamp proofs.
+A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
-A PCD proof is a commitment to its own witness data. Two proofs built from overlapping private inputs are correlated as group elements, even when their public headers reveal nothing. The proof a wallet holds after `SpendBind` and the proof it publishes in a stamp share a lineage, so an observer holding both could link them, and an aggregator that merges two stamps sees both inputs directly.
+Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
+Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
-A stamp crosses a trust boundary at exactly these points. A wallet hands an autonome to the p2p network; an aggregator hands a merged stamp onward while retaining the inputs it merged. Rerandomizing at each handoff replaces the proof with an unrelated one that verifies against the same header, so the released artifact carries no correlation back to the private lineage that produced it, and none forward to a later release of the same lineage.
-
-The rule is that a proof leaving the process that built it is rerandomized first. Intermediate PCDs that stay inside a wallet, such as a derivation window or an `ArbitraryUnspent` segment, do not need it: nothing outside the wallet ever observes them.
+`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Stamp` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
+The implementation rerandomizes no other PCD.
 
 ## Simple transaction
 
