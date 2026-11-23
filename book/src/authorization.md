@@ -5,7 +5,7 @@ This chapter covers each layer, then shows the complete flow from action creatio
 
 ## Actions
 
-Each tachyaction requires a fresh randomized key pair.
+Each action requires a fresh randomized key pair.
 
 The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
 

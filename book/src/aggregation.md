@@ -98,20 +98,20 @@ flowchart LR
 
     subgraph pool["Mempool"]
         subgraph mp1["Autonome 1"]
-            mp1_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp1_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp1_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp1_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp2["Autonome 2"]
-            mp2_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp2_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp2_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp2_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp3["Autonome 3"]
-            mp3_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp3_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp3_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp3_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
         subgraph mp4["Autonome 4"]
-            mp4_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
-            mp4_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            mp4_ta:::ta_vec@{ shape: procs, label: "actions" }
+            mp4_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
     end
 
@@ -129,23 +129,23 @@ flowchart LR
         direction LR
 
         subgraph bk0["Aggregate"]
-            bk0_ts:::tstamp@{ shape: trap-t, label: "tachystamp" }
+            bk0_ts:::tstamp@{ shape: trap-t, label: "stamp" }
         end
 
         bk0 ~~~ invisible
 
         subgraph invisible[" "]
             subgraph bk1["Adjunct 1"]
-                bk1_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk1_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk2["Adjunct 2"]
-                bk2_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk2_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk3["Adjunct 3"]
-                bk3_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk3_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
             subgraph bk4["Adjunct 4"]
-                bk4_ta:::ta_vec@{ shape: procs, label: "tachyaction" }
+                bk4_ta:::ta_vec@{ shape: procs, label: "actions" }
             end
         end
     end
