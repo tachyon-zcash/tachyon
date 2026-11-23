@@ -18,11 +18,11 @@ use crate::{
 ///
 /// # Injectivity
 ///
-/// The type holds any field element. [`new`](Self::new) returns an
-/// [action digest](poseidon::action_digest) and
-/// [`Descriptor::digest`](crate::fee::Descriptor::digest) a
-/// [fee digest](poseidon::fee_digest). Either determines its function and
-/// what it absorbed ([`poseidon`]).
+/// [`new`](Self::new) returns an [action digest](poseidon::action_digest) and
+/// [`Descriptor::digest`](crate::fee::Descriptor::digest) returns a
+/// [fee digest](poseidon::fee_digest). Either digest determines its function
+/// and what it absorbed ([`poseidon`]). The type itself holds any field
+/// element.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
 

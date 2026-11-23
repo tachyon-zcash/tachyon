@@ -1,28 +1,28 @@
 //! # Multiset
 //!
-//! A multiset of field elements is encoded as the monic polynomial whose roots
-//! are its members, its *set polynomial*.
+//! A *set polynomial* encodes a multiset of field elements as the monic
+//! polynomial with those members as roots.
 //!
 //! $$
 //!   S(X) = \prod_{m \in S}{(X - m)}
 //! $$
 //!
-//! The empty multiset is the constant one.
+//! The constant one encodes the empty multiset.
 //!
 //! ## Injectivity
 //!
+//! A set polynomial determines its members and their multiplicities because
 //! $\mathbb{F}_p\[X\]$ factors uniquely and each $X - m$ is monic and
-//! irreducible, so a set polynomial determines its members with their
-//! multiplicities. The product of two set polynomials is that of the multiset
-//! sum, a polynomial that divides one is a scalar times that of a
-//! sub-multiset, and $S(x) = 0$ exactly when $x$ is a member.
+//! irreducible. Multiplying two set polynomials gives the set polynomial of the
+//! multiset sum. Any divisor of a set polynomial is a scalar multiple of a
+//! sub-multiset's set polynomial, and $S(x) = 0$ holds iff $x$ is a member.
 //!
-//! No constraint makes a slot's polynomial a product of linear factors. What
-//! a step shows about a slot is about that polynomial's roots and factors,
-//! and is about a multiset only once the polynomial is known to be a set
-//! polynomial. An identity at the challenge against factors computed in the
-//! circuit from values fixed before the challenge shows that, as does an
-//! accumulator that a verifier recomputes from published members.
+//! No constraint forces a slot's polynomial to split into linear factors. A
+//! step proves claims about a slot polynomial's roots and factors, and those
+//! claims describe a multiset only after something establishes a set
+//! polynomial. Two mechanisms do so. A step checks a challenge identity against
+//! in-circuit factors built from values fixed before the challenge, or a
+//! verifier recomputes the accumulator from published members.
 
 extern crate alloc;
 

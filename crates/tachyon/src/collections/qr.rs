@@ -7,16 +7,16 @@
 //!
 //! ## Sides
 //!
-//! A field element is zero, a nonzero square or a non-residue, and only one
-//! of the three. The side of $x$ at $R$ is therefore a function of $x$ and
-//! $R$, and every pair has one.
+//! Every pair $(x, R)$ has one side because each field element is either zero,
+//! a nonzero square, or a non-residue, and never two of these.
 //!
-//! - A class root with $m = 1$ shows that $x$ takes the residue side.
-//! - A class root with $m = c$ shows that $x + R$ is zero or a non-residue, by
-//!   the product rule on [`QUADRATIC_NON_RESIDUE`]. Together with $x + R \neq
-//!   0$ it shows that $x$ takes the non-residue side.
+//! - With $m = 1$, a class root puts $x$ on the residue side.
+//! - With $m = c$, the product rule on [`QUADRATIC_NON_RESIDUE`] makes $x + R$
+//!   zero or a non-residue. Adding $x + R \neq 0$ puts $x$ on the non-residue
+//!   side.
 //!
-//! A value other than $-R$ has a root for its own side and none for the other.
+//! Every value other than $-R$ has a root for its own side and none for the
+//! other.
 //!
 //! ## Class decomposition
 //!
@@ -28,17 +28,17 @@
 //!   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 //! $$
 //!
-//! Conversely, take any polynomials $q$, $u$ and $h$ that satisfy the
-//! identity. Then $u(x)^2 = m \cdot (x + R)$ at every root $x$ of $q$. With
-//! $m = 1$ every root of $q$ takes the residue side. With $m = c$ every root
-//! of $q$ other than $-R$ takes the non-residue side.
+//! Conversely, if polynomials $q$, $u$ and $h$ satisfy the identity, then
+//! $u(x)^2 = m \cdot (x + R)$ holds at every root $x$ of $q$. With $m = 1$
+//! every root of $q$ takes the residue side, and with $m = c$ every root of $q$
+//! other than $-R$ takes the non-residue side.
 //!
 //! The exceptional value $-R$ satisfies the identity with root $0$ under
 //! either multiplier. The condition $q_0(-R) \neq 0$ keeps it on the residue
 //! side.
 //!
-//! The arguments use the identity only at the roots of $q$ in the field.
-//! They draw nothing from it about a value that is not a root of $q$.
+//! The arguments apply the identity only at roots of $q$ in the field and say
+//! nothing about non-roots.
 
 extern crate alloc;
 

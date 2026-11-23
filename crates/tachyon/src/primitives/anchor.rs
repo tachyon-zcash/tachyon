@@ -29,74 +29,68 @@ pub enum AnchorError {
 
 /// Running anchor over the consensus state.
 ///
-/// An anchor is the head of a hash chain over a pool history. The history
-/// starts at the genesis value [`Anchor::default`], $\mathsf{ep}(0, 0)$, and
-/// each entry advances the anchor $a$ by one digest.
+/// An anchor heads a hash chain over a pool history starting at the genesis
+/// value [`Anchor::default`], $\mathsf{ep}(0, 0)$. Each entry advances $a$ by
+/// one digest.
 ///
-/// - A stamp published in epoch $e$ gives the stamp absorption $\mathsf{st}(a,
-///   e, B)$, the [`anchor_next_stamp`](poseidon::anchor_next_stamp) digest of
-///   $a$, $e$ and the two coordinates of $B$, the canonical [bridge
+/// - Publishing a stamp in epoch $e$ yields the stamp absorption
+///   $\mathsf{st}(a, e, B)$, the
+///   [`anchor_next_stamp`](poseidon::anchor_next_stamp) digest of $a$, $e$ and
+///   the two coordinates of $B$, the canonical [bridge
 ///   hash](super::TachygramSetBridge) of the stamp's tachygram accumulator.
-/// - A boundary into epoch $e \geq 1$ gives the boundary digest $\mathsf{ep}(a,
-///   e)$ of $a$ into $e$, the
-///   [`anchor_next_epoch`](poseidon::anchor_next_epoch) digest. In a history,
-///   $a$ is the final anchor of the epoch before $e$ and the digest is the
-///   entry anchor of $e$.
+/// - Crossing into epoch $e \geq 1$ yields the boundary digest $\mathsf{ep}(a,
+///   e)$, the [`anchor_next_epoch`](poseidon::anchor_next_epoch) digest of $a$
+///   into $e$. In a history, $a$ is the previous epoch's final anchor and the
+///   digest is the entry anchor of $e$.
 ///
 /// # Injectivity
 ///
-/// An anchor stands for the pool history that produced it, its entries in
-/// order. A digest determines its function and the elements it absorbed
-/// ([Poseidon](poseidon#injectivity)), so an anchor determines its last
-/// entry and the anchor before it. A stamp absorption determines the epoch
-/// and the bridge hash, and the bridge hash determines the accumulator and
-/// its polynomial ([`TachygramSetBridge`](super::TachygramSetBridge)). An
-/// epoch is an integer at most `EPOCH_MAX` and is absorbed as that integer.
+/// An anchor determines the ordered entries of its pool history. Because a
+/// digest determines its function and absorbed elements
+/// ([Poseidon](poseidon#injectivity)), an anchor determines its last entry and
+/// predecessor anchor. A stamp absorption determines its epoch and bridge hash,
+/// and the bridge hash determines the accumulator and its polynomial
+/// ([`TachygramSetBridge`](super::TachygramSetBridge)). Epochs enter as
+/// integers at most `EPOCH_MAX`.
 ///
-/// No later anchor of a history is the genesis value. A stamp absorption has
-/// the other tag, and a boundary digest of a history absorbs another epoch,
-/// because [`next_epoch`](Self::next_epoch) rejects epoch zero. Walking back
-/// from an anchor therefore finds one entry at each step and ends only at the
-/// history's start. Two histories with one anchor have the same entries, and no
-/// history holds an anchor twice.
+/// Walking back from an anchor recovers one entry per step and terminates only
+/// at genesis, so matching anchors imply identical histories and no history
+/// repeats an anchor. No later history anchor equals genesis because stamp
+/// absorptions use a distinct tag and [`next_epoch`](Self::next_epoch) rejects
+/// epoch zero.
 ///
 /// # Chains in a step
 ///
-/// A step computes the same digests on wires, and several take the absorbed
-/// anchor or the epoch from the prover. Such a step shows that a chain of
-/// digests exists. It does not show that the chain is part of a pool history.
+/// Steps compute the same digests on wires, sometimes taking the predecessor
+/// anchor or epoch from the prover. Satisfying a step proves that a digest
+/// chain exists without tying it to a pool history.
 ///
-/// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ is, for each $i$
-/// from 1 to $k$, an epoch $e_i$ at most `EPOCH_MAX`, a polynomial $P_i$
-/// that is neither zero nor the constant one and a bridge hash $B_i$ of the
-/// accumulator of $P_i$, with $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The
-/// chain is *in epoch* $e$ when every $e_i$ is $e$. A chain of no absorptions
-/// has $a_k = a_0$.
+/// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
+/// $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a
+/// bridge hash $B_i$ of $P_i$'s accumulator at each $i \in 1..=k$, with
+/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. Every $e_i$ equals $e$ when the
+/// chain is *in epoch* $e$, and $k = 0$ sets $a_k = a_0$.
 ///
-/// A step adds an absorption with the `anchor_next_stamp` circuit on an
-/// anchor wire, an [`EpochIndex`](crate::gadgets::epoch::EpochIndex) gadget
-/// and its two bridge hash wires. Those wires
-/// are a bridge hash of the accumulator in the step's last output slot
-/// ([Recursion](crate::stamp::proof#assumptions)), so the absorption's
-/// polynomial is the one in that slot. It is not zero, because the
-/// accumulator of the zero polynomial is the identity and a bridge hash
-/// commits to an accumulator's two affine coordinates. Each such step shows
-/// that it is not the constant one, as [`next_stamp`](Self::next_stamp)
-/// rejects the empty set. Only
-/// [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) reads an
-/// absorption in an identity at its challenge.
+/// To add an absorption, a step runs `anchor_next_stamp` on an anchor wire, an
+/// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) gadget and its two bridge
+/// hash wires. Under [Recursion](crate::stamp::proof#assumptions), those wires
+/// carry a bridge hash for the accumulator in the step's last output slot,
+/// tying the absorption's polynomial to that slot. Because a bridge hash
+/// commits to affine coordinates while the zero polynomial's accumulator is the
+/// identity, that polynomial is nonzero. Each step also rules out the constant
+/// one, matching [`next_stamp`](Self::next_stamp) on the empty set. Only
+/// [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) evaluates an
+/// absorption inside a challenge identity.
 ///
-/// Each $a_i$ after $a_0$ determines $a_{i-1}$, $e_i$, $B_i$ and $P_i$, as
-/// above. When $a_k$ is an anchor of a pool history, the $k$ absorptions are
-/// the last $k$ entries behind $a_k$ in that history. Each is a stamp entry,
-/// $e_i$ is its epoch, $B_i$ is the canonical bridge hash of its accumulator
-/// and $P_i$ is the polynomial that accumulator commits to.
+/// Each $a_i$ after $a_0$ determines $a_{i-1}$, $e_i$, $B_i$ and $P_i$. When
+/// $a_k$ belongs to a pool history, the $k$ absorptions match the last $k$
+/// entries behind $a_k$, where each entry is a stamp in epoch $e_i$ with
+/// canonical bridge hash $B_i$ and committed polynomial $P_i$.
 ///
-/// A boundary digest $\mathsf{ep}(a, e)$ that is a later anchor of a pool
-/// history is likewise that history's boundary entry into $e$, with $a$ the
-/// anchor behind it. One that is the genesis value is no entry. It is the
-/// history's start, with $a$ and $e$ both zero, and nothing shows that zero
-/// is an anchor.
+/// Likewise, a boundary digest $\mathsf{ep}(a, e)$ appearing after genesis in a
+/// pool history is that history's boundary entry into $e$ from predecessor $a$.
+/// At genesis, $a$ and $e$ are both zero rather than a history entry, and
+/// nothing makes zero an anchor.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 

@@ -9,9 +9,9 @@ use crate::pasta::Fp;
 ///
 /// # Injectivity
 ///
-/// A root is a leaf digest or a node digest of
-/// [`poseidon`](crate::digest::poseidon#injectivity). It is not known to be
-/// both and determines what it absorbed, so a root built from bucket headers
-/// determines the shape of its tree and the bucket header at every leaf.
+/// A root built from bucket headers determines its tree shape and every leaf's
+/// bucket header. Each root is either a leaf digest or a node digest of
+/// [`poseidon`](crate::digest::poseidon#injectivity), cannot be known as both,
+/// and determines what it absorbed.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct EvidenceTreeRoot(pub Fp);

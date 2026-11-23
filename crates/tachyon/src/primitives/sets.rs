@@ -1,20 +1,17 @@
-//! Set polynomials, their accumulators and the bridge hash of an
-//! accumulator.
+//! Set polynomials, their accumulators and accumulator bridge hashes.
 //!
 //! # Injectivity
 //!
-//! An accumulator determines its polynomial, by the
-//! [Commitments assumption](crate::stamp::proof#assumptions), because no slot
-//! holds more than $2^{13}$ coefficients. The accumulator of a set polynomial
-//! therefore determines its members, fewer than $2^{13}$ of them, by the
-//! [multiset] encoding. The types
-//! here hold any polynomial and any point, and a header that carries one says
-//! which polynomial its slot holds.
+//! Because no slot exceeds $2^{13}$ coefficients, an accumulator determines its
+//! polynomial under the
+//! [Commitments assumption](crate::stamp::proof#assumptions). A set
+//! polynomial's accumulator therefore determines its fewer than $2^{13}$
+//! members via the [multiset] encoding. These types accept any polynomial or
+//! point, and each header specifies which polynomial occupies its slot.
 //!
-//! The three kinds differ only in what a member is, and nothing in an
-//! accumulator says which kind it is. A header's `OnlinePolyCommit` fixes the
-//! kind of each slot and a step names the kind it opens, so a step reads a
-//! slot only as the kind its header declares.
+//! Although an accumulator carries no member-kind tag, a header's
+//! `OnlinePolyCommit` fixes each slot's kind and steps name the kind they open,
+//! so every step reads a slot as its declared kind.
 
 use core::iter;
 
@@ -39,15 +36,14 @@ use crate::{
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(EqAffine);
 
-/// Bridge hash of a tachygram accumulator: a Pallas point.
+/// Bridge hash of a tachygram accumulator as a Pallas point.
 ///
-/// It commits to the accumulator's two coordinates under the nested
-/// generators and determines the accumulator, by the
-/// [Commitments assumption](crate::stamp::proof#assumptions), and with it the
-/// polynomial. One accumulator
-/// has many bridge hashes. [`bridge_hash`](crate::bridge_hash::bridge_hash)
-/// computes the one an honest prover uses, and [`Anchor::next_stamp`] absorbs
-/// that one. A step reads its own as two wires that are not fixed before its
+/// Committing to the accumulator's two coordinates under the nested generators,
+/// a bridge hash determines the accumulator and its polynomial under the
+/// [Commitments assumption](crate::stamp::proof#assumptions). Each accumulator
+/// has many bridge hashes. Honest provers compute the canonical one via
+/// [`bridge_hash`](crate::bridge_hash::bridge_hash) for [`Anchor::next_stamp`],
+/// whereas steps read their bridge hash as two wires chosen after the
 /// challenge.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetBridge(EpAffine);
@@ -100,13 +96,13 @@ pub struct AnchorSetCommit(EqAffine);
 
 /// Set polynomial of a tachygram set (members encoded as roots).
 ///
-/// A member is a [`Tachygram`]. The set is one stamp's, or the multiset sum
-/// of several stamps' where a step multiplies their polynomials.
+/// Members are [`Tachygram`] values from one stamp, or from the multiset sum of
+/// several stamps when a step multiplies their polynomials.
 ///
-/// A step that takes one from its prover as a stamp's does not show that it
-/// is a set polynomial. The step absorbs a bridge hash of its accumulator
-/// into an [`Anchor`], and an anchor of a pool history determines the
-/// accumulator of each stamp behind it.
+/// Steps taking a stamp polynomial from the prover do not constrain it to split
+/// into linear factors. Instead, they absorb a bridge hash of its accumulator
+/// into an [`Anchor`], and a pool-history anchor determines each preceding
+/// stamp's accumulator.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 

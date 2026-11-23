@@ -20,11 +20,11 @@ use crate::pasta::Fp;
 ///
 /// # Injectivity
 ///
-/// The bits stand for the integer $n = \sum_i 2^i b_i$, of which they are
-/// the binary expansion. No use has more than 254 bits, and $2^{254}$ is
-/// below both Pasta moduli, so distinct bit strings are distinct elements of
-/// $\mathbb{F}_p$ for [`pack`](Self::pack) and distinct scalars of
-/// $\mathbb{F}_q$ for a [fixed base](super::fixed_base).
+/// Distinct bit strings map to distinct elements of $\mathbb{F}_p$ under
+/// [`pack`](Self::pack) and distinct scalars of $\mathbb{F}_q$ for a
+/// [fixed base](super::fixed_base). The bits form the binary expansion of
+/// $n = \sum_i 2^i b_i$, and every width here is at most 254, with $2^{254}$
+/// below both Pasta moduli.
 #[derive(Gadget)]
 pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
     #[ragu(gadget)]
@@ -32,13 +32,12 @@ pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
-    /// Allocates `BITS` Boolean wires and assigns them the low bits of
-    /// `value`, an element of either Pasta field.
+    /// Allocates `BITS` Boolean wires assigned to the low bits of `value`, an
+    /// element of either Pasta field.
     ///
-    /// No constraint relates the bits to `value` or to another wire. A caller
-    /// that needs them to be a certain integer constrains
-    /// [`pack`](Self::pack)'s output or uses
-    /// [`from_element`](Self::from_element).
+    /// No constraint ties the bits to `value` or any other wire. Callers
+    /// needing a specific integer constrain [`pack`](Self::pack)'s output or
+    /// call [`from_element`](Self::from_element).
     pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
         let bits = value.map(|element| element.to_le_bits());
         Ok(Self {
@@ -55,9 +54,9 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
     ///
-    /// The width is at most 254, so the packing does not wrap. The bits are
-    /// the only string of this width whose integer is `element`, and an
-    /// element at or above $2^{BITS}$ has no assignment.
+    /// Because `BITS` is at most 254, packing never wraps. This produces the
+    /// unique bit string of width `BITS` for `element`, leaving elements at or
+    /// above $2^{BITS}$ with no assignment.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
         Ok(Self {
             bits: decompose_n(dr, &mut (), element)?,

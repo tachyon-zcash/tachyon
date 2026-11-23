@@ -81,14 +81,13 @@ impl QrClass {
 ///
 /// # Injectivity
 ///
-/// $R_0$ gives every field element a [side](crate::collections::qr#sides) at
-/// every depth $j$, its side at $R_0 + j$, a sum in the field. $R_0$ and a
-/// [`QrProfile`] of depth $d$ therefore determine one class of values, those
-/// whose first $d$ sides are the profile's, and a value is in one class of
-/// each depth. Every element is a valid $R_0$. A step that starts an intake
-/// takes it from `Step::Witness`, every later step copies it from an input
-/// header or holds two inputs' copies equal, and a step that tests a value
-/// classifies at the $R_0$ of its bucket.
+/// Together with a depth-$d$ [`QrProfile`], $R_0$ determines one value class,
+/// and every value belongs to one class at each depth. Adding $j$ in the field
+/// gives each element a [side](crate::collections::qr#sides) at $R_0 + j$, and
+/// a profile's class holds the values matching its first $d$ sides. Any field
+/// element serves as $R_0$. Intake seeds witness $R_0$ via `Step::Witness`,
+/// later routing steps copy it or equate two inputs' copies, and query steps
+/// classify at their bucket's $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
@@ -253,9 +252,9 @@ impl QrSplit {
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
 ///
-/// A hint. No step checks how it was built, and what the
-/// [class decomposition](crate::collections::qr#class-decomposition) shows
-/// does not depend on it.
+/// Serves as an unchecked hint. What the
+/// [class decomposition](crate::collections::qr#class-decomposition) proves
+/// does not depend on how $u$ was built.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -281,7 +280,7 @@ pub struct QrInterpolantCommit(EqAffine);
 /// Witness polynomial for the class decomposition quotient $h$ in
 /// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
 ///
-/// A hint, as [`QrInterpolantPoly`] is.
+/// Serves as an unchecked hint like [`QrInterpolantPoly`].
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
@@ -308,17 +307,15 @@ pub struct QrQuotientCommit(EqAffine);
 ///
 /// # Injectivity
 ///
-/// A profile stands for a path, the sides $b_0, \dots, b_{d-1}$ taken at
-/// depths $0$ to $d - 1$, with $b_j = 1$ for the residue side. `depth` is $d$,
-/// at most [`MAX_DEPTH`](Self::MAX_DEPTH), and `bits` is $\sum_{j < d} b_j
-/// \cdot 2^{d - 1 - j}$, an integer below $2^d$ in binary. Two paths of one
-/// length differ in `bits` and two of different lengths in `depth`. `bits`
-/// alone does not determine a path, because a path that starts on the
-/// non-residue side has leading zeros.
+/// Within bounds, `(depth, bits)` determines a path $b_0, \dots, b_{d-1}$ of
+/// sides at depths $0$ to $d - 1$, where $b_j = 1$ marks the residue side.
+/// `depth` holds $d \leq$ [`MAX_DEPTH`](Self::MAX_DEPTH), and `bits` packs
+/// $\sum_{j < d} b_j \cdot 2^{d - 1 - j} < 2^d$. Same-length paths differ in
+/// `bits` and different-length paths differ in `depth`. Leading non-residue
+/// sides pack as zeros, so `bits` alone does not fix the path.
 ///
-/// The type holds any two integers, and a pair outside those bounds is no
-/// path. The circuit gadget's `descend` builds a path from a path, and its
-/// `enforce_sides_of` accepts only paths.
+/// Out-of-bounds integer pairs represent no path. In circuits, `descend`
+/// extends a path into a path, and `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct QrProfile {
     /// The number of splits taken.
@@ -370,8 +367,8 @@ impl QrProfile {
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
 /// It carries no class and is distinct from a root $x$ of a set polynomial.
 ///
-/// With a multiplier it [shows the side](crate::collections::qr#sides) of $x$
-/// to a circuit. A zero $x + R$ has the root zero and the residue side.
+/// Paired with a multiplier, $r$ [shows the side](crate::collections::qr#sides)
+/// of $x$ in a circuit. When $x + R = 0$, $r = 0$ puts $x$ on the residue side.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

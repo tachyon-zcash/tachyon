@@ -2,42 +2,39 @@
 //!
 //! # Injectivity
 //!
+//! Each base $B$ is a non-identity point in a group of prime order $q$, and no
+//! [bit string](super::uint::Uint) here exceeds 254 bits. Because $n < 2^{254}
+//! < q$ for the bit string's unreduced integer $n$, $\[n\]B$ determines $n$.
 //! Ragu's `FixedBase::mul` returns $\[n\]B + C$ and `mul_and_add` returns
-//! $\[n\]B + C + P$, for the base $B$, the table's constant correction $C$,
-//! the added point $P$ and the unreduced integer $n$ of the
-//! [bit string](super::uint::Uint). Each base is a point other than the
-//! identity in a group of prime order $q$, and no bit string here has more
-//! than 254 bits, so $n < 2^{254} < q$ and $\[n\]B$ determines $n$.
+//! $\[n\]B + C + P$, for the table's constant correction $C$ and the added
+//! point $P$.
 //!
 //! ## Cases without an assignment
 //!
-//! `mul` has no assignment when its result is the identity, which without a
-//! correction is $n = 0$. `mul_and_add` has none when its result is the
-//! identity or when $P = -\[l + O\]B$, the negation of the partial sum it
-//! adds $P$ to. $l$ is $n$ without the bits of its top window and $O$ is a
-//! constant of the table. A step cannot be proved in these cases, and they
-//! do not change what a satisfied circuit shows.
+//! `mul` has no assignment when its result is the identity, which is $n = 0$
+//! without a correction. `mul_and_add` has no assignment when its result is the
+//! identity or when $P = -\[l + O\]B$ negates the partial sum it adds $P$ to,
+//! for $l$ equal to $n$ without its top-window bits and a table constant $O$.
+//! These cases prevent proving a step and do not weaken what a satisfied
+//! circuit shows.
 //!
 //! ## Value commitments
 //!
-//! A value commitment is $\mathsf{cv} = \[v\]\mathcal{V} +
-//! \[r\]\mathcal{R}$. A step computes the blind point $\[r\]\mathcal{R}$
-//! with `mul` on [`struct@R_BASE`], so $0 < r < 2^{254}$. Where the value may
-//! be other than zero it adds the value term with `mul_and_add`.
+//! A value commitment $\mathsf{cv} = \[v\]\mathcal{V} + \[r\]\mathcal{R}$
+//! determines $v$ and $r$ as integers. A step computes $\[r\]\mathcal{R}$ with
+//! `mul` on [`struct@R_BASE`], holding $0 < r < 2^{254}$, and adds nonzero
+//! value terms with `mul_and_add`.
 //!
-//! A satisfied step shows that its prover knows an opening $(v, r)$ whose
-//! $v$ is the amount the step constrains. Two openings of one point that
-//! differ modulo $q$ give the discrete logarithm of $\mathcal{V}$ to the
-//! base $\mathcal{R}$, which the
-//! [Commitments assumption](crate::stamp::proof#assumptions) says nobody
-//! knows. Nobody therefore knows two openings of one value commitment, and
-//! in that sense it determines its opening modulo $q$. A value has absolute
-//! value at most `MAX_MONEY` and a blind is below $2^{254}$, so the
-//! commitment determines both as integers.
+//! A satisfied step shows that its prover knows an opening $(v, r)$ with the
+//! step's constrained amount $v$. Two openings that differ modulo $q$ yield the
+//! discrete logarithm of $\mathcal{V}$ to the base $\mathcal{R}$, which the
+//! [Commitments assumption](crate::stamp::proof#assumptions) rules out. A value
+//! commitment therefore determines its opening modulo $q$, and because $|v|$ is
+//! at most `MAX_MONEY` and $r < 2^{254}$, it determines both as integers.
 //!
-//! Where a value term is added, each further case without an assignment
-//! needs the blind point to be a known multiple of $\mathcal{V}$, which
-//! gives the same discrete logarithm.
+//! Adding a value term introduces further unassigned cases only when the blind
+//! point is a known multiple of $\mathcal{V}$, which yields the same discrete
+//! logarithm.
 
 use lazy_static::lazy_static;
 use ragu::{primitives::FixedBase, udon::curve::Projective as _};

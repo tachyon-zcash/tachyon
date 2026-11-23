@@ -8,27 +8,22 @@
 //!
 //! # Injectivity
 //!
-//! The permutation has width five and the sponge has rate four. The sponge
-//! adds each block of four absorbed elements into the rate and permutes, and
-//! a last block of fewer than four is added with zeros in the missing
-//! positions. The first squeeze reads rate element zero of the final state,
-//! and each of the next three reads the next rate element of the same state.
-//! No function here squeezes more than four.
+//! Under the [Poseidon assumption](crate::stamp::proof#assumptions), a digest
+//! determines its function and every element that function absorbed, in order.
+//! One element matching two functions' digests is a collision. Absorbing a
+//! point as its two affine coordinates determines the point, and each function
+//! states what its composite inputs determine in turn.
 //!
-//! The sponge does not record how many elements it absorbed, so an input with
-//! a short last block and the same input with zeros filling that block give
-//! one digest. Each tag here belongs to
-//! one function, and that function absorbs a fixed number of elements. Two
-//! inputs to one function therefore differ in an absorbed element, and two
-//! functions differ in the tag. A domain is below $2^{128}$, so distinct
-//! domains are distinct capacity elements.
+//! The permutation has width five and rate four. The sponge adds each
+//! four-element block into the rate and permutes, padding a shorter final block
+//! with zeros. Four squeezes read rate elements zero through three of the final
+//! state, and no function here squeezes more.
 //!
-//! Under the [Poseidon assumption](crate::stamp::proof#assumptions) a digest
-//! then determines its function and every element that function absorbed, in
-//! order. An element that is the digest of two functions is a collision. A
-//! point is absorbed as its two affine coordinates, which determine it. Where
-//! an absorbed element is built from something else, the function says what
-//! the digest determines in turn.
+//! Because the sponge records no input length, a short final block and its
+//! zero-padded form share one digest. Here each tag belongs to one function
+//! with a fixed input length, so distinct inputs to one function differ in an
+//! absorbed element and distinct functions differ in their tag. Domains lie
+//! below $2^{128}$ and map to distinct capacity elements.
 
 use core::array;
 
@@ -69,7 +64,7 @@ const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
 /// $r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\mathsf{pk}, \psi,
 /// \mathsf{rcm})$.
 ///
-/// The blind is the digest read as an integer, which is also the scalar.
+/// Reading the digest as an integer gives the blind scalar.
 #[must_use]
 pub fn feemax_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
     let [hash] = emulated(FEE_BLIND_DOMAIN, [pk, psi, rcm]);
@@ -82,7 +77,7 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{feemax}), y(\mathsf{cv}_\mathsf{feemax}),
 /// \mathsf{fee}, \mathsf{cm}_\mathsf{chg})$.
 ///
-/// `fee` is an integer below $2^{64}$ and enters as that integer.
+/// `fee` enters as an integer below $2^{64}$.
 ///
 /// # Panics
 ///
@@ -113,8 +108,8 @@ const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 ///   )
 /// $$
 ///
-/// The pair is the root multiset of $X^2 - (t_1 + t_2) X + t_1 t_2$. The sum
-/// and product therefore determine the two tachygrams and not their order.
+/// The sum and product determine the two tachygrams without their order, as the
+/// root multiset of $X^2 - (t_1 + t_2) X + t_1 t_2$.
 ///
 /// # Panics
 ///
@@ -174,9 +169,8 @@ const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 ///   )
 /// $$
 ///
-/// `value` is an integer below $2^{64}$ and enters as that integer. The
-/// circuit function absorbs whatever element it is given for $v$, and the
-/// caller bounds it.
+/// `value` enters as an integer below $2^{64}$. The circuit function absorbs
+/// any element for $v$, and the caller bounds it.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -192,8 +186,8 @@ const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 /// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
 /// observer pair them off and recover the output count.
 ///
-/// The pad absorbs the same four elements as [`note_commitment`] under its
-/// own tag.
+/// This function absorbs the same four elements as [`note_commitment`] under
+/// its own tag.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -210,8 +204,8 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 ///   )
 /// $$
 ///
-/// The digest absorbs nothing else of the note, so notes that share $\psi$
-/// and $\mathsf{nk}$ share the master key.
+/// Because the digest absorbs nothing else from the note, notes sharing $\psi$
+/// and $\mathsf{nk}$ share a master key.
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     let [hash] = emulated(NULLIFIER_MASTER_DOMAIN, [psi, nk]);
@@ -226,9 +220,8 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
 ///
-/// The randomizer $\alpha$ is the digest read as an integer. A step
-/// decomposes it into 254 bits, so a digest at or above $2^{254}$ has no
-/// assignment.
+/// Reading the digest as an integer gives $\alpha$. Steps decompose $\alpha$
+/// into 254 bits, leaving digests at or above $2^{254}$ with no assignment.
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(SPEND_ALPHA_DOMAIN, [theta, cm]);
@@ -243,8 +236,7 @@ const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
 ///
-/// The randomizer $\alpha$ is the digest read as an integer, as in
-/// [`alpha_spend`].
+/// Reading the digest as an integer gives $\alpha$, as in [`alpha_spend`].
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(OUTPUT_ALPHA_DOMAIN, [theta, cm]);
@@ -256,15 +248,15 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// Derives the group of consecutive epoch nullifiers starting at the
 /// group-aligned epoch `epoch_start` from the note's master key.
 ///
-/// The group is the first `PoseidonFp::RATE` squeezes of
-/// $\mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ g)$, for $g$ =
-/// `epoch_start`. The nullifier of epoch $e$ is squeeze $e \bmod 4$ of the
-/// group with $g = e - (e \bmod 4)$. The pair $(g,\ e \bmod 4)$ determines
-/// $e$, and the Poseidon assumption covers every squeeze position. A
-/// nullifier therefore determines $\mathsf{mk}$ and $e$.
+/// A nullifier determines $\mathsf{mk}$ and its epoch $e$. For $g$ =
+/// `epoch_start`, the group is the first `PoseidonFp::RATE` squeezes of
+/// $\mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ g)$, and epoch
+/// $e$ takes squeeze $e \bmod 4$ at $g = e - (e \bmod 4)$. The pair
+/// $(g,\ e \bmod 4)$ determines $e$, and the Poseidon assumption covers every
+/// squeeze position.
 ///
-/// The function absorbs whatever element it is given for $g$. The caller
-/// holds it to a multiple of four.
+/// The function absorbs any element for $g$. Its caller constrains $g$ to a
+/// multiple of four.
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     emulated(NULLIFIER_DOMAIN, [mk, epoch_start])
@@ -301,9 +293,9 @@ const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 /// Digests a sealed bucket's metadata and contents bridge hash into a leaf,
 /// absorbing the point's affine coordinates.
 ///
-/// The leaf absorbs the eight elements of a
+/// Absorbs the eight elements of a
 /// [`QrBucket`](crate::stamp::proof::qr::QrBucket) header in header order,
-/// with the profile as depth then bits and the bridge hash as its two
+/// placing depth before bits and expanding the bridge hash into its two
 /// coordinates.
 ///
 /// # Panics

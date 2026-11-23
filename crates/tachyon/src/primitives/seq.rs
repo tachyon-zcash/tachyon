@@ -25,19 +25,19 @@ use crate::{
 
 /// Pedersen commitment to a nullifier sequence.
 ///
-/// The commitment determines its [`NfSeqPoly`], by the
-/// [Commitments assumption](crate::stamp::proof#assumptions).
+/// Under the [Commitments assumption](crate::stamp::proof#assumptions), the
+/// commitment determines its [`NfSeqPoly`].
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct NfSeqCommit(EqAffine);
 
-/// Witness polynomial for a nullifier sequence: the product of its members'
-/// encodings, one per member.
+/// Witness polynomial for a nullifier sequence, multiplying one encoding per
+/// member.
 ///
-/// A member is a nullifier indexed by its epoch. A product of member
-/// encodings determines the multiset of its members, by the
-/// [indexed multiset](crate::collections::indexed_multiset)'s Injectivity
-/// section. The type itself holds any polynomial. A header that carries one
-/// says which product it is.
+/// Each member pairs a nullifier with its epoch index, and a product of member
+/// encodings determines its member multiset
+/// ([indexed multiset](crate::collections::indexed_multiset#injectivity)). The
+/// type holds any polynomial, and each carrying header specifies which product
+/// occupies its slot.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 

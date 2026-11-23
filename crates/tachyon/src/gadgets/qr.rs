@@ -15,11 +15,11 @@ use crate::{
     primitives::{self, QrClass, QrClassRoot},
 };
 
-/// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
+/// An in-circuit [`QrProfile`](primitives::QrProfile) holding the number of
 /// sides taken and those sides as bits.
 ///
-/// Allocation places no constraint, so the two wires are a
-/// [path](primitives::QrProfile#injectivity) only where a step shows it.
+/// Allocation adds no constraint, so the two wires form a
+/// [path](primitives::QrProfile#injectivity) only where a step proves it.
 #[derive(Gadget, Write)]
 #[expect(
     missing_debug_implementations,
@@ -31,7 +31,7 @@ pub struct QrProfile<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
-    /// Allocates a header's profile as two wires, without a constraint.
+    /// Allocates a header's profile as two unconstrained wires.
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -65,10 +65,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     ///
     /// # Soundness
     ///
-    /// The range check holds the parent's `depth` to an integer $j$ below
-    /// `MAX_DEPTH`. The child has `depth` $j + 1$ and `bits` $2 \cdot
-    /// \mathsf{bits} + b$. When the parent is a path, the child is that path
-    /// followed by $b$, and its `bits` stay below $2^{j+1}$, so no sum wraps.
+    /// When the parent is a path, the child extends that path by $b$ without
+    /// wrapping. The range check bounds the parent's `depth` to an integer $j$
+    /// below `MAX_DEPTH`, giving the child `depth` $j + 1$ and `bits` $2 \cdot
+    /// \mathsf{bits} + b < 2^{j+1}$.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
         self.depth
@@ -95,8 +95,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// non-residue is $c$. Unlike descent, which checks the sibling's class,
     /// this check uses the queried class itself. A zero shifted value cannot
     /// claim the non-residue class. The mask $e_j$ must be a prefix of
-    /// `depth` ones, and the selected classes must pack to `bits`. The
-    /// constraints that hold them to that are
+    /// `depth` ones, and the selected classes must pack to `bits` under
     ///
     /// $$
     ///   \sum_j e_j = \mathsf{depth},
@@ -110,19 +109,21 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     ///
     /// # Soundness
     ///
-    /// With $b_j = 1$ the root [shows](crate::collections::qr#sides) that
-    /// $x + R_j$ is a square or zero, and with $b_j = 0$ the root and $x + R_j
-    /// \neq 0$ show a non-residue, so $b_j$ is the side of $x$ at $R_j$. The
-    /// mask bits are boolean, so `depth` is an integer $d$ from $0$ to
-    /// `MAX_DEPTH` and the second equation holds over the integers. Among $d$
-    /// distinct positions the sum is at least $d \cdot (d - 1)/2$, and only
-    /// the first $d$ reach it, so the mask is $d$ ones followed by zeros. The
-    /// fold then doubles $a$ and adds $b_j$ at each of the first $d$ positions
-    /// and leaves it unchanged after, so `bits` is $\sum_{j < d} b_j \cdot
-    /// 2^{d-1-j}$, which is below $2^{32}$ and does not wrap. The profile is
-    /// thus the [path](primitives::QrProfile#injectivity) of the first $d$
-    /// sides of $x$, and $x$ is in its class at $R_0$. The gadget reads no
-    /// challenge and holds for whatever wires it is given.
+    /// These constraints force the profile to equal the
+    /// [path](primitives::QrProfile#injectivity) of the first $d$ sides of $x$,
+    /// placing $x$ in its class at $R_0$. The gadget reads no challenge and
+    /// holds for any input wires.
+    ///
+    /// Each $b_j$ equals the side of $x$ at $R_j$. For $b_j = 1$ the root
+    /// [shows](crate::collections::qr#sides) that $x + R_j$ is a square or
+    /// zero, and for $b_j = 0$ the root and $x + R_j \neq 0$ show a
+    /// non-residue. Boolean mask bits force `depth` to an integer $d$ in
+    /// `0..=MAX_DEPTH`, so the second equation holds over the integers. Among
+    /// $d$ distinct positions, $\sum_j j \cdot e_j$ has minimum $d \cdot (d -
+    /// 1)/2$ and attains it only on the first $d$ positions, forcing $d$ ones
+    /// followed by zeros. The fold then doubles $a$ and adds $b_j$ across the
+    /// first $d$ positions and leaves $a$ unchanged thereafter, setting `bits`
+    /// to $\sum_{j < d} b_j \cdot 2^{d-1-j} < 2^{32}$ without wrapping.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
