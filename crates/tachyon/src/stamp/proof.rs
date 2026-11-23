@@ -128,13 +128,14 @@
 //! tachygram set polynomial that a verifier recomputes from published
 //! members.
 //!
-//! The arguments tell the four kinds apart by their tags. A padding tachygram
-//! or a nullifier equal to a note commitment is a Poseidon collision, and so
-//! are two notes with one commitment. At zero the collision is two preimages
-//! of zero, each found without the other. The Poseidon assumption excludes
-//! it like any other collision. The constraints exclude it without the
-//! assumption, because no step that derives a tachygram has an assignment at
-//! zero.
+//! The arguments tell a note commitment, a padding tachygram and a nullifier
+//! apart by their tags. A fee change commitment is a note commitment. A
+//! padding tachygram or a nullifier equal to a note commitment is a Poseidon
+//! collision, and so are two notes with one commitment. At zero the collision
+//! is two preimages of zero, each found without the other. The Poseidon
+//! assumption excludes it like any other collision. The constraints exclude
+//! it without the assumption, because no step that derives a tachygram has an
+//! assignment at zero.
 //!
 //! Without the constraints, a prover who knows one note whose padding
 //! tachygram is zero and a second note whose commitment is zero outputs the
@@ -142,11 +143,9 @@
 //! [`SpendableInit`](spendable::SpendableInit) opens it at the second note's
 //! commitment for zero, and the second note is spent though no output
 //! created it and no binding signature balanced its value. A zero nullifier
-//! gives the same root from a spend. In the other direction, a zero
-//! commitment or padding tachygram is a root at the nullifier of any note
-//! whose nullifier is zero at that epoch. The exclusion of that nullifier
-//! then fails though the note is unspent, and a spend that publishes it
-//! repeats a tachygram.
+//! gives the same root from a spend. A zero commitment or fee change
+//! commitment gives it too, and the second note is then a different note
+//! with the same commitment.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

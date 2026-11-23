@@ -393,7 +393,7 @@ The documentation of `QrDiscriminant` in the crate says what a bucket's exclusio
 `QrIntakeSplit` factors an intake's contents into two sides as `QrIntakeSides`.
 The two sides' set polynomials are $q_0$ for non-residue and $q_1$ for residue.
 The split opens its input and its two output polynomials once each at $\zeta$ and checks that the contents are the product of the two sides.
-It rejects contents that open to one there, so an empty intake is sealed without a split.
+It rejects contents that open to one there, so an intake whose contents are the constant one is sealed without a split.
 It puts the two sides in the `NON_RESIDUE` and `RESIDUE` slots of `QrIntakeSides`, each a `TachygramSetPoly`, and records the bridge hash of $q_0$ in the header.
 The split checks the product and classifies nothing.
 `QrSideSelect` and `QrSideDescend` check the classes at the discriminant of the intake's depth

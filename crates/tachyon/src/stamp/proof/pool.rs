@@ -82,13 +82,12 @@ use crate::{
 ///   [indexed multiset](crate::collections::indexed_multiset)'s encoding of
 ///   member $m$ at index $i$.
 ///
-/// Each $v_e$ is nonzero, as every published tachygram is. Zero is a root of
-/// no published polynomial ([zero tachygrams](super#zero-tachygrams)), so a
-/// segment never stands for the exclusion of a value that no spend can
-/// publish. [`UnspentBind`] makes each $v_e$ a note's nullifier, so a note
-/// whose nullifier at some epoch is zero has no [`NoteUnspent`] over that
-/// epoch and is not lifted past it. The exclusion of zero would be true
+/// Each $v_e$ is nonzero. Zero is a root of no published polynomial
+/// ([zero tachygrams](super#zero-tachygrams)), so its exclusion would be true
 /// wherever a bucket shows it, and no argument here needs it refused.
+/// [`UnspentBind`] makes each $v_e$ a note's nullifier, so a note whose
+/// nullifier at some epoch is zero has no [`NoteUnspent`] over that epoch
+/// and is not lifted past it.
 ///
 /// $E$ has one factor for each epoch of the range and no other. An
 /// epoch is within the encoding's index bound, so $E$ determines each pair of

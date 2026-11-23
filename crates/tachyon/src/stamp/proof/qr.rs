@@ -161,8 +161,8 @@ impl Header<Fp> for QrIntake {
 ///
 /// - what [`QrIntake`] asserts holds of `intake` with $q_0 \cdot q_1$ as the
 ///   contents,
-/// - $q_0 \cdot q_1$ is not the constant one, so the empty set has no split and
-///   an empty intake is sealed at the depth it reached,
+/// - $q_0 \cdot q_1$ is not the constant one, though it may be another
+///   constant,
 /// - `non_residue_hash` is a [bridge hash](TachygramSetBridge) of the
 ///   accumulator of $q_0$.
 ///
@@ -942,11 +942,11 @@ impl Step<Pasta> for QrSideSelect {
 /// are different polynomials and the output's contents are one of them and
 /// not the other. The bit $b$ in the output's profile is then the one that
 /// names those contents within the split. With equal sides one polynomial
-/// would be the child under either bit, and both descents would pass whenever
-/// it has no root. A doubled set split into two equal halves is rejected the
-/// same way. The check compares the polynomials and not their roots, so two
-/// sides that differ by a scalar pass. The identity above gives the child its
-/// roots with or without this check.
+/// would be the child under either bit. A doubled set split into two equal
+/// halves is rejected for this. The check compares the polynomials and not
+/// their roots. Two sides that differ by a scalar pass it, and two different
+/// constants pass it and both descents. The identity above gives the child
+/// its roots with or without this check.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
