@@ -504,6 +504,8 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
 
+The same rule applies before the fee: `ActionsPlan::prove` rerandomizes the part sent by an action prover, and `ProvenActions::merge` rerandomizes the part a coordinator can forward to the next prover. Its anchor, action descriptors and tachygram pairs remain visible to the receiver.
+
 A PCD proof is a commitment to its own witness data. Two proofs built from overlapping private inputs are correlated as group elements, even when their public headers reveal nothing. The proof a wallet holds after `SpendBind` and the proof it publishes in a stamp share a lineage, so an observer holding both could link them, and an aggregator that merges two stamps sees both inputs directly.
 
 A stamp crosses a trust boundary at exactly these points. A wallet hands an autonome to the p2p network; an aggregator hands a merged stamp onward while retaining the inputs it merged. Rerandomizing at each handoff replaces the proof with an unrelated one that verifies against the same header, so the released artifact carries no correlation back to the private lineage that produced it, and none forward to a later release of the same lineage.

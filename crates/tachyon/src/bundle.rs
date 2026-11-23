@@ -498,6 +498,8 @@ impl Plan {
 
     /// Apply `fee` to proven actions with `FeeFuse` and rerandomize the stamp.
     /// Returns the proving data for [`Self::assemble`].
+    /// Check a received part with [`stamp::ProvenActions::verify`] against the
+    /// intended anchor and [`Self::descriptors`] before applying the fee.
     ///
     /// # Errors
     ///
