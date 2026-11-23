@@ -48,7 +48,7 @@ use crate::{
 ///   $\mathsf{nk}$,
 /// - `cm` is the [note commitment](poseidon::note_commitment) of `note`,
 /// - `note.value` is an integer in `0..=MAX_MONEY`,
-/// - `note.rcm` is nonzero, which no step relies on.
+/// - `note.rcm` is nonzero.
 ///
 /// `cm` stands for the note. It determines the four fields of `note`, the
 /// note's `pk` determines $\mathsf{ak}$ and $\mathsf{nk}$, and $\psi$ and
@@ -60,6 +60,24 @@ use crate::{
 /// $\mathsf{nk}$ have one `mk` and the same nullifiers, whatever their
 /// $\mathsf{ak}$, values and `rcm`. Steps that join two headers of a note
 /// compare `cm`.
+///
+/// # Zero commitment trapdoor
+///
+/// [`NoteSeed`] alone outputs this header and alone holds `rcm` nonzero,
+/// the rule that [`Note::commitment`] enforces natively. `cm` determines
+/// `rcm`, so a note whose `rcm` is zero has no `NoteSecret`, and
+/// [`SpendBind`](super::spend::SpendBind) cannot spend it.
+///
+/// [`OutputBind`](super::output::OutputBind),
+/// [`FeeFuse`](super::stamp::FeeFuse) and [`FeeSeed`](super::stamp::FeeSeed)
+/// commit to a note and do not hold its `rcm` nonzero. A prover who skips the
+/// native check can output a note with a zero `rcm`, or leave one as fee
+/// change. The stamp verifies and the bundle balances, and the note's value
+/// stays in the pool with no way to spend it. The loss falls on whoever takes
+/// that note as payment, and on the owner of a fee change note whose max fee
+/// note another party chose. A recipient checks that `rcm` is nonzero before
+/// it credits a note, and before it calls [`Note::commitment`] on an opening
+/// it was sent, which panics on zero.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 

@@ -82,11 +82,17 @@ use crate::{
 ///   [indexed multiset](crate::collections::indexed_multiset)'s encoding of
 ///   member $m$ at index $i$.
 ///
-/// No step relies on $v_e$ being nonzero. $E$ has one factor for each epoch
-/// of the range and no other. An epoch is within the encoding's index bound,
-/// so $E$ determines each pair of an epoch and its value. `anchor_next` is
-/// the last bucket's, so it determines `epoch_next` and the end of that
-/// bucket's chain.
+/// Each $v_e$ is nonzero. Zero is a root of no published polynomial
+/// ([zero tachygrams](super#zero-tachygrams)), so its exclusion would be true
+/// wherever a bucket shows it, and no argument here needs it refused.
+/// [`UnspentBind`] makes each $v_e$ a note's nullifier, so a note whose
+/// nullifier at some epoch is zero has no [`NoteUnspent`] over that epoch
+/// and is not lifted past it.
+///
+/// $E$ has one factor for each epoch of the range and no other. An
+/// epoch is within the encoding's index bound, so $E$ determines each pair of
+/// an epoch and its value. `anchor_next` is the last bucket's, so it determines
+/// `epoch_next` and the end of that bucket's chain.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -243,8 +249,8 @@ impl Header<Fp> for NoteUnspent {
 ///
 /// `anchor_start` and each absorption's epoch are the prover's choice. The
 /// assertion does not make the epochs equal, and it says nothing of what lies
-/// behind `anchor_start`. No step relies on an absorption's polynomial
-/// differing from the constant one.
+/// behind `anchor_start`. No absorption's polynomial is the constant one, as
+/// in a pool history, where [`Anchor::next_stamp`] rejects the empty set.
 ///
 /// $M$ is a [set polynomial](crate::collections::multiset), so it determines
 /// those anchors and has no other root. A stamp chain leads from each root to

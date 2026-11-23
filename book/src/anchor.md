@@ -49,4 +49,4 @@ Within a block, each stamp's absorption produces an intermediate hash value.
 Consensus acknowledges only end-of-block anchors: stamps must anchor to an end-of-block anchor within the present epoch or the immediately previous epoch. That a stamp's anchor is on the canonical chain and satisfies this recency rule is a consensus obligation outside `Bundle::verify`, which checks the stamp proof against the carried anchor without consulting chain history.
 
 A step such as `SpendableInit` may produce a header at an intra-block state: its anchor is the state right after the creation stamp, which is the end-of-block anchor only when that stamp is the block's last.
-A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#spending), which prove state continuity.
+A spend of that note reaches an end-of-block anchor when its `Actions` are lifted with `ActionLift`, or after the fee its `Stamp` with `StampLift`, along [anchor spans](./proof-tree.md#anchor-segments), which prove state continuity.

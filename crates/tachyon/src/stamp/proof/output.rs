@@ -45,10 +45,12 @@ use crate::{
 ///   negated. It is a [value commitment](fixed_base#value-commitments), so it
 ///   determines its opening.
 ///
-/// `cm` and `pad` are nonzero, and no step relies on that. The assertion does
-/// not make $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a payment key.
+/// `cm` and `pad` are nonzero, so neither is a root at zero
+/// ([zero tachygrams](super#zero-tachygrams)). The assertion does not make
+/// $\mathsf{rcm}$ nonzero or $\mathsf{pk}$ a payment key.
 /// [`NoteSeed`](super::delegation::NoteSeed) holds both for a note that is
-/// spent.
+/// spent, so an output with a zero $\mathsf{rcm}$ is a note that is
+/// [never spent](super::delegation::NoteSecret#zero-commitment-trapdoor).
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -167,7 +169,8 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
-        // Both tachygrams are held nonzero. No step relies on it.
+        // A zero root is the factor `X` whatever kind of tachygram it was
+        // meant to be, so both are held nonzero.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their

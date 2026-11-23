@@ -134,7 +134,8 @@ impl Header<Fp> for Actions {
 ///   commitment](gadgets::note::Note::cv_feemax).
 /// - $\mathsf{cm}_\mathsf{chg}$, the leaf's tachygram, is the [note
 ///   commitment](poseidon::note_commitment) of the note with value $m - f$. It
-///   is nonzero, and no step relies on that.
+///   is nonzero, so it is not a root at zero ([zero
+///   tachygrams](super#zero-tachygrams)).
 /// - $d$ is the [fee digest](poseidon::fee_digest) of
 ///   $\mathsf{cv}_\mathsf{feemax}$, $f$ and $\mathsf{cm}_\mathsf{chg}$.
 ///
@@ -152,6 +153,13 @@ impl Header<Fp> for Actions {
 ///   accumulator in the step's last output slot, which holds $T$. The native
 ///   verifier recomputes the field with
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash). No step reads it.
+/// - $A$ and $T$ are the set polynomials of digests and tachygrams that the
+///   covered bundles publish. A verifier rebuilds both accumulators from the
+///   bundles' actions, pairs, fees and fee changes
+///   ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)), and
+///   an accumulator determines its polynomial. A stamp proof that carries $A$
+///   and $T$ in full therefore shows nothing of them that the bundles do not
+///   ([full proofs](super#full-proofs-between-parties)).
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -1024,7 +1032,8 @@ impl Step<Pasta> for FeeFuse {
         }
         .commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee, &fee_change)?;
-        // The fee change is held nonzero. No step relies on it.
+        // A zero root is the factor `X` whatever kind of tachygram it was
+        // meant to be, so the fee change is held nonzero.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
@@ -1183,7 +1192,8 @@ impl Step<Pasta> for FeeSeed {
         // With a zero maximum and fee, the change note is the max-fee note.
         let fee_change = max_fee_note.commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero, &fee_change)?;
-        // The fee change is held nonzero. No step relies on it.
+        // A zero root is the factor `X` whatever kind of tachygram it was
+        // meant to be, so the fee change is held nonzero.
         fee_change.clone().enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
