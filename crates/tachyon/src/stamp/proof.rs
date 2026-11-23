@@ -249,12 +249,16 @@
 //! ### What a party does
 //!
 //! - It lets a stamp proof leave only after rerandomization.
-//!   [`Plan::prove`](crate::stamp::Plan::prove) and
-//!   [`ProofStamp`](crate::stamp::ProofStamp)'s `lift`, `merge` and `unmerge`
-//!   end with it. A full proof that was not rerandomized holds in the clear its
-//!   inputs' headers, the steps that made them and their instances, and its own
-//!   opening points and values. For [`SpendBind`](spend::SpendBind) that is the
-//!   spent note's opening and master key.
+//!   [`Plan::prove`](crate::stamp::Plan::prove) rerandomizes the output of
+//!   `FeeSeed` or `FeeFuse`.
+//!   [`ProofStamp::merge`](crate::stamp::ProofStamp::merge) rerandomizes the
+//!   merged stamp and `ProofStamp::unmerge` the quotient. `ProofStamp::lift`
+//!   rerandomizes after the last span; with no spans it returns the original
+//!   stamp without rerandomizing. A full proof that was not rerandomized holds
+//!   in the clear its inputs' headers, the steps that made them and their
+//!   instances, and its own opening points and values. For
+//!   [`SpendBind`](spend::SpendBind) that is the spent note's opening and
+//!   master key.
 //! - It draws every proving call's randomness from a source no other party can
 //!   predict.
 //! - It uses the bootstrap proof that its release shares and never one of its
