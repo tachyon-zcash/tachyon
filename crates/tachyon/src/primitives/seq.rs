@@ -1,32 +1,41 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::ops::Mul;
 
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{Cycle as _, pasta::Pasta};
-use udon::field::Field as _;
+use ragu::{
+    Cycle as _, Polynomial, WalletRank,
+    pasta::Pasta,
+    udon::{
+        curve::Projective as _,
+        exec::{ExecutionOptions, SerialExecutor},
+        fft::{Domain, Expansion, Transform},
+        field::Field as _,
+    },
+};
 
 use crate::{
-    arithmetic,
     collections::indexed_multiset,
     nullifier::Nullifier,
     pasta,
-    pasta::{Eq, Fp},
-    primitives::EpochIndex,
+    pasta::{EqAffine, Fp},
+    primitives::{EpochIndex, PolySlot},
 };
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct NfSeqCommit(Eq);
+pub struct NfSeqCommit(EqAffine);
 
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
-#[derive(AsRef, Clone, Debug, From, Into)]
-pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
+#[derive(AsRef, Clone, Debug, Into)]
+pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 
 impl NfSeqPoly {
+    /// Names this polynomial in a header that carries one.
+    pub const SLOT: PolySlot<Self> = PolySlot::new();
+
     /// Build the sequence polynomial for one contiguous run: the members of
     /// the consecutive epochs starting at `epoch_start`.
     #[must_use]
@@ -39,19 +48,11 @@ impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit(Pasta::host_generators(pasta::baked())))
-    }
-
-    /// Evaluate the sequence polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
-}
-
-impl Default for NfSeqPoly {
-    fn default() -> Self {
-        Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
+        NfSeqCommit(
+            self.0
+                .commit(Pasta::host_generators(pasta::baked()))
+                .to_affine(),
+        )
     }
 }
 
@@ -63,6 +64,10 @@ impl Mul for NfSeqPoly {
     /// # Panics
     ///
     /// If the product exceeds the polynomial coefficient cap.
+    #[expect(
+        clippy::expect_used,
+        reason = "the FFT domain fits the product and expands onto itself"
+    )]
     fn mul(self, rhs: Self) -> Self {
         let [left, right] = [self.0, rhs.0].map(|poly| {
             let mut coeffs: Vec<Fp> = poly.iter_coeffs().collect();
@@ -74,6 +79,45 @@ impl Mul for NfSeqPoly {
             );
             coeffs
         });
-        Self(Polynomial::from_coeffs(arithmetic::poly_mul(&left, &right)))
+        if left.is_empty() || right.is_empty() {
+            return Self(Polynomial::new());
+        }
+
+        let result_len = left.len() + right.len() - 1;
+        let size = result_len.next_power_of_two();
+        let transform = Transform::new(
+            Domain::for_size(size)
+                .expect("the product fits the FFT domain")
+                .subgroup(),
+        );
+        let expansion = Expansion::new(transform, transform.domain(), None)
+            .expect("a subgroup expands onto itself");
+        let options = ExecutionOptions::default();
+        let mut coeffs = vec![Fp::ZERO; 2 * size];
+        let (product, factor) = Fp::as_slice_mut(&mut coeffs).split_at_mut(size);
+        expansion
+            .coefficients(
+                Fp::as_slice(&right),
+                factor,
+                options,
+                &SerialExecutor,
+                &mut [],
+            )
+            .expect("the factor fits the FFT domain");
+        expansion
+            .short_product(
+                Fp::as_slice(&left),
+                expansion.view(factor),
+                product,
+                options,
+                &SerialExecutor,
+                &mut [],
+            )
+            .expect("the product fits the FFT domain");
+        transform
+            .inverse(product, options, &SerialExecutor, &mut [])
+            .expect("the serial inverse needs no scratch");
+        coeffs.truncate(result_len);
+        Self(Polynomial::from_coeffs(coeffs))
     }
 }

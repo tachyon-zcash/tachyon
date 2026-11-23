@@ -1,6 +1,3 @@
-use alloc::string::ToString as _;
-use core::assert_matches;
-
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -65,7 +62,6 @@ fn fee_fuse_rejects_maximum_above_max_money() {
         .unwrap();
 
     // This module can hand-build the raw Value, bypassing Positive's cap.
-    // The output sets are unused: the maximum-bound constraint must fail first.
     let bad_witness = (
         Note {
             value: Value(i64::try_from(MAX_MONEY + 1).unwrap()),
@@ -77,15 +73,14 @@ fn fee_fuse_rejects_maximum_above_max_money() {
             TachygramSetPoly::from_iter([]),
         ),
     );
-    assert_matches!(
-        app.fuse(
+    let (forged, ()) = app
+        .fuse(
             rng,
             FeeFuse,
             bad_witness,
             actions,
             app.bootstrap_proof().clone().carry::<()>(()),
-        ).err(),
-        Some(ragu_core::Error::InvalidWitness(err))
-            if err.to_string() == "FeeFuse: maximum fee exceeds MAX_MONEY"
-    );
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }

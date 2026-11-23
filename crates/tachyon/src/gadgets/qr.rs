@@ -1,19 +1,18 @@
 //! QR profiles inside a circuit.
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
+    primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
+    udon::field::Field as _,
 };
-use ragu_primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write};
-use udon::field::Field as _;
 
-use super::uint::Uint;
 use crate::{
     collections::qr::QUADRATIC_NON_RESIDUE,
     pasta::Fp,
-    primitives::{self, QrClassRoot},
+    primitives::{self, QrClass, QrClassRoot},
 };
 
 /// A [`QrProfile`](primitives::QrProfile) inside a circuit: the number of
@@ -64,10 +63,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     /// the new side.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn descend(&self, dr: &mut D, bit: &Boolean<'dr, D>) -> Result<Self> {
-        Uint::<_, { primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>::from_element(
-            dr,
-            &self.depth,
-        )?;
+        self.depth
+            .enforce_lt::<{ primitives::QrProfile::MAX_DEPTH.ilog2() as usize }>(
+                dr,
+                &mut (),
+                Fp::from(primitives::QrProfile::MAX_DEPTH as u64),
+            )?;
         let one = Element::constant(dr, Fp::ONE);
         Ok(Self {
             depth: self.depth.add(dr, &one),
@@ -77,18 +78,24 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// At each discriminant $d_i$ of the progression from `discriminant`, the
-    /// witnessed root squares to $s$ or $c \cdot s$ for $s = v + d_i$ and the
-    /// fixed non-residue $c$, which fixes the side; a zero $s$ cannot claim the
-    /// non-residue side. The depth mask must be a prefix of `depth` ones, and
-    /// the selected sides must pack to `bits`.
+    /// `path` is the value's class at each of the 32 depths, its path.
+    /// `roots` gives the class root witnessing each step of the path.
+    ///
+    /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
+    /// with $R_j = R_0 + j$ from `discriminant` and multiplier
+    /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
+    /// non-residue is $c$. Unlike descent, which checks the sibling's class,
+    /// this check uses the queried class itself. A zero shifted value cannot
+    /// claim the non-residue class. The mask $e_j$ must be a prefix of
+    /// `depth` ones, and the selected classes must pack to `bits`.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,
         dr: &mut D,
         value: &Element<'dr, D>,
         discriminant: &Element<'dr, D>,
-        classes: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
+        path: DriverValue<D, [QrClass; primitives::QrProfile::MAX_DEPTH]>,
+        roots: DriverValue<D, [QrClassRoot; primitives::QrProfile::MAX_DEPTH]>,
         mask: DriverValue<D, [bool; primitives::QrProfile::MAX_DEPTH]>,
     ) -> Result<()> {
         let mut shifted = value.add(dr, discriminant);
@@ -102,31 +109,20 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             let side = Boolean::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].0),
+                path.as_ref().map(|classes| classes[position].bit()),
             )?;
             let root = Element::alloc(
                 dr,
                 &mut (),
-                classes.as_ref().map(|values| values[position].1),
+                roots.as_ref().map(|values| Fp::from(values[position])),
             )?;
             let selected =
                 Boolean::alloc(dr, &mut (), mask.as_ref().map(|values| values[position]))?;
             let multiplier = side.conditional_select(dr, &non_residue, &one)?;
             let expected_square = multiplier.mul(dr, &shifted)?;
-            root.square(dr)?
-                .enforce_equal(dr, &expected_square)
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "QR profile: root does not square to the claimed class".into(),
-                    )
-                })?;
+            root.square(dr)?.enforce_equal(dr, &expected_square)?;
             side.conditional_select(dr, &shifted, &one)?
-                .enforce_nonzero(dr)
-                .map_err(|_err| {
-                    ragu_core::Error::InvalidWitness(
-                        "QR profile: exceptional discriminant claimed the non-residue class".into(),
-                    )
-                })?;
+                .enforce_nonzero(dr)?;
             depth_acc = depth_acc.add(dr, &selected.element());
             let index_term = selected.element().mul(dr, &position_element)?;
             index_acc = index_acc.add(dr, &index_term);
@@ -136,24 +132,13 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
             shifted = shifted.add(dr, &one);
             position_element = position_element.add(dr, &one);
         }
-        depth_acc.enforce_equal(dr, &self.depth).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QR profile: depth mask does not match the bucket's depth".into(),
-            )
-        })?;
+        depth_acc.enforce_equal(dr, &self.depth)?;
         let depth_minus_one = depth_acc.sub(dr, &one);
         let expected_index_sum = depth_acc.mul(dr, &depth_minus_one)?;
         index_acc
             .double(dr)
-            .enforce_equal(dr, &expected_index_sum)
-            .map_err(|_err| {
-                ragu_core::Error::InvalidWitness("QR profile: depth mask is not a prefix".into())
-            })?;
-        bits_acc.enforce_equal(dr, &self.bits).map_err(|_err| {
-            ragu_core::Error::InvalidWitness(
-                "QR profile: value does not take the bucket's profile".into(),
-            )
-        })?;
+            .enforce_equal(dr, &expected_index_sum)?;
+        bits_acc.enforce_equal(dr, &self.bits)?;
         Ok(())
     }
 }

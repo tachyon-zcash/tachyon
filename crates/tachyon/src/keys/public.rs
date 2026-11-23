@@ -3,14 +3,14 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use udon::curve::Affine as _;
+use ragu::udon::curve::Affine as _;
 
 use crate::{action, bundle, pasta::EpAffine, reddsa, value};
 
 /// The randomized action verification key `rk`: per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`Action`](crate::Action). Terminal type, with no further
+/// Goes into [`action::Descriptor`]. Terminal type, with no further
 /// derivation.
 ///
 /// Both spend and output actions produce an `rk`

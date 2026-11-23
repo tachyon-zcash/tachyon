@@ -26,21 +26,18 @@ pub mod stamp;
 pub mod value;
 pub mod witness;
 
-mod arithmetic;
+mod bridge_hash;
 mod collections;
 mod gadgets;
 mod primitives;
-mod relations;
 mod serialization;
 
-pub use action::{Action, Plan as ActionPlan};
+pub use action::Plan as ActionPlan;
 pub use bundle::{
     Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
-    VerifyCoverageError, VerifyPointersError, VerifyTachygramsError,
+    VerifyCoverageError,
 };
 pub use note::Note;
 pub use primitives::*;
 pub use serialization::compactsize::{CompactSize, CompactSizeError};
-pub use stamp::{
-    AggregateId, AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp, Unproven,
-};
+pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp};

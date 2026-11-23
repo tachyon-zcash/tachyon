@@ -1,4 +1,4 @@
-use ragu_primitives::Simulator;
+use ragu::primitives::Simulator;
 
 use super::*;
 

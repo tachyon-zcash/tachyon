@@ -4,7 +4,7 @@
 //! to the same types through `Cycle` projections, which derives on Tachyon's
 //! newtypes cannot see through.
 
-use udon::{
+use ragu::udon::{
     curve::{AffineAdapter, Pallas, ProjectiveAdapter, Vesta},
     field::{FieldAdapter, PallasBase, PallasScalar},
 };
@@ -27,4 +27,4 @@ pub type Eq = ProjectiveAdapter<Vesta>;
 /// Vesta in affine coordinates, including identity.
 pub type EqAffine = AffineAdapter<Vesta>;
 
-pub(crate) use ragu_pcd::pasta::baked;
+pub(crate) use ragu::pcd::pasta::baked;

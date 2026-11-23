@@ -34,8 +34,8 @@
 //! Ragu circuits and is TBD.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use crate::{
     digest::poseidon,
@@ -91,7 +91,7 @@ impl Note {
     pub fn derive_feemax_blind(&self) -> value::Trapdoor {
         let blind =
             poseidon::feemax_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+        value::ValueTrapdoor(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// The max fee commitment, `cv_feemax`.

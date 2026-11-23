@@ -2,17 +2,15 @@
 
 use core::ops::Deref;
 
-use ragu_core::{
-    Error, PoseidonPermutation as _, Result,
+use ragu::{
+    PoseidonPermutation as _, Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
     pasta::PoseidonFp,
+    primitives::{Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write},
+    udon::field::Field as _,
 };
-use ragu_primitives::{
-    Boolean, Element, allocator::Allocator, comparison::GadgetEquals, io::Write,
-};
-use udon::field::Field as _;
 
 use super::uint::Uint;
 use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};
@@ -39,26 +37,24 @@ impl<'dr, D: Driver<'dr>> Deref for EpochIndex<'dr, D> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
     /// Allocates `epoch` and range-checks it.
-    #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         epoch: DriverValue<D, primitives::EpochIndex>,
     ) -> Result<Self> {
         let element = Element::alloc(dr, allocator, epoch.map(Fp::from))?;
-        Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &element)?;
-        Ok(Self { element })
+        Self::from_element(dr, element)
     }
 
-    /// The epoch `bits` encodes.
+    /// Range-checks `element` as an epoch.
     #[expect(clippy::as_conversions, reason = "constant value")]
-    pub(crate) fn from_bits(
-        dr: &mut D,
-        bits: &Uint<'dr, D, { (EPOCH_MAX + 1).ilog2() as usize }>,
-    ) -> Result<Self> {
-        Ok(Self {
-            element: bits.pack(dr)?,
-        })
+    pub(crate) fn from_element(dr: &mut D, element: Element<'dr, D>) -> Result<Self> {
+        element.enforce_le::<{ (EPOCH_MAX + 1).ilog2() as usize }>(
+            dr,
+            &mut (),
+            Fp::from(u64::from(EPOCH_MAX)),
+        )?;
+        Ok(Self { element })
     }
 
     /// The epoch `bits` encodes, with its low `log2(RATE)` bits held to zero:
@@ -71,18 +67,24 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         for (bit, _) in bits.bits().iter().zip(0..PoseidonFp::RATE.ilog2()) {
             bit.element().enforce_zero(dr)?;
         }
-        Self::from_bits(dr, bits)
+        Ok(Self {
+            element: bits.pack(dr)?,
+        })
     }
 
     /// The index after this one. Range-checks both this index and the
     /// result; unsatisfiable at `EPOCH_MAX`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn next(&self, dr: &mut D) -> Result<Self> {
-        Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &self.element)?;
+        self.element
+            .enforce_le::<{ (EPOCH_MAX + 1).ilog2() as usize }>(
+                dr,
+                &mut (),
+                Fp::from(u64::from(EPOCH_MAX)),
+            )?;
         let one = Element::constant(dr, Fp::ONE);
         let element = self.element.add(dr, &one);
-        Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &element)?;
-        Ok(Self { element })
+        Self::from_element(dr, element)
     }
 
     /// Splits this index into the first epoch of its nullifier group and the
@@ -92,9 +94,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         let bits =
             Uint::<_, { (EPOCH_MAX + 1).ilog2() as usize }>::from_element(dr, &self.element)?;
         let mut low_bits = bits.bits().iter().cloned();
-        let (Some(low), Some(high)) = (low_bits.next(), low_bits.next()) else {
-            return Err(Error::InvalidWitness("an epoch has two low bits".into()));
-        };
+        #[expect(
+            clippy::expect_used,
+            reason = "the fixed epoch width includes two low bits"
+        )]
+        let [low, high] = [(); 2].map(|()| low_bits.next().expect("an epoch has two low bits"));
         let twice_high = high.element().double(dr);
         let group_start = self.element.sub(dr, &low.element()).sub(dr, &twice_high);
         Ok((group_start, [low, high]))

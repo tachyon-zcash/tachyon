@@ -2,13 +2,16 @@
 
 use core::ops::Deref;
 
-use ragu_core::{
+use ragu::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe as _,
+    primitives::{
+        Element, allocator::Allocator, comparison::GadgetEquals, decompose_n, enforce_le_bits,
+        io::Write,
+    },
 };
-use ragu_primitives::{Element, allocator::Allocator, comparison::GadgetEquals, io::Write};
 
 use super::uint::Uint;
 use crate::{constants::MAX_MONEY, pasta::Fp, value};
@@ -40,8 +43,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         value: DriverValue<D, value::Positive>,
     ) -> Result<Self> {
         let element = Element::alloc(dr, allocator, value.map(u64::from).map(Fp::from))?;
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &element)?
-            .enforce_max(dr, MAX_MONEY)?;
+        element.enforce_le::<{ MAX_MONEY.bit_width() as usize }>(
+            dr,
+            &mut (),
+            Fp::from(MAX_MONEY),
+        )?;
         Ok(Self { element })
     }
 
@@ -51,7 +57,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         dr: &mut D,
         bits: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
     ) -> Result<Self> {
-        bits.enforce_max(dr, MAX_MONEY)?;
+        enforce_le_bits(dr, bits.bits(), Fp::from(MAX_MONEY))?;
         Ok(Self {
             element: bits.pack(dr)?,
         })
@@ -63,8 +69,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         dr: &mut D,
         slack: &Uint<'dr, D, { MAX_MONEY.bit_width() as usize }>,
     ) -> Result<Self> {
+        let maximum = Fp::from(MAX_MONEY);
+        enforce_le_bits(dr, slack.bits(), maximum)?;
+        let packed_slack = slack.pack(dr)?;
         Ok(Self {
-            element: slack.enforce_max(dr, MAX_MONEY)?.pack(dr)?,
+            element: Element::constant(dr, maximum).sub(dr, &packed_slack),
         })
     }
 
@@ -80,7 +89,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;
         let rest = self.element.sub(dr, &packed);
-        Uint::<_, { MAX_MONEY.bit_width() as usize }>::from_element(dr, &rest)?;
+        decompose_n::<_, { MAX_MONEY.bit_width() as usize }>(dr, &mut (), &rest)?;
         Ok((Self { element: packed }, Self { element: rest }))
     }
 

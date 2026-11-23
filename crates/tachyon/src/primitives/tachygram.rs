@@ -2,8 +2,8 @@ use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
-use udon::field::Field as _;
 
 use crate::{pasta::Fp, serialization};
 
@@ -59,8 +59,7 @@ impl PartialOrd for Tachygram {
 
 impl Ord for Tachygram {
     /// Order by the canonical little-endian byte encoding of the field
-    /// element, matching the byte-lexicographic order the stamp digest
-    /// commits to. `Fp` has no intrinsic `Ord`.
+    /// element. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_bytes().cmp(&other.0.to_bytes())
     }

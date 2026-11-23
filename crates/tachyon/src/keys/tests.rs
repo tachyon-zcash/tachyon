@@ -1,8 +1,7 @@
 use core::array;
 
-use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
+use ragu::{PoseidonPermutation as _, pasta::PoseidonFp, udon::field::Field as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use udon::field::Field as _;
 
 use crate::{
     constants::EPOCH_MAX,
