@@ -198,7 +198,7 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 
 Every step is one Ragu PCD step: it reads two input PCDs, left and right, and emits one output PCD. A step with fewer inputs takes the unit header in the unused position.
 A header carries only field elements, with a point given as its two affine coordinates.
-No header carries a polynomial commitment.
+No header carries an accumulator.
 Each PCD also carries two online polynomials in two slots. A header names the polynomial type each slot holds, such as `ActionSetPoly` or `TachygramSetPoly`, or leaves the slot as padding; a header holding two polynomials of one type names each, as `Summary` and `QrIntakeSides` do. A step reaches a slot of its left input, right input or output by that name.
 The framework derives one challenge $\zeta$ per step, bound to both input headers, all six slot commitments, and the step's staged values.
 A step stages a witnessed scalar to fix it before $\zeta$.
