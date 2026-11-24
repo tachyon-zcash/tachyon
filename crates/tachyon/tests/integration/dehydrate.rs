@@ -10,7 +10,9 @@ use zcash_tachyon::{
         Compressed, Proof as _, ProofStamp, Uncompressed,
         proof::{
             self, App,
-            transaction::{PublicTransaction, Transaction, TransactionDehydrate},
+            transaction::{
+                PublicTransaction, Transaction, TransactionDehydrate, TransactionRehydrate,
+            },
         },
     },
     value,
@@ -21,7 +23,7 @@ use super::fixtures::{
     wallet::{WalletSim, shared_sk},
 };
 
-fn funded_output(
+pub(super) fn funded_output(
     app: &App<'_>,
     wallet: &WalletSim,
     anchor: Anchor,
@@ -65,9 +67,21 @@ fn dehydrate_copies_the_certified_action_binding() {
     assert!(!app.verify_uncompressed(&false_public, &mut *rng).unwrap());
 
     let (public, ()) = app
-        .fuse(rng, TransactionDehydrate, (), working, unit)
+        .fuse(rng, TransactionDehydrate, (), working, unit.clone())
         .unwrap();
     assert_eq!(public.commitments(), [pad, pad]);
+    // Even an authenticated PublicTransaction issued under K_W and the right
+    // polynomial cannot satisfy step 40 with a wallet-rank output oracle.
+    let (same_rank, ()) = app
+        .fuse(
+            rng,
+            TransactionRehydrate::new().unwrap(),
+            (actions, commitment.into()),
+            public.clone(),
+            unit,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&same_rank, &mut *rng).unwrap());
     let refreshed = app.rerandomize(public, &mut *rng).unwrap();
     let published = app.compress(&refreshed, &mut *rng).unwrap();
     assert!(app.verify_compressed(&published).unwrap());

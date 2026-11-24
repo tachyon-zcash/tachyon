@@ -1,5 +1,6 @@
 use ragu::{
     circuits::polynomials,
+    pasta::Pasta,
     pcd::{bridge_hash, ipa::IpaCycle as _},
     primitives::Simulator,
     udon::curve::Projective as _,

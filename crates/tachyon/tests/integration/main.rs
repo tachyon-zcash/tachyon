@@ -32,6 +32,8 @@ mod proof;
 #[cfg(test)]
 mod qr;
 #[cfg(test)]
+mod rehydrate;
+#[cfg(test)]
 mod stamp;
 #[cfg(test)]
 mod summary;

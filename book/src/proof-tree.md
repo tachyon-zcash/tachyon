@@ -713,6 +713,7 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | TransactionLift | Transaction | AnchorSpan | action_set | Transaction |
 | TransactionUnmerge | Transaction | Transaction | quotient action_set | Transaction |
 | TransactionDehydrate | Transaction | — | — | PublicTransaction |
+| TransactionRehydrate | PublicTransaction | — | candidate action polynomial and its commitment | Transaction |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.

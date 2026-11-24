@@ -58,6 +58,21 @@ and checks the trailer's tachygram commitment against the pairs and fee
 changes. Each covered bundle contributes a fee digest and a change tachygram.
 Signature verification uses each transaction's own sighash.
 
+The finalized stamp is a `ProofStamp<stamp::Compressed>`. For import, the
+expected `PublicTransaction` data is the wallet `ActionSetBridge` of the
+reconstructed action commitment and the stamp's anchor. Attaching those fields
+does not verify them; Ragu's import must authenticate the wallet statement.
+
+`TransactionRehydrate` (step 40) copies the authenticated anchor, installs the
+candidate action polynomial in its last output slot, and checks that slot's
+bridge against the public action bridge using the two fixed generator
+differences. The wallet-origin check belongs to the issuer at step 39; step
+40 neither reads the imported scratch slots nor repeats the padding check.
+The output reports the local oracle. Wallet dehydration followed by wallet
+rehydration cannot verify, even though both steps are registered there.
+The paired integration test uses Ragu's aggregator profile and baked tables
+to verify the restored transaction against its local bridge and anchor.
+
 ### Merge to produce Aggregate
 
 The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. This crate registers wallet-rank proofs; it does not yet implement an aggregator application that can import a compressed stamp.

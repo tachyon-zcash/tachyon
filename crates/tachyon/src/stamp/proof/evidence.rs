@@ -15,11 +15,11 @@
 use core::array;
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::curve::Affine as _,
@@ -208,7 +208,7 @@ impl Header<Fp> for EvidenceTreePair {
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
-impl Step<Pasta> for EvidenceTreeLeafPair {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreeLeafPair {
     type Aux<'source> = ();
     type Left = QrBucket;
     type Output = EvidenceTreePair;
@@ -220,7 +220,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -311,7 +311,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 #[derive(Debug)]
 pub struct EvidenceTreePairFuse;
 
-impl Step<Pasta> for EvidenceTreePairFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreePairFuse {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTreePair;
@@ -323,7 +323,7 @@ impl Step<Pasta> for EvidenceTreePairFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -395,7 +395,7 @@ impl Step<Pasta> for EvidenceTreePairFuse {
 #[derive(Debug)]
 pub struct EvidenceTreeFuse;
 
-impl Step<Pasta> for EvidenceTreeFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreeFuse {
     type Aux<'source> = ();
     type Left = EvidenceTreePair;
     type Output = EvidenceTree;
@@ -407,7 +407,7 @@ impl Step<Pasta> for EvidenceTreeFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -488,7 +488,7 @@ impl Step<Pasta> for EvidenceTreeFuse {
 #[derive(Debug)]
 pub struct EvidenceTreeCap;
 
-impl Step<Pasta> for EvidenceTreeCap {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreeCap {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTree;
@@ -500,7 +500,7 @@ impl Step<Pasta> for EvidenceTreeCap {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -581,7 +581,7 @@ const _: () = assert!(
     "a descent's levels must divide the quaternary levels a profile can address"
 );
 
-impl Step<Pasta> for EvidenceTreeDescend {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreeDescend {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = EvidenceTree;
@@ -598,7 +598,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -707,7 +707,7 @@ impl Step<Pasta> for EvidenceTreeDescend {
 #[derive(Debug)]
 pub struct EvidenceTreeOpen;
 
-impl Step<Pasta> for EvidenceTreeOpen {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for EvidenceTreeOpen {
     type Aux<'source> = ();
     type Left = EvidenceTree;
     type Output = QrBucket;
@@ -730,7 +730,7 @@ impl Step<Pasta> for EvidenceTreeOpen {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

@@ -8,12 +8,12 @@
 //! [`NoteNullifiers`].
 
 use ragu::{
-    PoseidonPermutation as _,
+    Cycle, PoseidonPermutation as _,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::{Pasta, PoseidonFp},
+    pasta::PoseidonFp,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::{curve::Affine as _, field::Field as _},
@@ -160,7 +160,7 @@ impl Header<Fp> for NoteNullifiers {
 #[derive(Debug)]
 pub struct NoteSeed;
 
-impl Step<Pasta> for NoteSeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = NoteSecret;
@@ -178,7 +178,7 @@ impl Step<Pasta> for NoteSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -287,7 +287,7 @@ impl Step<Pasta> for NoteSeed {
 #[derive(Debug)]
 pub struct NullifierDerive;
 
-impl Step<Pasta> for NullifierDerive {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for NullifierDerive {
     type Aux<'source> = ();
     type Left = NoteSecret;
     type Output = NoteNullifiers;
@@ -319,7 +319,7 @@ impl Step<Pasta> for NullifierDerive {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -422,7 +422,7 @@ impl Step<Pasta> for NullifierDerive {
 #[derive(Debug)]
 pub struct NullifierFuse;
 
-impl Step<Pasta> for NullifierFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for NullifierFuse {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteNullifiers;
@@ -445,7 +445,7 @@ impl Step<Pasta> for NullifierFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

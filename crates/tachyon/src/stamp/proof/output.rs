@@ -3,11 +3,11 @@
 extern crate alloc;
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Element, Point, allocator::Allocator, io::Write},
     step::{Encoded, Index, Oracles, Step},
     udon::curve::EndomorphismAffine,
@@ -75,7 +75,7 @@ impl Header<Fp> for OutputHeader {
 #[derive(Debug)]
 pub struct OutputBind;
 
-impl Step<Pasta> for OutputBind {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for OutputBind {
     type Aux<'source> = ();
     type Left = ();
     type Output = OutputHeader;
@@ -88,7 +88,7 @@ impl Step<Pasta> for OutputBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

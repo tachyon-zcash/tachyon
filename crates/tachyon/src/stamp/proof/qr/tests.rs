@@ -18,7 +18,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
     /// `(anchor_final_prev, shift)`
     type Witness<'source> = (Anchor, Fp);
 
-    const INDEX: Index = QrBucketSeal::INDEX;
+    const INDEX: Index = <QrBucketSeal as Step<Pasta>>::INDEX;
 
     fn prepare(
         &self,
@@ -157,7 +157,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     /// `(anchor, epoch, discriminant, linear)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, Fp);
 
-    const INDEX: Index = QrEmptyIntakeSeed::INDEX;
+    const INDEX: Index = <QrEmptyIntakeSeed as Step<Pasta>>::INDEX;
 
     fn prepare(
         &self,
@@ -250,3 +250,4 @@ fn qr_empty_intake_seed_rejects_nonempty_output_slot() {
     assert!(app.verify_uncompressed(&honest, &mut *rng).unwrap());
     assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
+use ragu::pasta::Pasta;

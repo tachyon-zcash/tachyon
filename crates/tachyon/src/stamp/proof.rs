@@ -5,6 +5,10 @@
 //! `Step::INDEX` runs from zero without gaps, and [`new_application`] registers
 //! the steps in that order; `ApplicationBuilder` rejects any other sequence.
 //! `Header::SUFFIX` runs from zero without gaps too.
+//! Wallet and aggregator registration share the same `Step<C>` implementations.
+//! Where the cycle cannot be inferred, associated items of formerly Pasta-only
+//! steps now require qualification, e.g. `<QrBucketSeal as Step<Pasta>>::INDEX`
+//! (likewise `NUM_STAGED` or a context-free `prepare` call).
 //!
 //! A step is named "noun + verb", where the noun is the header it **emits**,
 //! not the one it reads. Most fuse steps read and emit the same header, which
@@ -38,9 +42,14 @@ pub mod spendable;
 pub mod summary;
 pub mod transaction;
 
+mod registry;
+#[cfg(test)]
+#[cfg(feature = "test-epoch-size")]
+mod tests;
+
 use alloc::boxed::Box;
 
-use ragu::{AcceleratedProver, Application, ApplicationBuilder, WalletRank, pasta::Pasta};
+use ragu::{AcceleratedProver, Application, WalletRank, pasta::Pasta};
 
 use crate::pasta;
 
@@ -62,47 +71,7 @@ pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, Accelerat
 ///
 /// Returns an error if step registration or application finalization fails.
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
-    ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>::new()
-        .register(delegation::NoteSeed)?
-        .register(delegation::NullifierDerive)?
-        .register(pool::UnspentFuse)?
-        .register(pool::UnspentBind)?
-        .register(spendable::SpendableInit)?
-        .register(spendable::SpendableLift)?
-        .register(output::OutputBind)?
-        .register(transaction::OutputAction)?
-        .register(spend::SpendBind)?
-        .register(transaction::SpendAction)?
-        .register(transaction::TransactionMerge)?
-        .register(transaction::TransactionLift)?
-        .register(delegation::NullifierFuse)?
-        .register(summary::SummarySeed)?
-        .register(summary::SummaryAdvance)?
-        .register(qr::QrSummaryIntake)?
-        .register(qr::QrIntakeMerge)?
-        .register(qr::QrIntakeSplit)?
-        .register(qr::QrSideDescend)?
-        .register(qr::QrUnspentInit)?
-        .register(qr::QrBucketSeal)?
-        .register(qr::QrStampIntakeSeed)?
-        .register(spendable::QrSpendableInit)?
-        .register(qr::QrEmptyIntakeSeed)?
-        .register(pool::UnspentLift)?
-        .register(evidence::EvidenceTreePairFuse)?
-        .register(evidence::EvidenceTreeFuse)?
-        .register(evidence::EvidenceTreeCap)?
-        .register(evidence::EvidenceTreeDescend)?
-        .register(evidence::EvidenceTreeOpen)?
-        .register(evidence::EvidenceTreeLeafPair)?
-        .register(pool::AnchorSpanSeed)?
-        .register(pool::AnchorSpanFuse)?
-        .register(transaction::FeeFuse)?
-        .register(transaction::ActionMerge)?
-        .register(transaction::ActionLift)?
-        .register(transaction::FeeSeed)?
-        .register(transaction::TransactionUnmerge)?
-        .register(qr::QrSideSelect)?
-        .register(transaction::TransactionDehydrate)?
+    registry::shared_builder::<Pasta, WalletRank>(transaction::TransactionRehydrate::new()?)?
         .finalize(pasta::baked())
         .map(Box::new)
 }
