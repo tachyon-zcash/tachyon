@@ -26,8 +26,8 @@ use crate::{
     primitives::{Anchor, EpochIndex, PolySlot, TachygramSetPoly},
 };
 
-/// Wallet's spendable position: a note, the epoch up to which its nullifiers
-/// are tested, and the position's anchor.
+/// Wallet's spendable position, holding a note, the epoch up to which its
+/// nullifiers are tested, and the position's anchor.
 ///
 /// # Injectivity
 ///

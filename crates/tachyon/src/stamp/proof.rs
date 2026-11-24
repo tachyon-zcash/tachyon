@@ -92,7 +92,7 @@
 //!
 //! ## Checks at the challenge
 //!
-//! Ragu draws a step's challenge $\zeta$ after fixing both input proofs and
+//! Ragu draws a step's challenge $\zeta$ after fixing both input PCDs and
 //! committing the step's output polynomials and staged values. Input header
 //! fields, input and output polynomials, staged values, constants and any
 //! in-circuit digest of fixed inputs are all fixed before $\zeta$. The prover
