@@ -6,19 +6,8 @@
 //! encode and adds the table's correction and any supplied point. Each base
 //! here has prime order $q$ and $n < 2^{254} < q$, so $\[n\]B$ determines $n$.
 //!
-//! ## Value commitments
-//!
-//! The prover of a value-commitment step knows an opening $(v,r)$ of
-//! $\[v\]\mathcal{V}+\[r\]\mathcal{R}$.
-//! [`FixedBase::mul`] cannot return the identity, so the 254-bit blind on
-//! [`struct@R_BASE`] satisfies $0<r<2^{254}$. With $|v|$ at most `MAX_MONEY`,
-//! openings equal modulo $q$ agree as integers. Two openings differing modulo
-//! $q$ reveal the discrete logarithm of $\mathcal{V}$ to base $\mathcal{R}$,
-//! contrary to the [commitment assumption](crate::stamp::proof#assumptions).
-//!
-//! Adding the value term with [`FixedBase::mul_and_add`] can fail only if the
-//! blind point cancels a known multiple of $\mathcal{V}$, which reveals the
-//! same logarithm. Such an exception prevents an assignment.
+//! [`FixedBase::mul`] and [`FixedBase::mul_and_add`] require a finite,
+//! non-identity result.
 
 use lazy_static::lazy_static;
 use ragu::{primitives::FixedBase, udon::curve::Projective as _};
@@ -34,6 +23,9 @@ use crate::{
 lazy_static! {
     /// Multiplied by a 254-bit $r$, computes $\[r\]\mathcal{R}$, the blind
     /// point of a value commitment.
+    ///
+    /// A standalone [`FixedBase::mul`] on this zero-correction table admits
+    /// exactly $0 < r < 2^{254}$.
     pub(crate) static ref R_BASE: FixedBase<EpAffine, 254> =
         prepare(*orchard::VALUE_COMMIT_R, Ep::identity());
     /// Multiplied by a 254-bit $\alpha$, computes $\[\alpha\]\mathcal{G}$,

@@ -44,14 +44,14 @@ use crate::{
 ///   Each fixes its key and epoch, so the pair fixes the omitted $e$, but not
 ///   `cm`: notes sharing $\psi$ and $\mathsf{nk}$ share the key. Neither
 ///   nullifier can mark a zero commitment as published because both are
-///   [nonzero](super#zero-tachygrams).
+///   [nonzero](super::stamp::Stamp#injectivity).
 /// - `anchor` is the position where [`NoteSpendable`] establishes spendability,
 ///   referring to the published pool history when canonical.
 /// - `pk` stands for the note's owner, determined by `cm` and determining
 ///   $\mathsf{ak}$ and $\mathsf{nk}$.
 /// - `cv` stands for $v$ as $\[v\]\mathcal{V} + \[r\]\mathcal{R}$ for a
 ///   prover-known integer $0 < r < 2^{254}$, determining its opening as a
-///   [value commitment](fixed_base#value-commitments).
+///   [value commitment](crate::value::ValueCommitment#binding).
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -136,8 +136,8 @@ impl Header<Fp> for SpendHeader {
 /// Multiplying [`V_BASE`](struct@fixed_base::V_BASE) by the 51-bit
 /// decomposition of the secret's value wire (which [`NoteSecret`] bounds to
 /// `0..=MAX_MONEY`) and adding [`R_BASE`](struct@fixed_base::R_BASE) times 254
-/// freely chosen Boolean blind wires yields `cv`, with no assignment at a zero
-/// blind. Reading no challenge, the step copies `cm` and `anchor`
+/// freely chosen Boolean blind wires yields `cv`, subject to that table's blind
+/// range. Reading no challenge, the step copies `cm` and `anchor`
 /// from the lineage and `pk` from the secret.
 #[derive(Debug)]
 pub struct SpendBind;

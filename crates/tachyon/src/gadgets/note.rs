@@ -81,17 +81,18 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     ///
     /// # Injectivity
     ///
-    /// As a [value commitment](fixed_base#value-commitments) it fixes $v$
-    /// and $r$. Below $2^{254}$ the scalar $r$ uniquely encodes the blind
-    /// digest, which fixes the remaining note fields `pk`, `psi` and `rcm`.
+    /// As a [value commitment](crate::value::ValueCommitment#binding) it fixes
+    /// $v$ and $r$. Below $2^{254}$ the scalar $r$ uniquely encodes the
+    /// blind digest, which fixes the remaining note fields `pk`, `psi` and
+    /// `rcm`.
     ///
     /// The circuit constrains `slack + value` to `MAX_MONEY`. Because both
     /// lie below $2^{51}$, the sum holds over the integers and `slack` is the
     /// unique bit string for `MAX_MONEY - value`. Multiplying
     /// [`FEE_V_BASE`](struct@fixed_base::FEE_V_BASE) by `slack` yields
-    /// $\[-v\]\mathcal{V}$. Digests at or above $2^{254}$ have no 254-bit
-    /// decomposition, and multiplying `R_BASE` by zero has no
-    /// assignment.
+    /// $\[-v\]\mathcal{V}$. The blind bits must recompose to the digest, and
+    /// the blind must satisfy the [`R_BASE`](struct@fixed_base::R_BASE)
+    /// range.
     pub(crate) fn cv_feemax(
         &self,
         dr: &mut D,
@@ -108,8 +109,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     }
 
     /// Enforces $v=0$, so [`cv_feemax`](Self::cv_feemax) is the blind term
-    /// alone and still determines the note. The 254-bit multiplication on
-    /// [`R_BASE`](struct@fixed_base::R_BASE) admits exactly $0<r<2^{254}$.
+    /// alone and still determines the note. The blind bits must recompose to
+    /// the digest and satisfy the [`R_BASE`](struct@fixed_base::R_BASE) range.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;

@@ -39,7 +39,7 @@ use crate::{
 ///
 /// [`SummarySeed`] and [`SummaryAdvance`] output this header. Every verified
 /// `Summary` asserts `epoch <= EPOCH_MAX` as an integer and a prover-known
-/// [stamp chain](Anchor#chains-in-a-step) in `epoch` of $k \geq 1$ absorptions
+/// [stamp chain](super#chains-in-a-step) in `epoch` of $k \geq 1$ absorptions
 /// from `anchor_prev` to `anchor_end` with polynomials $P_1, \dots, P_k$, where
 /// [`Summary::ACCUMULATED`] equals $P_1 \cdots P_k$ and
 /// [`Summary::LAST_STAMP`] equals $P_k$.
@@ -128,7 +128,7 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// The step [absorbs](Anchor#chains-in-a-step) [`Summary::LAST_STAMP`] into
+/// The step [absorbs](super#chains-in-a-step) [`Summary::LAST_STAMP`] into
 /// prover-chosen `anchor_prev` at `epoch`. Both output slots precede $\zeta$;
 /// matching their openings there sets [`Summary::ACCUMULATED`] to that stamp.
 /// Requiring the opening to differ from one permits other nonzero constants.
@@ -232,7 +232,7 @@ impl Step<Pasta> for SummarySeed {
 /// # Soundness
 ///
 /// The step keeps `epoch` and `anchor_prev` and
-/// [absorbs](Anchor#chains-in-a-step) the new stamp $P$ into `anchor_end`. Only
+/// [absorbs](super#chains-in-a-step) the new stamp $P$ into `anchor_end`. Only
 /// the accumulated product $A$ is read from the input slots. It and both output
 /// polynomials precede $\zeta$, so checking $A'(\zeta)=A(\zeta)P(\zeta)$
 /// extends the product by $P$. Requiring $P(\zeta)\ne1$ rules out the constant

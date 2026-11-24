@@ -30,34 +30,25 @@
 //! - **Recursion.** Ragu is an argument of knowledge. Parties jointly producing
 //!   a verified PCD know its step tree and satisfying wires. “Its prover knows”
 //!   attributes a value, chain or PCD to the party running that step; extending
-//!   a received PCD implies no knowledge of its witnesses ([full stamp
-//!   proofs](self#full-proofs-between-parties)). Every step input is a verified
-//!   PCD of the declared header. Headers reach steps and verifiers as
-//!   [`HEADER_SIZE`] elements ending in a unique suffix. Opening a slot yields
-//!   the evaluation of the polynomial committed when producing that slot.
-//!   Unopened output slots hold the constant one, and no registered step can
-//!   open a `Padding` slot. Ragu binds the two bridge hash wires to a bridge
-//!   hash of the last output slot's accumulator outside the step circuit.
-//!
-//!   Every tree consists of steps registered in [`new_application`], Ragu's
-//!   unit-header bootstrap step, and Ragu's rerandomization step, which
-//!   `Application::rerandomize` runs twice in succession. Rerandomization
-//!   preserves every assertion by copying its input header fields and equating
-//!   each output polynomial with its input at the challenge, so header
-//!   documentation lists only registered producers. The application uses Ragu's
-//!   standard profile, which includes no decompression step.
-//! - **Poseidon.** Each tag absorbs a fixed number of elements, and no two
-//!   distinct triples of tag, fixed-length input and squeeze position are known
-//!   to yield the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed) alone
-//!   needs more and models the stamp absorption digest as a random function.
-//! - **Commitments.** No discrete-log relation is known among either curve's
-//!   generators or between the value commitment generators $\mathcal{V}$ and
-//!   $\mathcal{R}$. An accumulator $\sum_j c_j G_j$ weights host generators by
-//!   polynomial coefficients without a blinding term. It determines its
-//!   polynomial among those of at most $2^{13}$ coefficients. A bridge hash
-//!   commits to an accumulator's two coordinates under the nested generators
-//!   and determines that accumulator. Many bridge hashes exist per accumulator,
-//!   and honest provers compute [`bridge_hash`](crate::bridge_hash).
+//!   a received PCD implies no knowledge of its witnesses. Every step input is
+//!   a verified PCD of the declared header. Headers reach steps and verifiers
+//!   as [`HEADER_SIZE`] elements ending in a unique suffix. Opening a slot
+//!   yields the evaluation of the polynomial committed when producing that
+//!   slot. Unopened output slots hold the constant one, and no registered step
+//!   can open a `Padding` slot. Ragu binds the two bridge hash wires to a
+//!   bridge hash of the last output slot's accumulator. Every tree consists of
+//!   steps registered in [`new_application`], Ragu's unit-header bootstrap
+//!   step, and Ragu's rerandomization step. Rerandomization preserves the input
+//!   header and each online polynomial, so header documentation lists only
+//!   registered producers. The application uses Ragu's standard profile, which
+//!   includes no decompression step.
+//! - **Poseidon.** See [tagged hashing](crate::digest::poseidon#injectivity)
+//!   and [`AnchorSpanSeed`](pool::AnchorSpanSeed#soundness) for the stronger
+//!   stamp absorption premise.
+//! - **Commitments.** See the binding of
+//!   [accumulators](crate::TachygramSetCommit) and [bridge
+//!   hashes](crate::primitives::TachygramSetBridge), and the [value commitment
+//!   binding assumption](crate::value::ValueCommitment#binding).
 //! - **Challenge.** Ragu squeezes each step's challenge from a transcript hash
 //!   modelled as a random oracle, making the challenge uniform and independent
 //!   of prior transcript inputs.
@@ -92,80 +83,45 @@
 //! Opening at any other point evaluates the committed polynomial there, so a
 //! zero opening proves a root.
 //!
-//! ## Zero tachygrams
+//! A slot alone need not hold a product of monic linear factors. Steps can
+//! establish that product by checking factors fixed before the challenge;
+//! [`AnchorSpanSeed`](pool::AnchorSpanSeed) gives the separate argument for its
+//! unfixed root. A verifier can also recompute the accumulator from published
+//! members. Accumulators carry no member-kind tag; steps open slots by the kind
+//! declared in `OnlinePolyCommit`.
 //!
-//! [`OutputBind`](output::OutputBind) holds `cm` and `pad` nonzero,
-//! [`SpendBind`](spend::SpendBind) both nullifiers, and
-//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) the fee change
-//! commitment. Thus no leaf of a verified [`Stamp`](stamp::Stamp) contributes a
-//! zero root to the published [set polynomial](crate::collections::multiset).
-//! Its factors record no roles: zero always contributes $X$.
+//! ## Chains in a step
 //!
-//! Matching a note commitment (including fee change) to another note's
-//! commitment or to a differently tagged pad or nullifier requires a Poseidon
-//! collision. At zero the nonzero checks exclude a match independently of
-//! collision resistance: zero cannot be the published root that
-//! [`SpendableInit`](spendable::SpendableInit) tests for membership.
+//! Steps can take the predecessor or epoch from the prover. Their digests
+//! establish a chain without tying it to a pool history.
 //!
-//! ## Full proofs between parties
+//! A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
+//! $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a
+//! bridge hash $B_i$ of $P_i$'s accumulator at each $i \in 1..=k$, with
+//! $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ when
+//! every $e_i$ equals $e$, and $k = 0$ sets $a_k = a_0$.
 //!
-//! In this crate, lifting, merging and unmerging take an uncompressed stamp.
-//! The crate can verify a compressed stamp proof but cannot decompress it.
+//! `anchor_next_stamp` absorbs an anchor wire, an
+//! [`EpochIndex`](crate::gadgets::epoch::EpochIndex) and two bridge hash wires
+//! tied by [Recursion](self#assumptions) to the last output slot's accumulator.
+//! Its polynomial is nonzero: the zero polynomial commits to the identity,
+//! which lacks affine coordinates for a bridge hash. Each step also rules out
+//! the constant one, as
+//! [`Anchor::next_stamp`](crate::primitives::Anchor::next_stamp) rejects the
+//! empty set. Only [`AnchorSpanSeed`](pool::AnchorSpanSeed) evaluates an
+//! absorption inside a challenge identity.
 //!
-//! ### What a receiver can produce
+//! Steps taking a stamp polynomial from the prover do not establish that it is
+//! a monic product of linear factors. Instead, they absorb a bridge hash of its
+//! accumulator into an [`Anchor`](crate::primitives::Anchor), and a
+//! pool-history anchor determines each preceding stamp's accumulator.
 //!
-//! Only [`StampMerge`](stamp::StampMerge), [`StampLift`](stamp::StampLift) and
-//! [`StampUnmerge`](stamp::StampUnmerge) read a [`Stamp`](stamp::Stamp) among
-//! registered steps, while rerandomization reads any header. Holding a full
-//! stamp proof lets a receiver run these operations and compress the result.
-//! If the output stamp proof verifies, its leaves satisfy the `Stamp`
-//! assertion regardless of who ran the step. A receiver can combine leaf
-//! multisets of held stamps by sum and difference alongside leaves it proves
-//! itself; it need not have proved the input leaves.
-//!
-//! Bundle signatures cover each action's `cv` and $\mathsf{rk}$ plus
-//! $\mathsf{cv}_\mathsf{feemax}$, leaving the stamp, the fee and each action's
-//! tachygram pair for the stamp's leaves to fix from their wires.
-//!
-//! - Fees apply after signing. Signatures fix the maximum via
-//!   $\mathsf{cv}_\mathsf{feemax}$, while the stamp's fee leaf fixes the fee
-//!   and fee change. Because only [`FeeFuse`](stamp::FeeFuse) and
-//!   [`FeeSeed`](stamp::FeeSeed) produce fee leaves from max-fee-note wires,
-//!   producing a new fee leaf requires the opening. Its holder can choose a fee
-//!   up to the signed maximum for which the fee circuit has an assignment;
-//!   reusing a previously proved leaf does not require the opening. To replace
-//!   the fee on an existing stamp, the holder runs `FeeFuse` twice over one of
-//!   its own actions at the stamp's anchor for the old and new fees, merging
-//!   the new stamp in and unmerging the old one.
-//! - Proving a new action leaf for a published $\mathsf{rk}$ requires $\theta$
-//!   and `cm` ([`Actions`](stamp::Actions#injectivity)). A delegate given every
-//!   wire of a spend and a valid spendable for a later epoch can re-prove it
-//!   with the same `cv` and $\mathsf{rk}$ and a new nullifier pair. The signing
-//!   key enters no step. Spending still requires the action signature.
-//!
-//! The full proof carries its header and both online polynomials. For a
-//! verified stamp covering published bundles, the leaf digests bind the fee and
-//! output notes, each spend's master key and value, and the value commitment
-//! openings ([`Actions`](stamp::Actions#injectivity),
-//! [`Stamp`](stamp::Stamp#injectivity)).
-//!
-//! ### What a party does
-//!
-//! - It lets a stamp proof leave only after rerandomization.
-//!   [`Plan::prove`](crate::stamp::Plan::prove) rerandomizes the output of
-//!   `FeeSeed` or `FeeFuse`.
-//!   [`ProofStamp::merge`](crate::stamp::ProofStamp::merge) rerandomizes the
-//!   merged stamp and `ProofStamp::unmerge` the quotient. `ProofStamp::lift`
-//!   rerandomizes after the last span; with no spans it returns the original
-//!   stamp without rerandomizing. A full proof that was not rerandomized holds
-//!   in the clear its inputs' headers, the steps that made them and their
-//!   instances, and its own opening points and values. For
-//!   [`SpendBind`](spend::SpendBind) that is the spent note's opening and
-//!   master key.
-//! - It draws randomness for every proving call from an unpredictable source.
-//! - It uses its release's shared bootstrap proof. Both rerandomization passes
-//!   take that proof as their right input.
-//! - It verifies every received stamp before extending it.
+//! If $a_k$ belongs to a pool history, backward injectivity matches the $k$
+//! absorptions to its last $k$ entries behind $a_k$, including each stamp's
+//! epoch $e_i$, canonical bridge hash $B_i$ and polynomial $P_i$. A non-genesis
+//! $\mathsf{ep}(a,e)$ in that history is its boundary into $e$ from $a$.
+//! Genesis $\mathsf{ep}(0,0)$ is no entry and does not make zero a history
+//! anchor.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

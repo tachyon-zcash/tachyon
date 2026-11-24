@@ -53,16 +53,6 @@ use crate::{
 /// $\mathsf{nk}$ fix `mk` and every epoch's nullifier. The converse fails:
 /// changing $\mathsf{ak}$, value or `rcm` alone leaves `mk` and all nullifiers
 /// unchanged. Steps joining headers for one note therefore match `cm`.
-///
-/// # Zero commitment trapdoor
-///
-/// Since `cm` fixes `rcm` and [`NoteSeed`] excludes zero, a zero-`rcm` note has
-/// no `NoteSecret` for [`SpendBind`](super::spend::SpendBind).
-/// [`OutputBind`](super::output::OutputBind),
-/// [`FeeFuse`](super::stamp::FeeFuse) and [`FeeSeed`](super::stamp::FeeSeed)
-/// enforce the same check for outputs and fee change. Recipients check
-/// unverified openings before calling [`Note::commitment`], which panics on
-/// zero `rcm`.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 

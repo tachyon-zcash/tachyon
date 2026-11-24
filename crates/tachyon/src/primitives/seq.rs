@@ -25,7 +25,7 @@ use crate::{
 
 /// Pedersen commitment to a nullifier sequence.
 ///
-/// Under the [Commitments assumption](crate::stamp::proof#assumptions), the
+/// Under the [accumulator assumption](super::sets#injectivity), the
 /// commitment determines its [`NfSeqPoly`].
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct NfSeqCommit(EqAffine);

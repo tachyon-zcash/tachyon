@@ -16,12 +16,6 @@
 //! irreducible. Multiplying two set polynomials gives the set polynomial of the
 //! multiset sum. Any divisor of a set polynomial is a scalar multiple of a
 //! sub-multiset's set polynomial, and $S(x) = 0$ holds iff $x$ is a member.
-//!
-//! A slot alone need not hold a product of monic linear factors. Steps can
-//! establish that product by checking factors fixed before the challenge;
-//! [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) gives the
-//! separate argument for its unfixed root. A verifier can also recompute the
-//! accumulator from published members.
 
 extern crate alloc;
 

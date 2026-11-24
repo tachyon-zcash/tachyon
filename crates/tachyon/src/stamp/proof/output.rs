@@ -36,11 +36,11 @@ use crate::{
 /// The [note commitment](crate::digest::poseidon::note_commitment) `cm` and
 /// [padding tachygram](crate::digest::poseidon::pad_tachygram) `pad` each
 /// determine all four fields under distinct tags, and thus determine each
-/// other. The [value commitment](fixed_base#value-commitments)
+/// other. The [value commitment](crate::value::ValueCommitment#binding)
 /// $\mathsf{cv}=\[-v\]\mathcal{V}+\[r\]\mathcal{R}$ binds the opening $(-v,r)$.
 ///
 /// Both `cm` and `pad` are nonzero, ruling out roots at zero
-/// ([zero tachygrams](super#zero-tachygrams)), and $\mathsf{rcm}$ is nonzero.
+/// ([`Stamp`](super::stamp::Stamp#injectivity)), and $\mathsf{rcm}$ is nonzero.
 /// Nothing here constrains $\mathsf{pk}$ to a derived payment key, which
 /// [`NoteSeed`](super::delegation::NoteSeed) proves when spending the note.
 #[derive(Debug)]
@@ -95,7 +95,7 @@ impl Header<Fp> for OutputHeader {
 /// `Note::commitment` excludes zero `rcm`; this step excludes zero `cm` and
 /// `pad`. Neither `pk` nor `psi` has a separate constraint.
 /// Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by 254 freely chosen
-/// Boolean blind wires computes the blind point, with no assignment at zero.
+/// Boolean blind wires computes the blind point subject to the table's range.
 /// `NEG_V_BASE.mul_and_add` adds the negated value term from
 /// the same 51 bits that encode the
 /// [amount](gadgets::value::Positive::from_bits) for both digests.

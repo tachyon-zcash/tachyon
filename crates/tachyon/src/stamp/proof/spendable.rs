@@ -34,7 +34,7 @@ use crate::{
 /// one of two forms.
 ///
 /// - **Creation.** The prover knows a one-absorption [stamp
-///   chain](Anchor#chains-in-a-step) in `epoch_current` ending at `anchor`. The
+///   chain](super#chains-in-a-step) in `epoch_current` ending at `anchor`. The
 ///   header's [`TachygramSetPoly`] is that absorption's polynomial with `cm`
 ///   among its roots.
 /// - **Lineage.** The prover knows an epoch $e_0 < \text{epoch\_current}$,
@@ -109,7 +109,7 @@ impl Header<Fp> for NoteSpendable {
 /// # Soundness
 ///
 /// Reading no challenge, the step copies `cm` from its input,
-/// [adds an absorption](Anchor#chains-in-a-step) of prover-chosen `anchor_prev`
+/// [adds an absorption](super#chains-in-a-step) of prover-chosen `anchor_prev`
 /// and `creation_epoch` with the creation polynomial, and opens that polynomial
 /// to zero at `cm`. That zero opening proves `cm` is a root and rules out the
 /// constant one.

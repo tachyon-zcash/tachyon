@@ -48,34 +48,6 @@ pub enum AnchorError {
 /// equals genesis: stamp absorptions use another tag and
 /// [`next_epoch`](Self::next_epoch) rejects epoch zero. Hence matching anchors
 /// have identical histories and no history repeats an anchor.
-///
-/// # Chains in a step
-///
-/// Steps can take the predecessor or epoch from the prover. Their digests
-/// establish a chain without tying it to a pool history.
-///
-/// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
-/// $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a
-/// bridge hash $B_i$ of $P_i$'s accumulator at each $i \in 1..=k$, with
-/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ when
-/// every $e_i$ equals $e$, and $k = 0$ sets $a_k = a_0$.
-///
-/// `anchor_next_stamp` absorbs an anchor wire, an
-/// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) and two bridge hash wires
-/// tied by [Recursion](crate::stamp::proof#assumptions) to the last output
-/// slot's accumulator. Its polynomial is nonzero: the zero polynomial commits
-/// to the identity, which lacks affine coordinates for a bridge hash. Each step
-/// also rules out the constant one, as [`next_stamp`](Self::next_stamp) rejects
-/// the empty set. Only
-/// [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) evaluates an
-/// absorption inside a challenge identity.
-///
-/// If $a_k$ belongs to a pool history, backward injectivity matches the $k$
-/// absorptions to its last $k$ entries behind $a_k$, including each stamp's
-/// epoch $e_i$, canonical bridge hash $B_i$ and polynomial $P_i$. A non-genesis
-/// $\mathsf{ep}(a,e)$ in that history is its boundary into $e$ from $a$.
-/// Genesis $\mathsf{ep}(0,0)$ is no entry and does not make zero a history
-/// anchor.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 

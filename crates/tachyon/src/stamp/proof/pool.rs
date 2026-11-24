@@ -62,7 +62,7 @@ use crate::{
 /// [class](crate::QrDiscriminant#injectivity) of its `profile` at its
 /// `discriminant` and has contents non-vanishing at $v$. Under the bucket's
 /// [assertion](QrBucket#injectivity), its contents hold every root in that
-/// class across its [stamp chain](Anchor#chains-in-a-step), so $v$ is a root of
+/// class across its [stamp chain](super#chains-in-a-step), so $v$ is a root of
 /// none of those polynomials. Boundary digests $b$ and $b'$ fix that chain for
 /// every bucket sharing `(e, b, b')`, and $b'$ determines $e + 1$ and the
 /// chain's end.
@@ -216,7 +216,7 @@ impl Header<Fp> for NoteUnspent {
 /// # Injectivity
 ///
 /// [`AnchorSpanSeed`] and [`AnchorSpanFuse`] output this header. Every verified
-/// `AnchorSpan` asserts a prover-known [stamp chain](Anchor#chains-in-a-step)
+/// `AnchorSpan` asserts a prover-known [stamp chain](super#chains-in-a-step)
 /// of $k \geq 1$ absorptions from `anchor_start` to `anchor_end` whose anchors
 /// after `anchor_start` form the [`AnchorSetPoly`]
 /// $M(X) = \prod_{i=1}^{k} (X - a_i)$.
@@ -281,7 +281,7 @@ impl Header<Fp> for AnchorSpan {
 /// challenges and $Q$ stamp absorption digests, the member polynomial $M$
 /// equals $X - a$ as [`AnchorSpan`] asserts for a single-absorption chain.
 ///
-/// The step [adds an absorption](Anchor#chains-in-a-step) $a$ of prover-chosen
+/// The step [adds an absorption](super#chains-in-a-step) $a$ of prover-chosen
 /// `anchor_start` and `epoch` with the stamp polynomial, holding that
 /// polynomial's opening at $\zeta$ away from one to rule out the constant one.
 ///
@@ -295,10 +295,10 @@ impl Header<Fp> for AnchorSpan {
 /// - Otherwise $X - M(X)$ is nonconstant of degree below $2^{13}$, and the
 ///   constraint requires $a = \zeta - M(\zeta)$. Collision resistance does not
 ///   rule that out, so this step models the stamp absorption digest as a random
-///   function ([Poseidon assumption](crate::stamp::proof#assumptions)). Any
-///   single challenge and digest output satisfy the equation with probability
-///   below $2^{13}/p$ in either draw order, summing to $2^{13} \cdot T \cdot
-///   Q/p$ whereas checks on pre-challenge values avoid the factor $Q$.
+///   function ([Poseidon assumption](poseidon#injectivity)). Any single
+///   challenge and digest output satisfy the equation with probability below
+///   $2^{13}/p$ in either draw order, summing to $2^{13} \cdot T \cdot Q/p$
+///   whereas checks on pre-challenge values avoid the factor $Q$.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 

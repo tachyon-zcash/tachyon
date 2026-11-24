@@ -159,11 +159,11 @@ Under **recursion**, joint provers of a verified PCD know its step tree and sati
 ### Consensus rules
 
 1. **Anchor chain.** Consensus advances the anchor as [Anchor](./anchor.md) defines. Each stamp absorption hashes the containing block's epoch and the honest bridge hash of the stamp's tachygram accumulator, excluding stamps with empty tachygram sets. One boundary digest enters each epoch.
-2. **Covered sets.** Each stamp covers its carrying bundle and the bundles named in its adjunct list. Consensus rebuilds every action and fee digest from the covered bundles, recomputes both accumulators from published members[^tachygrams], rejects duplicate actions, fee descriptors or tachygrams, and verifies the stamp proof against both accumulators and the stamp's anchor.
+2. **Covered sets.** Each stamp covers its carrying bundle and the bundles named in its [adjunct list](./aggregation.md#adjunct-list). Consensus rebuilds the action and fee digests and both accumulators from the covered bundles, [rejects duplicate actions, fee descriptors or tachygrams](./tachygrams.md#consensus-validation), and verifies the stamp proof against the accumulators and the stamp's anchor.
 3. **Acknowledged anchor.** Each stamp's anchor is a canonical end-of-block anchor from the containing block's epoch or the epoch before, as [Anchor](./anchor.md#intra-block-state-vs-end-of-block-anchor) states.
-4. **Two-epoch uniqueness.** No tachygram in a stamp appears in any other stamp from the containing block's epoch or the epoch before[^tachygrams].
-5. **Block coverage.** Every bundle in a stamp's adjunct list is a stripped bundle in the same block, and exactly one stamp in that block names each stripped bundle[^aggregation]. Each transaction appears in at most one block on the accepted chain.
-6. **Signatures and balance.** Every bundle in a block, stripped or not, carries an action signature under each action's randomized key and a binding signature over its value commitments and value balance. Consensus applies each bundle's value balance and fee once.
+4. **Two-epoch uniqueness.** No [tachygram](./tachygrams.md#consensus-validation) in a stamp appears in any other stamp from the containing block's epoch or the epoch before.
+5. **Block coverage.** Under the [aggregation block rules](./aggregation.md#block-rules), every named bundle is stripped and in the same block, and exactly one stamp names each stripped bundle. Each transaction appears in at most one block on the accepted chain.
+6. **Signatures and balance.** Every [bundle](./bundle.md#bundle-body), stripped or not, carries an action signature under each action's randomized key and a binding signature over its value commitments and value balance. Consensus applies each bundle's value balance and fee once.
 
 For rule 2, the caller resolves the adjunct list by `txid`. `Bundle::verify` checks coverage against the supplied bodies, verifies the stamp proof against the resulting claims, and checks the carrying bundle's own signatures under rule 6. It reads neither the adjunct list nor chain history.
 Nodes enforce rules 1, 3, 4 and 5 against chain history.
@@ -251,17 +251,16 @@ Finally, rule 5 assigns each bundle to a single stamp in its sole block, so rule
 
 ### A full stamp proof between parties
 
-In the crate today, `Plan::prove` returns an uncompressed stamp. The crate can compress its proof but cannot decompress it.
-The [aggregation chapter](./aggregation.md#merge-to-produce-aggregate) states the intended publication rule.
+See [Aggregation](./aggregation.md#merge-to-produce-aggregate) for the publication rule and the crate's current support for compression.
 
 Any party holding an uncompressed stamp proof can lift, merge or unmerge it with the requisite inputs, rerandomize it, and compress it. `StampLift`, `StampMerge` and `StampUnmerge` are the only registered steps reading `Stamp`; generic rerandomization also reads it.
-Lifting preserves coverage and can advance a canonical anchor within its epoch. Merging adds leaves; unmerging removes them. These operations preserve the covered transactions' `txid`s. Each step's argument applies regardless of who runs it, and the consensus conclusions apply to any stamp consensus accepts.
+Lifting preserves coverage and can advance a canonical anchor within its epoch. Merging adds leaves; unmerging removes them. These operations preserve the covered transactions' `txid`s. The receiver need not have proved the input leaves. If the output proof verifies, its leaves satisfy the `Stamp` assertion regardless of who ran the step. The consensus conclusions apply to any stamp consensus accepts.
 
 Bundle signatures omit the stamp, the fee and each action's tachygram pair, leaving the stamp's leaves to fix them.
 Fees apply after signing ([Dynamic Fee](./fee.md)). Signatures fix the maximum via the max fee commitment; the fee leaf fixes the fee and fee change. Producing a new fee leaf requires the max fee note's opening and a fee at or below the maximum for which the circuit has an assignment. Reusing an existing fee leaf does not require its opening.
-Building a new action leaf for a published action requires the action's entropy and note commitment. A delegate given all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair. Spending still requires the action signature.
+Building a new action leaf for a published action requires the action's entropy and note commitment. A delegate given all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair. The signing key enters no step. Spending still requires the action signature.
 
-An uncompressed stamp carries both set polynomials. Rule 2 binds them to the published bundles, whose digests determine the fee and output notes and each spend's master key and value.
+An uncompressed stamp proof carries its header and both set polynomials. Rule 2 binds the polynomials to the published bundles, whose digests determine the fee and output notes, each spend's master key and value, and the value commitment openings.
 
 ### What the stamp proof leaves to others
 
@@ -285,8 +284,7 @@ $$r^2 = m \cdot (x + R)$$
 with multiplier $m = 1$ for the residue class and fixed non-residue $c$ otherwise. At $x = -R$, root zero satisfies both multipliers, so the non-residue side separately excludes $x + R = 0$.
 A profile records the sequence of sides along the path to a bucket.
 For a complete binary routing tree with all buckets at one depth, that depth is $\log_2$ of the bucket count. This depth estimate stays below 26 at proposed throughputs; individual buckets need not stop at the same depth. The 32-position register sets a width rather than a security level[^balance].
-Builders can keep $R_0$ and intake headers private until the epoch closes and publish sealed buckets afterward.
-No step restricts the builder's initial choice of $R_0$; routing preserves it.
+No step proves that the builder's $R_0$ is random, secret, or selected by the chain; routing preserves it. Keeping $R_0$ and intake headers private until the epoch closes is a load-balancing policy. A biased or early-revealed choice affects that builder's buckets. Builders can publish sealed buckets after the epoch closes.
 
 `QrSummaryIntake` starts a depth-zero `QrIntake` from a `Summary`.
 `QrStampIntakeSeed` starts one from a single stamp, as `SummarySeed` starts a summary.
@@ -330,32 +328,21 @@ Selecting the bucket's depth-$d$ prefix via $e_j$ and accumulating $a_j$ from ze
 $$\sum_j e_j = d \qquad 2 \sum_j j \cdot e_j = d \cdot (d - 1) \qquad a_{j+1} = a_j + e_j \cdot (a_j + b_j) \qquad a_{32} = \mathsf{bits}$$
 
 while leaving positions past $d$ uncompared.
-Only the first $d$ positions attain the minimum index sum $d(d-1)/2$, so the mask is fixed. The step opens only the bucket contents (nonzero at $x$) and `elapsed` (equal at $\zeta$ to the indexed factor for $(\mathsf{epoch},x)$). The resulting `ArbitraryUnspent` covers `[anchor_start, anchor_next)` and `[epoch, epoch + 1)`. `UnspentFuse` joins segments at `anchor_next`; `UnspentBind` ties the value to a note.
+The step opens only the bucket contents (nonzero at $x$) and `elapsed` (equal at $\zeta$ to the indexed factor for $(\mathsf{epoch},x)$). The resulting `ArbitraryUnspent` covers `[anchor_start, anchor_next)` and `[epoch, epoch + 1)`. `UnspentFuse` joins segments at `anchor_next`; `UnspentBind` ties the value to a note.
 
 `QrSpendableInit` bootstraps a lineage-form spendable from the creation bucket and that epoch's `NoteUnspent` segment after `UnspentBind`.
 Equating the bucket's `(epoch, anchor_start, anchor_next)` with the segment's `(epoch_start, anchor_start, anchor_next)` and checking `segment.epoch_next == bucket.epoch + 1`, it opens the bucket contents to zero at `segment.cm` without reading the profile and emits the spendable with that `cm` on `(epoch_next, anchor_next)`.
 
-### Scaled splits: observed behavior and limits
+### Scaled splits
 
 For nonzero $k$, a scaled split replaces $(q_0, q_1)$ with $(kq_0, q_1/k)$, preserving the product and roots while changing commitments when $k \neq 1$.
-Characterization tests in `crates/tachyon/tests/integration/qr.rs` record four behaviors.
+The `QrIntake` and `QrBucket` assertions concern roots of the contents whatever the shape of the polynomial, not just rescalings of a monic split.
 
-- `QrIntakeSplit` accepts reciprocal factors with unchanged product, and its empty-intake check rejects contents opening to one rather than all rootless polynomials. After routing into constant side $1/7$, splitting further into $11$ and $1/77$ passes.
-- `QrSideSelect` checks a nonzero exceptional-value opening preserved by nonzero scaling, and scaling sibling $q$ by $k$ with quotient $h/k$ preserves the class identity in `QrSideDescend`. Its unequal-opening check rejects identical monic sides of $(X-x)^2$ while accepting $7(X-x)$ and $(X-x)/7$ in the tested case, placing $x$ in the child under the opposite class profile.
-- `QrBucketSeal` and evidence admission accept the tested scaled buckets, whereas `EvidenceTreeOpen` requires the exact leaf and rejects rescaled replays because the leaf digest absorbs `contents_hash`.
-- The tested `QrUnspentInit` and `QrSpendableInit` queries distinguish zero from nonzero evaluations, which nonzero scaling preserves. Bound exclusion via `UnspentBind`, inclusion, and `SpendBind` match for the compared scaled and monic buckets. Wrong-profile exclusions still fail. A monic split carrying a stray member matches the scaled duplicate split on the tested queries.
-
-Rejecting canonical empty and equal-sided splits, enforcing membership and profile checks, and requiring exact leaf replay are intended, whereas accepting scaled empty and equal-root splits is pinned test behavior rather than a requirement.
-The tests cover finitely many cases. The `QrIntake` and `QrBucket` assertions concern roots of the contents whatever the shape of the polynomial, not just rescalings of a monic split.
-
-### Oversized buckets: observed behavior
+### Oversized buckets
 
 `QrSideDescend` stops at depth 32. Two tachygrams sharing all 32 sides cannot be separated, so their bucket is *oversized* for any builder capacity below two.
 
-For $x=n-R_0$, the shifted value at level $j$ is $x+R_0+j=n+j$. Two matching runs of 32 quadratic characters (filing zero on the residue side) thus give colliding profiles under any discriminant offset. Exhaustive search found the two smallest positive integers matching the run of $-31$, which exercises the zero rule at level 31.
 Modelling characters as independent and uniform for discriminant-independent tachygrams gives collision probability $2^{-32}$ across 32 levels.
-
-In `crates/tachyon/tests/integration/qr.rs`, `QrSideDescend` rejects further descent for this pair, but `QrBucketSeal` seals the bucket and an evidence tree admits and replays it via `EvidenceTreeOpen`. `QrUnspentInit` rejects both members and accepts the tested nonzero absent value with the same profile. Exact exclusion is intended; the test records the current depth limit, not a circuit capacity rule.
 
 ## Evidence trees
 
@@ -402,6 +389,8 @@ $$\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$$
 `SpendBind` commits the spent note's value with opposite sign
 
 $$\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$$
+
+The bind steps take the low 254 bits of $\mathsf{rcv}$ as free Boolean wires, with no constraint tying them to a full scalar. When all 254 bits are zero, the blind point is the identity and the bind step has no satisfying assignment.
 
 `OutputAction` reads `cv` and `cm` from `OutputHeader` and derives `alpha` from prover-chosen `theta` and that `cm`. It takes no key witness and sets `rk` to the generator times `alpha`[^keys].
 `SpendAction` reads `cv` from `SpendHeader`, equates its witnessed proof authorizing key's payment key with `pk`, derives `alpha` from `theta` and `cm`, sets `rk` to `ak` plus the generator times `alpha`, and publishes the nullifier pair `SpendBind` derived from the master key.

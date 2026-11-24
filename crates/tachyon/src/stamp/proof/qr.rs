@@ -50,7 +50,7 @@ use crate::{
 /// [`QrIntakeMerge`] and [`QrSideDescend`] output this header. Every verified
 /// `QrIntake` with contents $C$ asserts `epoch <= EPOCH_MAX` as an
 /// [integer](gadgets::epoch::EpochIndex), a [path](QrProfile#injectivity)
-/// `profile`, and a prover-known [stamp chain](Anchor#chains-in-a-step) in
+/// `profile`, and a prover-known [stamp chain](super#chains-in-a-step) in
 /// `epoch` from `anchor_prev` to `anchor_end` with product $P$, where $C$
 /// divides $P$ and holds every root of $P$ in the
 /// [class](QrDiscriminant#injectivity) of `profile` at `discriminant`.
@@ -279,8 +279,7 @@ impl Header<Fp> for QrSideSelection {
 /// [`Summary::ACCUMULATED`] at $\zeta$ sets the contents to the chain product
 /// $P$ asserted by [`Summary`], while copying `epoch` and both anchors adopts
 /// that chain. Constant depth-zero `profile` covers all values, and
-/// `discriminant` comes from `Step::Witness` ([Choosing the first
-/// discriminant](QrDiscriminant#choosing-the-first-discriminant)).
+/// the first `discriminant` $R_0$ comes from `Step::Witness`.
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -857,8 +856,11 @@ impl Step<Pasta> for QrSideSelect {
 /// [`QrSideSelection`]'s polynomial with the left input's $q_0$ so that
 /// $q_0(-R) \neq 0$.
 ///
-/// The circuit constrains the witness bit $b$ to be Boolean and equal to the
-/// staged `class`. Thus $b$, input slot polynomials
+/// The challenge binds both input headers, their online commitments, and the
+/// staged child bit, and does not absorb the output header. The step computes
+/// $R = R_0 + \mathsf{depth}$ from the input header without hashing or staging
+/// $R$ separately. The circuit constrains the witness bit $b$ to be Boolean
+/// and equal to the staged `class`. Thus $b$, input slot polynomials
 /// $q_0, q_1, u, h$, committed output contents, and $R = R_0 + j$ are all fixed
 /// before $\zeta$.
 ///
@@ -1149,10 +1151,10 @@ impl Header<Fp> for QrBucket {
 ///
 /// `epoch.next` range-checks the successor $e+1$. The step matches
 /// `intake.anchor_prev` to the [boundary digest](poseidon::anchor_next_epoch)
-/// of witnessed `anchor_final_prev` into $e$, and sets `anchor_next` to the
-/// boundary digest of `intake.anchor_end` into $e+1$. These digests determine
-/// their predecessors without establishing that either is an epoch's final
-/// anchor.
+/// of `anchor_final_prev`, the step's only witness, into $e$, and sets
+/// `anchor_next` to the boundary digest of `intake.anchor_end` into $e+1$.
+/// These digests determine their predecessors without establishing that
+/// either is an epoch's final anchor.
 ///
 /// Matching the pre-committed output contents to the input at $\zeta$
 /// preserves the polynomial. Its bridge hash becomes `contents_hash`;

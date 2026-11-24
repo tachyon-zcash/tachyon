@@ -8,16 +8,14 @@
 //!
 //! # Injectivity
 //!
-//! Under the [Poseidon assumption](crate::stamp::proof#assumptions), a digest
-//! determines its function and ordered inputs: a different function or input
-//! yielding it is a collision. Two absorbed affine coordinates fix the point.
+//! No two distinct triples of tag, fixed-length input and squeeze position are
+//! known to yield the same element. Under that assumption, a digest determines
+//! its function and ordered inputs: a different function or input yielding it
+//! is a collision. Two absorbed affine coordinates fix the point.
 //!
-//! The sponge adds each four-element block into the rate, zero-pads the last
-//! partial block and permutes at width five after each block. Squeezes read
-//! final rate elements in order from zero, at most four. Padding encodes no
-//! length, but each function has fixed arity and its own domain below
-//! $2^{128}$: distinct inputs differ in an absorbed element or in the capacity
-//! tag.
+//! Each function has fixed arity and its own domain below $2^{128}$: distinct
+//! inputs differ in an absorbed element or in the capacity tag. Squeezes read
+//! final rate elements in order from zero, at most four.
 
 use core::array;
 
@@ -163,8 +161,7 @@ const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 ///   )
 /// $$
 ///
-/// `value` enters as an integer below $2^{64}$. The circuit function absorbs
-/// any element for $v$, and the caller bounds it.
+/// `value` enters as an integer below $2^{64}$.
 #[must_use]
 pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(NOTE_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -211,8 +208,7 @@ const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Spend}(\theta,\ \mathsf{cm})
 /// $$
 ///
-/// Reading the digest as an integer gives $\alpha$. Steps decompose $\alpha$
-/// into 254 bits, leaving digests at or above $2^{254}$ with no assignment.
+/// Reading the digest as an integer gives $\alpha$.
 #[must_use]
 pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(SPEND_ALPHA_DOMAIN, [theta, cm]);

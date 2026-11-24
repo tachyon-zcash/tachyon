@@ -61,23 +61,6 @@ impl QrClass {
 /// $r^2 = m \cdot (x + R)$. Discriminants progress by one. A network samples
 /// a first discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
 ///
-/// # Choosing the first discriminant
-///
-/// The builder chooses $R_0$. No step proves that it is random, secret, or
-/// selected by the chain. Keeping it private until the epoch closes is a
-/// load-balancing policy. A biased or early-revealed choice affects that
-/// builder's buckets.
-///
-/// Seeds take $R_0$ from `Step::Witness`. Routing copies it: merges equate both
-/// inputs' values, descents equate split and selection, and reopening binds
-/// the same $R_0$. Class tests use their bucket's $R_0$.
-///
-/// A descent's challenge binds both input headers, their online commitments,
-/// and the staged child bit. The step computes $R = R_0 + \mathsf{depth}$
-/// from the header. It neither hashes nor stages $R$ separately, and the
-/// challenge does not absorb the output header. The seal copies $R_0$;
-/// its free witness is `anchor_final_prev`.
-///
 /// # Injectivity
 ///
 /// For any field element $R_0$, each value has one
@@ -362,10 +345,8 @@ impl QrProfile {
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
 /// It carries no class and is distinct from a root $x$ of a set polynomial.
 ///
-/// Paired with a multiplier, $r$ [shows the side](crate::collections::qr#sides)
-/// of $x$, except at $x + R = 0$ where $r=0$ satisfies both multipliers.
-/// The non-residue side's nonzero check excludes $x+R=0$, leaving it on the
-/// residue side.
+/// See [Sides](crate::collections::qr#sides) for how $r$ and the multiplier
+/// determine the side, including the case $x + R = 0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

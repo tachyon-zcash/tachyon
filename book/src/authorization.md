@@ -127,8 +127,7 @@ $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 where $v$ is the signed integer value (positive for spends, negative for outputs).
 
 Native sampling draws $\mathsf{rcv}$ uniformly from $\mathbb{F}_q$, and the planned commitment uses the whole scalar.
-The bind steps take its low 254 bits as free boolean wires, with no constraint tying them to a full scalar.
-At $\mathsf{rcv} = 0$ or $\mathsf{rcv} = 2^{254}$, all 254 bits are zero: the blind point is the identity, so the bind step has no satisfying assignment.
+Under the [bind steps' encoding](./proof-tree.md#stamp-construction), at $\mathsf{rcv} = 0$ or $\mathsf{rcv} = 2^{254}$ the bind step has no satisfying assignment.
 Above $2^{254}$, a successful bind step commits with the low bits, so the stamp proof covers a different commitment and fails verification against the planned body.
 A stamp proof for the planned body therefore requires $0 < \mathsf{rcv} < 2^{254}$; a uniform blind falls outside this range with negligible probability.
 

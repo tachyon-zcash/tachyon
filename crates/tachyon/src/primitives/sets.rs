@@ -2,12 +2,12 @@
 //!
 //! # Injectivity
 //!
-//! At the slot limit of $2^{13}$ coefficients, the [commitment
-//! assumption](crate::stamp::proof#assumptions) binds each accumulator to its
-//! polynomial and hence, for a [multiset], its fewer than $2^{13}$ members.
-//! The wrappers accept arbitrary polynomials and points. Accumulators carry no
-//! member-kind tag; steps open slots by the kind declared in
-//! `OnlinePolyCommit`.
+//! An accumulator $\sum_j c_j G_j$ weights host generators by polynomial
+//! coefficients without a blinding term. No discrete-log relation is known
+//! among the host generators, so at the slot limit of $2^{13}$ coefficients,
+//! each accumulator determines its polynomial and hence, for a [multiset],
+//! its fewer than $2^{13}$ members.
+//! The wrappers accept arbitrary polynomials and points.
 
 use core::iter;
 
@@ -35,9 +35,9 @@ pub struct TachygramSetCommit(EqAffine);
 /// Bridge hash of a tachygram accumulator as a Pallas point.
 ///
 /// Committing to the accumulator's two coordinates under the nested generators,
-/// a bridge hash determines the accumulator and its polynomial under the
-/// [Commitments assumption](crate::stamp::proof#assumptions). Each accumulator
-/// has many bridge hashes. Honest provers compute the canonical one via
+/// a bridge hash determines the accumulator and its polynomial, assuming no
+/// known discrete-log relation among those generators. Each accumulator has
+/// many bridge hashes. Honest provers compute the canonical one via
 /// [`bridge_hash`](crate::bridge_hash::bridge_hash) for [`Anchor::next_stamp`],
 /// whereas steps read it as two wires not fixed before the challenge.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -93,11 +93,6 @@ pub struct AnchorSetCommit(EqAffine);
 ///
 /// Members are [`Tachygram`] values from one stamp, or from the multiset sum of
 /// several stamps when a step multiplies their polynomials.
-///
-/// Steps taking a stamp polynomial from the prover do not establish that it is
-/// a monic product of linear factors. Instead, they absorb a bridge hash of its
-/// accumulator into an [`Anchor`], and a pool-history anchor determines each
-/// preceding stamp's accumulator.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 

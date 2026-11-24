@@ -423,7 +423,8 @@ impl Plan {
     /// The planned actions are recursively merged via [`ActionMerge`] into a
     /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
     /// then applies the fee, or [`FeeSeed`] proves it for a plan with no
-    /// actions. The stamp lists no adjuncts.
+    /// actions. This method rerandomizes the resulting stamp, which lists no
+    /// adjuncts.
     ///
     /// # Errors
     ///
@@ -660,7 +661,15 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 ///
 /// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
 /// proof. [`Self::compress`] produces a stamp with a [`Compressed`] proof.
-/// A stamp with either proof type can be read, written and verified.
+/// A stamp with either proof type can be read, written and verified. The crate
+/// cannot decompress a proof.
+///
+/// Verify every received stamp before extending it. Draw randomness for every
+/// proving call from an unpredictable source. Rerandomize a stamp before
+/// releasing it, using the release's shared bootstrap proof. A full proof
+/// that was not rerandomized holds in the clear its inputs' headers, the steps
+/// that made them and their instances, and its own opening points and values.
+/// For [`spend::SpendBind`] that is the spent note's opening and master key.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
     /// The historic pool state for which this stamp is valid.
@@ -946,11 +955,12 @@ impl ProofStamp<Uncompressed> {
     /// Successful construction does not guarantee that the lifted stamp
     /// verifies.
     ///
+    /// Rerandomizes after the last span. If `spans` is empty, returns the
+    /// original stamp without inspecting the descriptors or rerandomizing.
+    ///
     /// # Errors
     ///
     /// Returns [`ragu::Error`] if a proof-system operation fails.
-    /// Empty `spans` leave the stamp unchanged before
-    /// inspecting the descriptors.
     ///
     /// # Panics
     ///
@@ -977,7 +987,7 @@ impl ProofStamp<Uncompressed> {
         self.prove_lift(rng, app, action_digests, spans)
     }
 
-    /// Merges two stamps into one covering stamp.
+    /// Merges two stamps into one covering stamp and rerandomizes it.
     /// Successful construction does not guarantee that the merged stamp
     /// verifies.
     ///
@@ -1082,7 +1092,8 @@ impl ProofStamp<Uncompressed> {
     }
 
     /// Divides this stamp by a divisor stamp at the same anchor, removing the
-    /// divisor's covered actions, fees and tachygrams.
+    /// divisor's covered actions, fees and tachygrams. Rerandomizes the
+    /// quotient.
     ///
     /// Each side supplies borrowed action and fee maps. The quotient's action
     /// digests and tachygrams are the dividend's less the divisor's. A divisor
@@ -1233,12 +1244,9 @@ impl<P: Proof> ProofStamp<P> {
     /// polynomial](crate::collections::multiset) and thus its roots with
     /// multiplicity.
     ///
-    /// The caller resolves the named bundles.
-    /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)
-    /// derives their action and fee digests and checks their pairs and fee
-    /// changes against the tachygram accumulator. The caller also checks
-    /// for a canonical end-of-block anchor from the current or previous
-    /// epoch.
+    /// Bundle coverage
+    /// ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)) and
+    /// anchor eligibility are checked separately.
     ///
     /// # Errors
     ///

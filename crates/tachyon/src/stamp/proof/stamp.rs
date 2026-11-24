@@ -50,7 +50,7 @@ use crate::{
 ///   and elements $\mathsf{nk}$ and $\theta$, taking `(nf_current, nf_next)` as
 ///   its pair where `pk` equals the [payment key](poseidon::payment_key) of
 ///   $\mathsf{ak}$ and $\mathsf{nk}$ and a [stamp
-///   chain](Anchor#chains-in-a-step) leads from the header's `anchor` to this
+///   chain](super#chains-in-a-step) leads from the header's `anchor` to this
 ///   `Actions`'s `anchor`.
 ///
 /// Using `cm` and `cv` from the named header, $\alpha < 2^{254}$ is the
@@ -127,8 +127,7 @@ impl Header<Fp> for Actions {
 ///   commitment](gadgets::note::Note::cv_feemax),
 /// - $\mathsf{cm}_\mathsf{chg}$ is the nonzero [note
 ///   commitment](poseidon::note_commitment) of the same note with only its
-///   value changed to $m - f$ ([zero tachygrams](super#zero-tachygrams)),
-///   serving as the leaf's tachygram,
+///   value changed to $m - f$, serving as the leaf's tachygram,
 /// - $d$ is the [fee digest](poseidon::fee_digest) of
 ///   $\mathsf{cv}_\mathsf{feemax}$, $f$ and $\mathsf{cm}_\mathsf{chg}$.
 ///
@@ -143,12 +142,19 @@ impl Header<Fp> for Actions {
 ///   the native verifier recomputes
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash) and no step reads the
 ///   field.
-/// - Stamp proof verification binds $A$ and $T$ to the supplied action digests
-///   and tachygram accumulator.
-///   [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered) derives
-///   those digests and checks that accumulator against the supplied bundles'
-///   actions, pairs, fees and fee changes. The caller resolves the adjunct list
-///   by transaction ID.
+///
+/// [`OutputBind`](super::output::OutputBind) holds `cm` and `pad` nonzero,
+/// [`SpendBind`](super::spend::SpendBind) both nullifiers, and
+/// [`FeeFuse`] and [`FeeSeed`] the fee change commitment. Thus no leaf of a
+/// verified `Stamp` contributes a zero root to the published [set
+/// polynomial](crate::collections::multiset). Its factors record no roles:
+/// zero always contributes $X$.
+///
+/// Matching a note commitment (including fee change) to another note's
+/// commitment or to a differently tagged pad or nullifier requires a Poseidon
+/// collision. At zero the nonzero checks exclude a match independently of
+/// collision resistance: zero cannot be the published root that
+/// [`SpendableInit`](super::spendable::SpendableInit) tests for membership.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -346,8 +352,8 @@ impl Step<Pasta> for OutputAction {
 ///   [`NoteSecret`](super::delegation::NoteSecret), and neither witness wire
 ///   need be fixed before $\zeta$.
 /// - [`mul_and_add`](ragu::primitives::FixedBase::mul_and_add) computes
-///   $\mathsf{rk}=\mathsf{ak}+\[\alpha\]\mathcal{G}$. Its exceptional cases
-///   exclude at most five 254-bit $\alpha$ values per $\mathsf{ak}$.
+///   $\mathsf{rk}=\mathsf{ak}+\[\alpha\]\mathcal{G}$, which must be finite and
+///   non-identity.
 /// - Copying the input header's `anchor` forms a zero-absorption stamp chain.
 #[derive(Debug)]
 pub struct SpendAction;
