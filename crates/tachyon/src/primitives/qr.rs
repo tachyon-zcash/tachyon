@@ -87,7 +87,7 @@ impl QrClass {
 /// a profile's class holds the values matching its first $d$ sides. Any field
 /// element serves as $R_0$. Intake seeds witness $R_0$ via `Step::Witness`,
 /// later routing steps copy it or equate two inputs' copies, and query steps
-/// classify at their bucket's $R_0$.
+/// that test a value's class use their bucket's $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
@@ -252,7 +252,7 @@ impl QrSplit {
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
 ///
-/// Serves as an unchecked hint. What the
+/// No step checks how the hint was built. What the
 /// [class decomposition](crate::collections::qr#class-decomposition) proves
 /// does not depend on how $u$ was built.
 #[derive(AsRef, Clone, Debug, From, Into)]
@@ -280,7 +280,8 @@ pub struct QrInterpolantCommit(EqAffine);
 /// Witness polynomial for the class decomposition quotient $h$ in
 /// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
 ///
-/// Serves as an unchecked hint like [`QrInterpolantPoly`].
+/// As with [`QrInterpolantPoly`], descent checks the class identity, not how
+/// the hint was built.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
@@ -314,8 +315,9 @@ pub struct QrQuotientCommit(EqAffine);
 /// `bits` and different-length paths differ in `depth`. Leading non-residue
 /// sides pack as zeros, so `bits` alone does not fix the path.
 ///
-/// Out-of-bounds integer pairs represent no path. In circuits, `descend`
-/// extends a path into a path, and `enforce_sides_of` accepts only paths.
+/// The native fields accept any pair of `u32`s; out-of-bounds pairs represent
+/// no path. In circuits, `descend` extends a path into a path, and
+/// `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct QrProfile {
     /// The number of splits taken.
@@ -367,8 +369,9 @@ impl QrProfile {
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
 /// It carries no class and is distinct from a root $x$ of a set polynomial.
 ///
-/// Paired with a multiplier, $r$ [shows the side](crate::collections::qr#sides)
-/// of $x$ in a circuit. When $x + R = 0$, $r = 0$ puts $x$ on the residue side.
+/// A class root [shows the side](crate::collections::qr#sides) except that
+/// when $x + R = 0$, root zero satisfies either multiplier. The separate
+/// nonzero check for the non-residue side leaves only the residue side there.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

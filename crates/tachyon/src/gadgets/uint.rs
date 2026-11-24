@@ -20,11 +20,11 @@ use crate::pasta::Fp;
 ///
 /// # Injectivity
 ///
-/// Distinct bit strings map to distinct elements of $\mathbb{F}_p$ under
-/// [`pack`](Self::pack) and distinct scalars of $\mathbb{F}_q$ for a
-/// [fixed base](super::fixed_base). The bits form the binary expansion of
-/// $n = \sum_i 2^i b_i$, and every width here is at most 254, with $2^{254}$
-/// below both Pasta moduli.
+/// At each width used here, distinct bit strings map to distinct elements of
+/// $\mathbb{F}_p$ under [`pack`](Self::pack) and distinct scalars of
+/// $\mathbb{F}_q$ for a [fixed base](super::fixed_base). The bits form the
+/// binary expansion of $n = \sum_i 2^i b_i$, and every width here is at most
+/// 254, with $2^{254}$ below both Pasta moduli.
 #[derive(Gadget)]
 pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
     #[ragu(gadget)]
@@ -54,9 +54,9 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
 
     /// Decomposes `element` into `BITS` bits that pack back to it.
     ///
-    /// Because `BITS` is at most 254, packing never wraps. This produces the
-    /// unique bit string of width `BITS` for `element`, leaving elements at or
-    /// above $2^{BITS}$ with no assignment.
+    /// At the widths used here (`BITS` at most 254), packing never wraps. This
+    /// produces the unique bit string of width `BITS` for `element`,
+    /// leaving elements at or above $2^{BITS}$ with no assignment.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
         Ok(Self {
             bits: decompose_n(dr, &mut (), element)?,

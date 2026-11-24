@@ -43,8 +43,7 @@ pub struct TachygramSetCommit(EqAffine);
 /// [Commitments assumption](crate::stamp::proof#assumptions). Each accumulator
 /// has many bridge hashes. Honest provers compute the canonical one via
 /// [`bridge_hash`](crate::bridge_hash::bridge_hash) for [`Anchor::next_stamp`],
-/// whereas steps read their bridge hash as two wires chosen after the
-/// challenge.
+/// whereas steps read it as two wires not fixed before the challenge.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetBridge(EpAffine);
 
@@ -99,10 +98,10 @@ pub struct AnchorSetCommit(EqAffine);
 /// Members are [`Tachygram`] values from one stamp, or from the multiset sum of
 /// several stamps when a step multiplies their polynomials.
 ///
-/// Steps taking a stamp polynomial from the prover do not constrain it to split
-/// into linear factors. Instead, they absorb a bridge hash of its accumulator
-/// into an [`Anchor`], and a pool-history anchor determines each preceding
-/// stamp's accumulator.
+/// Steps taking a stamp polynomial from the prover do not establish that it is
+/// a monic product of linear factors. Instead, they absorb a bridge hash of its
+/// accumulator into an [`Anchor`], and a pool-history anchor determines each
+/// preceding stamp's accumulator.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 

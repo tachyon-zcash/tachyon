@@ -10,8 +10,9 @@ use crate::pasta::Fp;
 /// # Injectivity
 ///
 /// A root built from bucket headers determines its tree shape and every leaf's
-/// bucket header. Each root is either a leaf digest or a node digest of
-/// [`poseidon`](crate::digest::poseidon#injectivity), cannot be known as both,
-/// and determines what it absorbed.
+/// bucket header. Each valid root is a leaf or node digest of
+/// [`poseidon`](crate::digest::poseidon#injectivity) and determines what it
+/// absorbed. Producing both kinds of preimage for one root would be a
+/// collision. The native wrapper itself accepts any field element.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct EvidenceTreeRoot(pub Fp);

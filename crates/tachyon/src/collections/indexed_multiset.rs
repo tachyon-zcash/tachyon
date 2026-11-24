@@ -55,10 +55,10 @@
 //!
 //! ## Injectivity
 //!
-//! Within the index bound, $S$ determines its multiset of $(i, m)$ tuples, and
-//! any divisor of $S$ is a scalar multiple of a sub-multiset's encoding. The
-//! bound exceeds $2^{126}$. Every step indexes by an epoch, which is at most
-//! `EPOCH_MAX`.
+//! When $i_\mathsf{max} + 1 < \lfloor\sqrt{p/3}\rfloor$, $S$ determines its
+//! multiset of $(i, m)$ tuples, and any divisor of $S$ is a scalar multiple of
+//! a sub-multiset's encoding. The bound exceeds $2^{126}$. Every step indexes
+//! by an epoch, which is at most `EPOCH_MAX`.
 //!
 //! Unique factorization in $\mathbb{F}_p\[X\]$ means $S$ determines its
 //! irreducible factors up to scalars. Scalar-multiple encodings are equal. If

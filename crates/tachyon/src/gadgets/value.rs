@@ -100,10 +100,10 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
 
     /// `(part, self - part)`.
     ///
-    /// Packs `part` from 51 unconstrained bits and decomposes `self - part`
-    /// into 51 bits. Two integers below $2^{51}$ sum to less than the modulus,
-    /// so they sum to `self` over the integers and both lie in `0..=self` as
-    /// amounts.
+    /// Packs `part` from 51 freely chosen Boolean wires and decomposes `self -
+    /// part` into 51 bits. Two integers below $2^{51}$ sum to less than the
+    /// modulus, so they sum to `self` over the integers and both lie in
+    /// `0..=self` as amounts.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;

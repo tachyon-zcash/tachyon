@@ -11,9 +11,10 @@
 //! a nonzero square, or a non-residue, and never two of these.
 //!
 //! - With $m = 1$, a class root puts $x$ on the residue side.
-//! - With $m = c$, the product rule on [`QUADRATIC_NON_RESIDUE`] makes $x + R$
-//!   zero or a non-residue. Adding $x + R \neq 0$ puts $x$ on the non-residue
-//!   side.
+//! - With $m = c$, a root satisfying the class equation shows that $x + R$ is
+//!   zero or a non-residue, by the product rule on [`QUADRATIC_NON_RESIDUE`].
+//!   Only with the additional check $x + R \neq 0$ does it prove the
+//!   non-residue side.
 //!
 //! Every value other than $-R$ has a root for its own side and none for the
 //! other.

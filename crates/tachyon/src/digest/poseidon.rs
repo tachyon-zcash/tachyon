@@ -14,10 +14,10 @@
 //! point as its two affine coordinates determines the point, and each function
 //! states what its composite inputs determine in turn.
 //!
-//! The permutation has width five and rate four. The sponge adds each
-//! four-element block into the rate and permutes, padding a shorter final block
-//! with zeros. Four squeezes read rate elements zero through three of the final
-//! state, and no function here squeezes more.
+//! The permutation has width five and the sponge has rate four. The sponge adds
+//! each four-element block into the rate and permutes, padding a shorter final
+//! block with zeros. Four squeezes read rate elements zero through three of the
+//! final state, and no function here squeezes more.
 //!
 //! Because the sponge records no input length, a short final block and its
 //! zero-padded form share one digest. Here each tag belongs to one function
@@ -255,8 +255,8 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// $(g,\ e \bmod 4)$ determines $e$, and the Poseidon assumption covers every
 /// squeeze position.
 ///
-/// The function absorbs any element for $g$. Its caller constrains $g$ to a
-/// multiple of four.
+/// The function absorbs any element for $g$. Group alignment is a precondition
+/// of the nullifier derivation; the circuit callers enforce it.
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     emulated(NULLIFIER_DOMAIN, [mk, epoch_start])

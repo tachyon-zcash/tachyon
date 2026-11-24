@@ -53,23 +53,23 @@ pub enum AnchorError {
 /// ([`TachygramSetBridge`](super::TachygramSetBridge)). Epochs enter as
 /// integers at most `EPOCH_MAX`.
 ///
-/// Walking back from an anchor recovers one entry per step and terminates only
-/// at genesis, so matching anchors imply identical histories and no history
-/// repeats an anchor. No later history anchor equals genesis because stamp
-/// absorptions use a distinct tag and [`next_epoch`](Self::next_epoch) rejects
-/// epoch zero.
+/// Comparing two histories backward from matching anchors identifies one
+/// matching entry per step until genesis. Thus the histories agree and no
+/// history repeats an anchor. No later history anchor equals genesis because
+/// stamp absorptions use a distinct tag and [`next_epoch`](Self::next_epoch)
+/// rejects epoch zero.
 ///
 /// # Chains in a step
 ///
 /// Steps compute the same digests on wires, sometimes taking the predecessor
-/// anchor or epoch from the prover. Satisfying a step proves that a digest
+/// anchor or epoch from the prover. Satisfying such a step proves that a digest
 /// chain exists without tying it to a pool history.
 ///
 /// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
 /// $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a
 /// bridge hash $B_i$ of $P_i$'s accumulator at each $i \in 1..=k$, with
-/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. Every $e_i$ equals $e$ when the
-/// chain is *in epoch* $e$, and $k = 0$ sets $a_k = a_0$.
+/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ iff
+/// every $e_i$ equals $e$. When $k = 0$, $a_k = a_0$.
 ///
 /// To add an absorption, a step runs `anchor_next_stamp` on an anchor wire, an
 /// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) gadget and its two bridge

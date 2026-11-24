@@ -21,16 +21,17 @@
 //! ## Value commitments
 //!
 //! A value commitment $\mathsf{cv} = \[v\]\mathcal{V} + \[r\]\mathcal{R}$
-//! determines $v$ and $r$ as integers. A step computes $\[r\]\mathcal{R}$ with
-//! `mul` on [`struct@R_BASE`], holding $0 < r < 2^{254}$, and adds nonzero
-//! value terms with `mul_and_add`.
+//! binds its prover to an opening. A step computes $\[r\]\mathcal{R}$ with
+//! `mul` on [`struct@R_BASE`], holding $0 < r < 2^{254}$. Where the value may
+//! be other than zero it adds the value term with `mul_and_add`.
 //!
 //! A satisfied step shows that its prover knows an opening $(v, r)$ with the
 //! step's constrained amount $v$. Two openings that differ modulo $q$ yield the
 //! discrete logarithm of $\mathcal{V}$ to the base $\mathcal{R}$, which the
-//! [Commitments assumption](crate::stamp::proof#assumptions) rules out. A value
-//! commitment therefore determines its opening modulo $q$, and because $|v|$ is
-//! at most `MAX_MONEY` and $r < 2^{254}$, it determines both as integers.
+//! [Commitments assumption](crate::stamp::proof#assumptions) says nobody
+//! knows. Nobody can therefore produce two openings differing modulo $q$;
+//! because $|v|$ is at most `MAX_MONEY` and $0 < r < 2^{254}$, openings in
+//! these ranges that agree modulo $q$ also agree as integers.
 //!
 //! Adding a value term introduces further unassigned cases only when the blind
 //! point is a known multiple of $\mathcal{V}$, which yields the same discrete
