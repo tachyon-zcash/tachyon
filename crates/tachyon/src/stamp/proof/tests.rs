@@ -71,12 +71,12 @@ fn shared_registry_preserves_the_dehydration_prefix_and_fits_the_wallet() {
         .finalize(pasta::baked())
         .unwrap();
     // Pin the width-nine test-epoch registry through TransactionDehydrate,
-    // including the wallet-locked spend writer.
+    // including the wallet-locked spend and end-factor span writers.
     assert_eq!(
         prefix.native_registry().tag().to_bytes(),
         [
-            36, 182, 81, 241, 91, 60, 133, 79, 107, 166, 50, 172, 62, 199, 130, 107, 187, 74, 8,
-            205, 15, 78, 152, 122, 105, 216, 140, 6, 185, 144, 148, 24
+            52, 90, 131, 40, 47, 46, 162, 35, 170, 179, 109, 45, 182, 78, 172, 191, 75, 10, 150,
+            220, 204, 71, 245, 110, 167, 44, 235, 154, 240, 171, 56, 30
         ]
     );
     assert_eq!(
@@ -98,12 +98,30 @@ fn shared_registry_preserves_the_dehydration_prefix_and_fits_the_wallet() {
         registered_cost::cost(registry, before - 40 + 8),
         (1644, 3311)
     );
-    assert_eq!(registry.num_circuits(), before + 1);
+    assert_eq!(registry.num_circuits(), before + 3);
     // The adapter wires its final gate to an oracle evaluation. Inspect the
     // highest occupied gate in each actual step's wiring, including SYSTEM,
     // the application's reserved stage and the adapter's default openings.
-    let costs = [before - 1, before].map(|index| registered_cost::cost(registry, index));
-    assert_eq!(costs, [(16, 47), (1405, 2828)]);
+    let costs = [
+        before - 9,
+        before - 8,
+        before - 1,
+        before,
+        before + 1,
+        before + 2,
+    ]
+    .map(|index| registered_cost::cost(registry, index));
+    assert_eq!(
+        costs,
+        [
+            (330, 675),
+            (23, 50),
+            (16, 47),
+            (1405, 2828),
+            (17, 47),
+            (1407, 2830)
+        ]
+    );
 
     // The integration suite exercises the finalized aggregator application.
     shared_builder::<profile::Profiled<Pasta, profile::Standard>, polynomials::AggregatorRank>(

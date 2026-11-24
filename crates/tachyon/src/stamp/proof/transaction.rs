@@ -199,21 +199,27 @@ impl Header<Fp> for PublicTransaction {
 pub struct TransactionDehydrate;
 
 impl TransactionDehydrate {
-    pub(super) fn enforce_wallet_padding<'dr, D: Driver<'dr, F = Fp>>(
-        dr: &mut D,
-        x: &Element<'dr, D>,
-        y: &Element<'dr, D>,
-    ) -> ragu::Result<()> {
+    pub(super) fn wallet_padding() -> ragu::Result<[Fp; 2]> {
         // Canonical little-endian x,y of h13(C([1])) under the baked setup.
         // These coefficients never depend on the enclosing rank or a witness.
         const K_W: [[u8; 32]; 2] = [
             *b"\xa3\x5e\x57\x0c\x9a\xe1\xe5\xe9\x80\xc5\xb5\xff\x16\xa8\xd4\xa0\x8b\x47\x73\x32\x5a\xaf\xc7\x94\x18\x90\xf6\xc8\xd1\x1c\xdc\x30",
             *b"\xb0\x19\x9c\x1d\x8d\xdb\x33\x44\xe3\xfb\x9a\xb4\xce\xd5\xa3\xc5\xb2\x93\xc2\x98\x23\x62\x51\xdd\xa5\xda\x86\x70\xec\xc1\xde\x09",
         ];
-        for (coordinate, bytes) in [x, y].into_iter().zip(K_W) {
-            let expected = Fp::from_bytes(bytes).ok_or_else(|| {
+        let [x, y] = K_W.map(|bytes| {
+            Fp::from_bytes(bytes).ok_or_else(|| {
                 ragu::Error::Initialization("invalid wallet padding constant".into())
-            })?;
+            })
+        });
+        Ok([x?, y?])
+    }
+
+    pub(super) fn enforce_wallet_padding<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        x: &Element<'dr, D>,
+        y: &Element<'dr, D>,
+    ) -> ragu::Result<()> {
+        for (coordinate, expected) in [x, y].into_iter().zip(Self::wallet_padding()?) {
             let fixed = Element::constant(dr, expected);
             coordinate.enforce_equal(dr, &fixed)?;
         }
@@ -756,7 +762,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionLift {
         let AnchorSpanOutput {
             anchor_start,
             anchor_end,
-        } = right_encoded.as_gadget().clone();
+        } = right_encoded.as_gadget().0.clone();
         let z = oracles.zeta().clone();
         let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
         let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
@@ -778,7 +784,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionLift {
             )]
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
                 .expect("the bridge hash commitment is a curve point");
-            let (_, span_anchor_end) = right.take();
+            let (_, span_anchor_end, _) = right.take();
             (ActionSetBridge::from(bridge_hash), span_anchor_end)
         });
         let encoded = Encoded::from_gadget(TransactionOutput {
@@ -789,81 +795,95 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionLift {
     }
 }
 
-/// Advances action content's anchor to the end of an [`AnchorSpan`].
-///
-/// The actions' `anchor` must be the span's `anchor_start` or one of its
-/// members.
-///
-/// Opens the span members and both input and output action and tachygram sets.
-#[derive(Debug)]
-pub struct ActionLift;
+// Both registry generations use exactly the same membership relation.
+macro_rules! action_lift {
+    ($visibility:vis $(, $field:tt)?) => {
+        /// Advances action content's anchor to the end of an [`AnchorSpan`].
+        ///
+        /// The actions' `anchor` must be the span's `anchor_start` or one of its
+        /// members.
+        ///
+        /// Opens the span members and both input and output action and tachygram sets.
+        #[derive(Debug)]
+        $visibility struct ActionLift;
 
-impl<C: Cycle<CircuitField = Fp>> Step<C> for ActionLift {
-    type Aux<'source> = ();
-    type Left = Actions;
-    type Output = Actions;
-    type Right = AnchorSpan;
-    type Witness<'source> = ();
+        impl<C: Cycle<CircuitField = Fp>> Step<C> for ActionLift {
+            type Aux<'source> = ();
+            type Left = Actions;
+            type Output = Actions;
+            type Right = AnchorSpan;
+            type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(35);
+            const INDEX: Index = Index::new(35);
 
-    // Preserve the left action and tachygram sets; the right anchor set
-    // supplies the span membership opening.
-    fn prepare(
-        &self,
-        &(): &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let prepared = ActionSetPoly::SLOT.copy_from(Prepared::new(), &left, ActionSetPoly::SLOT);
-        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
-    }
+            // Preserve the left action and tachygram sets; the right anchor set
+            // supplies the span membership opening.
+            fn prepare(
+                &self,
+                &(): &Self::Witness<'_>,
+                left: HeaderInput<'_, Fp, Self::Left>,
+                _: HeaderInput<'_, Fp, Self::Right>,
+            ) -> ragu::Result<Prepared<Fp, Self::Output>> {
+                let prepared =
+                    ActionSetPoly::SLOT.copy_from(Prepared::new(), &left, ActionSetPoly::SLOT);
+                Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
+            }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let AnchorSpanOutput {
-            anchor_start,
-            anchor_end,
-        } = right_encoded.as_gadget().clone();
-        let z = oracles.zeta().clone();
-        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
-        let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
-        left_actions.enforce_equal(dr, &output_actions)?;
-        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
-        let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
-        let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
-        let delta = anchor.sub(dr, &anchor_start);
-        let membership = anchor_evaluation.mul(dr, &delta)?;
-        membership.enforce_zero(dr)?;
-        let fields = ActionsOutput { anchor: anchor_end };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            right.map(|(_, span_anchor_end)| span_anchor_end),
-            D::unit(),
-        ))
-    }
+            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+                &self,
+                dr: &mut D,
+                oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+                _witness: DriverValue<D, Self::Witness<'source>>,
+                left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+                right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+            ) -> ragu::Result<(
+                (
+                    Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                    Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                    Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+                ),
+                DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+                DriverValue<D, Self::Aux<'source>>,
+            )>
+            where
+                Self: 'dr,
+            {
+                let left_encoded =
+                    Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+                let right_encoded =
+                    Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+                let AnchorSpanOutput {
+                    anchor_start,
+                    anchor_end,
+                } = right_encoded.as_gadget()$(.$field)?.clone();
+                let z = oracles.zeta().clone();
+                let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+                let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
+                left_actions.enforce_equal(dr, &output_actions)?;
+                let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+                let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
+                left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
+                let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
+                let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
+                let delta = anchor.sub(dr, &anchor_start);
+                let membership = anchor_evaluation.mul(dr, &delta)?;
+                membership.enforce_zero(dr)?;
+                let fields = ActionsOutput { anchor: anchor_end };
+                Ok((
+                    (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+                    right.map(|span| span.1),
+                    D::unit(),
+                ))
+            }
+        }
+    };
+}
+action_lift!(pub, 0);
+
+pub(super) mod historical {
+    use super::*;
+    use crate::stamp::proof::pool::historical::{AnchorSpan, AnchorSpanOutput};
+    action_lift!(pub(crate));
 }
 
 /// Turns [`Actions`] into a [`Transaction`] by adding the fee digest to the

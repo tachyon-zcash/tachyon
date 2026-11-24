@@ -16,7 +16,10 @@ pub(super) fn shared_builder<
 >(
     step: transaction::TransactionRehydrate,
 ) -> ragu::Result<ApplicationBuilder<'static, C, R, HEADER_SIZE, AcceleratedProver>> {
-    dehydration_registry::<C, R>()?.register(step)
+    dehydration_registry::<C, R>()?
+        .register(step)?
+        .register(pool::AnchorSpanDehydrate)?
+        .register(pool::AnchorSpanRehydrate::new()?)
 }
 
 pub(super) fn dehydration_registry<

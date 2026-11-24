@@ -72,6 +72,10 @@ pub struct ActionSetBridge(EpAffine);
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct AnchorSetCommit(EqAffine);
 
+/// Bridge of a span's prefix commitment, excluding one final anchor.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct AnchorSetBridge(EpAffine);
+
 /// Witness polynomial for a tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);

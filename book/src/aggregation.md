@@ -77,7 +77,7 @@ with the ordinary wallet setup alone.
 
 ### Merge to produce Aggregate
 
-Wallets publish compressed stamps. An aggregator checks the signed host and covered bodies, imports the wallet publication, and restores a full working transaction. It can merge that transaction with work at the same anchor or divide it by a retained divisor. The native builders support up to 8,191 roots per output polynomial. A miner rerandomizes and compresses the resulting *working transaction* at aggregator rank. A wallet publication is already mineable without this round trip.
+Wallets publish compressed stamps. An aggregator checks the signed host and covered bodies, imports the wallet publication, and restores a full working transaction. It can lift that transaction along restored wallet spans, merge it with work at the same anchor, or divide it by a retained divisor. The native builders support up to 8,191 roots per output polynomial. A miner rerandomizes and compresses the resulting *working transaction* at aggregator rank. A wallet publication is already mineable without this round trip.
 
 `Plan::prove` returns the full working `Transaction` used for lifting, merging and unmerging. At publication the wallet calls `ProofStamp::finalize` once: it dehydrates, rerandomizes, and compresses. The resulting `PublicTransaction` uses the existing compressed stamp type and wire format. Compressing a working `Transaction` directly with Ragu still leaves the action commitment in its last slot; that proof is not accepted as a wallet publication.
 

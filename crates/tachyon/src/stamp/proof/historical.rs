@@ -18,7 +18,7 @@ use ragu::{
 
 use super::{
     App, HEADER_SIZE, delegation, evidence, output, pool,
-    pool::{AnchorSpan, AnchorSpanOutput},
+    pool::historical::{AnchorSpan, AnchorSpanOutput},
     qr, spend, spendable, summary, transaction,
     transaction::{Actions, ActionsOutput},
 };
@@ -788,11 +788,11 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(evidence::EvidenceTreeDescend)?
         .register(evidence::EvidenceTreeOpen)?
         .register(evidence::EvidenceTreeLeafPair)?
-        .register(pool::AnchorSpanSeed)?
-        .register(pool::AnchorSpanFuse)?
+        .register(pool::historical::AnchorSpanSeed)?
+        .register(pool::historical::AnchorSpanFuse)?
         .register(FeeFuse)?
         .register(transaction::ActionMerge)?
-        .register(transaction::ActionLift)?
+        .register(transaction::historical::ActionLift)?
         .register(FeeSeed)?
         .register(StampUnmerge)?
         .register(qr::QrSideSelect)?

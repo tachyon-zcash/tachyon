@@ -34,14 +34,7 @@ impl<P, W> PolySlot<P, W> {
         O::OnlinePolyCommit: Has<Self, I>,
         P: AsRef<Polynomial<Fp, WalletRank>>,
     {
-        let mut coefficients = polynomial.as_ref().iter_coeffs().collect::<Vec<_>>();
-        coefficients.truncate(
-            coefficients
-                .iter()
-                .rposition(|coefficient| coefficient != &Fp::ZERO)
-                .map_or(0, |degree| degree + 1),
-        );
-        prepared.poly(self, coefficients)
+        prepared.poly(self, coefficients(polynomial.as_ref()))
     }
 
     /// Sets the output's polynomial at this slot to an input's polynomial of
@@ -72,3 +65,13 @@ impl<P, W> Clone for PolySlot<P, W> {
 impl<P, W> Copy for PolySlot<P, W> {}
 
 impl<P: 'static, W: 'static> OnlinePoly for PolySlot<P, W> {}
+
+pub(crate) fn coefficients(polynomial: &Polynomial<Fp, WalletRank>) -> Vec<Fp> {
+    let len = polynomial
+        .iter_stored_coeffs()
+        .filter(|&(_, coefficient)| *coefficient != Fp::ZERO)
+        .map(|(degree, _)| degree + 1)
+        .max()
+        .unwrap_or(0);
+    polynomial.iter_coeffs().take(len).collect()
+}

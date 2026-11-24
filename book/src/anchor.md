@@ -12,7 +12,7 @@ The first block of a new epoch applies the boundary digest before absorbing any 
 
 ## Stamp absorption
 
-Each stamp lands at a definite position in an accepted block. To advance the pool state, the anchor absorbs the containing block's epoch $e$ and the affine coordinates of the bridge hash $B$ of the stamp's tachygram-set commitment[^tachygrams]
+Each stamp lands at a definite position in an accepted block. To advance the pool state, consensus hashes the previous running anchor and the containing block's epoch $e$ with both coordinates of the canonical wallet-rank (rank 13) bridge hash $B=h_{13}(C)$ of the checked tachygram-set commitment $C$.[^tachygrams]
 
 $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorSt}\bigl(\mathsf{anchor},\ e,\ x(B),\ y(B)\bigr)

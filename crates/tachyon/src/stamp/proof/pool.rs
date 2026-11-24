@@ -42,6 +42,13 @@ use crate::{
     },
 };
 
+mod crossing;
+pub use crossing::{AnchorSpanDehydrate, AnchorSpanRehydrate, PublicAnchorSpan};
+mod span;
+pub use span::{
+    AnchorSpan, AnchorSpanBridgeSlot, AnchorSpanFuse, AnchorSpanOutput, AnchorSpanSeed,
+};
+
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///
 /// The tested values are arbitrary field elements until [`UnspentBind`]
@@ -188,258 +195,267 @@ impl Header<Fp> for NoteUnspent {
     }
 }
 
-/// An anchor path with a commitment to the anchors inside it.
-///
-/// The members polynomial has one root for each stamp folded into the span. The
-/// root is the anchor that fold produces. `anchor_end` is a member and
-/// `anchor_start` is not. [`super::transaction::TransactionLift`] uses spans to
-/// advance a stamp's anchor. A spendable's anchor advances through
-/// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
-///
-/// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
-/// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt` domain.
-/// Entering the next epoch takes [`Anchor::next_epoch`], which hashes under
-/// `Tachyon-AnchorEp`. Among the proof steps, only
-/// [`QrBucketSeal`](super::qr::QrBucketSeal) computes it. Consensus also
-/// rejects a tachygram published twice within two epochs. That check catches a
-/// tachygram already published earlier in the epoch a stamp is lifted across.
-///
-/// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
-/// is not tied to the published chain. Consensus ties it when it checks the
-/// anchor of the stamp that [`super::transaction::TransactionLift`] outputs.
-#[derive(Clone, Debug)]
-pub struct AnchorSpan;
+// The historical registry retains its original suffix-14 encoding and writers.
+pub(super) mod historical {
+    use super::*;
 
-#[derive(Gadget, Write)]
-pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
-    pub anchor_start: Element<'dr, D>,
-    pub anchor_end: Element<'dr, D>,
-}
+    /// An anchor path with a commitment to the anchors inside it.
+    ///
+    /// The members polynomial has one root for each stamp folded into the span.
+    /// The root is the anchor that fold produces. `anchor_end` is a member
+    /// and `anchor_start` is not. [`super::super::historical::StampLift`] uses
+    /// spans to advance a stamp's anchor. A spendable's anchor advances
+    /// through [`ArbitraryUnspent`], whose steps prove the note's
+    /// nullifiers absent.
+    ///
+    /// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
+    /// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt`
+    /// domain. Entering the next epoch takes [`Anchor::next_epoch`], which
+    /// hashes under `Tachyon-AnchorEp`. Among the proof steps, only
+    /// [`QrBucketSeal`](super::super::qr::QrBucketSeal) computes it. Consensus
+    /// also rejects a tachygram published twice within two epochs. That
+    /// check catches a tachygram already published earlier in the epoch a
+    /// stamp is lifted across.
+    ///
+    /// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its
+    /// own is not tied to the published chain. Consensus ties it when it
+    /// checks the anchor of the stamp that
+    /// [`super::super::historical::StampLift`] outputs.
+    #[derive(Clone, Debug)]
+    pub struct AnchorSpan;
 
-impl Header<Fp> for AnchorSpan {
-    /// `(anchor_start, anchor_end)`
-    type Data = (Anchor, Anchor);
-    type OnlinePolyCommit = (PolySlot<AnchorSetPoly>, PolySlot<TachygramSetPoly>);
-    type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
+    #[derive(Gadget, Write)]
+    pub struct AnchorSpanOutput<'dr, D: Driver<'dr>> {
+        pub anchor_start: Element<'dr, D>,
+        pub anchor_end: Element<'dr, D>,
+    }
 
-    const SUFFIX: Suffix = Suffix::new(14);
+    impl Header<Fp> for AnchorSpan {
+        /// `(anchor_start, anchor_end)`
+        type Data = (Anchor, Anchor);
+        type OnlinePolyCommit = (PolySlot<AnchorSetPoly>, PolySlot<TachygramSetPoly>);
+        type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
-    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
-        dr: &mut D,
-        allocator: &mut A,
-        witness: DriverValue<D, Self::Data>,
-    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
-        Ok(AnchorSpanOutput {
-            anchor_start: Element::alloc(
+        const SUFFIX: Suffix = Suffix::new(14);
+
+        fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+            dr: &mut D,
+            allocator: &mut A,
+            witness: DriverValue<D, Self::Data>,
+        ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
+            Ok(AnchorSpanOutput {
+                anchor_start: Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| Fp::from(fields.0)),
+                )?,
+                anchor_end: Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|fields| Fp::from(fields.1)),
+                )?,
+            })
+        }
+    }
+
+    /// Start an [`AnchorSpan`] from one stamp.
+    ///
+    /// The step folds the stamp's bridge hash into `anchor_start`.
+    /// The span's only member is the resulting anchor.
+    /// Its prepared member uses the wallet-rank bridge. This step seeds
+    /// canonical spans at wallet rank only.
+    ///
+    /// # Soundness
+    ///
+    /// `epoch` is a free witness. Consensus computes each fold with the epoch
+    /// of the block that contains the stamp. A span built with a different
+    /// epoch holds anchors that are not on the published chain.
+    ///
+    /// The circuit requires the stamp polynomial not to open to one, so an
+    /// empty stamp has no proof.
+    #[derive(Debug)]
+    pub(crate) struct AnchorSpanSeed;
+
+    impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanSeed {
+        type Aux<'source> = ();
+        type Left = ();
+        type Output = AnchorSpan;
+        type Right = ();
+        /// `(anchor_start, epoch, stamp)`
+        type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
+
+        const INDEX: Index = Index::new(31);
+
+        fn prepare(
+            &self,
+            witness: &Self::Witness<'_>,
+            _: HeaderInput<'_, Fp, Self::Left>,
+            _: HeaderInput<'_, Fp, Self::Right>,
+        ) -> ragu::Result<Prepared<Fp, Self::Output>> {
+            // The witness phase rejects the empty stamp at its polynomial opening.
+            let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
+                witness.0.into(),
+                witness.1.into(),
+                bridge_hash(witness.2.commit().into()),
+            ));
+            let stamp = &witness.2;
+            let prepared =
+                AnchorSetPoly::SLOT.poly(Prepared::new(), &AnchorSetPoly::from_iter([anchor_end]));
+            Ok(TachygramSetPoly::SLOT.poly(prepared, stamp))
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+            &self,
+            dr: &mut D,
+            oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+            witness: DriverValue<D, Self::Witness<'source>>,
+            left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+            right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+        ) -> ragu::Result<(
+            (
+                Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            ),
+            DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
+            let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+            let previous = Element::alloc(
                 dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.0)),
-            )?,
-            anchor_end: Element::alloc(
+                &mut (),
+                witness
+                    .as_ref()
+                    .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
+            )?;
+            let epoch_element = gadgets::epoch::EpochIndex::alloc(
                 dr,
-                allocator,
-                witness.as_ref().map(|fields| Fp::from(fields.1)),
-            )?,
-        })
-    }
-}
-
-/// Start an [`AnchorSpan`] from one stamp.
-///
-/// The step folds the stamp's bridge hash into `anchor_start`.
-/// The span's only member is the resulting anchor.
-/// Its prepared member uses the wallet-rank bridge. This step seeds
-/// canonical spans at wallet rank only.
-///
-/// # Soundness
-///
-/// `epoch` is a free witness. Consensus computes each fold with the epoch of
-/// the block that contains the stamp. A span built with a different epoch
-/// holds anchors that are not on the published chain.
-///
-/// The circuit requires the stamp polynomial not to open to one, so an empty
-/// stamp has no proof.
-#[derive(Debug)]
-pub struct AnchorSpanSeed;
-
-impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = AnchorSpan;
-    type Right = ();
-    /// `(anchor_start, epoch, stamp)`
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly);
-
-    const INDEX: Index = Index::new(31);
-
-    fn prepare(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        // The witness phase rejects the empty stamp at its polynomial opening.
-        let anchor_end = Anchor::from(poseidon::anchor_next_stamp(
-            witness.0.into(),
-            witness.1.into(),
-            bridge_hash(witness.2.commit().into()),
-        ));
-        let stamp = &witness.2;
-        let prepared =
-            AnchorSetPoly::SLOT.poly(Prepared::new(), &AnchorSetPoly::from_iter([anchor_end]));
-        Ok(TachygramSetPoly::SLOT.poly(prepared, stamp))
+                &mut (),
+                witness.as_ref().map(|&(_, epoch, _)| epoch),
+            )?;
+            // The empty set polynomial is the constant one, so a stamp whose
+            // polynomial opens to one at zeta has no tachygrams.
+            let z = oracles.zeta().clone();
+            let stamp_at_z = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
+            let one = Element::constant(dr, Fp::ONE);
+            stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
+            let anchor = poseidon::circuit::anchor_next_stamp(
+                dr,
+                &previous,
+                &epoch_element,
+                &[
+                    oracles.bridge_hash().x().clone(),
+                    oracles.bridge_hash().y().clone(),
+                ],
+            )?;
+            // The span's one member is the fold just computed, so a member chosen
+            // after the challenge takes a preimage of the fold.
+            let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
+            let member_factor = z.sub(dr, &anchor);
+            members.enforce_equal(dr, &member_factor)?;
+            let data = D::just(|| {
+                let (anchor_start, ..) = witness.take();
+                (anchor_start, Anchor::from(*anchor.value().take()))
+            });
+            let fields = AnchorSpanOutput {
+                anchor_start: previous,
+                anchor_end: anchor,
+            };
+            Ok((
+                (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+                data,
+                D::unit(),
+            ))
+        }
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
-        witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left)?;
-        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
-        let previous = Element::alloc(
-            dr,
-            &mut (),
-            witness
-                .as_ref()
-                .map(|&(anchor_start, ..)| Fp::from(anchor_start)),
-        )?;
-        let epoch_element = gadgets::epoch::EpochIndex::alloc(
-            dr,
-            &mut (),
-            witness.as_ref().map(|&(_, epoch, _)| epoch),
-        )?;
-        // The empty set polynomial is the constant one, so a stamp whose
-        // polynomial opens to one at zeta has no tachygrams.
-        let z = oracles.zeta().clone();
-        let stamp_at_z = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let one = Element::constant(dr, Fp::ONE);
-        stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
-        let anchor = poseidon::circuit::anchor_next_stamp(
-            dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
-        )?;
-        // The span's one member is the fold just computed, so a member chosen
-        // after the challenge takes a preimage of the fold.
-        let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
-        let member_factor = z.sub(dr, &anchor);
-        members.enforce_equal(dr, &member_factor)?;
-        let data = D::just(|| {
-            let (anchor_start, ..) = witness.take();
-            (anchor_start, Anchor::from(*anchor.value().take()))
-        });
-        let fields = AnchorSpanOutput {
-            anchor_start: previous,
-            anchor_end: anchor,
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            D::unit(),
-        ))
-    }
-}
+    /// Concatenate two [`AnchorSpan`]s with
+    /// `left.anchor_end == right.anchor_start`.
+    ///
+    /// The shared anchor is a member of the left span and not of the right
+    /// span. The two member sets are therefore disjoint, and the combined
+    /// members polynomial is the product of the two.
+    ///
+    /// # Soundness
+    ///
+    /// The product check opens both member polynomials and their product at a
+    /// challenge that absorbs all three commitments.
+    #[derive(Debug)]
+    pub(crate) struct AnchorSpanFuse;
 
-/// Concatenate two [`AnchorSpan`]s with
-/// `left.anchor_end == right.anchor_start`.
-///
-/// The shared anchor is a member of the left span and not of the right span.
-/// The two member sets are therefore disjoint, and the combined members
-/// polynomial is the product of the two.
-///
-/// # Soundness
-///
-/// The product check opens both member polynomials and their product at a
-/// challenge that absorbs all three commitments.
-#[derive(Debug)]
-pub struct AnchorSpanFuse;
+    impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanFuse {
+        type Aux<'source> = ();
+        type Left = AnchorSpan;
+        type Output = AnchorSpan;
+        type Right = AnchorSpan;
+        /// `(combined,)`
+        type Witness<'source> = (AnchorSetPoly,);
 
-impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanFuse {
-    type Aux<'source> = ();
-    type Left = AnchorSpan;
-    type Output = AnchorSpan;
-    type Right = AnchorSpan;
-    /// `(combined,)`
-    type Witness<'source> = (AnchorSetPoly,);
+        const INDEX: Index = Index::new(32);
 
-    const INDEX: Index = Index::new(32);
+        fn prepare(
+            &self,
+            witness: &Self::Witness<'_>,
+            _: HeaderInput<'_, Fp, Self::Left>,
+            _: HeaderInput<'_, Fp, Self::Right>,
+        ) -> ragu::Result<Prepared<Fp, Self::Output>> {
+            let combined = &witness.0;
+            Ok(AnchorSetPoly::SLOT.poly(Prepared::new(), combined))
+        }
 
-    fn prepare(
-        &self,
-        witness: &Self::Witness<'_>,
-        _: HeaderInput<'_, Fp, Self::Left>,
-        _: HeaderInput<'_, Fp, Self::Right>,
-    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let combined = &witness.0;
-        Ok(AnchorSetPoly::SLOT.poly(Prepared::new(), combined))
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
-        &self,
-        dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
-        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
-    ) -> ragu::Result<(
-        (
-            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
-            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
-        ),
-        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
-        DriverValue<D, Self::Aux<'source>>,
-    )>
-    where
-        Self: 'dr,
-    {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let left_span = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let right_span = right_encoded.as_gadget();
-        left_span
-            .anchor_end
-            .enforce_equal(dr, &right_span.anchor_start)?;
-        let data = D::just(|| {
-            let (left_anchor_start, ..) = left.take();
-            let (_, right_anchor_end) = right.take();
-            (left_anchor_start, right_anchor_end)
-        });
-        let z = oracles.zeta().clone();
-        let left_members = oracles.left(AnchorSetPoly::SLOT).open(dr, &z)?;
-        let right_members = oracles.right(AnchorSetPoly::SLOT).open(dr, &z)?;
-        let combined = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
-        let expected_members = left_members.mul(dr, &right_members)?;
-        combined.enforce_equal(dr, &expected_members)?;
-        let fields = AnchorSpanOutput {
-            anchor_start: left_span.anchor_start.clone(),
-            anchor_end: right_span.anchor_end.clone(),
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            data,
-            D::unit(),
-        ))
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+            &self,
+            dr: &mut D,
+            oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+            _witness: DriverValue<D, Self::Witness<'source>>,
+            left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+            right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+        ) -> ragu::Result<(
+            (
+                Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+                Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+            ),
+            DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+            DriverValue<D, Self::Aux<'source>>,
+        )>
+        where
+            Self: 'dr,
+        {
+            let left_encoded =
+                Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+            let left_span = left_encoded.as_gadget();
+            let right_encoded =
+                Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
+            let right_span = right_encoded.as_gadget();
+            left_span
+                .anchor_end
+                .enforce_equal(dr, &right_span.anchor_start)?;
+            let data = D::just(|| {
+                let (left_anchor_start, ..) = left.take();
+                let (_, right_anchor_end) = right.take();
+                (left_anchor_start, right_anchor_end)
+            });
+            let z = oracles.zeta().clone();
+            let left_members = oracles.left(AnchorSetPoly::SLOT).open(dr, &z)?;
+            let right_members = oracles.right(AnchorSetPoly::SLOT).open(dr, &z)?;
+            let combined = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
+            let expected_members = left_members.mul(dr, &right_members)?;
+            combined.enforce_equal(dr, &expected_members)?;
+            let fields = AnchorSpanOutput {
+                anchor_start: left_span.anchor_start.clone(),
+                anchor_end: right_span.anchor_end.clone(),
+            };
+            Ok((
+                (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+                data,
+                D::unit(),
+            ))
+        }
     }
 }
 

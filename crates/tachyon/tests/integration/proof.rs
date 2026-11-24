@@ -163,10 +163,16 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
-    let (anchor_start, anchor_end) = *span.data();
+    let (anchor_start, anchor_end, prefix_bridge) = *span.data();
 
     assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
     assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
+    let prefix = AnchorSetPoly::from_iter(members[..members.len() - 1].iter().copied());
+    assert_eq!(span.commitments()[1], EqAffine::from(prefix.commit()));
+    assert_eq!(
+        prefix_bridge,
+        app.bridge_hash(prefix.commit().into()).unwrap().into()
+    );
     assert_eq!(
         span.commitments()[0],
         EqAffine::from(AnchorSetPoly::from_iter(members).commit())
@@ -182,7 +188,7 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
     let pool = PoolSim::shared();
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
     let members = pool.anchors_in(BlockHeight(1)..=BlockHeight(2));
-    let (anchor_start, anchor_end) = *span.data();
+    let (anchor_start, anchor_end, _) = *span.data();
     let fork = anchor_start
         .next_stamp(
             BlockHeight(1).epoch(),

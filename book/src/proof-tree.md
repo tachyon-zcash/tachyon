@@ -183,9 +183,13 @@ A segment ties to real chain history only through a consensus-published stamp wh
 An `AnchorSpan` covers `[anchor_start, anchor_end]`.
 Its proof carries `members`, the polynomial whose roots are the anchors in `(anchor_start, anchor_end]`.
 Each stamp folded into the span adds one member.
-`anchor_end` is a member and `anchor_start` is not.
+The final position contributes a factor; the initial position does not. The polynomial counts positions with multiplicity, so a later position can contribute the same value as an earlier one.
 `AnchorSpanSeed` folds the bridge hash of its own witnessed tachygram set into `anchor_start`, and the resulting anchor is the only root of its members polynomial. This hash is distinct from the stamp proof's action-set bridge.
 `AnchorSpanFuse` requires the left span's `anchor_end` to equal the right span's `anchor_start`, and proves that the combined members polynomial is the product of the two halves' polynomials.
+
+For transport, the span also binds the prefix polynomial $Q$ obtained by removing **one occurrence** of the final factor from its members $M$. Writing $e$ for the authenticated end, $M(X)=(X-e)Q(X)$. The identity determines the remaining factors with multiplicity; it does not certify a shorter ordered path. A seed has $Q=1$ and records the fixed wallet bridge of the commitment to one. A join puts $Q$ in its last slot, checks the factor identity at the challenge, and records that slot's bridge. The full members remain in slot zero in both cases.
+
+To export a wallet-certified range, `AnchorSpanDehydrate` copies the endpoints and prefix bridge to a padding-only `PublicAnchorSpan`. Its own padding bridge must match the wallet constant. The producer rerandomizes and compresses this proof. The aggregator decompresses it once, then supplies the prefix polynomial and its commitment to `AnchorSpanRehydrate`. That step checks the wallet-to-aggregator bridge relation against its own prefix slot and proves the factor identity against the imported end. The result is an ordinary `AnchorSpan`: many stamps can use the same restored proof, and adjacent restored ranges can be joined. The crossing cost is paid once per imported range. The aggregator obtains new canonical absorptions from the wallet rank, whose tachygram bridge the [anchor rule](./anchor.md#stamp-absorption) uses.
 
 `TransactionLift` moves a stamp from `anchor_start` or from any member to `anchor_end`.
 It checks $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, where $M$ is the members polynomial and $\mathsf{anchor}$ is the stamp's anchor.
@@ -646,7 +650,8 @@ flowchart LR
 
 | Header | Fields | Slots |
 | ------ | ------ | ----- |
-| AnchorSpan | (anchor_start, anchor_end) | AnchorSetPoly: members; TachygramSetPoly |
+| AnchorSpan | (anchor_start, anchor_end, prefix_bridge) | AnchorSetPoly: members; AnchorSpanBridgeSlot: seed stamp or prefix |
+| PublicAnchorSpan | (anchor_start, anchor_end, prefix_bridge) | — |
 | Summary | (epoch, anchor_prev, anchor_end) | TachygramSetPoly `ACCUMULATED`: accumulated set; TachygramSetPoly `LAST_STAMP` |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile) | TachygramSetPoly: contents |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue_hash) | TachygramSetPoly `RESIDUE`: residue; TachygramSetPoly `NON_RESIDUE`: non_residue |
@@ -665,7 +670,7 @@ flowchart LR
 | Transaction | (action_set_bridge, anchor) | padding; ActionSetPoly: action and fee digests |
 | PublicTransaction | (action_set_bridge, anchor) | — |
 
-Slots lists each header's polynomial types in slot order, with the slot's name where a header holds two of one type and the contents consumers read; — marks a header whose slots are padding. A type listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeqPoly` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, the `TachygramSetPoly` in the second slot (`LAST_STAMP` in a summary) holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
+Slots lists each header's polynomial types in slot order, with the slot's name where a header holds two of one type and the contents consumers read; — marks a header whose slots are padding. A type listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeqPoly` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, the second slot (`LAST_STAMP` in a summary) holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
 `contents_hash` and `non_residue_hash` bind a `TachygramSetPoly` in the producing step's second slot. `action_set_bridge` instead binds a stamp's `ActionSetPoly`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's non-residue polynomial, not of the selection's own `QrQuotientPoly`.
 
@@ -675,6 +680,8 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | ---- | ---- | ----- | ------- | ------ |
 | AnchorSpanSeed | — | — | anchor_start, epoch, stamp | AnchorSpan |
 | AnchorSpanFuse | AnchorSpan | AnchorSpan | combined | AnchorSpan |
+| AnchorSpanDehydrate | AnchorSpan | — | — | PublicAnchorSpan |
+| AnchorSpanRehydrate | PublicAnchorSpan | — | prefix, prefix commitment | AnchorSpan |
 | SummarySeed | — | — | anchor_prev, epoch, stamp | Summary |
 | SummaryAdvance | Summary | — | extended, stamp | Summary |
 | QrSpendableInit | NoteUnspent | QrBucket | — | NoteSpendable |

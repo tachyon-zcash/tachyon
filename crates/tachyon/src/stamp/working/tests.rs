@@ -1,16 +1,20 @@
 use alloc::vec;
+use core::iter;
 
 use ragu::circuits::polynomials;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
-    Anchor, Bundle, Note, TachyonBundle, VerificationError, bundle,
+    Anchor, Bundle, EpochIndex, Note, TachyonBundle, VerificationError, bundle,
     entropy::ActionEntropy,
     keys::private::SpendingKey,
     pasta::Fp,
-    stamp::{Compressed, proof},
-    value,
+    stamp::{
+        Compressed,
+        proof::{self, pool},
+    },
+    value, witness,
 };
 
 #[test]
@@ -18,12 +22,13 @@ use crate::{
     clippy::too_many_lines,
     reason = "exercise the complete publication and mining workflow with one paired setup"
 )]
-fn wallet_publications_merge_and_divide_before_block_compression() {
+fn wallet_publications_merge_lift_and_divide_before_block_compression() {
     let rng = &mut StdRng::seed_from_u64(58);
     let app = proof::new_aggregator_application(rng).unwrap();
     let wallet = proof::new_application().unwrap();
     let sk = SpendingKey::random(rng);
     let start = Anchor::random(rng);
+    let epoch = EpochIndex::new(1);
     let mut issue = |tag: u64| {
         let note = Note {
             pk: Fp::from(tag).into(),
@@ -117,15 +122,21 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
     let combined = extracted
         .rehydrate(rng, &app, &sighash, &[&stripped])
         .unwrap();
+    let noop = left_work
+        .clone()
+        .lift(rng, &app, &empty, &left_fee, vec![])
+        .unwrap();
+    assert_eq!(noop.proof.data(), left_work.proof.data());
+    assert_eq!(noop.proof.commitments(), left_work.proof.commitments());
     // Proof multiplication counts repeated roots. Admission of the same
     // covered body twice is a separate coverage check.
-    let product = left_work
+    let product = noop
         .clone()
         .merge(
             rng,
             &app,
             (&empty, &left_fee),
-            (left_work.clone(), sighash, &empty, &left_fee),
+            (noop.clone(), sighash, &empty, &left_fee),
         )
         .unwrap();
     let digest = left.fee.digest(left.fee_auth);
@@ -135,7 +146,7 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
             rng,
             &app,
             (&empty, &left_fee),
-            (left_work.clone(), sighash, &empty, &left_fee),
+            (noop.clone(), sighash, &empty, &left_fee),
         )
         .unwrap_err();
     let (one_copy, ()) = app
@@ -144,12 +155,12 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
             TransactionUnmerge,
             (ActionSetPoly::from_iter([digest]),),
             (*product.proof).clone(),
-            (*left_work.proof).clone(),
+            (*noop.proof).clone(),
         )
         .unwrap();
     let result = ProofStamp {
         anchor: start,
-        tachygram_set: left_work.tachygram_set,
+        tachygram_set: noop.tachygram_set,
         adjuncts: BTreeSet::new(),
         proof: Box::new(one_copy),
     }
@@ -159,7 +170,7 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
     let doubled = product.finalize(rng, &app).unwrap();
     assert!(doubled.verify_proof(&app, &[digest, digest]).unwrap());
     assert!(!doubled.verify_proof(&app, &[digest]).unwrap());
-    let missing_divisor = left_work
+    let missing_divisor = noop
         .clone()
         .unmerge(
             rng,
@@ -172,7 +183,6 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
         .unwrap();
     assert!(!missing_divisor.verify_proof(&app, &[digest]).unwrap());
     let merged = left_work
-        .clone()
         .merge(
             rng,
             &app,
@@ -192,6 +202,18 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
     assert!(receive_work(&app, rng, &checkpoint, expected, Anchor::from(Fp::from(99))).is_none());
     let resumed = receive_work(&app, rng, &checkpoint, expected, start).unwrap();
     drop(checkpoint);
+    let witness =
+        witness::anchor_span_seed(((), ()), start, epoch, &[left.fee_auth, right.fee_auth]);
+    let end = start.next_stamp(epoch, &witness.2.commit()).unwrap();
+    let seed = wallet.seed(rng, pool::AnchorSpanSeed, witness).unwrap().0;
+    let unit = wallet.bootstrap_proof().clone().carry::<()>(());
+    let public = wallet
+        .fuse(rng, pool::AnchorSpanDehydrate, (), seed, unit)
+        .unwrap()
+        .0;
+    let refreshed = wallet.rerandomize(public, &mut *rng).unwrap();
+    let frame = wallet.compress(&refreshed, &mut *rng).unwrap();
+    let span = aggregator::import_span(rng, &app, &frame, iter::empty().collect()).unwrap();
     let all_fees = left_fee
         .iter()
         .chain(&right_fee)
@@ -203,7 +225,7 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
             rng,
             &app,
             (&right_actions, &all_fees),
-            (left_work, left.commitment(), &empty, &left_fee),
+            (noop.clone(), left.commitment(), &empty, &left_fee),
         )
         .unwrap()
         .finalize(rng, &app)
@@ -221,21 +243,38 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
         invalid_host.verify(&app, &sighash, &[&stripped]),
         Err(VerificationError::Coverage(_))
     ));
-    let restored = ProofStamp {
+    let lifted = ProofStamp {
         proof: Box::new(resumed),
         ..merged
-    };
-    let quotient = restored
+    }
+    .lift(rng, &app, &right_actions, &all_fees, vec![span.clone()])
+    .unwrap();
+    let divisor = right_work
+        .lift(rng, &app, &right_actions, &right_fee, vec![span])
+        .unwrap();
+    let unequal = noop
+        .merge(
+            rng,
+            &app,
+            (&empty, &left_fee),
+            (divisor.clone(), right_id, &right_actions, &right_fee),
+        )
+        .unwrap()
+        .finalize(rng, &app)
+        .unwrap();
+    let roots = extracted.verify_covered(&[&stripped]).unwrap().0;
+    assert!(!unequal.verify_proof(&app, &roots).unwrap());
+    let quotient = lifted
         .clone()
         .unmerge(
             rng,
             &app,
             (&right_actions, &all_fees),
-            (right_work, right_id, &reversed, &right_fee),
+            (divisor, right_id, &reversed, &right_fee),
         )
         .unwrap();
-    for (working, adjuncts) in [(restored, vec![&stripped]), (quotient, vec![])] {
-        assert_eq!(working.anchor, start);
+    for (working, adjuncts) in [(lifted, vec![&stripped]), (quotient, vec![])] {
+        assert_eq!(working.anchor, end);
         assert_eq!(working.adjuncts.contains(&right_id), !adjuncts.is_empty());
         let stamp = working.finalize(rng, &app).unwrap();
         let body = Bundle {
@@ -248,14 +287,7 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
             memo: left.memo.clone(),
             stamp,
         };
-        check_block(
-            &app,
-            &body,
-            &left,
-            &adjuncts,
-            Anchor::from(Fp::from(99)),
-            start,
-        );
+        check_block(&app, &body, &left, &adjuncts, start, end);
     }
 }
 

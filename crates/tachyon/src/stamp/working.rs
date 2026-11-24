@@ -13,7 +13,7 @@ use super::{
     ProofStamp, PublicationProof,
     proof::{
         aggregator,
-        transaction::{TransactionMerge, TransactionUnmerge},
+        transaction::{TransactionLift, TransactionMerge, TransactionUnmerge},
     },
     sealed,
 };
@@ -100,6 +100,35 @@ impl ProofStamp<aggregator::Transaction> {
             tachygram_set,
             adjuncts,
         }
+    }
+
+    /// Advance the transaction reference along restored anchor spans.
+    /// The native witness supports at most 8,191 action and fee roots.
+    /// Supply all covered bodies' distinct action and fee descriptors.
+    ///
+    /// # Errors
+    /// Returns a Ragu error if a witness is too large or proving fails.
+    pub fn lift<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &aggregator::App<'_>,
+        actions: Descriptors<'_>,
+        fees: Fees<'_>,
+        spans: Vec<aggregator::Span>,
+    ) -> ragu::Result<Self> {
+        if spans.is_empty() {
+            return Ok(self);
+        }
+        let (_, set) = checked_leaves(&self.proof, (actions, fees))?;
+        let mut pcd = *self.proof;
+        for span in spans {
+            pcd = app.fuse(rng, TransactionLift, (set.clone(),), pcd, span)?.0;
+        }
+        Ok(Self::from_pcd(
+            app.rerandomize(pcd, rng)?,
+            self.tachygram_set,
+            self.adjuncts,
+        ))
     }
 
     /// Merge two working transactions at the same reference, retaining the left
