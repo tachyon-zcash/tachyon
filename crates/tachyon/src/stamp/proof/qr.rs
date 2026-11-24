@@ -1,25 +1,10 @@
 //! QR epoch evidence: one epoch's tachygrams partitioned by profile.
 //!
-//! Each depth classifies at a discriminant of the progression
-//!
-//! $$
-//!   R_j = R_0 + j,
-//! $$
-//!
-//! from a first discriminant $R_0$. Every header carries $R_0$, so depth $j$
-//! classifies at $R_j$, and a value takes the residue side there iff $x + R_j$
-//! is a square or zero.
-//!
-//! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
-//! [`QrStampIntakeSeed`] from one unsummarized stamp, and
-//! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
-//! partitions an intake at its discriminant into [`QrIntakeSides`], with
-//! non-residue and residue set polynomials $q_0$ and $q_1$.
-//! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
-//! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
-//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
-//! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
-//! profile against a bucket and opens the bucket at it.
+//! Every header carries $R_0$. At depth $j$, $R_j=R_0+j$ and $x$ takes the
+//! residue side iff $x+R_j$ is a square or zero. An intake starts from a
+//! summary, one stamp or an empty epoch. Split, select and descend route it;
+//! merge joins adjacent same-profile intakes. [`QrBucketSeal`] seals the result
+//! for queries.
 
 #[cfg(test)]
 mod tests;
@@ -872,23 +857,6 @@ impl Step<Pasta> for QrSideSelect {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// For the sibling's set polynomial $q$, interpolant $u$ and quotient $h$,
-/// the class decomposition satisfies
-///
-/// $$
-///   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
-/// $$
-///
-/// The discriminant is $R = R_0 + j$ at parent depth $j$. For child bit $b$,
-/// the sibling's multiplier is $m = 1 + b(c - 1)$, with $c$ the fixed
-/// non-residue. A residue child has a non-residue sibling, so the multiplier
-/// is the opposite of the one used to check the queried class directly.
-/// The identity and the exceptional-value check attest the sibling's class:
-/// at every member $x_i$, the class root $r_i = u(x_i)$ satisfies
-/// $r_i^2 = m \cdot (x_i + R)$. The split's product then places every
-/// member of the extracted class in the child. Equal side openings are
-/// rejected.
-///
 /// Opens both sides, the interpolant, the quotient and the selected output
 /// once each at $\zeta$.
 ///
@@ -904,11 +872,13 @@ impl Step<Pasta> for QrSideSelect {
 /// $q_0, q_1, u, h$, committed output contents, and $R = R_0 + j$ are all fixed
 /// before $\zeta$.
 ///
-/// Selecting child $q_b$ ($q_1$ for $b = 1$, $q_0$ for $b = 0$) and sibling $q$
-/// at $\zeta$, the circuit equates the output contents with $q_b$ and equates
-/// $u(\zeta)^2 - q(\zeta) \cdot h(\zeta)$ with $m \cdot (\zeta + R)$. Under the
-/// [class decomposition](crate::collections::qr#class-decomposition) and
-/// $q_0(-R) \neq 0$, no root of $q$ takes side $b$ at $R$.
+/// Selecting child $q_b$ and sibling $q$ by $b$, the circuit checks the output
+/// equals $q_b$ and the [class
+/// identity](crate::collections::qr#class-decomposition)
+/// $u(X)^2-m(X+R)=q(X)h(X)$ at $\zeta$, with interpolant $u$ and quotient $h$.
+/// For fixed non-residue $c$, $m=1+b(c-1)$ tests the sibling, opposite the
+/// queried child. At any sibling root $x$, $u(x)^2=m(x+R)$; with $q_0(-R)\ne0$,
+/// no such root takes side $b$.
 ///
 /// Copying `epoch`, anchors and `discriminant` preserves the chain of product
 /// $P$, while `profile.descend` appends $b$ at depth $j$ (discriminant $R$).
@@ -1057,11 +1027,8 @@ impl Step<Pasta> for QrSideDescend {
 
 /// One profile's members between two boundary digests of one epoch.
 ///
-/// The bucket covers `[anchor_start, anchor_next)`. Both bounds are boundary
-/// digests. The range excludes `anchor_next`. [`QrBucketSeal`] computes
-/// `anchor_next` from the intake's `anchor_end`. The [`TachygramSetPoly`]
-/// holds the contents, and `contents_hash` is a bridge hash of its
-/// accumulator.
+/// Its [`TachygramSetPoly`] holds the contents over `[anchor_start,
+/// anchor_next)`.
 ///
 /// # Injectivity
 ///
@@ -1184,14 +1151,9 @@ impl Header<Fp> for QrBucket {
 /// Seal a routed [`QrIntake`] into a [`QrBucket`] that runs boundary to
 /// boundary.
 ///
-/// The intake's `anchor_prev` must be the boundary digest of
-/// `anchor_final_prev` into `epoch`. It becomes the bucket's `anchor_start`.
-/// The step computes the boundary digest of the intake's `anchor_end` into
-/// `epoch + 1`, and outputs it as the bucket's `anchor_next`.
-///
-/// The intake covers stamp absorptions over `(anchor_prev, anchor_end]` within
-/// `epoch`. The bucket covers `[anchor_start, anchor_next)`. `anchor_start`
-/// absorbs no tachygrams. Both bucket bounds are boundary digests.
+/// The intake covers `(anchor_prev, anchor_end]` within `epoch`. Its
+/// `anchor_prev` becomes the bucket's `anchor_start`, a boundary absorbing no
+/// tachygrams.
 ///
 /// # Soundness
 ///
@@ -1314,18 +1276,8 @@ impl Step<Pasta> for QrBucketSeal {
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// `path` gives the value's class at each of the 32 depths, its QR path. Its
-/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
-/// root witnessing class `j`, including positions past that prefix. The step
-/// also opens the bucket at the value for nonzero.
-///
-/// The emitted segment reads the value as a nullifier and takes the bucket's
-/// extent, `[anchor_start, anchor_next)`, with epochs `[epoch, epoch + 1)`.
-/// Its one member is the value at `epoch`. `anchor_next` is the boundary
-/// digest into `epoch + 1`, excluded, so that epoch's nullifier is the next
-/// segment's to test. Consecutive epochs' segments meet on that boundary and
-/// fuse directly, or [`UnspentLift`](super::pool::UnspentLift) appends the
-/// next epoch's bucket in one step.
+/// The one-member segment covers the bucket's `[epoch, epoch + 1)` and can fuse
+/// at its far boundary or extend by [`UnspentLift`](super::pool::UnspentLift).
 ///
 /// # Soundness
 ///

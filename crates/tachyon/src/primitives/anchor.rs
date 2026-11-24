@@ -71,26 +71,22 @@ pub enum AnchorError {
 /// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ when
 /// every $e_i$ equals $e$, and $k = 0$ sets $a_k = a_0$.
 ///
-/// To add an absorption, a step runs `anchor_next_stamp` on an anchor wire, an
-/// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) gadget and its two bridge
-/// hash wires. Under [Recursion](crate::stamp::proof#assumptions), those wires
-/// carry a bridge hash for the accumulator in the step's last output slot,
-/// tying the absorption's polynomial to that slot. Because a bridge hash
-/// commits to affine coordinates while the zero polynomial's accumulator is the
-/// identity, that polynomial is nonzero. Each step also rules out the constant
-/// one, matching [`next_stamp`](Self::next_stamp) on the empty set. Only
+/// `anchor_next_stamp` absorbs an anchor wire, an
+/// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) and two bridge hash wires
+/// tied by [Recursion](crate::stamp::proof#assumptions) to the last output
+/// slot's accumulator. Its polynomial is nonzero: the zero polynomial commits
+/// to the identity, which lacks affine coordinates for a bridge hash. Each step
+/// also rules out the constant one, as [`next_stamp`](Self::next_stamp) rejects
+/// the empty set. Only
 /// [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) evaluates an
 /// absorption inside a challenge identity.
 ///
-/// Each $a_i$ after $a_0$ determines $a_{i-1}$, $e_i$, $B_i$ and $P_i$. When
-/// $a_k$ belongs to a pool history, the $k$ absorptions match the last $k$
-/// entries behind $a_k$, where each entry is a stamp in epoch $e_i$ with
-/// canonical bridge hash $B_i$ and committed polynomial $P_i$.
-///
-/// Likewise, a boundary digest $\mathsf{ep}(a, e)$ appearing after genesis in a
-/// pool history is that history's boundary entry into $e$ from predecessor $a$.
-/// At genesis, $a$ and $e$ are both zero rather than a history entry, and
-/// nothing makes zero an anchor.
+/// If $a_k$ belongs to a pool history, backward injectivity matches the $k$
+/// absorptions to its last $k$ entries behind $a_k$, including each stamp's
+/// epoch $e_i$, canonical bridge hash $B_i$ and polynomial $P_i$. A non-genesis
+/// $\mathsf{ep}(a,e)$ in that history is its boundary into $e$ from $a$.
+/// Genesis $\mathsf{ep}(0,0)$ is no entry and does not make zero a history
+/// anchor.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 

@@ -24,9 +24,8 @@ use crate::{
 /// An output's tachygram pair and value commitment, derived from one note
 /// (wallet-only).
 ///
-/// Carries the note commitment `cm`, padding tachygram `pad` and value
-/// commitment `cv` for [`OutputAction`](super::stamp::OutputAction), which
-/// reads all three fields and derives `rk`.
+/// [`OutputAction`](super::stamp::OutputAction) reads all three fields and
+/// derives `rk`.
 ///
 /// # Injectivity
 ///

@@ -61,16 +61,14 @@ use crate::{
 ///
 /// # Zero commitment trapdoor
 ///
-/// Because [`NoteSeed`] is the sole producer of `NoteSecret` and holds `rcm`
-/// nonzero (matching [`Note::commitment`] natively), `cm` determines a nonzero
-/// `rcm`. A note with `rcm == 0` has no `NoteSecret` and cannot be spent by
+/// Sole producer [`NoteSeed`] holds `rcm` nonzero. Since `cm` determines `rcm`,
+/// a zero-`rcm` note has no `NoteSecret` for
 /// [`SpendBind`](super::spend::SpendBind).
-///
 /// [`OutputBind`](super::output::OutputBind),
 /// [`FeeFuse`](super::stamp::FeeFuse) and [`FeeSeed`](super::stamp::FeeSeed)
-/// likewise hold `rcm` nonzero when deriving output or fee change commitments.
-/// Recipients still check unverified openings before calling
-/// [`Note::commitment`], which panics on a zero `rcm`.
+/// enforce the same check for outputs and fee change. Recipients check
+/// unverified openings before calling [`Note::commitment`], which panics on
+/// zero `rcm`.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
@@ -317,10 +315,6 @@ impl Step<Pasta> for NoteSeed {
 /// Derive one window of nullifiers and export it as a
 /// [`NoteNullifiers`].
 ///
-/// The window starts on a group boundary. One `Tachyon-NfDerive` sponge per
-/// group absorbs the note's master key and the group's first epoch, then
-/// produces `PoseidonFp::RATE` nullifiers.
-///
 /// # Soundness
 ///
 /// Because the input header fixes `mk` and `cm` and the step stages
@@ -329,11 +323,12 @@ impl Step<Pasta> for NoteSeed {
 /// range-checking `epoch_end = epoch_start + 15` prevents wrapping while
 /// bounding all sixteen epochs to `EPOCH_MAX`.
 ///
-/// Four sponges absorb `mk` and `epoch_start + 4k` to squeeze `mk`'s nullifiers
-/// across each four-epoch group. Pairing each nullifier with its epoch, the
-/// circuit multiplies all sixteen factors at $\zeta$ and equates the product
-/// with the pre-committed output sequence's opening, establishing the product
-/// [`NoteNullifiers`] asserts while copying `cm` from the input.
+/// Four `Tachyon-NfDerive` sponges absorb `mk` and `epoch_start + 4k` to
+/// squeeze `PoseidonFp::RATE` nullifiers across each four-epoch group. Pairing
+/// each nullifier with its epoch, the circuit multiplies all sixteen factors at
+/// $\zeta$ and equates the product with the pre-committed output sequence's
+/// opening, establishing the product [`NoteNullifiers`] asserts while copying
+/// `cm` from the input.
 ///
 /// # Panics
 ///
@@ -456,16 +451,6 @@ impl Step<Pasta> for NullifierDerive {
 }
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
-///
-/// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
-/// product
-///
-/// $$
-///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
-/// $$
-///
-/// since concatenation of disjoint ranges is exactly multiplication.
 ///
 /// # Soundness
 ///

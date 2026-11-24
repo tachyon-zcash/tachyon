@@ -215,11 +215,9 @@ impl Step<Pasta> for SpendableInit {
 /// Bootstrap a spendable from a [`QrBucket`] holding the note's creation,
 /// over the note's [`NoteUnspent`] for that epoch.
 ///
-/// The `NoteUnspent` is the epoch's QR segment bound to the note
-/// ([`QrUnspentInit`](super::qr::QrUnspentInit) then
-/// [`UnspentBind`](super::pool::UnspentBind)). This step adds the membership
-/// of `cm` in the bucket and emits the spendable on the segment's
-/// `(epoch_next, anchor_next)`.
+/// [`QrUnspentInit`](super::qr::QrUnspentInit) then
+/// [`UnspentBind`](super::pool::UnspentBind) supply the segment. The spendable
+/// takes its `(epoch_next, anchor_next)`.
 ///
 /// # Soundness
 ///
@@ -301,9 +299,9 @@ impl Step<Pasta> for QrSpendableInit {
 
 /// Advance the spendable over one [`NoteUnspent`] segment.
 ///
-/// Wallet-only, witness-free. The lineage moves to the segment's far boundary
-/// `(epoch_next, anchor_next)`. The segment may span any number of epochs. A
-/// [`SpendableInit`] spendable cannot lift, and spends in its creation epoch.
+/// Wallet-only and witness-free, to `(epoch_next, anchor_next)` across any
+/// segment length. [`SpendableInit`] spendables cannot lift and spend in their
+/// creation epoch.
 ///
 /// # Soundness
 ///

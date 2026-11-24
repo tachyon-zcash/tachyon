@@ -86,16 +86,11 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
 
     /// Proves that `value`'s first `depth` QR sides are this profile's bits.
     ///
-    /// `path` is the value's class at each of the 32 depths, its path.
-    /// `roots` gives the class root witnessing each step of the path.
-    ///
-    /// At depth $j$, the class root satisfies $r_j^2 = m_j \cdot (x + R_j)$,
-    /// with $R_j = R_0 + j$ from `discriminant` and multiplier
-    /// $m_j = c - (c - 1) b_j$ for the queried class bit $b_j$. The fixed
-    /// non-residue is $c$. Unlike descent, which checks the sibling's class,
-    /// this check uses the queried class itself. A zero shifted value cannot
-    /// claim the non-residue class. The mask $e_j$ must be a prefix of
-    /// `depth` ones, and the selected classes must pack to `bits` under
+    /// At each of 32 positions, `path` gives class bit $b_j$ and `roots` gives
+    /// $r_j$ satisfying $r_j^2=m_j(x+R_j)$ for $R_j=R_0+j$ from `discriminant`.
+    /// Unlike descent, $m_j=c-(c-1)b_j$ uses the queried class, not its
+    /// sibling, with fixed non-residue $c$. The mask $e_j$ selects the
+    /// profile bits under
     ///
     /// $$
     ///   \sum_j e_j = \mathsf{depth},
@@ -109,21 +104,16 @@ impl<'dr, D: Driver<'dr, F = Fp>> QrProfile<'dr, D> {
     ///
     /// # Soundness
     ///
-    /// These constraints force the profile to equal the
-    /// [path](primitives::QrProfile#injectivity) of the first $d$ sides of $x$,
-    /// placing $x$ in its class at $R_0$. The gadget reads no challenge and
-    /// holds for any input wires.
-    ///
-    /// Each $b_j$ equals the side of $x$ at $R_j$. For $b_j = 1$ the root
-    /// [shows](crate::collections::qr#sides) that $x + R_j$ is a square or
-    /// zero, and for $b_j = 0$ the root and $x + R_j \neq 0$ show a
-    /// non-residue. Boolean mask bits force `depth` to an integer $d$ in
-    /// `0..=MAX_DEPTH`, so the second equation holds over the integers. Among
-    /// $d$ distinct positions, $\sum_j j \cdot e_j$ has minimum $d \cdot (d -
-    /// 1)/2$ and attains it only on the first $d$ positions, forcing $d$ ones
-    /// followed by zeros. The fold then doubles $a$ and adds $b_j$ across the
-    /// first $d$ positions and leaves $a$ unchanged thereafter, setting `bits`
-    /// to $\sum_{j < d} b_j \cdot 2^{d-1-j} < 2^{32}$ without wrapping.
+    /// For $b_j=1$ the root [shows](crate::collections::qr#sides) a square or
+    /// zero; for $b_j=0$ the root and the nonzero check on $x+R_j$ show a
+    /// non-residue. Boolean mask bits give integer depth $d$ in
+    /// `0..=MAX_DEPTH`, so the index-sum equation holds over the integers.
+    /// Only the first $d$ positions attain the minimum sum $d(d-1)/2$. The
+    /// fold doubles $a$ and adds $b_j$ on this prefix, then leaves it
+    /// unchanged: `bits` is $\sum_{j<d} b_j 2^{d-1-j}<2^{32}$
+    /// without wrapping. Thus the profile is $x$'s depth-$d$
+    /// [path](primitives::QrProfile#injectivity) at $R_0$ for any
+    /// satisfying input wires, with no challenge.
     #[expect(clippy::indexing_slicing, reason = "fixed 32-position profile arrays")]
     pub(crate) fn enforce_sides_of(
         &self,

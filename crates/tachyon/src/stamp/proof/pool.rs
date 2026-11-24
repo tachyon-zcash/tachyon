@@ -1,18 +1,11 @@
 //! Anchor-bound primitives over consensus state.
 //!
-//! Hosts the nf-free anchor path ([`AnchorSpan`]) used by
-//! [`super::stamp::StampLift`] to advance a stamp's anchor, and the
-//! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
-//! [`super::spendable::SpendableLift`] to advance a spendable.
-//!
-//! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`.
-//! An [`AnchorSpan`] covers `[anchor_start, anchor_end]`, and its members are
-//! the anchors in `(anchor_start, anchor_end]`.
-//!
-//! Each [`Anchor`] advances via a stamp absorption or boundary digest without a
-//! block-level digest. Consensus conventions handle block alignment as
-//! validators check that anchor endpoints lie on the published per-block anchor
-//! sequence.
+//! [`super::stamp::StampLift`] uses a nullifier-free [`AnchorSpan`] covering
+//! `[anchor_start, anchor_end]` with members in `(anchor_start, anchor_end]`.
+//! [`ArbitraryUnspent`] supplies exclusion evidence for
+//! [`super::spendable::SpendableLift`]. An [`Anchor`] advances by stamp
+//! absorption or epoch boundary, not by block: validators check endpoints
+//! against the published per-block sequence.
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
@@ -45,15 +38,11 @@ use crate::{
 /// shows that they are a note's nullifiers. No step producing one touches a
 /// note, `cm`, or `mk`, so the segment is safe to delegate.
 ///
-/// A segment covers whole epochs, half-open on both axes:
-/// `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`. It starts at
-/// [`QrUnspentInit`](super::qr::QrUnspentInit) over one epoch's [`QrBucket`],
-/// [`UnspentLift`] appends the next epoch's bucket, and [`UnspentFuse`] joins
-/// segments on a shared boundary.
-///
-/// `epoch_next`'s nullifier is the next segment's to test, or
-/// [`SpendBind`](super::spend::SpendBind)'s once a spendable rests on
-/// `anchor_next`.
+/// Segments cover whole epochs: `[anchor_start, anchor_next)` and
+/// `[epoch_start, epoch_next)`. They start from one [`QrBucket`], extend by one
+/// bucket or fuse at a shared boundary. The next segment tests `epoch_next`'s
+/// nullifier, or [`SpendBind`](super::spend::SpendBind) derives it when the
+/// spendable rests at `anchor_next`.
 ///
 /// # Injectivity
 ///
@@ -605,10 +594,6 @@ impl Step<Pasta> for UnspentFuse {
 /// One step per epoch, where [`QrUnspentInit`](super::qr::QrUnspentInit) then
 /// [`UnspentFuse`] takes two.
 ///
-/// `path` gives the value's class at each of the 32 depths, its QR path. Its
-/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
-/// root witnessing class `j`, including positions past that prefix.
-///
 /// # Soundness
 ///
 /// Equating `(epoch_next, anchor_next)` on the segment with `(epoch,
@@ -764,9 +749,9 @@ impl Step<Pasta> for UnspentLift {
 /// Prove that an [`ArbitraryUnspent`]'s tested values match a note's nullifiers
 /// by dividing them into the note's derived sequence.
 ///
-/// Consumes any [`NoteNullifiers`] and outputs the complement holding derived
-/// members outside the lineage (earlier epochs plus epochs ahead of published
-/// exclusion evidence, since a spend publishes two nullifiers).
+/// The complement holds any [`NoteNullifiers`] derivation's members before or
+/// after the lineage: exclusion stops at published evidence, while a spend
+/// publishes two nullifiers.
 ///
 /// # Soundness
 ///

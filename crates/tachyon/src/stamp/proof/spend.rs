@@ -27,9 +27,6 @@ use crate::{
 /// A spend's note, epoch nullifier pair, pool anchor, payment key and value
 /// commitment (wallet-only).
 ///
-/// Carries the note commitment `cm`, the lineage's nullifier and its
-/// neighbour `(nf_current, nf_next)` derived from the note's master key, the
-/// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
 ///
@@ -125,12 +122,6 @@ impl Header<Fp> for SpendHeader {
 
 /// Derives a spend's epoch nullifier pair from the note's master key, commits
 /// the note's value, and binds both to the spendable lineage.
-///
-/// The secret is tied to the lineage's note by `secret_cm == spendable_cm`.
-/// The pair is `mk`'s nullifiers at the lineage's epoch $e$ and at $e + 1$,
-/// one group sponge each. Both are emitted on the [`SpendHeader`] for the
-/// action-producing step to publish, with the note's `pk` and
-/// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
 /// Two permutations (the pair) and two scalar multiplications (`cv`). Two
 /// sponges run whether or not $e$ and $e + 1$ share a group.

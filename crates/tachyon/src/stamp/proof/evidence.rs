@@ -1,16 +1,10 @@
 //! Evidence trees: one proof for a Poseidon Merkle root over a network's
 //! sealed [`QrBucket`]s.
 //!
-//! [`EvidenceTreeLeafPair`] admits buckets two at a time,
-//! [`EvidenceTreePairFuse`] and [`EvidenceTreeFuse`] assemble a node from
-//! four subtrees, and [`EvidenceTreeCap`] raises a root to the depth a descent
-//! needs. [`EvidenceTreeDescend`] walks a path, and [`EvidenceTreeOpen`]
-//! replays the bucket a leaf holds.
-//!
-//! A tree starts at [`EVIDENCE_TREE_ARITY`] leaves. A builder short of that
-//! repeats a bucket. A builder holding one bucket needs no tree at all: it
-//! serves that bucket's own proof, which every consumer of a replayed bucket
-//! takes unchanged.
+//! Pair and fuse steps assemble [`EVIDENCE_TREE_ARITY`]-child nodes; capping
+//! pads the depth for descent and replay. A tree needs at least four leaves,
+//! so builders may repeat buckets. With just one bucket they can serve its
+//! proof directly to any consumer of a replayed bucket.
 
 use core::array;
 
@@ -127,10 +121,9 @@ impl Header<Fp> for EvidenceTree {
 
 /// Two sibling subtree roots of one network: half of a node.
 ///
-/// A [`EVIDENCE_TREE_ARITY`]-child node reaches one hash through two steps,
-/// since a [`Step`] takes at most two predecessor proofs. This header is a node
-/// half-assembled: the left and right children of one side, under the four
-/// network fields both already agree on.
+/// Each [`Step`] takes at most two predecessor proofs. Two pairs of ordered
+/// children under the same network fields supply one
+/// [`EVIDENCE_TREE_ARITY`]-child node hash.
 ///
 /// # Injectivity
 ///

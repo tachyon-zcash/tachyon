@@ -14,16 +14,12 @@
 //! point as its two affine coordinates determines the point, and each function
 //! states what its composite inputs determine in turn.
 //!
-//! The width-five permutation powers a rate-four sponge. The sponge adds
-//! each four-element block into the rate and permutes, padding a shorter final
-//! block with zeros. Four squeezes read rate elements zero through three of the
-//! final state, and no function here squeezes more.
-//!
-//! Because the sponge records no input length, a short final block and its
-//! zero-padded form share one digest. Here each tag belongs to one function
-//! with a fixed input length, so distinct inputs to one function differ in an
-//! absorbed element and distinct functions differ in their tag. Domains lie
-//! below $2^{128}$ and map to distinct capacity elements.
+//! The sponge adds each four-element block into the rate, zero-pads the last
+//! partial block and permutes at width five after each block. Squeezes read
+//! final rate elements in order from zero, at most four. Padding encodes no
+//! length, but each function has fixed arity and its own domain below
+//! $2^{128}$: distinct inputs differ in an absorbed element or in the capacity
+//! tag.
 
 use core::array;
 
@@ -179,15 +175,12 @@ pub fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
 
 const PAD_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmOutPad";
 
-/// Derives an output's padding tachygram from the same note fields
-/// [`note_commitment`] commits to.
+/// Hashes the same four fields as [`note_commitment`] under the output padding
+/// tag.
 ///
 /// The preimage is the note opening rather than the commitment: both values are
 /// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
 /// observer pair them off and recover the output count.
-///
-/// This function absorbs the same four elements as [`note_commitment`] under
-/// its own tag.
 #[must_use]
 pub fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     let [hash] = emulated(PAD_COMMITMENT_DOMAIN, [rcm, pk, Fp::from(value), psi]);
@@ -230,13 +223,12 @@ pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
 
 const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
 
-/// Derives an output's $\alpha$ preimage from its entropy and note commitment.
+/// Hashes the output's entropy and note commitment, reading the digest as
+/// integer $\alpha$ as in [`alpha_spend`].
 ///
 /// $$
 ///   \mathsf{Poseidon}_\texttt{Tachyon-Output}(\theta,\ \mathsf{cm})
 /// $$
-///
-/// Reading the digest as an integer gives $\alpha$, as in [`alpha_spend`].
 #[must_use]
 pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
     let [hash] = emulated(OUTPUT_ALPHA_DOMAIN, [theta, cm]);

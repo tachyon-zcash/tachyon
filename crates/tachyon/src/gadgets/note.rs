@@ -109,16 +109,14 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
 
-    /// Enforces a zero `value` and returns the max fee commitment for it, the
-    /// blind term alone without a value term.
+    /// Enforces zero `value` and returns the blind term alone.
     ///
     /// # Injectivity
     ///
-    /// Equal to the max fee commitment at $v = 0$, this point determines the
-    /// note as [`cv_feemax`](Self::cv_feemax) does. Multiplying
-    /// [`R_BASE`](struct@fixed_base::R_BASE) by the blind digest's 254-bit
-    /// decomposition without adding a value term leaves only digests that are
-    /// zero or at least $2^{254}$ without an assignment.
+    /// This is [`cv_feemax`](Self::cv_feemax) at $v=0$ and determines the same
+    /// note. Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by the
+    /// 254-bit blind decomposition has an assignment exactly when $0 < r <
+    /// 2^{254}$.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;

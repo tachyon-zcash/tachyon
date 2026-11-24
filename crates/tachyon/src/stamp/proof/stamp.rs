@@ -210,12 +210,6 @@ impl Header<Fp> for Stamp {
 
 /// Proves an output's action as [`Actions`].
 ///
-/// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
-/// [`OutputBind`](super::output::OutputBind) derived, derives the action
-/// randomizer `alpha` from the witnessed `theta` and `cm`, then the randomized
-/// action key `rk`, and enforces the one-action set plus the two-element
-/// tachygram set `{cm, pad}`.
-///
 /// Three permutations (`alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
 ///
@@ -339,13 +333,6 @@ impl Step<Pasta> for OutputAction {
 }
 
 /// Proves a spend's action as [`Actions`].
-///
-/// The spent note's `pk` and value commitment `cv` arrive on the
-/// [`SpendHeader`] [`SpendBind`](super::spend::SpendBind) derived. The step
-/// derives the action randomizer `alpha` from the witnessed `theta` and `cm`,
-/// then the randomized action key `rk`, and enforces the one-action set plus
-/// the two-element tachygram set `{nf_current, nf_next}` (the pair `SpendBind`
-/// derived from the master key).
 ///
 /// Four permutations (`pk`, `alpha`, two for the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set
@@ -1200,26 +1187,20 @@ impl Step<Pasta> for FeeSeed {
 
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
 ///
-/// Divides the left dividend by the right divisor so the output holds the
-/// dividend's leaves minus the divisor's, opening all six online polynomials
-/// once at a shared challenge.
-///
 /// # Soundness
 ///
-/// With all six polynomials fixed before $\zeta$, equating each dividend set's
-/// opening at $\zeta$ with the divisor's times the output's
-/// ([checks at the challenge](super#checks-at-the-challenge)) enforces
-/// $\text{divisor} \cdot \text{output} = \text{dividend}$ on both sets.
+/// All six polynomials are fixed before $\zeta$ and opened once there. For each
+/// set, the [challenge check](super#checks-at-the-challenge) gives left
+/// dividend = right divisor × output.
 ///
 /// Because both inputs' action polynomials are monic
 /// [set polynomials](crate::collections::multiset), divisibility makes the
 /// divisor's digests a sub-multiset of the dividend's and makes the monic
 /// quotient the set polynomial of the remaining digests.
 ///
-/// Pairing each divisor leaf with a matching-digest dividend leaf matches their
-/// tachygram factors in $T$ (since each digest determines its tachygrams),
-/// leaving the unpaired dividend leaves' factors as the output's $T$, or the
-/// constant one when every leaf pairs off.
+/// Matching leaves by digest cancels identical tachygram factors in $T$: each
+/// digest determines its tachygrams. The output holds the unpaired dividend
+/// leaves' factors, or one if every leaf pairs off.
 ///
 /// Equating both `anchor` wires and outputting the left one preserves the end
 /// of every remaining leaf's stamp chain. Any verified `Stamp` at that anchor

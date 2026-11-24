@@ -16,19 +16,11 @@
 //!
 //! # Soundness
 //!
-//! Each header field or online polynomial stands for an object such as a note,
-//! a pool history or a multiset, and its documentation states what it stands
-//! for, which constraints enforce that, and why no other object shares the same
-//! value. Arguments sit on the items they describe and cite lower-level items.
-//!
-//! - Digests, encodings and gadgets state what their outputs determine.
-//! - Headers state under **Injectivity** what every verified PCD of that header
-//!   asserts and what each field and polynomial stands for.
-//! - Steps state under **Soundness** which constraints establish the output
-//!   header's assertion.
-//!
-//! Each assertion covers one header's fields, slots and named verified PCDs,
-//! saying nothing about the published chain.
+//! Digests, encodings and gadgets state what their outputs determine. Each
+//! header's **Injectivity** section states what its verified PCD asserts about
+//! its fields, polynomials and named verified PCDs, not the published chain.
+//! Each step's **Soundness** section gives the constraints establishing its
+//! output assertion. These arguments cite the lower-level items they rely on.
 //!
 //! A value *determines* a thing when two distinct things sharing that value
 //! yield a Poseidon collision or a discrete-log relation that the assumptions
@@ -78,26 +70,21 @@
 //!
 //! ## Native encodings
 //!
-//! Because Ragu's verifier recomputes header elements from native `Data`
-//! without constraints, distinct `Data` values of one header must never encode
-//! alike ([`Header`](ragu::header::Header)). Every header assigns each `Data`
-//! part its own elements in a fixed count and order, and no part collides.
-//!
-//! - Epochs, note values and profile halves are native integers bounded by
-//!   `EPOCH_MAX`, `MAX_MONEY` and $2^{32} - 1$. Each occupies its own element
-//!   as that integer below the modulus, without packing two integers together.
-//! - Value commitments and bridge hashes encode as their two affine
-//!   coordinates, which determine the point, while encoding the identity fails.
-//! - Every other part wraps one field element and encodes directly as it.
+//! Ragu's verifier encodes native [`Header::Data`](ragu::header::Header)
+//! without constraints, so distinct values of one header must encode
+//! differently. Fields occupy disjoint slices of fixed size and order. Each
+//! epoch, note value and profile half occupies one element as an integer
+//! bounded by `EPOCH_MAX`, `MAX_MONEY` and $2^{32}-1$, respectively, below the
+//! modulus. Value commitments and bridge hashes encode as two affine
+//! coordinates determining the point; the identity cannot encode. Other fields
+//! encode their wrapped element verbatim.
 //!
 //! ## Checks at the challenge
 //!
-//! Ragu draws a step's challenge $\zeta$ after fixing both input PCDs and
-//! committing the step's output polynomials and staged values. Input header
-//! fields, input and output polynomials, staged values, constants and any
-//! in-circuit digest of fixed inputs are all fixed before $\zeta$. The prover
-//! chooses every other wire with $\zeta$ in hand, including the bridge hash and
-//! output header fields.
+//! Before drawing $\zeta$, Ragu fixes both input PCDs (headers and polynomials)
+//! and commits the output polynomials and staged values. Constants and digests
+//! of fixed inputs are fixed too. Other wires, including bridge hash and output
+//! header fields, need not be fixed before $\zeta$.
 //!
 //! Equating two expressions in openings at $\zeta$ compares two polynomials at
 //! a random point. If the polynomials are distinct and fixed before $\zeta$,
@@ -112,35 +99,24 @@
 //!
 //! ## Zero tachygrams
 //!
-//! Every tachygram of every leaf in a verified [`Stamp`](stamp::Stamp) is
-//! nonzero, and no tachygram set polynomial recomputed by a verifier from
-//! published members has zero as a root. Because a
-//! [set polynomial](crate::collections::multiset) records roots without their
-//! published roles, a zero tachygram produces the factor $X$ whether intended
-//! as a note commitment, padding tachygram, nullifier or fee change commitment.
-//! Each tachygram-deriving circuit holds its output nonzero.
-//! [`OutputBind`](output::OutputBind) constrains the commitment and padding
-//! tachygram, [`SpendBind`](spend::SpendBind) constrains both nullifiers, and
-//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) constrain the
-//! fee change commitment.
+//! [`OutputBind`](output::OutputBind) holds `cm` and `pad` nonzero,
+//! [`SpendBind`](spend::SpendBind) both nullifiers, and
+//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) the fee change
+//! commitment. Thus no leaf of a verified [`Stamp`](stamp::Stamp) contributes a
+//! zero root to the published [set polynomial](crate::collections::multiset).
+//! Its factors record no roles: zero always contributes $X$.
 //!
-//! Distinct tags separate note commitments (including fee change commitments),
-//! padding tachygrams and nullifiers. Matching a padding tachygram or nullifier
-//! to a note commitment, or matching two notes' commitments, requires a
-//! Poseidon collision. At zero, two independently found zero preimages would
-//! collide. The Poseidon assumption rules this out alongside other collisions,
-//! and the nonzero constraints rule it out unconditionally by leaving zero
-//! unassigned.
+//! Matching a note commitment (including fee change) to another note's
+//! commitment or to a differently tagged pad or nullifier requires a Poseidon
+//! collision. Two independently found zero preimages would also collide; the
+//! nonzero checks exclude this case unconditionally.
 //!
-//! Without those constraints, a prover knowing a note with a zero padding
-//! tachygram and a second note with a zero commitment could output the first
-//! note, putting zero among the stamp polynomial's roots.
-//! [`SpendableInit`](spendable::SpendableInit) would then open that polynomial
-//! to zero at the second note's commitment, producing a spendable for a note
-//! no output created and no binding signature balanced. Spending it still
-//! requires a spend proof and authorization. A zero nullifier from a
-//! spend, or a zero commitment or fee change commitment paired with a distinct
-//! zero-commitment note, would permit the same spend.
+//! Without the checks, outputting a note with zero pad would let
+//! [`SpendableInit`](spendable::SpendableInit) open the polynomial at a second
+//! note's zero commitment, producing a spendable no output created
+//! and no binding signature balanced. A zero nullifier, output commitment or
+//! fee change would supply the same root. Spending the second note would still
+//! require a spend proof and authorization.
 //!
 //! ## Full proofs between parties
 //!

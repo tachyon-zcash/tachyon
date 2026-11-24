@@ -68,10 +68,9 @@ impl QrClass {
 /// load-balancing policy. A biased or early-revealed choice affects that
 /// builder's buckets.
 ///
-/// A seed fixes its own $R_0$. Routing headers carry it unchanged. A merge
-/// requires equal first discriminants on its inputs, and a descent requires
-/// equality between the split and the selection. Reopening an evidence leaf
-/// binds the same $R_0$.
+/// Seeds take $R_0$ from `Step::Witness`. Routing copies it: merges equate both
+/// inputs' values, descents equate split and selection, and reopening binds
+/// the same $R_0$. Class tests use their bucket's $R_0$.
 ///
 /// A descent's challenge binds both input headers, their online commitments,
 /// and the staged child bit. The step computes $R = R_0 + \mathsf{depth}$
@@ -85,9 +84,7 @@ impl QrClass {
 /// and every value belongs to one class at each depth. Adding $j$ in the field
 /// gives each element a [side](crate::collections::qr#sides) at $R_0 + j$, and
 /// a profile's class holds the values matching its first $d$ sides. Any field
-/// element serves as $R_0$. Intake seeds witness $R_0$ via `Step::Witness`,
-/// later routing steps copy it or equate two inputs' copies, and steps
-/// that test a value's class use their bucket's $R_0$.
+/// element serves as $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
