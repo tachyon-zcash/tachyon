@@ -51,8 +51,8 @@ use crate::{
 ///   Both nullifiers are nonzero, preventing a zero root from marking a
 ///   zero-commitment note as published ([zero
 ///   tachygrams](super#zero-tachygrams)).
-/// - `anchor` is the position where [`NoteSpendable`] establishes spendability.
-///   It refers to the published pool history if that anchor is canonical.
+/// - `anchor` is the position where [`NoteSpendable`] establishes spendability,
+///   referring to the published pool history when canonical.
 /// - `pk` stands for the note's owner, determined by `cm` and determining
 ///   $\mathsf{ak}$ and $\mathsf{nk}$.
 /// - `cv` stands for $v$ as $\[v\]\mathcal{V} + \[r\]\mathcal{R}$ for a
@@ -148,8 +148,8 @@ impl Header<Fp> for SpendHeader {
 /// Multiplying [`V_BASE`](struct@fixed_base::V_BASE) by the 51-bit
 /// decomposition of the secret's value wire (which [`NoteSecret`] bounds to
 /// `0..=MAX_MONEY`) and adding [`R_BASE`](struct@fixed_base::R_BASE) times 254
-/// freely chosen Boolean blind wires (the multiplication has no assignment at
-/// zero) yields `cv`. Reading no challenge, the step copies `cm` and `anchor`
+/// freely chosen Boolean blind wires yields `cv`, with no assignment at a zero
+/// blind. Reading no challenge, the step copies `cm` and `anchor`
 /// from the lineage and `pk` from the secret.
 #[derive(Debug)]
 pub struct SpendBind;

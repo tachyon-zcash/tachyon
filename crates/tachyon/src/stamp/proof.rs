@@ -137,8 +137,8 @@
 //! note, putting zero among the stamp polynomial's roots.
 //! [`SpendableInit`](spendable::SpendableInit) would then open that polynomial
 //! to zero at the second note's commitment, producing a spendable for a note
-//! no output created and no binding signature balanced. Spending it would
-//! still require a spend proof and authorization. A zero nullifier from a
+//! no output created and no binding signature balanced. Spending it still
+//! requires a spend proof and authorization. A zero nullifier from a
 //! spend, or a zero commitment or fee change commitment paired with a distinct
 //! zero-commitment note, would permit the same spend.
 //!
@@ -182,8 +182,8 @@
 //! ### What a full proof shows
 //!
 //! - Header fields and every coefficient of both online polynomials. For a
-//!   `Stamp`, the covered bundles determine the polynomials; the published
-//!   stamp also supplies the anchor ([`Stamp`](stamp::Stamp#injectivity)).
+//!   `Stamp`, the covered bundles determine both polynomials and the published
+//!   stamp supplies the anchor ([`Stamp`](stamp::Stamp#injectivity)).
 //! - Commitments from Ragu's bootstrap proof, passed as the right input to both
 //!   passes. Tachyon's default depends on the application, the Ragu version and
 //!   its seeded generator implementation, marking the release and platform
@@ -204,9 +204,9 @@
 //! knowledge, exposes witness polynomials uncompressed and their evaluations
 //! compressed, and relies on an unaudited hiding argument.
 //!
-//! No header assertion depends on hiding: it holds for every verified PCD of
+//! No header assertion depends on hiding. Each holds for every verified PCD of
 //! that header regardless of what its holder learns. The spend and balance
-//! arguments use those assertions together with the consensus rules. A spend
+//! arguments combine those assertions with the consensus rules. A spend
 //! also requires an action signature whose signing key enters no step.
 //!
 //! Wallet privacy and a spend's published nullifier pair do depend on hiding in

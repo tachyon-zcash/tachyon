@@ -191,7 +191,8 @@ impl Header<Fp> for NoteNullifiers {
 /// Certify a note's commitment and master key.
 ///
 /// Seed step. Witnesses the note's value, trapdoors and proof authorizing key.
-/// The header exports `pk` and `mk`, not the `nk` wire used to derive them.
+/// `nk` stays inside the step while the header exports its digests `pk` and
+/// `mk`.
 ///
 /// # Soundness
 ///
@@ -202,11 +203,11 @@ impl Header<Fp> for NoteNullifiers {
 /// $\psi$ and the same $\mathsf{nk}$ wire, and `cm` from `rcm`, `pk`, `value`
 /// and the same $\psi$ wire.
 ///
-/// This step does not prove publication.
+/// This step does not show that `cm` was published.
 /// [`SpendableInit`](super::spendable::SpendableInit)
-/// or [`QrSpendableInit`](super::spendable::QrSpendableInit) proves `cm` is a
-/// root in a stamp absorption or bucket. That establishes publication when the
-/// absorption's anchor or the bucket's `anchor_next`, respectively, is
+/// or [`QrSpendableInit`](super::spendable::QrSpendableInit) places `cm` among
+/// the roots of a stamp absorption or bucket, establishing publication once
+/// the absorption's anchor or the bucket's `anchor_next`, respectively, is
 /// canonical.
 #[derive(Debug)]
 pub struct NoteSeed;

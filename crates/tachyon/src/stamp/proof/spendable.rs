@@ -40,13 +40,13 @@ use crate::{
 ///   chain](Anchor#chains-in-a-step) in `epoch_current` ending at `anchor`. The
 ///   header's [`TachygramSetPoly`] is that absorption's polynomial with `cm`
 ///   among its roots.
-/// - **Lineage.** The prover knows an epoch $e_0 < \text{epoch\_current}$ and
+/// - **Lineage.** The prover knows an epoch $e_0 < \text{epoch\_current}$,
 ///   anchors $b_e$ across $e \in e_0..=\text{epoch\_current}$ ending at
-///   `anchor`. It knows a verified [`QrBucket`] at $(e_0, b_{e_0}, b_{e_0+1})$
-///   with `cm` as a root of its contents. The nullifier of `cm` at each $e \in
-///   e_0..\text{epoch\_current}$ is
-///   [excluded](super::pool::ArbitraryUnspent#injectivity) between $b_e$ and
-///   $b_{e+1}$, and the header's [`TachygramSetPoly`] is the constant one.
+///   `anchor`, and a verified [`QrBucket`] at $(e_0, b_{e_0}, b_{e_0+1})$ whose
+///   contents have `cm` as a root. At each $e \in e_0..\text{epoch\_current}$,
+///   `cm`'s nullifier is [excluded](super::pool::ArbitraryUnspent#injectivity)
+///   between $b_e$ and $b_{e+1}$, and the header's [`TachygramSetPoly`] is the
+///   constant one.
 ///
 /// In the lineage form, `cm` is a root of one of the stamp chain's polynomials
 /// because the creation bucket's contents divide their product, and the bucket

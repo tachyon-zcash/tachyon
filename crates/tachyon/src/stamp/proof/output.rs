@@ -97,11 +97,11 @@ impl Header<Fp> for OutputHeader {
 ///
 /// Reading no input or challenge, the circuit builds `OutputHeader` directly
 /// from its wires. Shared `rcm`, `pk`, `psi` and value wires feed both digest
-/// circuits. `Note::commitment` holds `rcm` nonzero; this step holds both
-/// digests nonzero. Neither `pk` nor `psi` has a separate constraint.
+/// circuits. `Note::commitment` holds `rcm` nonzero, this step holds `cm` and
+/// `pad` nonzero, and `pk` and `psi` carry no separate constraint.
 /// Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by 254 freely chosen
-/// Boolean blind wires computes the blind point and has no assignment at zero.
-/// `NEG_V_BASE.mul_and_add` adds the negative value term to that point using
+/// Boolean blind wires computes the blind point, with no assignment at zero.
+/// `NEG_V_BASE.mul_and_add` adds the negated value term from
 /// the same 51 bits that encode the
 /// [amount](gadgets::value::Positive::from_bits) for both digests.
 #[derive(Debug)]
