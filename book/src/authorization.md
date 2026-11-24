@@ -124,9 +124,12 @@ Tachyon uses Pedersen commitments on the Pallas curve for value hiding:
 
 $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 
-where $v$ is the signed integer value (positive for spends, negative for outputs) and `rcv` is a random[^rcv-note] trapdoor in $\mathbb{F}_q$.
+where $v$ is the signed integer value (positive for spends, negative for outputs).
 
-[^rcv-note]: `rcv` is currently sampled as a uniformly random scalar (`Fq::random`). This derivation may be revised in the future to incorporate a hash of the note commitment or other action-specific data.
+Native sampling draws $\mathsf{rcv}$ uniformly from $\mathbb{F}_q$, and the planned commitment uses the whole scalar.
+The bind steps take its low 254 bits as free boolean wires, with no constraint tying them to a full scalar.
+Zero has no finite blind point, and truncating a larger scalar changes the commitment rather than giving a second opening.
+A stamp proof for the planned body therefore requires $0 < \mathsf{rcv} < 2^{254}$; a uniform blind falls outside this range with negligible probability.
 
 The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived from the domain `z.cash:Orchard-cv`.[^generator-todo]
 
