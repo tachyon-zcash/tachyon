@@ -16,143 +16,130 @@
 //!
 //! # Soundness
 //!
-//! A header field or an online polynomial stands for something else, such as
-//! a note, a pool history or a multiset. The argument for it says what it
-//! stands for, which constraints force that, and why nothing else gives the
-//! same value. Each argument sits on the item it is about and cites the items
-//! below it.
+//! Each header field or online polynomial stands for an object such as a note,
+//! a pool history or a multiset, and its documentation states what it stands
+//! for, which constraints enforce that, and why no other object shares the same
+//! value. Arguments sit on the items they describe and cite lower-level items.
 //!
-//! - A digest, an encoding or a gadget states what its output determines.
-//! - A header states, under **Injectivity**, what every verified PCD of that
-//!   header asserts and what each field and polynomial stands for.
-//! - A step states, under **Soundness**, which constraints give the output
+//! - Digests, encodings and gadgets state what their outputs determine.
+//! - Headers state under **Injectivity** what every verified PCD of that header
+//!   asserts and what each field and polynomial stands for.
+//! - Steps state under **Soundness** which constraints establish the output
 //!   header's assertion.
 //!
-//! An assertion is about one header's fields and slots and the other verified
-//! PCDs it names. It says nothing about the published chain.
+//! Each assertion covers one header's fields, slots and named verified PCDs,
+//! saying nothing about the published chain.
 //!
-//! A value *determines* a thing when two different things for one value give
-//! a Poseidon collision or a discrete-log relation that the assumptions below
-//! say nobody can produce.
+//! A value *determines* a thing when two distinct things sharing that value
+//! yield a Poseidon collision or a discrete-log relation excluded by the
+//! assumptions below.
 //!
 //! ## Assumptions
 //!
-//! - **Recursion.** Ragu is an argument of knowledge. The parties that together
-//!   produce a PCD that verifies can also produce the tree of steps that built
-//!   it, with every step's wires, and every circuit in the tree is satisfied.
-//!   "Its prover knows" in a header's assertion means that the tree holds the
-//!   value, the chain or the verified PCD it names, known to the party that ran
-//!   the step it belongs to. The arguments credit a party that extends a proof
-//!   it received with the steps it ran and with nothing beneath them ([full
-//!   proofs](self#full-proofs-between-parties)). Ragu's book calls extraction a
-//!   knowledge assumption and says it gives no end-to-end soundness argument
-//!   through the recursion. Each input a step reads is a verified PCD of the
-//!   header the step declares. A header reaches a step or a verifier as
-//!   [`HEADER_SIZE`] elements that end in its suffix, and no two headers share
-//!   a suffix. A value a step opens is the value of the polynomial that the
-//!   step producing that slot committed. An output slot a step does not open
-//!   holds the constant one, and no registered step can open a slot its header
-//!   lists as `Padding`. The two bridge hash wires a step reads are a bridge
-//!   hash of the accumulator in that step's last output slot. Ragu holds them
-//!   to the slot, and no step circuit constrains them.
+//! - **Recursion.** Ragu is an argument of knowledge. Parties jointly producing
+//!   a verified PCD can also produce the step tree that built it, with every
+//!   step's wires satisfying its circuit. In a header's assertion, "its prover
+//!   knows" means that the tree contains the named value, chain or verified
+//!   PCD, known to the party that ran that step. Extending a received stamp
+//!   proof credits the party only with the steps it ran and nothing beneath
+//!   them ([full proofs](self#full-proofs-between-parties)). Ragu's book calls
+//!   extraction a knowledge assumption and provides no end-to-end soundness
+//!   argument across recursion. Every step input is a verified PCD of the
+//!   declared header. Headers reach steps and verifiers as [`HEADER_SIZE`]
+//!   elements ending in a unique suffix. Opening a slot yields the evaluation
+//!   of the polynomial committed when producing that slot. Unopened output
+//!   slots hold the constant one, and no registered step can open a `Padding`
+//!   slot. Ragu constrains a step's two bridge hash wires to a bridge hash of
+//!   the accumulator in the step's last output slot without step-circuit
+//!   constraints.
 //!
-//!   The tree holds the steps registered in [`new_application`], Ragu's
-//!   bootstrap step, which outputs the unit header, and Ragu's rerandomization
-//!   step, which `Application::rerandomize` runs twice in a row. That step
-//!   outputs the header it reads with the same fields and holds each output
-//!   polynomial equal to the input's at its challenge, so it preserves every
-//!   assertion. A header's documentation therefore names only the registered
-//!   steps that output it. The application proves in Ragu's standard profile,
-//!   which has no decompression step.
-//! - **Poseidon.** Each tag absorbs a fixed number of elements. No two distinct
-//!   triples of tag, absorbed elements of that number and squeeze position are
-//!   known that give the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed)
-//!   alone needs more. Its argument models the stamp absorption digest as a
-//!   random function, and it says so.
-//! - **Commitments.** No discrete-log relation is known among the generators of
-//!   either curve, nor between the value commitment generators $\mathcal{V}$
-//!   and $\mathcal{R}$. An accumulator is the sum $\sum_j c_j G_j$ of host
-//!   generators weighted by a polynomial's coefficients, without a blinding
-//!   term. It determines its polynomial among those of at most $2^{13}$
-//!   coefficients. A bridge hash commits to an accumulator's two coordinates
-//!   under the nested generators and determines the accumulator. One
-//!   accumulator has many bridge hashes, and
-//!   [`bridge_hash`](crate::bridge_hash) computes the one an honest prover
-//!   uses.
-//! - **Challenge.** Ragu squeezes a step's challenge from a transcript and
-//!   models that hash as a random oracle. The challenge is then uniform and
-//!   independent of everything the transcript absorbed before it.
+//!   Every tree consists of steps registered in [`new_application`], Ragu's
+//!   unit-header bootstrap step, and Ragu's rerandomization step, which
+//!   `Application::rerandomize` runs twice in succession. Rerandomization
+//!   preserves every assertion by copying its input header fields and equating
+//!   each output polynomial with its input at the challenge, so header
+//!   documentation lists only registered producers. The application uses Ragu's
+//!   standard profile, which includes no decompression step.
+//! - **Poseidon.** Each tag absorbs a fixed number of elements, and no two
+//!   distinct triples of tag, fixed-length input and squeeze position are known
+//!   to yield the same element. [`AnchorSpanSeed`](pool::AnchorSpanSeed) alone
+//!   needs more and models the stamp absorption digest as a random function.
+//! - **Commitments.** No discrete-log relation is known among either curve's
+//!   generators or between the value commitment generators $\mathcal{V}$ and
+//!   $\mathcal{R}$. An accumulator $\sum_j c_j G_j$ weights host generators by
+//!   polynomial coefficients without a blinding term, determining any
+//!   polynomial of at most $2^{13}$ coefficients. A bridge hash commits to an
+//!   accumulator's two coordinates under the nested generators and determines
+//!   that accumulator. Many bridge hashes exist per accumulator, and honest
+//!   provers compute [`bridge_hash`](crate::bridge_hash).
+//! - **Challenge.** Ragu squeezes each step's challenge from a transcript hash
+//!   modelled as a random oracle, making the challenge uniform and independent
+//!   of prior transcript inputs.
 //!
 //! ## Native encodings
 //!
-//! Ragu's verifier recomputes a header's elements from its native `Data` and
-//! runs no constraint, so two `Data` values of one header must never encode
-//! alike ([`Header`](ragu::header::Header)). Every header here gives each
-//! part of its `Data` elements of its own, in a fixed order and number. Two
-//! `Data` values then encode alike only if some part does, and no part does.
+//! Because Ragu's verifier recomputes header elements from native `Data`
+//! without constraints, distinct `Data` values of one header must never encode
+//! alike ([`Header`](ragu::header::Header)). Every header assigns each `Data`
+//! part its own elements in a fixed count and order, and no part collides.
 //!
-//! - An epoch, a note value and each half of a profile are native integers, at
-//!   most `EPOCH_MAX`, `MAX_MONEY` and $2^{32} - 1$. Each encodes as that
-//!   integer in one element, below the modulus. No header packs two of them
-//!   into one element.
-//! - A value commitment and a bridge hash are points. A point encodes as its
-//!   two affine coordinates, which determine it. The identity has no
-//!   coordinates, and encoding it fails.
-//! - Every other part wraps one field element and encodes as it.
+//! - Epochs, note values and profile halves are native integers bounded by
+//!   `EPOCH_MAX`, `MAX_MONEY` and $2^{32} - 1$. Each occupies its own element
+//!   as that integer below the modulus, without packing two integers together.
+//! - Value commitments and bridge hashes encode as their two affine
+//!   coordinates, which determine the point, while encoding the identity fails.
+//! - Every other part wraps one field element and encodes directly as it.
 //!
 //! ## Checks at the challenge
 //!
-//! Ragu draws a step's challenge $\zeta$ after it has committed the step's
-//! output polynomials and staged values, and after both input proofs are
-//! fixed. Input header fields, input polynomials, output polynomials, staged
-//! values and constants are fixed before $\zeta$. A digest computed in the
-//! circuit is fixed before $\zeta$ when every element it absorbs is. Any other
-//! wire is the prover's choice with $\zeta$ in hand, the bridge hash and the
-//! output header's fields included.
+//! Ragu draws a step's challenge $\zeta$ after fixing both input proofs and
+//! committing the step's output polynomials and staged values. Input header
+//! fields, input and output polynomials, staged values, constants and any
+//! in-circuit digest of fixed inputs are all fixed before $\zeta$. The prover
+//! chooses every other wire with $\zeta$ in hand, including the bridge hash and
+//! output header fields.
 //!
-//! A step that equates two expressions in openings at $\zeta$ equates two
-//! polynomials at a random point. When everything in them is fixed before
-//! $\zeta$, the polynomials are equal unless $\zeta$ is a root of their
-//! difference. A product of two slots has degree below $2^{14}$, so one
-//! attempt at one step meets a root with probability below $2^{14}/p$, and the
-//! bound adds over the steps of a tree and a prover's attempts. Each step says
-//! why the values its identities read are fixed.
+//! Equating two expressions in openings at $\zeta$ compares two polynomials at
+//! a random point. When every input to those expressions is fixed before
+//! $\zeta$, the polynomials match unless $\zeta$ hits a root of their
+//! difference. Because a product of two slots has degree below $2^{14}$, one
+//! step attempt hits a root with probability below $2^{14}/p$, summing across
+//! tree steps and prover attempts. Each step explains why its identity inputs
+//! are fixed.
 //!
-//! An opening at any other point is the committed polynomial's value at that
-//! point. A zero opening shows that the point is a root.
+//! Opening at any other point evaluates the committed polynomial there, so a
+//! zero opening proves a root.
 //!
 //! ## Zero tachygrams
 //!
-//! A [set polynomial](crate::collections::multiset) records a root and not
-//! what the root was published as. A zero tachygram is the factor $X$ whether
-//! it was meant as a note commitment, a padding tachygram, a nullifier or a
-//! fee change commitment. The circuit that derives a tachygram holds it
-//! nonzero. [`OutputBind`](output::OutputBind) holds the commitment and the
-//! padding tachygram, [`SpendBind`](spend::SpendBind) both nullifiers, and
-//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) the fee change
-//! commitment. Every tachygram of a leaf of a verified
-//! [`Stamp`](stamp::Stamp) is therefore nonzero, and zero is a root of no
-//! tachygram set polynomial that a verifier recomputes from published
-//! members.
+//! Every tachygram of every leaf in a verified [`Stamp`](stamp::Stamp) is
+//! nonzero, and no tachygram set polynomial recomputed by a verifier from
+//! published members has zero as a root. Because a
+//! [set polynomial](crate::collections::multiset) records roots without their
+//! published roles, a zero tachygram produces the factor $X$ whether intended
+//! as a note commitment, padding tachygram, nullifier or fee change commitment.
+//! Each tachygram-deriving circuit holds its output nonzero.
+//! [`OutputBind`](output::OutputBind) constrains the commitment and padding
+//! tachygram, [`SpendBind`](spend::SpendBind) constrains both nullifiers, and
+//! [`FeeFuse`](stamp::FeeFuse) and [`FeeSeed`](stamp::FeeSeed) constrain the
+//! fee change commitment.
 //!
-//! The arguments tell a note commitment, a padding tachygram and a nullifier
-//! apart by their tags. A fee change commitment is a note commitment. A
-//! padding tachygram or a nullifier equal to a note commitment is a Poseidon
-//! collision, and so are two notes with one commitment. At zero the collision
-//! is two preimages of zero, each found without the other. The Poseidon
-//! assumption excludes it like any other collision. The constraints exclude
-//! it without the assumption, because no step that derives a tachygram has an
-//! assignment at zero.
+//! Distinct tags separate note commitments (including fee change commitments),
+//! padding tachygrams and nullifiers. Matching a padding tachygram or nullifier
+//! to a note commitment, or matching two notes' commitments, requires a
+//! Poseidon collision. At zero, two independently found zero preimages would
+//! collide. The Poseidon assumption rules this out alongside other collisions,
+//! and the nonzero constraints rule it out unconditionally by leaving zero
+//! unassigned.
 //!
-//! Without the constraints, a prover who knows one note whose padding
-//! tachygram is zero and a second note whose commitment is zero outputs the
-//! first. The stamp's polynomial then has the root zero.
-//! [`SpendableInit`](spendable::SpendableInit) opens it at the second note's
-//! commitment for zero, and the second note is spent though no output
-//! created it and no binding signature balanced its value. A zero nullifier
-//! gives the same root from a spend. A zero commitment or fee change
-//! commitment gives it too, and the second note is then a different note
-//! with the same commitment.
+//! Without those constraints, a prover knowing a note with a zero padding
+//! tachygram and a second note with a zero commitment could output the first
+//! note, putting zero among the stamp polynomial's roots.
+//! [`SpendableInit`](spendable::SpendableInit) would then open that polynomial
+//! to zero at the second note's commitment, spending an uncreated note whose
+//! value no binding signature balanced. A zero nullifier from a spend, or a
+//! zero commitment or fee change commitment paired with a distinct
+//! zero-commitment note, would permit the same spend.
 //!
 //! ## Full proofs between parties
 //!
@@ -161,90 +148,82 @@
 //!
 //! ### What a receiver can produce
 //!
-//! [`StampMerge`](stamp::StampMerge), [`StampLift`](stamp::StampLift) and
-//! [`StampUnmerge`](stamp::StampUnmerge) are the only registered steps that
-//! read a [`Stamp`](stamp::Stamp), and rerandomization reads any header. A
-//! receiver of a full stamp proof can run those and compress the result. Each
-//! output is a verified `Stamp` by the step's own argument, which does not ask
-//! who runs the step. Its leaves are sums and differences of the leaves of
-//! stamps the receiver holds, with leaves the receiver proves itself. No
-//! argument here takes the party that made a stamp to be the party that
-//! proved its leaves.
+//! Only [`StampMerge`](stamp::StampMerge), [`StampLift`](stamp::StampLift) and
+//! [`StampUnmerge`](stamp::StampUnmerge) read a [`Stamp`](stamp::Stamp) among
+//! registered steps, while rerandomization reads any header. Holding a full
+//! stamp proof lets a receiver run these operations and compress the result.
+//! Each step's soundness argument makes the output a verified `Stamp`
+//! regardless of who runs it, combining leaf multisets of held stamps by sum
+//! and difference alongside leaves the receiver proves itself. No argument here
+//! assumes that a stamp's producer proved its leaves.
 //!
-//! A bundle's signatures cover an action's `cv` and $\mathsf{rk}$ and the
-//! max fee commitment $\mathsf{cv}_\mathsf{feemax}$. They cover neither the
-//! stamp, nor the fee, nor an action's tachygram pair. The stamp's leaves
-//! fix those, and a leaf is proved from its wires.
+//! Bundle signatures cover each action's `cv` and $\mathsf{rk}$ plus
+//! $\mathsf{cv}_\mathsf{feemax}$, leaving the stamp, the fee and each action's
+//! tachygram pair for the stamp's leaves to fix from their wires.
 //!
-//! - The fee is applied after signing. The signatures bind the maximum through
-//!   $\mathsf{cv}_\mathsf{feemax}$, and the stamp's fee leaf fixes the fee and
-//!   the fee change. A fee leaf comes only from [`FeeFuse`](stamp::FeeFuse) or
-//!   [`FeeSeed`](stamp::FeeSeed) with the max fee note as wires, so a party
-//!   that holds the note's opening sets the fee anywhere up to the signed
-//!   maximum, and no other party can. To set it again on a stamp it holds, that
-//!   party runs `FeeFuse` twice over one action of its own at the stamp's
-//!   anchor, at the old fee and at the new one, merges the second result into
-//!   the stamp and unmerges the first.
-//! - A new action leaf for a published $\mathsf{rk}$ needs $\theta$ and `cm`
-//!   ([`Actions`](stamp::Actions#injectivity)). A party with every wire of a
-//!   spend can prove it again at a later epoch, with the same `cv` and
-//!   $\mathsf{rk}$ and another nullifier pair. Which pair a spend publishes,
-//!   and so the epoch its bundle can enter, is as safe as those wires are
-//!   secret. A party that proves for a signer holds them by design.
+//! - Fees apply after signing. Signatures fix the maximum via
+//!   $\mathsf{cv}_\mathsf{feemax}$, while the stamp's fee leaf fixes the fee
+//!   and fee change. Because only [`FeeFuse`](stamp::FeeFuse) and
+//!   [`FeeSeed`](stamp::FeeSeed) produce fee leaves from max-fee-note wires,
+//!   holding the note's opening is necessary and sufficient to set any fee up
+//!   to the signed maximum. That holder can replace the fee on an existing
+//!   stamp by running `FeeFuse` twice over one of its own actions at the
+//!   stamp's anchor for the old and new fees, merging the new stamp in and
+//!   unmerging the old one.
+//! - Proving a new action leaf for a published $\mathsf{rk}$ requires $\theta$
+//!   and `cm` ([`Actions`](stamp::Actions#injectivity)). Holding every wire of
+//!   a spend lets a party re-prove it at a later epoch with the same `cv` and
+//!   $\mathsf{rk}$ and a new nullifier pair, so keeping those wires secret
+//!   protects which pair a spend publishes and which epoch its bundle can
+//!   enter. By design, a proving delegate holds those wires.
 //!
 //! ### What a full proof shows
 //!
-//! - The header's fields and the two online polynomials, coefficient by
-//!   coefficient. For a `Stamp` the published bundles determine all of them
+//! - Header fields and every coefficient of both online polynomials, all of
+//!   which the published bundles already determine for a `Stamp`
 //!   ([`Stamp`](stamp::Stamp#injectivity)).
-//! - The commitments of Ragu's bootstrap proof, the right input of both passes.
-//!   Tachyon uses Ragu's default. It depends on the application, the version of
-//!   Ragu and the implementation of its seeded generator, so it is shared by
-//!   the wallets of one release and platform and marks that group, in the
-//!   compressed proof as well.
-//! - The polynomials of the second pass's stages, traces and accumulators. Ragu
-//!   computes them from the first pass's commitments and challenges, values
-//!   computed from the first pass's polynomials, and fresh randomness.
+//! - Commitments from Ragu's bootstrap proof, passed as the right input to both
+//!   passes. Tachyon's default depends on the application, the Ragu version and
+//!   its seeded generator implementation, marking the release and platform
+//!   group in both uncompressed and compressed stamp proofs.
+//! - Second-pass stage, trace and accumulator polynomials, which Ragu computes
+//!   from first-pass commitments, challenges and polynomial evaluations plus
+//!   fresh randomness.
 //!
-//! A compressed proof is computed from the full one, so it shows no more.
+//! Computing a compressed stamp proof from the full one reveals nothing
+//! further.
 //!
-//! Ragu states a goal for the standard profile, which this application uses.
-//! Rerandomizations of two valid inputs with the same header and online
-//! polynomials are to be indistinguishable, even to the party that chose the
-//! inputs. Ragu's documentation of `Application::rerandomize` says that joint
-//! hiding of the output fields remains unproved. Its masking argument says
-//! that it does not establish the joint distribution of the output, and that
-//! it has not been shown that no valid input can defeat the masks. Ragu's
-//! book says that the protocol does not provide zero knowledge, that an
-//! uncompressed proof contains witness polynomials and a compressed one
-//! reveals evaluations of them, and that the hiding argument has not been
-//! audited.
+//! Under Ragu's standard profile, rerandomizing two valid inputs sharing a
+//! header and online polynomials aims to produce outputs indistinguishable even
+//! to the party that chose the inputs. However, `Application::rerandomize`
+//! documents joint output hiding as unproved, Ragu's masking argument neither
+//! establishes the joint output distribution nor rules out valid inputs that
+//! defeat the masks, and Ragu's book states that the protocol lacks zero
+//! knowledge, exposes witness polynomials uncompressed and their evaluations
+//! compressed, and relies on an unaudited hiding argument.
 //!
-//! No header's assertion rests on hiding. Each holds of any PCD that
-//! verifies, whatever its holder learns, and a spend also needs the action
-//! signature, whose key is a wire of no step. The arguments about spends and
-//! balance stand on those assertions.
+//! No header assertion or spend and balance argument depends on hiding. Each
+//! holds for every verified PCD regardless of what its holder learns, and
+//! spends additionally require an action signature whose signing key enters no
+//! step.
 //!
-//! Two things do rest on it, in both forms of the proof: a wallet's privacy,
-//! and which pair a spend publishes, as above. The goal Ragu states is not
-//! enough for either. For
-//! a `Stamp` the published bundles already determine the fee note, each output
-//! note, each spend's master key and value, and each value commitment's opening
-//! ([`Actions`](stamp::Actions#injectivity)). Every valid input shares them,
-//! so a rerandomization could show them and still meet the goal. What they
-//! need is a property Ragu does not state: that a rerandomized proof could
-//! be made from the header, the online polynomials, the bootstrap proof and
-//! fresh randomness, without the input.
+//! Wallet privacy and a spend's published nullifier pair do depend on hiding in
+//! both uncompressed and compressed forms. Ragu's stated indistinguishability
+//! goal suffices for neither, because published bundles already fix the fee
+//! note, every output note, each spend's master key and value, and every value
+//! commitment opening ([`Actions`](stamp::Actions#injectivity)). Every valid
+//! input shares those values, so rerandomization could leak them while meeting
+//! the goal. Protecting them requires an unstated simulation property in which
+//! a rerandomized stamp proof can be generated from the header, online
+//! polynomials, bootstrap proof and fresh randomness alone, without the input.
 //!
-//! If that fails, the output can show at most what the rerandomized input
-//! holds. For a wallet that is usually its `FeeFuse` or `FeeSeed` proof. It
-//! names the step that made its `Actions` input, which for one action tells
-//! a spend from an output. It stages the max fee note's `pk`, `psi`, `rcm`
-//! and value, and its accumulators fold every step of the wallet's tree, so
-//! the bound is the whole tree. A wallet's tree also folds inputs that other
-//! parties chose, the anchor spans and a sync service's segments. For an
-//! aggregator the input is a merge, lift or unmerge of stamps it received,
-//! or its own `FeeSeed` proof.
+//! If simulation fails, rerandomization leaks at most what its input contains.
+//! Wallets normally rerandomize a `FeeFuse` or `FeeSeed` output, which records
+//! the step that built `Actions` (distinguishing a single spend from an
+//! output), stages the max fee note's `pk`, `psi`, `rcm` and value, and folds
+//! the entire wallet tree into its accumulators, including third-party anchor
+//! spans and sync segments. Aggregators rerandomize a merge, lift or unmerge of
+//! received stamps, or their own `FeeSeed` output.
 //!
 //! ### What a party does
 //!
@@ -259,12 +238,11 @@
 //!   instances, and its own opening points and values. For
 //!   [`SpendBind`](spend::SpendBind) that is the spent note's opening and
 //!   master key.
-//! - It draws every proving call's randomness from a source no other party can
-//!   predict.
-//! - It uses the bootstrap proof that its release shares and never one of its
-//!   own, which would mark its stamps in both forms. Ragu advises one pinned
-//!   proof for all compatible wallets and leaves the provisioning open.
-//! - It verifies a stamp it received before it extends it.
+//! - It draws randomness for every proving call from an unpredictable source.
+//! - It uses its release's shared bootstrap proof rather than a custom one that
+//!   would mark its stamps in both forms. Ragu advises sharing one pinned
+//!   bootstrap proof across compatible wallets and leaves provisioning open.
+//! - It verifies every received stamp before extending it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]
 

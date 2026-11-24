@@ -24,32 +24,29 @@ use crate::{
 /// An output's tachygram pair and value commitment, derived from one note
 /// (wallet-only).
 ///
-/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
-/// value commitment `cv`. `rk` is produced downstream at
-/// [`OutputAction`](super::stamp::OutputAction), which reads all three
-/// fields.
+/// Carries the note commitment `cm`, padding tachygram `pad` and value
+/// commitment `cv` for [`OutputAction`](super::stamp::OutputAction), which
+/// reads all three fields and derives `rk`.
 ///
 /// # Injectivity
 ///
-/// [`OutputBind`] outputs this header. A verified `OutputHeader` asserts that
-/// its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ with $v$
-/// an integer in `0..=MAX_MONEY`, and an integer $r$ with $0 < r < 2^{254}$.
+/// [`OutputBind`] outputs this header. Every verified `OutputHeader` asserts
+/// that its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ with
+/// integer $v$ in `0..=MAX_MONEY` and an integer $r$ with $0 < r < 2^{254}$.
 ///
-/// - `cm` is the note's [note
-///   commitment](crate::digest::poseidon::note_commitment) and stands for the
-///   note, whose four fields it determines.
-/// - `pad` is the note's [padding
-///   tachygram](crate::digest::poseidon::pad_tachygram). It determines the same
-///   four fields under its own tag, so `cm` and `pad` determine each other.
-/// - `cv` is $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$ and stands for the value,
-///   negated. It is a [value commitment](fixed_base#value-commitments), so it
-///   determines its opening.
+/// - `cm` is the [note commitment](crate::digest::poseidon::note_commitment),
+///   standing for the note and determining its four fields.
+/// - `pad` is the [padding tachygram](crate::digest::poseidon::pad_tachygram),
+///   determining the same four fields under its own tag so that `cm` and `pad`
+///   determine each other.
+/// - `cv` equals $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$, standing for $-v$ and
+///   determining its opening as a [value
+///   commitment](fixed_base#value-commitments).
 ///
-/// `cm` and `pad` are nonzero, so neither is a root at zero
-/// ([zero tachygrams](super#zero-tachygrams)). The commitment trapdoor
-/// $\mathsf{rcm}$ is also nonzero. The assertion does not make $\mathsf{pk}$
-/// a payment key; [`NoteSeed`](super::delegation::NoteSeed) proves that for
-/// a note that is spent.
+/// Both `cm` and `pad` are nonzero, ruling out roots at zero
+/// ([zero tachygrams](super#zero-tachygrams)), and $\mathsf{rcm}$ is nonzero.
+/// Nothing here constrains $\mathsf{pk}$ to a derived payment key, which
+/// [`NoteSeed`](super::delegation::NoteSeed) proves when spending the note.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -98,17 +95,15 @@ impl Header<Fp> for OutputHeader {
 ///
 /// # Soundness
 ///
-/// The step reads no input and no challenge, and builds the header from its
-/// own wires. One `rcm` wire, one `pk` wire, one `psi` wire and the value
-/// feed both digest circuits, whose outputs are held nonzero. The commitment
-/// circuit holds `rcm` nonzero; `pk` and `psi` carry no other constraint.
-/// The value is the
-/// [amount](gadgets::value::Positive::from_bits) that 51 bit wires encode, and
-/// [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) multiplied by those same wires
-/// is added to the blind point. The committed value is therefore the one both
-/// digests absorb. The blind is 254 bit wires with no other constraint, and
-/// [`R_BASE`](struct@fixed_base::R_BASE) multiplied by them has no assignment
-/// at zero.
+/// Reading no input or challenge, the circuit builds `OutputHeader` directly
+/// from its wires. Shared `rcm`, `pk`, `psi` and value wires feed both digest
+/// circuits, which hold `cm`, `pad` and `rcm` nonzero while leaving `pk` and
+/// `psi` unconstrained. Fifty-one bit wires encode the
+/// [amount](gadgets::value::Positive::from_bits) for both digests and multiply
+/// [`NEG_V_BASE`](struct@fixed_base::NEG_V_BASE) to match the committed value
+/// to the digested value. Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by
+/// 254 unconstrained blind bits adds the blind point and leaves zero
+/// unassigned.
 #[derive(Debug)]
 pub struct OutputBind;
 
@@ -169,8 +164,8 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
-        // A zero root is the factor `X` whatever kind of tachygram it was
-        // meant to be, so both are held nonzero.
+        // Zero produces the factor `X` regardless of tachygram kind, so hold
+        // both nonzero.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their

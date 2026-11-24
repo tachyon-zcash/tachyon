@@ -1,14 +1,14 @@
 //! Tachygram accumulators over consecutive stamps of one epoch.
 //!
-//! A summary multiplies each stamp's tachygram polynomial into one polynomial
-//! while the anchor absorbs each stamp's bridge hash. The prover chooses where
-//! a summary starts and stops.
-//! [`QrIntakeMerge`](super::qr::QrIntakeMerge) joins the intakes of summaries
-//! whose anchors meet.
+//! Each summary multiplies stamp tachygram polynomials into one polynomial
+//! while advancing the anchor across each stamp's bridge hash. Provers choose
+//! where summaries start and stop, and
+//! [`QrIntakeMerge`](super::qr::QrIntakeMerge) joins intakes from summaries
+//! with matching endpoint anchors.
 //!
-//! Consensus rejects a tachygram published twice within two epochs. The
-//! accumulated polynomial of a summary on the published chain therefore has
-//! no repeated root.
+//! Because consensus rejects duplicate tachygrams within two epochs, the
+//! accumulated polynomial of a summary on the published chain has no repeated
+//! root.
 
 use core::convert::Infallible;
 
@@ -37,27 +37,25 @@ use crate::{
 ///
 /// # Injectivity
 ///
-/// [`SummarySeed`] and [`SummaryAdvance`] output this header. A verified
-/// `Summary` asserts that `epoch` is an integer at most `EPOCH_MAX`, and that
-/// its prover knows a [stamp chain](Anchor#chains-in-a-step) in `epoch` of
-/// $k \geq 1$ absorptions from `anchor_prev` to `anchor_end`, with
-/// polynomials $P_1, \dots, P_k$, for which
+/// [`SummarySeed`] and [`SummaryAdvance`] output this header. Every verified
+/// `Summary` asserts `epoch <= EPOCH_MAX` as an integer and a prover-known
+/// [stamp chain](Anchor#chains-in-a-step) in `epoch` of $k \geq 1$ absorptions
+/// from `anchor_prev` to `anchor_end` with polynomials $P_1, \dots, P_k$, where
+/// [`Summary::ACCUMULATED`] equals $P_1 \cdots P_k$ and
+/// [`Summary::LAST_STAMP`] equals $P_k$.
 ///
-/// - [`Summary::ACCUMULATED`] is the product $P_1 \cdots P_k$,
-/// - [`Summary::LAST_STAMP`] is $P_k$.
+/// The prover chooses `anchor_prev` freely, and nothing constrains history
+/// behind it. No $P_i$ equals the constant one, matching [`Anchor::next_stamp`]
+/// rejecting the empty set in a pool history.
 ///
-/// `anchor_prev` is the prover's choice, and the assertion says nothing of
-/// what lies behind it. No $P_i$ is the constant one, as in a pool history,
-/// where [`Anchor::next_stamp`] rejects the empty set.
-///
-/// - `anchor_end` determines `epoch`, $P_k$ and each absorption behind it
+/// - `anchor_end` determines `epoch`, $P_k$ and every preceding absorption
 ///   ([`Anchor`]).
-/// - [`Summary::ACCUMULATED`] has no factor other than the $P_i$, so a value is
-///   a root of it exactly when it is a root of some $P_i$. Where each $P_i$ is
-///   a [set polynomial](crate::collections::multiset), it is the set polynomial
-///   of the multiset sum of the stamps' tachygrams.
-/// - [`Summary::LAST_STAMP`] sits in the last slot because a step reads the
-///   bridge hash of that slot. No step reads it from an input.
+/// - [`Summary::ACCUMULATED`] has roots equal to the union of the $P_i$'s
+///   roots, and equals the multiset-sum [set
+///   polynomial](crate::collections::multiset) when every $P_i$ is a set
+///   polynomial.
+/// - [`Summary::LAST_STAMP`] occupies the last slot to supply the step's bridge
+///   hash, and no consumer reads it.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
@@ -130,15 +128,13 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// The step [adds an absorption](Anchor#chains-in-a-step) of `anchor_prev`,
-/// `epoch` and the polynomial in [`Summary::LAST_STAMP`], with both wires the
-/// prover's choice. Both output polynomials are committed before the
-/// challenge. The circuit equates their openings at $\zeta$, so they are one
-/// polynomial, and holds the opening away from one, so it is not the constant
-/// one.
+/// The step [adds an absorption](Anchor#chains-in-a-step) of prover-chosen
+/// `anchor_prev` and `epoch` with the pre-committed polynomial in
+/// [`Summary::LAST_STAMP`]. Equating both pre-committed output slots at $\zeta$
+/// and holding the opening away from one makes them one non-unit polynomial.
 ///
-/// [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] open once each at the
-/// challenge.
+/// Opens [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] once each at
+/// $\zeta$.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -238,17 +234,16 @@ impl Step<Pasta> for SummarySeed {
 ///
 /// # Soundness
 ///
-/// The step [adds an absorption](Anchor#chains-in-a-step) of the input's
-/// `anchor_end`, the input's `epoch` and the polynomial $P$ in the output's
-/// [`Summary::LAST_STAMP`]. This extends the input's chain by one absorption
-/// in the same epoch. The step copies `epoch` and `anchor_prev`, and it does
-/// not read the input's [`Summary::LAST_STAMP`].
+/// Copying `epoch` and `anchor_prev` while ignoring the input's
+/// [`Summary::LAST_STAMP`], the step
+/// [adds an absorption](Anchor#chains-in-a-step) of the input's `anchor_end`
+/// and `epoch` with the output's [`Summary::LAST_STAMP`] polynomial $P$,
+/// extending the chain in `epoch`.
 ///
-/// The input's [`Summary::ACCUMULATED`] $A$ is fixed in the input PCD, and
-/// both output polynomials are committed before the challenge. The circuit
-/// equates the opening of the output's [`Summary::ACCUMULATED`] at $\zeta$
-/// with $A(\zeta) \cdot P(\zeta)$, so that polynomial is $A \cdot P$. The
-/// circuit holds $P(\zeta)$ away from one, so $P$ is not the constant one.
+/// With the input's [`Summary::ACCUMULATED`] $A$ fixed in the input PCD and
+/// both output slots committed before $\zeta$, equating the output's
+/// [`Summary::ACCUMULATED`] at $\zeta$ with $A(\zeta) \cdot P(\zeta)$ sets it
+/// to $A \cdot P$, and holding $P(\zeta) \neq 1$ rules out the constant one.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
