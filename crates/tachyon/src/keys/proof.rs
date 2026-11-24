@@ -16,16 +16,12 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 /// construct proofs for all notes (since `nk` is wallet-wide) but cannot
 /// sign actions.
 ///
-/// Derived from [`super::private::SpendingKey`] $\to$ [`SpendValidatingKey`]
-/// and [`NullifierKey`].
-///
-/// ## Status
-///
-/// Currently a data holder, with no proof-construction methods yet. These will
-/// be added once the Ragu PCD circuit is integrated and proof delegation is
-/// specified.
-// TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
-// once the Ragu circuit API is available.
+/// Derived from [`super::private::SpendingKey::derive_proof_private`]
+/// ([`SpendValidatingKey`] and [`NullifierKey`]); passed to
+/// [`crate::stamp::Plan::prove`], [`crate::witness::note_seed`], and
+/// [`crate::witness::spend_action`] (witnessed by
+/// [`NoteSeed`](crate::stamp::proof::delegation::NoteSeed) and
+/// [`SpendAction`](crate::stamp::proof::stamp::SpendAction)).
 #[derive(Clone, Copy, Debug)]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.

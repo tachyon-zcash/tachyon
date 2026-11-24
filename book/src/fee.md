@@ -194,7 +194,7 @@ each bundle body's `vFeeTachyon` and `cmChangeTachyon` unchanged. Re-proving
 at another fee updates those two fields along with the stamp. For an
 unchanged plan and epoch, the action pairs do not depend on the fee.
 
-## Balance
+## Balance {#balance}
 
 The fee steps prove that the fee change note keeps the unused portion of the
 maximum fee in the pool. The pool's net outflow is the bundle's contribution

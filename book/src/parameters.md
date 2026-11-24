@@ -23,7 +23,9 @@ Values defined outside the crate come from Ragu at the pinned revision and from 
 | Note value | $0 \leq v \leq \mathsf{MAX\_MONEY}$ | `value.rs` |
 | Fee | $0 \leq \fee \leq \feemax \leq \mathsf{MAX\_MONEY}$ | `fee.rs`, `stamp/proof/stamp.rs` |
 | Value balance | $-\mathsf{MAX\_MONEY} \leq v^{\mathsf{bal}} \leq \mathsf{MAX\_MONEY}$ | `value.rs` |
-| Action randomizer $\alpha$ and max-fee blind $r$ | $< 2^{254}$ | `stamp/proof/stamp.rs`, `gadgets/note.rs` |
+| Note commitment trapdoor $\rcm$ | $\neq 0$ | `note.rs`, `gadgets/note.rs` |
+| Action randomizer $\alpha$ | $< 2^{254}$; $\neq 0$ for outputs, at most five unassigned values per $\ak$ for spends | `stamp/proof/stamp.rs`, Ragu `FixedBase` |
+| Action value trapdoor $\rcv$ and max-fee blind $r$ | $0 < x < 2^{254}$ | Ragu `FixedBase`, `stamp/proof/spend.rs`, `stamp/proof/output.rs`, `stamp/proof/stamp.rs`, `gadgets/note.rs` |
 
 ## Chain and epochs
 
@@ -43,6 +45,7 @@ Because `EPOCH_SIZE` divides $2^{32}$, the last epoch is full and ends at `BLOCK
 | Parameter | Value | Defined in |
 | --------- | ----- | ---------- |
 | `NF_DERIVATION_WIDTH`, the derivation window | 16 epochs, four groups of the Poseidon rate | `nullifier.rs` |
+| Published tachygrams | $\neq 0$ | `stamp/proof/spend.rs`, `stamp/proof/output.rs`, `stamp/proof/stamp.rs` |
 | Cubic non-residue of the indexed multiset | 2 | `collections/indexed_multiset.rs` |
 | Quadratic non-residue of the QR classes | 5 | `collections/qr.rs` |
 | `QrProfile::MAX_DEPTH` | 32 | `primitives/qr.rs` |

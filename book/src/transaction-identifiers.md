@@ -27,6 +27,9 @@ $$
 
 Record $i$ combines `vActionSigsTachyon[i]` with `vActionTachygramsTachyon[i]`, hashing the pair as written. Each record is 128 bytes. The preimage is $137 + 128n$ bytes, with the record sequence its only variable-length input; no count is hashed. This is a digest projection, not the phase-ordered [wire layout](./bundle.md#bundle-body).
 
+When `tachyonBundleState` is `0x00` (no Tachyon bundle), the two contributions are `COMMIT_NO_BUNDLE` and `AUTH_DIGEST_NO_BUNDLE`, the empty-input hashes under `ZTxIdTachyonHash` and `ZTxAuthTachyHash`.
+Both differ from a zero-action bundle, which still hashes its effecting fields in the bundle commitment and its state byte, fee, fee change, binding signature and stamp digest in the auth digest.
+
 For a proof stamp, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
 
 $$

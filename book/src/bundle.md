@@ -189,8 +189,8 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | --- | --- | --- | --- |
 | effecting | `valueBalanceTachyon` | i64 LE | net value of tachyon actions, with the max fee note counted as an output; range-checked and zero for no actions |
 | | `nActionsTachyon` | compactSize | number of tachyon actions |
-| | `vActionsTachyon` | 64 * nActionsTachyon | canonical `cv` (32 bytes), `rk` (32 bytes) |
-| | `cvFeeMaxTachyon` | 32 bytes | [max fee note](./fee.md) value commitment |
+| | `vActionsTachyon` | 64 * nActionsTachyon | canonical non-identity `cv` (32 bytes), `rk` (32 bytes) |
+| | `cvFeeMaxTachyon` | 32 bytes | canonical non-identity [max fee note](./fee.md) value commitment |
 | | `nMemoTachyon` | compactSize | memo length, `0` when absent |
 | | `vMemoTachyon` | nMemoTachyon bytes | opaque recipient-directed payload |
 | signing | `vActionSigsTachyon` | 64 * nActionsTachyon | authorization per action over the tx sighash |
@@ -199,11 +199,11 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
 | | `cmChangeTachyon` | 32 bytes | canonical field element, the fee change note commitment |
 
-A single `nActionsTachyon` frames all three action vectors; there are no additional vector counts. `cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
+A single `nActionsTachyon` frames all three action vectors; there are no additional vector counts. Every action's `cv` and `rk` and the bundle's `cvFeeMaxTachyon` are effecting data, and parsing requires each to be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
 
 `nActionsTachyon` is at most 4095, the most actions whose pairs fit one set polynomial beside the bundle's fee change. Parsing rejects a larger count.
 
-The prover writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
+The prover orders each pair ascending by bytewise comparison of their 32-byte little-endian encodings, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
@@ -215,16 +215,16 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 
 | Name | Format | Description |
 | --- | --- | --- |
-| `anchorTachyon` | 32 bytes | pool state reference |
-| `cTachygrams` | 32 bytes | commitment to the tachygram union derived from covered bundles |
+| `anchorTachyon` | 32 bytes | canonical field element, the pool state reference |
+| `cTachygrams` | 32 bytes | canonical non-identity Vesta point, the commitment to the tachygram union derived from covered bundles |
 | `nAdjunctsTachyon` | compactSize | number of other covered transactions, `0` for an autonome |
 | `vAdjunctsTachyon` | 32 * nAdjunctsTachyon | txids of the other covered transactions, strictly ascending |
 | `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
 | `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
 
-`cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Parsing rejects the identity point. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
+`cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
-Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore commits to $2N + B$ tachygrams, at most $2^{13} - 1$, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$. Full validation rejects a larger or repeating union.
+Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore commits to $2N + B$ tachygrams, at most $2^{13} - 1$, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's `WalletRank` gives $2^{13}$. Full validation rejects a larger or repeating union.
 
 A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set. A max fee note publishes its fee change note's commitment.
 
