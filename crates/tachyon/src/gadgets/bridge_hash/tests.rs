@@ -15,7 +15,7 @@ use super::*;
 // Make the two hashes the public instance; the opening is private. Both good
 // and bad assignments run through exactly the same circuit and setup.
 #[derive(Clone, Copy)]
-struct Confirm<'setup>(&'setup TransactionRehydrate);
+struct Confirm<'setup>(&'setup BridgeConversion);
 
 impl Circuit<Fp> for Confirm<'_> {
     type Aux<'source> = ();
@@ -86,7 +86,7 @@ fn shared_opening_checks_both_rank_digests() {
     // verify a public instance or a PCD proof, so these inputs are test
     // values, not hashes authenticated by a parent or a verified header.
     let params = parameters::baked();
-    let conversion = TransactionRehydrate::new().unwrap();
+    let conversion = BridgeConversion::new().unwrap();
     let &[original, replacement] = Pasta::host_generators(params).g().first_chunk().unwrap();
     let (x, y) = original.coordinates().unwrap();
     let (other_x, other_y) = replacement.coordinates().unwrap();
@@ -145,7 +145,7 @@ fn setup_rejects_an_unexpected_stage_layout() {
 
 #[test]
 fn either_off_curve_endpoint_returns_a_witness_error() {
-    let conversion = TransactionRehydrate::new().unwrap();
+    let conversion = BridgeConversion::new().unwrap();
     let (native_x, native_y) = Pasta::nested_generator(parameters::baked(), 3975)
         .unwrap()
         .coordinates()
@@ -174,7 +174,7 @@ fn either_off_curve_endpoint_returns_a_witness_error() {
 
 #[test]
 fn fixed_base_exceptional_sums_fail_with_finite_endpoints() {
-    let step = TransactionRehydrate::new().unwrap();
+    let step = BridgeConversion::new().unwrap();
     let point = |i| {
         Pasta::nested_generator(parameters::baked(), i)
             .unwrap()

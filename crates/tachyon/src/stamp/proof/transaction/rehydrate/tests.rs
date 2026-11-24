@@ -1,5 +1,3 @@
-mod relation;
-
 use ragu::{
     AcceleratedProver, Cycle as _, FixedGenerators as _, WalletRank,
     circuits::{Circuit, WithAux, polynomials::AggregatorRank, registry::RegistryBuilder},
