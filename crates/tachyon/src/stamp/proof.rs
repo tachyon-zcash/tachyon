@@ -36,15 +36,15 @@
 //!   yields the evaluation of the polynomial committed when producing that
 //!   slot. Unopened output slots hold the constant one, and no registered step
 //!   can open a `Padding` slot. Ragu binds the two bridge hash wires to a
-//!   bridge hash of the last output slot's accumulator. Every tree consists of
-//!   steps registered in [`new_application`], Ragu's unit-header bootstrap
-//!   step, and Ragu's rerandomization step. Rerandomization preserves the input
-//!   header and each online polynomial, so header documentation lists only
-//!   registered producers. The application uses Ragu's standard profile, which
-//!   includes no decompression step.
+//!   bridge hash of the last output slot's accumulator outside the step
+//!   circuit. Every tree consists of steps registered in [`new_application`],
+//!   Ragu's unit-header bootstrap step, and Ragu's rerandomization step.
+//!   Rerandomization preserves the input header and each online polynomial, so
+//!   header documentation lists only registered producers. The application uses
+//!   Ragu's standard profile, which includes no decompression step.
 //! - **Poseidon.** See [tagged hashing](crate::digest::poseidon#injectivity)
-//!   and [`AnchorSpanSeed`](pool::AnchorSpanSeed#soundness) for the stronger
-//!   stamp absorption premise.
+//!   and the [stamp-absorption random-function
+//!   premise](pool::AnchorSpanSeed#soundness) used by `AnchorSpanSeed` alone.
 //! - **Commitments.** See the binding of
 //!   [accumulators](crate::TachygramSetCommit) and [bridge
 //!   hashes](crate::primitives::TachygramSetBridge), and the [value commitment
@@ -116,7 +116,8 @@
 //! accumulator into an [`Anchor`](crate::primitives::Anchor), and a
 //! pool-history anchor determines each preceding stamp's accumulator.
 //!
-//! If $a_k$ belongs to a pool history, backward injectivity matches the $k$
+//! If $a_k$ belongs to a pool history, [`Anchor`'s backward
+//! injectivity](crate::Anchor#injectivity) matches the $k$
 //! absorptions to its last $k$ entries behind $a_k$, including each stamp's
 //! epoch $e_i$, canonical bridge hash $B_i$ and polynomial $P_i$. A non-genesis
 //! $\mathsf{ep}(a,e)$ in that history is its boundary into $e$ from $a$.

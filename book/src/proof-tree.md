@@ -159,11 +159,11 @@ Under **recursion**, joint provers of a verified PCD know its step tree and sati
 ### Consensus rules
 
 1. **Anchor chain.** Consensus advances the anchor as [Anchor](./anchor.md) defines. Each stamp absorption hashes the containing block's epoch and the honest bridge hash of the stamp's tachygram accumulator, excluding stamps with empty tachygram sets. One boundary digest enters each epoch.
-2. **Covered sets.** Each stamp covers its carrying bundle and the bundles named in its [adjunct list](./aggregation.md#adjunct-list). Consensus rebuilds the action and fee digests and both accumulators from the covered bundles, [rejects duplicate actions, fee descriptors or tachygrams](./tachygrams.md#consensus-validation), and verifies the stamp proof against the accumulators and the stamp's anchor.
+2. **Covered sets.** Each stamp covers its carrying bundle and the bundles named in its [adjunct list](./aggregation.md#adjunct-list). Consensus rebuilds the action and fee digests and both accumulators from the covered bundles, [rejects duplicate actions, fee descriptors or tachygrams](./fee.md#coverage), and verifies the stamp proof against the accumulators and the stamp's anchor.
 3. **Acknowledged anchor.** Each stamp's anchor is a canonical end-of-block anchor from the containing block's epoch or the epoch before, as [Anchor](./anchor.md#intra-block-state-vs-end-of-block-anchor) states.
 4. **Two-epoch uniqueness.** No [tachygram](./tachygrams.md#consensus-validation) in a stamp appears in any other stamp from the containing block's epoch or the epoch before.
 5. **Block coverage.** Under the [aggregation block rules](./aggregation.md#block-rules), every named bundle is stripped and in the same block, and exactly one stamp names each stripped bundle. Each transaction appears in at most one block on the accepted chain.
-6. **Signatures and balance.** Every [bundle](./bundle.md#bundle-body), stripped or not, carries an action signature under each action's randomized key and a binding signature over its value commitments and value balance. Consensus applies each bundle's value balance and fee once.
+6. **Signatures and balance.** Every bundle, stripped or not, carries an action signature under each action's randomized key and a [binding signature](./authorization.md#binding-signature) over its value commitments and value balance. Consensus applies each bundle's [value balance and fee](./fee.md#balance) once.
 
 For rule 2, the caller resolves the adjunct list by `txid`. `Bundle::verify` checks coverage against the supplied bodies, verifies the stamp proof against the resulting claims, and checks the carrying bundle's own signatures under rule 6. It reads neither the adjunct list nor chain history.
 Nodes enforce rules 1, 3, 4 and 5 against chain history.
@@ -260,7 +260,7 @@ Bundle signatures omit the stamp, the fee and each action's tachygram pair, leav
 Fees apply after signing ([Dynamic Fee](./fee.md)). Signatures fix the maximum via the max fee commitment; the fee leaf fixes the fee and fee change. Producing a new fee leaf requires the max fee note's opening and a fee at or below the maximum for which the circuit has an assignment. Reusing an existing fee leaf does not require its opening.
 Building a new action leaf for a published action requires the action's entropy and note commitment. A delegate given all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair. The signing key enters no step. Spending still requires the action signature.
 
-An uncompressed stamp proof carries its header and both set polynomials. Rule 2 binds the polynomials to the published bundles, whose digests determine the fee and output notes, each spend's master key and value, and the value commitment openings.
+An uncompressed stamp proof carries both set polynomials. The typed PCD pairs the proof with its header, but the stamp does not store that header. The receiver reconstructs it from the stamp's anchor and the bridge hash of its tachygram accumulator. Rule 2 binds the polynomials to the published bundles, whose digests determine the fee and output notes, each spend's master key and value, and the value commitment openings.
 
 ### What the stamp proof leaves to others
 
@@ -337,6 +337,8 @@ Equating the bucket's `(epoch, anchor_start, anchor_next)` with the segment's `(
 
 For nonzero $k$, a scaled split replaces $(q_0, q_1)$ with $(kq_0, q_1/k)$, preserving the product and roots while changing commitments when $k \neq 1$.
 The `QrIntake` and `QrBucket` assertions concern roots of the contents whatever the shape of the polynomial, not just rescalings of a monic split.
+
+Rejecting canonical empty and equal-sided splits, enforcing membership and profile checks, and requiring exact leaf replay are intended, whereas accepting scaled empty and equal-root splits is pinned test behavior rather than a requirement.
 
 ### Oversized buckets
 
@@ -424,9 +426,6 @@ Every `Stamp`-emitting step writes its tachygram-set bridge hash to `tachygram_s
 ## Rerandomization at trust boundaries
 
 Before a wallet broadcasts an autonome or an aggregator releases an aggregate, it rerandomizes the stamp proof for the same header, using fresh, unpredictable randomness and the release's shared bootstrap proof. Rerandomization precedes compression. A party verifies a received stamp before extending it.
-
-`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Stamp` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
-The implementation rerandomizes no other PCD.
 
 ## Simple transaction
 

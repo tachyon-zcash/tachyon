@@ -277,6 +277,9 @@ impl Header<Fp> for AnchorSpan {
 ///
 /// # Soundness
 ///
+/// This step requires a stronger premise than collision resistance: it models
+/// the stamp absorption digest as a random function.
+///
 /// Except with probability at most $2^{13} \cdot T \cdot Q/p$ across $T$
 /// challenges and $Q$ stamp absorption digests, the member polynomial $M$
 /// equals $X - a$ as [`AnchorSpan`] asserts for a single-absorption chain.
@@ -293,12 +296,11 @@ impl Header<Fp> for AnchorSpan {
 /// - When $M = X - c$ for a constant $c$, the constraint enforces $a = c$,
 ///   giving $M = X - a$.
 /// - Otherwise $X - M(X)$ is nonconstant of degree below $2^{13}$, and the
-///   constraint requires $a = \zeta - M(\zeta)$. Collision resistance does not
-///   rule that out, so this step models the stamp absorption digest as a random
-///   function ([Poseidon assumption](poseidon#injectivity)). Any single
-///   challenge and digest output satisfy the equation with probability below
-///   $2^{13}/p$ in either draw order, summing to $2^{13} \cdot T \cdot Q/p$
-///   whereas checks on pre-challenge values avoid the factor $Q$.
+///   constraint requires $a = \zeta - M(\zeta)$. Under the random-function
+///   premise, any single challenge and digest output satisfy the equation with
+///   probability below $2^{13}/p$ in either draw order, summing to $2^{13}
+///   \cdot T \cdot Q/p$ whereas checks on pre-challenge values avoid the factor
+///   $Q$.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 

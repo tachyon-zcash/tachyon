@@ -153,9 +153,12 @@ The fee steps prove that the fee digest and fee change commitment come from
 one max fee note opening and one fee. Funding comes from the bundle's
 actions, the binding signature, and transaction accounting.
 
-To replace the fee on an existing stamp, the holder of the max fee note opening
-runs `FeeFuse` twice over one of its own actions at the stamp's anchor for the
-old and new fees, merging the new stamp in and unmerging the old one.
+At the level of stamp multisets, replacing a fee adds the new fee leaf and
+removes the old one. The holder of the max fee note opening can use `FeeFuse`
+to pair each fee leaf with the same auxiliary `Actions` proof at the stamp's
+anchor. Adding the new-fee stamp and subtracting the old-fee stamp cancels the
+auxiliary leaves. For the temporary merge, the added stamp's action digests
+and tachygrams must be disjoint from the original stamp's sets.
 
 The prover applies `FeeFuse` after proving and merging a bundle's
 actions, or `FeeSeed` when the bundle has none. The bundle body's
