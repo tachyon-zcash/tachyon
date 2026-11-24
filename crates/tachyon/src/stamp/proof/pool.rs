@@ -67,11 +67,9 @@ use crate::{
 /// every bucket sharing `(e, b, b')`, and $b'$ determines $e + 1$ and the
 /// chain's end.
 ///
-/// Although zero is never a root of a published polynomial
-/// ([zero tachygrams](super#zero-tachygrams)) and no argument here requires
-/// rejecting it, holding each $v_e$ nonzero ensures that once [`UnspentBind`]
-/// equates $v_e$ with a note's nullifier, any note with a zero nullifier at
-/// epoch $e$ has no [`NoteUnspent`] across $e$ and cannot lift past it.
+/// Each $v_e$ is nonzero. Since [`UnspentBind`] equates it with the note's
+/// nullifier, a note with a zero nullifier at epoch $e$ has no [`NoteUnspent`]
+/// across $e$ and cannot lift past it.
 ///
 /// Because $E$ holds one factor per epoch in range within the index bound, $E$
 /// determines every $(e, v_e)$ pair, while `anchor_next` from the final bucket

@@ -34,16 +34,14 @@
 //!   knows" means that the tree contains the named value, chain or verified
 //!   PCD, known to the party that ran that step. Extending a received PCD
 //!   credits the party only with the steps it ran and nothing beneath them
-//!   ([full proofs](self#full-proofs-between-parties)). Ragu's book calls
-//!   extraction a knowledge assumption and provides no end-to-end soundness
-//!   argument across recursion. Every step input is a verified PCD of the
-//!   declared header. Headers reach steps and verifiers as [`HEADER_SIZE`]
-//!   elements ending in a unique suffix. Opening a slot yields the evaluation
-//!   of the polynomial committed when producing that slot. Unopened output
-//!   slots hold the constant one, and no registered step can open a `Padding`
-//!   slot. Ragu constrains a step's two bridge hash wires to a bridge hash of
-//!   the accumulator in the step's last output slot without step-circuit
-//!   constraints.
+//!   ([full proofs](self#full-proofs-between-parties)). Every step input is a
+//!   verified PCD of the declared header. Headers reach steps and verifiers as
+//!   [`HEADER_SIZE`] elements ending in a unique suffix. Opening a slot yields
+//!   the evaluation of the polynomial committed when producing that slot.
+//!   Unopened output slots hold the constant one, and no registered step can
+//!   open a `Padding` slot. Ragu constrains a step's two bridge hash wires to a
+//!   bridge hash of the accumulator in the step's last output slot without
+//!   step-circuit constraints.
 //!
 //!   Every tree consists of steps registered in [`new_application`], Ragu's
 //!   unit-header bootstrap step, and Ragu's rerandomization step, which
@@ -67,6 +65,9 @@
 //! - **Challenge.** Ragu squeezes each step's challenge from a transcript hash
 //!   modelled as a random oracle, making the challenge uniform and independent
 //!   of prior transcript inputs.
+//! - **Rerandomization (privacy only).** Wallet privacy relies on
+//!   rerandomization hiding the input proof beyond the public header, online
+//!   polynomials and shared bootstrap proof.
 //!
 //! ## Native encodings
 //!
@@ -108,15 +109,9 @@
 //!
 //! Matching a note commitment (including fee change) to another note's
 //! commitment or to a differently tagged pad or nullifier requires a Poseidon
-//! collision. Two independently found zero preimages would also collide; the
-//! nonzero checks exclude this case unconditionally.
-//!
-//! Without the checks, outputting a note with zero pad would let
-//! [`SpendableInit`](spendable::SpendableInit) open the polynomial at a second
-//! note's zero commitment, producing a spendable no output created
-//! and no binding signature balanced. A zero nullifier, output commitment or
-//! fee change would supply the same root. Spending the second note would still
-//! require a spend proof and authorization.
+//! collision. At zero the nonzero checks exclude a match independently of
+//! collision resistance: zero cannot be the published root that
+//! [`SpendableInit`](spendable::SpendableInit) tests for membership.
 //!
 //! ## Full proofs between parties
 //!
@@ -151,58 +146,15 @@
 //! - Proving a new action leaf for a published $\mathsf{rk}$ requires $\theta$
 //!   and `cm` ([`Actions`](stamp::Actions#injectivity)). A party with every
 //!   wire of a spend and a valid spendable for a later epoch can re-prove it
-//!   with the same `cv` and $\mathsf{rk}$ and a new nullifier pair, so keeping
-//!   those wires secret protects which pair a spend publishes and which epoch
-//!   its bundle can enter. By design, a proving delegate holds those wires.
+//!   with the same `cv` and $\mathsf{rk}$ and a new nullifier pair. A proving
+//!   delegate holds those wires; the signing key enters no step. Spending still
+//!   requires the action signature.
 //!
-//! ### What a full proof shows
-//!
-//! - Header fields and every coefficient of both online polynomials. For a
-//!   `Stamp`, the covered bundles determine both polynomials and the published
-//!   stamp supplies the anchor ([`Stamp`](stamp::Stamp#injectivity)).
-//! - Commitments from Ragu's bootstrap proof, passed as the right input to both
-//!   passes. Tachyon's default depends on the application, the Ragu version and
-//!   its seeded generator implementation, marking the release and platform
-//!   group in both uncompressed and compressed stamp proofs.
-//! - Second-pass stage, trace and accumulator polynomials, which Ragu computes
-//!   from first-pass commitments, challenges and values computed from the first
-//!   pass's polynomials plus fresh randomness.
-//!
-//! Computing a compressed stamp proof from the full one reveals nothing
-//! further.
-//!
-//! Under Ragu's standard profile, rerandomizing two valid inputs sharing a
-//! header and online polynomials aims to produce outputs indistinguishable even
-//! to the party that chose the inputs. However, `Application::rerandomize`
-//! documents joint output hiding as unproved, Ragu's masking argument neither
-//! establishes the joint output distribution nor rules out valid inputs that
-//! defeat the masks, and Ragu's book states that the protocol lacks zero
-//! knowledge, exposes witness polynomials uncompressed and their evaluations
-//! compressed, and relies on an unaudited hiding argument.
-//!
-//! No header assertion depends on hiding. Each holds for every verified PCD of
-//! that header regardless of what its holder learns. The spend and balance
-//! arguments combine those assertions with the consensus rules. A spend
-//! also requires an action signature whose signing key enters no step.
-//!
-//! Wallet privacy and a spend's published nullifier pair do depend on hiding in
-//! both uncompressed and compressed forms. Ragu's stated indistinguishability
-//! goal suffices for neither, because published bundles already fix the fee
-//! note, every output note, each spend's master key and value, and every value
-//! commitment opening ([`Actions`](stamp::Actions#injectivity)). Every valid
-//! input shares those values, so rerandomization could leak them while meeting
-//! the goal. Protecting them requires an unstated simulation property in which
-//! a rerandomized stamp proof can be generated from the header, online
-//! polynomials, bootstrap proof and fresh randomness alone, without the input.
-//!
-//! If simulation fails, rerandomization leaks at most what its input contains.
-//! Wallets normally rerandomize a `FeeFuse` or `FeeSeed` output. `FeeFuse`
-//! records the step that built `Actions` (distinguishing a single spend from an
-//! output), stages the max fee note's `pk`, `psi`, `rcm` and value, and folds
-//! the wallet tree, which may include third-party spans and sync segments.
-//! `FeeSeed` has no `Actions` input and stages only `pk`, `psi` and `rcm`;
-//! its note value is constrained to zero. Aggregators rerandomize a merge, lift
-//! or unmerge of received stamps, or their own `FeeSeed` output.
+//! The full proof carries its header and both online polynomials. For a
+//! verified stamp covering published bundles, the leaf digests bind the fee and
+//! output notes, each spend's master key and value, and the value commitment
+//! openings ([`Actions`](stamp::Actions#injectivity),
+//! [`Stamp`](stamp::Stamp#injectivity)).
 //!
 //! ### What a party does
 //!
@@ -218,9 +170,8 @@
 //!   [`SpendBind`](spend::SpendBind) that is the spent note's opening and
 //!   master key.
 //! - It draws randomness for every proving call from an unpredictable source.
-//! - It uses its release's shared bootstrap proof rather than a custom one that
-//!   would mark its stamps in both forms. Ragu advises sharing one pinned
-//!   bootstrap proof across compatible wallets and leaves provisioning open.
+//! - It uses its release's shared bootstrap proof. Both rerandomization passes
+//!   take that proof as their right input.
 //! - It verifies every received stamp before extending it.
 
 #![allow(missing_debug_implementations, missing_docs, reason = "todo")]

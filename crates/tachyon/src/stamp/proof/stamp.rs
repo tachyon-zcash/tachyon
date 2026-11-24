@@ -145,12 +145,10 @@ impl Header<Fp> for Actions {
 ///   the native verifier recomputes
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash) and no step reads the
 ///   field.
-/// - Because verifiers rebuild the accumulators of $A$ and $T$ from published
-///   bundle actions, pairs, fees and fee changes
-///   ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)) and
-///   accumulators determine their polynomials, carrying $A$ and $T$ in full in
-///   an uncompressed stamp proof reveals nothing beyond the bundles ([full
-///   proofs](super#full-proofs-between-parties)).
+/// - Verification rebuilds the accumulators from published bundle actions,
+///   pairs, fees and fee changes
+///   ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)). Those
+///   accumulators determine $A$ and $T$.
 #[derive(Debug)]
 pub struct Stamp;
 

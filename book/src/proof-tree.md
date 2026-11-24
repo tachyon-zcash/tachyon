@@ -194,6 +194,8 @@ A header asserts facts about its fields and two polynomial slots, not the publis
 
 Under **recursion**, joint provers of a verified PCD know its step tree and satisfying wires; an extender is credited only with its own steps. **Poseidon** has fixed arity per tag and no known collision between distinct triples of tag, absorbed elements and squeeze position. `AnchorSpanSeed` alone also models stamp absorption as a random function. **Commitments** assume no known discrete-log relation among their generators, including the value commitment bases. An accumulator thus *determines* its polynomial, a bridge hash its accumulator and a value commitment its opening: producing distinct alternatives would give a collision or discrete-log relation. Each **challenge** is modelled as a random oracle output over the preceding commitments.
 
+**Rerandomization (privacy only).** Wallet privacy relies on rerandomization hiding the input proof beyond the public header, online polynomials and shared bootstrap proof.
+
 ### Consensus rules
 
 1. **Anchor chain.** Consensus advances the anchor as [Anchor](./anchor.md) defines. Each stamp absorption hashes the containing block's epoch and the honest bridge hash of the stamp's tachygram accumulator, excluding stamps with empty tachygram sets. One boundary digest enters each epoch.
@@ -284,8 +286,7 @@ If `cm` is published multiple times (at least two epochs apart under rule 4), ea
 The argument used the single publication only to place the start of the second spendable at or before $E_1$. With several publications, the same contradiction rules out every such start. Each spend after the first must therefore start at a publication later than the previous spend, so `cm` is spent at most as many times as it is published.
 
 Under the Poseidon assumption, any published tachygram matching a note commitment comes from an output leaf or fee change, because matching a padding tachygram or nullifier would collide across tags even though the set polynomial records no member kind.
-At zero, two independently found zero preimages would collide. The Poseidon assumption excludes this alongside other collisions, while the nonzero constraints exclude it unconditionally by forbidding zero tachygrams.
-Without those constraints, a zero padding tachygram would place zero in a published polynomial and let a zero-commitment note be spent without creation or balance.
+At zero, the nonzero checks exclude such a match independently of collision resistance: no published tachygram set polynomial has a zero root.
 Finally, rule 5 assigns each bundle to a single stamp in its sole block, so rule 6's binding signature balances each commitment publication once.
 
 ### A full stamp proof between parties
@@ -299,19 +300,9 @@ Lifting preserves coverage and can advance a canonical anchor within its epoch. 
 Bundle signatures omit the stamp, the fee and each action's tachygram pair, leaving the stamp's leaves to fix them.
 Fees apply after signing ([Dynamic Fee](./fee.md)). Signatures fix the maximum via the max fee commitment; the fee leaf fixes the fee and fee change. Producing a new fee leaf requires the max fee note's opening and a fee at or below the maximum for which the circuit has an assignment. Reusing an existing fee leaf does not require its opening.
 Building a new action leaf for a published action requires the action's entropy and note commitment. A party with all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair.
-Keeping those witnesses secret protects which pair a spend publishes and which epoch its bundle can enter. Proving delegates hold them by design.
+Proving delegates hold those witnesses. Spending still requires the action signature.
 
-An uncompressed stamp proof exposes both set polynomials in full, which reveals nothing beyond the bundles because rule 2 rebuilds them from published data, alongside Ragu's bootstrap proof commitments, whose default marks the wallet's release and platform group in both uncompressed and compressed forms.
-
-Everything else in the stamp proof comes from rerandomization, for which Ragu's authors state an indistinguishability goal across equal headers and polynomials rather than a theorem, noting that joint output hiding is unproved, its argument is unaudited, and Ragu lacks zero knowledge.
-
-Neither header assertions nor the spend and balance arguments above rely on hiding. The assertions hold for every verified stamp regardless of what its holder learns. The conclusions about published spends and balance also require the consensus rules, including the action and binding signatures.
-Wallet privacy and a spend's published nullifier pair do rely on hiding in both uncompressed and compressed forms (since compression derives from the uncompressed stamp proof).
-Indistinguishability alone suffices for neither because published bundles already fix the fee note, output notes, and each spend's master key and value across every valid stamp proof. Protecting them requires an unstated simulation property in which a rerandomized stamp proof can be built from published data, the bootstrap proof and fresh randomness alone.
-
-If rerandomization leaked its input, a receiver would learn at most that input's contents. A wallet normally rerandomizes its `FeeFuse` or `FeeSeed` output. `FeeFuse` folds the wallet tree, including any third-party anchor spans or sync segments; `FeeSeed` takes no `Actions` input. Ragu's authors say it has not been shown that no valid input can defeat the masks. For an aggregator the input is a merge, lift or unmerge of received stamps, or its own `FeeSeed` output.
-
-Before releasing a stamp proof, a party should rerandomize it. It should draw proving randomness from a source no other party can predict, use its release's shared bootstrap proof, and verify a received stamp before extending it.
+An uncompressed stamp carries both set polynomials. Rule 2 binds them to the published bundles, whose digests determine the fee and output notes and each spend's master key and value.
 
 ### What the stamp proof leaves to others
 
@@ -416,7 +407,6 @@ Characterization tests in `crates/tachyon/tests/integration/qr.rs` record four b
 - The tested `QrUnspentInit` and `QrSpendableInit` queries distinguish zero from nonzero evaluations, which nonzero scaling preserves. Bound exclusion via `UnspentBind`, inclusion, and `SpendBind` match for the compared scaled and monic buckets. Wrong-profile exclusions still fail. A monic split carrying a stray member matches the scaled duplicate split on the tested queries.
 
 Rejecting canonical empty and equal-sided splits, enforcing membership and profile checks, and requiring exact leaf replay are intended, whereas accepting scaled empty and equal-root splits is pinned test behavior rather than a requirement.
-Adding normalization or rejection rules would change those outcomes and call for reviewing the characterization.
 The tests cover finitely many cases. The `QrIntake` and `QrBucket` assertions concern roots of the contents whatever the shape of the polynomial, not just rescalings of a monic split.
 
 ### Oversized buckets: observed behavior
@@ -434,7 +424,7 @@ Characterization tests in `crates/tachyon/tests/integration/qr.rs` record four o
 - `QrUnspentInit` accepts the tested nonzero absent value with the same profile and rejects both members.
 - Evidence trees admit the bucket and `EvidenceTreeOpen` replays it.
 
-Exact exclusion against the bucket is intended, whereas the inability to bound it by splitting is pinned test behavior rather than a requirement. Any rule bounding such buckets calls for reviewing the characterization.
+Exact exclusion against the bucket is intended. The test also records the current depth limit; bucket capacity is a builder policy.
 
 ## Evidence trees
 
@@ -515,7 +505,7 @@ Every `Stamp`-emitting step writes its tachygram-set bridge hash to `tachygram_s
 
 ## Rerandomization at trust boundaries
 
-Whoever releases a stamp must rerandomize it first, but rerandomization alone does not establish zero knowledge or unlinkability for current stamp proofs.
+Whoever releases a stamp must rerandomize it first, using fresh, unpredictable proving randomness and the release's shared bootstrap proof. A party extending a received stamp verifies it first.
 A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
 Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.

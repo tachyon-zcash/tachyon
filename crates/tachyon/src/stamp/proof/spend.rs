@@ -183,8 +183,7 @@ impl Step<Pasta> for SpendBind {
         let epoch_next = spendable.epoch_current.next(dr)?;
         let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
         let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
-        // A zero nullifier would put a zero root in the tachygram set and mark
-        // a zero-commitment note as published, so hold both nonzero.
+        // The published tachygram set must have no zero root.
         nf_current.clone().enforce_nonzero(dr)?;
         nf_next.clone().enforce_nonzero(dr)?;
 
