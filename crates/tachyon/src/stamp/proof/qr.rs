@@ -76,8 +76,9 @@ use crate::{
 /// polynomials are [set polynomials](crate::collections::multiset), which no
 /// constraint here enforces.
 ///
-/// Unlike [`QrBucket`], `QrIntake` neither records an absorption count nor
-/// restricts the two anchors to a single chain. When the chain has zero
+/// Neither `QrIntake` nor [`QrBucket`] records an absorption count. A sealed
+/// bucket's endpoints determine its chain; the intake's assertion does not
+/// establish that. When the chain has zero
 /// absorptions, $P = 1$ and nothing absorbs `epoch`, leaving `epoch` arbitrary
 /// in range until [`QrBucketSeal`] absorbs it.
 #[derive(Clone, Debug)]
@@ -593,13 +594,15 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// Equating `epoch`, `discriminant` and both `profile` wires across the inputs
 /// and matching `left.anchor_end` to `right.anchor_prev` concatenates their
-/// chains into one with product $P_L \cdot P_R$.
+/// chains into one. Write $P_L$ and $P_R$ for their respective products;
+/// the joined chain has product $P_L \cdot P_R$.
 ///
 /// With input contents $C_L, C_R$ and output contents fixed before $\zeta$,
 /// equating the output's opening at $\zeta$ with $C_L(\zeta) \cdot C_R(\zeta)$
-/// sets the output contents to $C_L \cdot C_R$, which divides $P_L \cdot P_R$
-/// and retains every root of $P_L \cdot P_R$ in the shared class without
-/// requiring disjoint roots.
+/// sets the output contents to $C_L \cdot C_R$, which divides $P_L \cdot P_R$.
+/// Each root of $P_L \cdot P_R$ in the shared class is a root of $P_L$ or
+/// $P_R$, hence of $C_L$ or $C_R$ by the corresponding intake assertion.
+/// This does not require disjoint roots.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -896,7 +899,8 @@ impl Step<Pasta> for QrSideSelect {
 /// [`QrSideSelection`]'s polynomial with the left input's $q_0$ so that
 /// $q_0(-R) \neq 0$.
 ///
-/// Staged boolean `class` bit $b$ from `Step::Witness`, input slot polynomials
+/// The circuit constrains the witness bit $b$ to be Boolean and equal to the
+/// staged `class`. Thus $b$, input slot polynomials
 /// $q_0, q_1, u, h$, committed output contents, and $R = R_0 + j$ are all fixed
 /// before $\zeta$.
 ///
@@ -908,15 +912,17 @@ impl Step<Pasta> for QrSideSelect {
 ///
 /// Copying `epoch`, anchors and `discriminant` preserves the chain of product
 /// $P$, while `profile.descend` appends $b$ at depth $j$ (discriminant $R$).
-/// Because $q_b$ divides $q_0 \cdot q_1$ (and thus $P$) while $q$ holds no root
-/// taking side $b$ at $R$, every root of $P$ in the child's class lies in
-/// $q_b$, without constraining $q_b$'s other roots.
+/// The child $q_b$ divides $q_0 q_1$ and hence $P$. Each root of $P$ in the
+/// child's class belongs to the parent's class, so the parent assertion puts
+/// it in $q_0 q_1$. It cannot lie in the sibling $q$, whose roots do not take
+/// side $b$ at $R$, so it lies in $q_b$. The child may retain roots outside its
+/// class.
 ///
 /// Holding $q_0(\zeta) - q_1(\zeta)$ nonzero forces $q_0 \neq q_1$, so $b$
-/// uniquely identifies the child within the split and rejects splitting a
-/// doubled set into identical halves. Comparing polynomials rather than roots
-/// still admits scalar-distinct sides or distinct constants, and class
-/// completeness holds even without this check.
+/// is the only bit selecting that child polynomial in this split. Identical
+/// halves of a doubled set fail. Distinct scalar multiples can pass when their
+/// openings differ; at a common root they fail. Distinct constants pass this
+/// check and can pass both descents. Class completeness does not rely on it.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -1076,7 +1082,7 @@ impl Step<Pasta> for QrSideDescend {
 ///
 /// Unlike an intake, a bucket's header determines its chain, product $P$ and
 /// class. `anchor_next` determines $a$ and $e + 1$, and `anchor_start`
-/// determines $e$ and its predecessor anchor. Any two stamp chains from
+/// determines $e$ and the anchor value it absorbs. Any two stamp chains from
 /// `anchor_start` to $a$ match step-for-step walking back from $a$, and
 /// distinct tags prevent any post-start stamp absorption from equalling the
 /// boundary digest `anchor_start`, so neither chain extends past the other's

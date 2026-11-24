@@ -60,9 +60,9 @@ use crate::{
 /// [`QrUnspentInit`](super::qr::QrUnspentInit), [`UnspentLift`] and
 /// [`UnspentFuse`] output this header. Every verified `ArbitraryUnspent`
 /// asserts `epoch_start < epoch_next <= EPOCH_MAX` over the integers
-/// ([`EpochIndex`](gadgets::epoch::EpochIndex)), anchors $b_e$ across
-/// $e \in \text{epoch\_start}..=\text{epoch\_next}$ from `anchor_start` to
-/// `anchor_next`, and nonzero values $v_e$ across
+/// ([`EpochIndex`](gadgets::epoch::EpochIndex)). Its prover knows anchors $b_e$
+/// across $e \in \text{epoch\_start}..=\text{epoch\_next}$ from `anchor_start`
+/// to `anchor_next`, and nonzero values $v_e$ across
 /// $e \in \text{epoch\_start}..\text{epoch\_next}$ where each $v_e$ is
 /// *excluded at* $e$ *between* $b_e$ and $b_{e+1}$ and the [`NfSeqPoly`] equals
 /// $E(X) = \prod_{e} F_{e,\ v_e}(X)$ under the
@@ -149,9 +149,9 @@ impl Header<Fp> for ArbitraryUnspent {
 ///
 /// [`UnspentBind`] outputs this header. Every verified `NoteUnspent` asserts
 /// `epoch_start < epoch_next <= EPOCH_MAX` over the integers, a prover-known
-/// verified [`NoteNullifiers`] carrying `cm`, and anchors $b_e$ across
-/// $e \in \text{epoch\_start}..=\text{epoch\_next}$ from `anchor_start` to
-/// `anchor_next` such that `cm`'s nullifier at each
+/// verified [`NoteNullifiers`] carrying `cm`, and prover-known anchors $b_e$
+/// across $e \in \text{epoch\_start}..=\text{epoch\_next}$ from `anchor_start`
+/// to `anchor_next` such that `cm`'s nullifier at each
 /// $e \in \text{epoch\_start}..\text{epoch\_next}$ is
 /// [excluded](ArbitraryUnspent#injectivity) between $b_e$ and $b_{e+1}$.
 ///
@@ -226,8 +226,10 @@ impl Header<Fp> for NoteUnspent {
 ///
 /// Each stamp absorbed into the span contributes its resulting anchor as a root
 /// of the members polynomial. [`StampLift`](super::stamp::StampLift) and
-/// [`ActionLift`](super::stamp::ActionLift) advance anchors across spans, while
-/// [`ArbitraryUnspent`] advances spendables by proving nullifiers absent.
+/// [`ActionLift`](super::stamp::ActionLift) advance anchors across spans.
+/// To advance a spendable, `SpendableLift` takes a [`NoteUnspent`] after
+/// [`UnspentBind`] ties the arbitrary segment's exclusions to that note's
+/// nullifiers.
 ///
 /// # Injectivity
 ///
@@ -383,7 +385,7 @@ impl Step<Pasta> for AnchorSpanSeed {
             witness.as_ref().map(|&(_, epoch, _)| epoch),
         )?;
         // The empty set polynomial is the constant one, so a stamp whose
-        // polynomial opens to one at zeta has no tachygrams.
+        // polynomial is the constant one cannot pass this check.
         let z = oracles.zeta().clone();
         let stamp_at_z = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
@@ -398,7 +400,7 @@ impl Step<Pasta> for AnchorSpanSeed {
             ],
         )?;
         // The span's sole member is the stamp absorption above, whose inputs
-        // are chosen after the challenge (see the step's Soundness section).
+        // are not fixed before the challenge (see the step's Soundness section).
         let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
         let member_factor = z.sub(dr, &anchor);
         members.enforce_equal(dr, &member_factor)?;
@@ -507,8 +509,9 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// # Soundness
 ///
 /// Equating `left.epoch_next` with `right.epoch_start` over the integers and
-/// `left.anchor_next` with `right.anchor_start` abuts the two epoch ranges and
-/// anchor sequences without gap or overlap, preserving each value's exclusion.
+/// `left.anchor_next` with `right.anchor_start` joins the half-open epoch
+/// ranges without gap or overlap. The anchor sequences meet at their shared
+/// endpoint, preserving each value's exclusion.
 /// Because all three sequences are committed before $\zeta$ and the circuit
 /// equates the output's opening at $\zeta$ with the product of the inputs'
 /// openings, the output sequence multiplies the inputs to hold one factor per

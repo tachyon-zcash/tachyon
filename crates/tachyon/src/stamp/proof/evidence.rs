@@ -39,8 +39,8 @@ use crate::{
 
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
-/// [`EvidenceTreeDescend`] produces a one-leaf tree whose root is that leaf's
-/// digest.
+/// A one-leaf tree's root is that leaf's digest. Such a tree comes from
+/// [`EvidenceTreeDescend`], which can also return a larger subtree.
 ///
 /// # Injectivity
 ///
@@ -575,7 +575,7 @@ impl Step<Pasta> for EvidenceTreeCap {
 ///
 /// Starting at the input's `root`, each level allocates four elements, equates
 /// their node digest with the current element, and selects the next element via
-/// two unconstrained boolean wires from `Step::Witness`.
+/// two freely chosen Boolean wires from `Step::Witness`.
 ///
 /// Because a valid element matching a node digest cannot also be known as a
 /// leaf digest, the second rule of [`EvidenceTree`] applies and the node digest
@@ -721,9 +721,9 @@ impl Step<Pasta> for EvidenceTreeDescend {
 /// for both accumulators and [determines its polynomial](TachygramSetBridge),
 /// $C$ equals that bucket's contents and inherits its assertion.
 ///
-/// Although the bridge hash is chosen after $\zeta$ and no identity is checked
-/// at $\zeta$, an unconstrained opening at $\zeta$ binds the output slot to
-/// $C$.
+/// Although the bridge hash is not fixed before $\zeta$ and no identity is
+/// checked at $\zeta$, an unconstrained opening at $\zeta$ binds the output
+/// slot to $C$.
 #[derive(Debug)]
 pub struct EvidenceTreeOpen;
 
