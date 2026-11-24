@@ -1,16 +1,10 @@
 //! Evidence trees: one proof for a Poseidon Merkle root over a network's
 //! sealed [`QrBucket`]s.
 //!
-//! [`EvidenceTreeLeafPair`] admits buckets two at a time,
-//! [`EvidenceTreePairFuse`] and [`EvidenceTreeFuse`] assemble a node from
-//! four subtrees, and [`EvidenceTreeCap`] raises a root to the depth a descent
-//! needs. [`EvidenceTreeDescend`] walks a path, and [`EvidenceTreeOpen`]
-//! replays the bucket a leaf holds.
-//!
-//! A tree starts at [`EVIDENCE_TREE_ARITY`] leaves. A builder short of that
-//! repeats a bucket. A builder holding one bucket needs no tree at all: it
-//! serves that bucket's own proof, which every consumer of a replayed bucket
-//! takes unchanged.
+//! Pair and fuse steps assemble [`EVIDENCE_TREE_ARITY`]-child nodes; capping
+//! pads the depth for descent and replay. A tree needs at least four leaves,
+//! so builders may repeat buckets. With just one bucket they can serve its
+//! proof directly to any consumer of a replayed bucket.
 
 use core::array;
 
@@ -39,15 +33,30 @@ use crate::{
 
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
-/// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
-/// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
-/// this header carries. A one-leaf tree's root is that leaf's digest, and
-/// [`EvidenceTreeDescend`] is what produces one.
+/// A one-leaf tree's root is that leaf's digest, produced when
+/// [`EvidenceTreeDescend`] reaches a leaf rather than an internal subtree.
 ///
-/// The tree claims nothing about which buckets it holds. A tree holding one
-/// bucket four times is as valid as a tree over a whole network, and a builder
-/// that omits a bucket can only fail to answer for it. Each bucket's exclusion
-/// claim already covers the whole epoch.
+/// # Injectivity
+///
+/// [`EvidenceTreeFuse`], [`EvidenceTreeCap`] and [`EvidenceTreeDescend`] output
+/// this header. Every verified `EvidenceTree` asserts that `root` is *valid*
+/// for its four network fields `(epoch, anchor_start, anchor_next,
+/// discriminant)`, saying nothing about bucket selection, count or placement.
+/// Each bucket's assertion stands independently of the rest of the tree.
+///
+/// Two rules define the least set of valid elements for given network fields.
+///
+/// - The [leaf digest](poseidon::evidence_tree_leaf) of the eight header
+///   elements of a verified [`QrBucket`] matching those network fields is
+///   valid.
+/// - The [node digest](poseidon::evidence_tree_node) of four elements valid for
+///   those network fields is valid.
+///
+/// No valid element is known as both a leaf digest and a node digest, and each
+/// [determines what it absorbed](EvidenceTreeRoot#injectivity). Because
+/// [`EvidenceTreeOpen`] reproduces the header and contents of the bucket behind
+/// a leaf, induction over the step tree traces every leaf behind a valid
+/// element to a header emitted by [`QrBucketSeal`](super::qr::QrBucketSeal).
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
@@ -112,10 +121,14 @@ impl Header<Fp> for EvidenceTree {
 
 /// Two sibling subtree roots of one network: half of a node.
 ///
-/// A [`EVIDENCE_TREE_ARITY`]-child node reaches one hash through two steps,
-/// since a [`Step`] takes at most two predecessor proofs. This header is a node
-/// half-assembled: the left and right children of one side, under the four
-/// network fields both already agree on.
+/// A [`Step`] takes at most two inputs, so one four-way node needs two pairs.
+///
+/// # Injectivity
+///
+/// [`EvidenceTreeLeafPair`] and [`EvidenceTreePairFuse`] output this header.
+/// Every verified `EvidenceTreePair` asserts that `first` and `second` are each
+/// [valid](EvidenceTree#injectivity) for its network fields, without relating
+/// the two.
 #[derive(Clone, Debug)]
 pub struct EvidenceTreePair;
 
@@ -200,11 +213,8 @@ impl Header<Fp> for EvidenceTreePair {
 ///
 /// # Soundness
 ///
-/// Each digest uses the contents hash certified by
-/// [`QrBucketSeal`](super::qr::QrBucketSeal) or [`EvidenceTreeOpen`]. The
-/// network equality carries the network fields as [`EvidenceTreePairFuse`]
-/// does. The emitted pair holds two sealed buckets as leaves and claims nothing
-/// more.
+/// The circuit equates and copies the network fields. Hashing each bucket's
+/// eight elements in header order gives two valid leaves for that network.
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
@@ -300,14 +310,8 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 ///
 /// # Soundness
 ///
-/// Both roots are threaded, and the network equality makes the emitted header's
-/// network fields true of every leaf beneath either input. The fields are
-/// checked equal because a consumer reads the extent off the tree, so a tree
-/// spanning more than its leaves do would let a bucket's exclusion cover folds
-/// the bucket never held.
-///
-/// Nothing is hashed here. The pair asserts only that two subtrees belong to
-/// one network; [`EvidenceTreeFuse`] is what turns four of them into a node.
+/// Matching and copying the network fields preserves the validity of both
+/// roots, copied as `first` and `second`.
 #[derive(Debug)]
 pub struct EvidenceTreePairFuse;
 
@@ -382,16 +386,13 @@ impl Step<Pasta> for EvidenceTreePairFuse {
 
 /// Hash two [`EvidenceTreePair`]s of one network into a node.
 ///
-/// The children are ordered `(left.0, left.1, right.0, right.1)`, which is the
-/// order [`EvidenceTreeDescend`] witnesses them in.
-///
 /// One permutation (the node).
 ///
 /// # Soundness
 ///
-/// All four roots are threaded, and the network equality carries the network
-/// fields as [`EvidenceTreePairFuse`] does. Every leaf beneath the emitted root
-/// was beneath one of the four inputs, so the claim carries by induction.
+/// Matching and copying the network fields gives four valid roots for one
+/// network. Their node digest in `(left.0, left.1, right.0, right.1)` order
+/// is valid by [`EvidenceTree`]'s node rule and matches descent order.
 #[derive(Debug)]
 pub struct EvidenceTreeFuse;
 
@@ -470,21 +471,18 @@ impl Step<Pasta> for EvidenceTreeFuse {
     }
 }
 
-/// Raise a [`EvidenceTree`] one level by making its root the only child of a
-/// new root.
+/// Raise an [`EvidenceTree`] one level.
 ///
 /// [`EvidenceTreeDescend`] walks [`EvidenceTreeDescend::LEVELS`] levels at a
-/// time. A builder caps a tree at most `LEVELS - 1` times, until its depth is a
-/// multiple of that.
+/// time. At most `LEVELS - 1` caps make the depth a multiple of `LEVELS`.
 ///
 /// One permutation (the node).
 ///
 /// # Soundness
 ///
-/// The root is threaded and repeated into every child slot, so the input tree
-/// is the only subtree beneath the emitted root and raising a tree cannot admit
-/// a leaf. A descent through such a node selects the same child whichever side
-/// bits it reads.
+/// Copying the network fields and hashing the input's `root` across all four
+/// node-digest positions makes `root` valid under the second rule of
+/// [`EvidenceTree`].
 #[derive(Debug)]
 pub struct EvidenceTreeCap;
 
@@ -549,20 +547,15 @@ impl Step<Pasta> for EvidenceTreeCap {
 /// Walk [`LEVELS`](Self::LEVELS) levels of a Merkle path, emitting the subtree
 /// the path reaches.
 ///
-/// Each level is a node's children, ordered as the node hashes them, and two
-/// side bits, outer first: the outer bit selects a half and the inner bit
-/// selects within it.
-///
 /// Four permutations (one node per level).
 ///
 /// # Soundness
 ///
-/// `node` starts threaded, each level's children are pinned to it by the node
-/// hash, and the emitted root is one of the four children of a node reached
-/// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
-/// tree, so the claim survives the descent. Leaf and node digests use different
-/// domains, `Tachyon-QrBucket` and `Tachyon-EvidNode`, so a path cannot stop
-/// one level short and present a node as a bucket.
+/// At each level, four witnessed roots must hash to the current root. A valid
+/// node digest cannot also open as a leaf and determines four valid roots for
+/// the same network. Either choice of half and either position within it
+/// therefore preserve validity. The prover chooses both bits freely; the
+/// output keeps the network fields, and no step depends on the path taken.
 #[derive(Debug)]
 pub struct EvidenceTreeDescend;
 
@@ -571,7 +564,7 @@ impl EvidenceTreeDescend {
     ///
     /// A path of `depth` levels takes `⌈depth / LEVELS⌉` descents, so a
     /// builder pads its tree to a multiple of this. A profile addresses at
-    /// most $\mathsf{MAX\_DEPTH} / 2$ quaternary levels, which is a multiple of
+    /// most `MAX_DEPTH / 2` quaternary levels, which is a multiple of
     /// `LEVELS`, so the deepest reachable tree needs no padding.
     pub const LEVELS: usize = 4;
 }
@@ -689,21 +682,21 @@ impl Step<Pasta> for EvidenceTreeDescend {
 ///
 /// # Soundness
 ///
-/// The witnessed profile and contents commitment are pinned jointly to `root`
-/// by the leaf digest. `root` is a leaf digest and not a node: leaf and node
-/// digests use different domains, `Tachyon-QrBucket` and `Tachyon-EvidNode`,
-/// and a descent stopped short leaves a node no preimage opens. Preimage
-/// resistance then makes the emitted header one
-/// [`QrBucketSeal`](super::qr::QrBucketSeal) emitted, so this second producer
-/// of [`QrBucket`] establishes nothing the seal did not.
+/// Copying the input's network fields, allocating two unconstrained profile
+/// wires, and reading `contents_hash` as the bridge hash of the prover's
+/// committed contents $C$ in the last output slot, the circuit equates `root`
+/// with the leaf digest of those eight elements.
 ///
-/// Only [`EvidenceTreeDescend`] emits a tree whose root is a leaf digest, so
-/// every open follows a descent.
+/// Because `root` is valid and cannot also be known as a node digest, the first
+/// rule of [`EvidenceTree`] makes it the leaf digest of a verified
+/// [`QrBucket`]. Leaf-digest injectivity matches the output header and profile
+/// path to that bucket's, and because `contents_hash` serves as a bridge hash
+/// for both accumulators and [determines its polynomial](TachygramSetBridge),
+/// $C$ equals that bucket's contents and inherits its assertion.
 ///
-/// Binding the profile stops this forgery: a real bucket's
-/// contents presented under the tested value's own profile would pass
-/// [`QrUnspentInit`](super::qr::QrUnspentInit)'s fold and open nonzero, proving
-/// exclusion for a value published in a different bucket.
+/// Although the bridge hash is not fixed before $\zeta$ and no identity is
+/// checked at $\zeta$, an unconstrained opening at $\zeta$ binds the output
+/// slot to $C$.
 #[derive(Debug)]
 pub struct EvidenceTreeOpen;
 

@@ -53,7 +53,7 @@ impl Trapdoor {
         Self(Fq::random(|bytes| rng.fill_bytes(bytes)))
     }
 
-    /// Commit to a given value with this trapdoor.
+    /// Build a [value commitment](ValueCommitment#binding) with this trapdoor.
     ///
     /// $$
     ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
@@ -77,6 +77,14 @@ impl Trapdoor {
 ///
 /// where $\mathcal{V}$, $\mathcal{R}$ are generator points
 /// shared with Orchard (§5.4.8.3).
+///
+/// # Binding
+///
+/// No discrete-log relation is known between $\mathcal{V}$ and $\mathcal{R}$.
+/// Two openings of the same commitment differing modulo the group order $q$
+/// reveal the discrete logarithm of $\mathcal{V}$ to base $\mathcal{R}$.
+/// With $|v|$ at most `MAX_MONEY` and $r$ represented canonically, openings
+/// equal modulo $q$ agree as integers.
 #[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
 pub struct ValueCommitment(#[debug(skip)] Ep);

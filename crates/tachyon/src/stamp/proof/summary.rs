@@ -1,11 +1,14 @@
 //! Tachygram accumulators over consecutive stamps of one epoch.
 //!
-//! A summary folds each stamp's tachygram set into one set polynomial while
-//! the anchor absorbs each stamp's bridge hash. Consensus forbids republishing
-//! a tachygram within two epochs. The accumulator is therefore square-free.
-//! The prover chooses where a summary starts and stops. A consumer joins
-//! summaries whose anchors are equal. The joined chain contains every stamp
-//! absorption.
+//! Each summary multiplies stamp tachygram polynomials into one polynomial
+//! while advancing the anchor across each stamp's bridge hash. Provers choose
+//! where summaries start and stop, and
+//! [`QrIntakeMerge`](super::qr::QrIntakeMerge) joins intakes from summaries
+//! with matching endpoint anchors.
+//!
+//! Because consensus rejects duplicate tachygrams within two epochs, the
+//! accumulated polynomial of a summary on the published chain has no repeated
+//! root.
 
 use core::convert::Infallible;
 
@@ -31,14 +34,37 @@ use crate::{
 ///
 /// Both polynomials are a [`TachygramSetPoly`]: [`Summary::ACCUMULATED`] and
 /// [`Summary::LAST_STAMP`].
+///
+/// # Injectivity
+///
+/// [`SummarySeed`] and [`SummaryAdvance`] output this header. Every verified
+/// `Summary` asserts `epoch <= EPOCH_MAX` as an integer and a prover-known
+/// [stamp chain](super#chains-in-a-step) in `epoch` of $k \geq 1$ absorptions
+/// from `anchor_prev` to `anchor_end` with polynomials $P_1, \dots, P_k$, where
+/// [`Summary::ACCUMULATED`] equals $P_1 \cdots P_k$ and
+/// [`Summary::LAST_STAMP`] equals $P_k$.
+///
+/// The prover chooses `anchor_prev` freely, and nothing constrains history
+/// behind it. No $P_i$ equals the constant one, matching [`Anchor::next_stamp`]
+/// rejecting the empty set in a pool history.
+///
+/// - `anchor_end` determines `epoch`, $P_k$ and every preceding absorption
+///   ([`Anchor`]).
+/// - [`Summary::ACCUMULATED`] has roots equal to the union of the $P_i$'s
+///   roots, and equals the multiset-sum [set
+///   polynomial](crate::collections::multiset) when every $P_i$ is a set
+///   polynomial.
+/// - [`Summary::LAST_STAMP`] occupies the last slot to supply the step's bridge
+///   hash, and no consumer reads it.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
-/// Every tachygram of the stamps in `(anchor_prev, anchor_end]`.
+/// The product of the polynomials of the stamps in
+/// `(anchor_prev, anchor_end]`.
 #[derive(Debug)]
 pub struct Accumulated(Infallible);
 
-/// The last stamp's tachygrams. Its bridge hash enters `anchor_end`.
+/// The last stamp's polynomial. Its bridge hash enters `anchor_end`.
 #[derive(Debug)]
 pub struct LastStamp(Infallible);
 
@@ -102,10 +128,10 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// `anchor_prev` and `epoch` are free witnesses. Consensus uses the epoch of
-/// the block that contains the stamp when advancing the anchor.
-/// [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] carry the same stamp
-/// set and open once each at the challenge.
+/// The step [absorbs](super#chains-in-a-step) [`Summary::LAST_STAMP`] into
+/// prover-chosen `anchor_prev` at `epoch`. Both output slots precede $\zeta$;
+/// matching their openings there sets [`Summary::ACCUMULATED`] to that stamp.
+/// Requiring the opening to differ from one permits other nonzero constants.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -200,9 +226,17 @@ impl Step<Pasta> for SummarySeed {
 /// Extend the accumulator with the next stamp while the anchor absorbs the
 /// stamp's bridge hash.
 ///
-/// The left and output [`Summary::ACCUMULATED`] hold the accumulated sets;
-/// the output's [`Summary::LAST_STAMP`] holds the next stamp's tachygrams.
-/// Each is opened once.
+/// The left and output [`Summary::ACCUMULATED`] and the output's
+/// [`Summary::LAST_STAMP`] are opened once each.
+///
+/// # Soundness
+///
+/// The step keeps `epoch` and `anchor_prev` and
+/// [absorbs](super#chains-in-a-step) the new stamp $P$ into `anchor_end`. Only
+/// the accumulated product $A$ is read from the input slots. It and both output
+/// polynomials precede $\zeta$, so checking $A'(\zeta)=A(\zeta)P(\zeta)$
+/// extends the product by $P$. Requiring $P(\zeta)\ne1$ rules out the constant
+/// one.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 

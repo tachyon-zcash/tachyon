@@ -1,25 +1,10 @@
 //! QR epoch evidence: one epoch's tachygrams partitioned by profile.
 //!
-//! Each depth classifies at a discriminant of the progression
-//!
-//! $$
-//!   R_j = R_0 + j,
-//! $$
-//!
-//! from a first discriminant $R_0$. Every header carries $R_0$, so depth $j$
-//! classifies at $R_j$, and a value takes the residue side there iff $x + R_j$
-//! is a square or zero.
-//!
-//! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
-//! [`QrStampIntakeSeed`] from one unsummarized stamp, and
-//! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
-//! partitions an intake at its discriminant into [`QrIntakeSides`], with
-//! non-residue and residue set polynomials $q_0$ and $q_1$.
-//! [`QrSideSelect`] fixes hints and the exceptional-value assignment,
-//! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
-//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
-//! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
-//! profile against a bucket and opens the bucket at it.
+//! Every header carries $R_0$. At depth $j$, $R_j=R_0+j$ and $x$ takes the
+//! residue side iff $x+R_j$ is a square or zero. An intake starts from a
+//! summary, one stamp or an empty epoch. Split, select and descend route it;
+//! merge joins adjacent same-profile intakes. [`QrBucketSeal`] seals the result
+//! for queries.
 
 #[cfg(test)]
 mod tests;
@@ -58,6 +43,27 @@ use crate::{
 /// Covers stamp folds over `(anchor_prev, anchor_end]`.
 /// A split classifies at `discriminant.at(profile.depth)`. A builder
 /// keeps its intake headers unpublished until the epoch closes.
+///
+/// # Injectivity
+///
+/// [`QrSummaryIntake`], [`QrStampIntakeSeed`], [`QrEmptyIntakeSeed`],
+/// [`QrIntakeMerge`] and [`QrSideDescend`] output this header. Every verified
+/// `QrIntake` with contents $C$ asserts `epoch <= EPOCH_MAX` as an
+/// [integer](gadgets::epoch::EpochIndex), a [path](QrProfile#injectivity)
+/// `profile`, and a prover-known [stamp chain](super#chains-in-a-step) in
+/// `epoch` from `anchor_prev` to `anchor_end` with product $P$, where $C$
+/// divides $P$ and holds every root of $P$ in the
+/// [class](QrDiscriminant#injectivity) of `profile` at `discriminant`.
+///
+/// Divisibility rules out roots outside $P$, but $C$ may retain roots outside
+/// the class. Roots represent tachygrams only when the chain holds
+/// [set polynomials](crate::collections::multiset); no intake checks this.
+///
+/// Neither `QrIntake` nor [`QrBucket`] records an absorption count. Only the
+/// sealed bucket's assertion establishes that its endpoints determine a single
+/// chain. When the chain has zero absorptions, $P = 1$ and nothing absorbs
+/// `epoch`, leaving `epoch` arbitrary in range until [`QrBucketSeal`] absorbs
+/// it.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -126,6 +132,18 @@ impl Header<Fp> for QrIntake {
 ///
 /// Both polynomials are a [`TachygramSetPoly`]: [`QrIntakeSides::RESIDUE`],
 /// then [`QrIntakeSides::NON_RESIDUE`].
+///
+/// # Injectivity
+///
+/// [`QrIntakeSplit`] outputs this header. With non-residue polynomial $q_0$ and
+/// residue polynomial $q_1$, every verified `QrIntakeSides` asserts that
+/// [`QrIntake`] holds for `intake` with contents $q_0 \cdot q_1 \neq 1$
+/// (allowing other constants) and that `non_residue_hash` is a
+/// [bridge hash](TachygramSetBridge) of $q_0$'s accumulator.
+///
+/// Nothing here constrains root sides. Because `non_residue_hash` determines
+/// $q_0$, [`QrSideSelection`] identifies $q_0$ across matching hashes, while no
+/// header field stands for $q_1$.
 #[derive(Clone, Debug)]
 pub struct QrIntakeSides;
 
@@ -216,6 +234,22 @@ impl Header<Fp> for QrIntakeSides {
 /// A split statement and committed hints for a descent.
 ///
 /// The output polynomials are the interpolant and quotient.
+///
+/// # Injectivity
+///
+/// [`QrSideSelect`] outputs this header. Every verified `QrSideSelection`
+/// asserts a verified [`QrIntakeSides`] sharing its eight header elements whose
+/// non-residue polynomial $q_0$ satisfies $q_0(-(R_0 + j)) \neq 0$ at
+/// `discriminant` $R_0$ and profile `depth` $j$, ruling out the sole point
+/// whose side a non-residue class root
+/// [leaves ambiguous](crate::collections::qr#class-decomposition).
+///
+/// Although $q_0$ occupies no slot here, `non_residue_hash`
+/// [determines it](QrIntakeSides#injectivity) across every verified
+/// [`QrIntakeSides`] sharing that hash. Nothing is asserted about the two hint
+/// slots beyond fixing them before the consuming step's challenge.
+///
+/// Shares `Data` with [`QrIntakeSides`], distinguished by header suffix.
 #[derive(Clone, Debug)]
 pub struct QrSideSelection;
 
@@ -241,8 +275,11 @@ impl Header<Fp> for QrSideSelection {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [Choosing the first
-/// discriminant](QrDiscriminant#choosing-the-first-discriminant).
+/// Equating the pre-committed output contents with the input's
+/// [`Summary::ACCUMULATED`] at $\zeta$ sets the contents to the chain product
+/// $P$ asserted by [`Summary`], while copying `epoch` and both anchors adopts
+/// that chain. Constant depth-zero `profile` covers all values, and
+/// the first `discriminant` $R_0$ comes from `Step::Witness`.
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -331,10 +368,12 @@ impl Step<Pasta> for QrSummaryIntake {
 ///
 /// # Soundness
 ///
-/// `discriminant` is a free witness; see [Choosing the first
-/// discriminant](QrDiscriminant#choosing-the-first-discriminant). The contents
-/// are the stamp's tachygram set and open once; their bridge hash enters
-/// `anchor_end`.
+/// Allocating `anchor_prev`, range-checked `epoch` and `discriminant` from
+/// `Step::Witness`, holding the pre-committed contents $C$ away from one at
+/// $\zeta$, and setting `anchor_end` to the
+/// [stamp absorption](poseidon::anchor_next_stamp) of `anchor_prev`, `epoch`
+/// and the bridge hash of $C$ in the last output slot forms a one-absorption
+/// chain with $P = C$ at the root profile.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -447,14 +486,13 @@ impl Step<Pasta> for QrStampIntakeSeed {
 ///
 /// # Soundness
 ///
-/// `anchor` and `epoch` are free witnesses. [`QrBucketSeal`] requires `anchor`
-/// to be a boundary digest into `epoch`. [`QrBucketSeal`] computes the boundary
-/// digest of `anchor` into `epoch + 1`. The sealed bucket ends on the published
-/// entry anchor of `epoch + 1` only if `anchor` is both the entry anchor and
-/// the final anchor of `epoch`. That holds only when the epoch published no
-/// stamp. `discriminant` is a free witness; see [Choosing the first
-/// discriminant](QrDiscriminant#choosing-the-first-discriminant).
-/// The contents open once at the challenge and are constrained to one.
+/// Allocating `anchor`, range-checked `epoch` and `discriminant` from
+/// `Step::Witness` while holding the pre-committed contents equal to one at
+/// $\zeta$ forms a zero-absorption chain from `anchor` to itself with $P = 1$
+/// and no roots.
+///
+/// [`QrBucketSeal`] later absorbs `anchor` and `epoch` into boundary digests.
+/// Nothing here proves `epoch` stamp-free or ties `anchor` to it.
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
@@ -536,8 +574,12 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// # Soundness
 ///
-/// Consensus forbids republishing a tachygram within two epochs, so the sets
-/// are disjoint and the product is the union's root polynomial.
+/// Matching `left.anchor_end` to `right.anchor_prev` joins the chains;
+/// matching `epoch`, `discriminant` and both `profile` wires preserves their
+/// epoch and class. All three contents precede $\zeta$, so the product check
+/// there fixes the output to $C_L C_R$, a divisor of the chain product $P_L
+/// P_R$. Any in-class root of either $P_i$ occurs in its $C_i$, hence in the
+/// output, whether or not the inputs share roots.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -632,10 +674,11 @@ impl Step<Pasta> for QrIntakeMerge {
 ///
 /// # Soundness
 ///
-/// The product pins the two sides to a factorization of the contents.
-/// [`QrSideSelect`] checks the exceptional-value assignment, and
-/// [`QrSideDescend`] attests each child's sibling.
-/// The contents and both sides open once each at the product challenge.
+/// With input contents $C$ fixed in the input slot and $q_0, q_1$ committed
+/// before $\zeta$, equating $C(\zeta)$ with $q_0(\zeta) \cdot q_1(\zeta)$ and
+/// holding $C(\zeta) \neq 1$ enforces $C = q_0 \cdot q_1 \neq 1$. Copying the
+/// six intake elements and reading `non_residue_hash` as the bridge hash of
+/// $q_0$ in the last output slot completes [`QrIntakeSides`].
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
@@ -727,9 +770,14 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// The non-residue set polynomial $q_0$ opens once at $-R$; the two hint
-/// polynomials supply output commitments. [`QrSideDescend`] checks their class
-/// identity and rejects a split whose two sides are the same set.
+/// [`QrSideDescend`] checks the hints' class identity and requires unequal
+/// side openings, which need not mean different roots.
+///
+/// # Soundness
+///
+/// The step copies all eight split fields and checks $q_0(-(R_0+j))\ne0$
+/// using the input's `discriminant` and `depth`. Unconstrained openings at
+/// $\zeta$ bind both output slots to the committed hints.
 #[derive(Debug)]
 pub struct QrSideSelect;
 
@@ -798,36 +846,44 @@ impl Step<Pasta> for QrSideSelect {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// For the sibling's set polynomial $q$, interpolant $u$ and quotient $h$,
-/// the class decomposition satisfies
-///
-/// $$
-///   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
-/// $$
-///
-/// The discriminant is $R = R_0 + j$ at parent depth $j$. For child bit $b$,
-/// the sibling's multiplier is $m = 1 + b(c - 1)$, with $c$ the fixed
-/// non-residue. A residue child has a non-residue sibling, so the multiplier
-/// is the opposite of the one used to check the queried class directly.
-/// The identity and the exceptional-value check attest the sibling's class:
-/// at every member $x_i$, the class root $r_i = u(x_i)$ satisfies
-/// $r_i^2 = m \cdot (x_i + R)$. The split's product then places every
-/// member of the extracted class in the child. Equal side openings are
-/// rejected.
+/// Opens both sides, the interpolant, the quotient and the selected output
+/// once each at $\zeta$.
 ///
 /// # Soundness
 ///
-/// The selection's metadata and non-residue bridge hash match the split.
-/// The framework fixes both input headers, their online commitments, and the
-/// staged child bit before the challenge $\zeta$. The child may hold a stray
-/// member of the sibling's class; consumers open it nonzero, so a stray member
-/// cannot pass a value that is present. The discriminant $R$ is computed from
-/// $R_0$ and the parent depth in the header. The parent's depth is
-/// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
-/// one depth's paths have distinct profiles.
+/// Equating all eight header elements across both inputs matches
+/// `non_residue_hash`, `discriminant` and `depth`, identifying the
+/// [`QrSideSelection`]'s polynomial with the left input's $q_0$ so that
+/// $q_0(-R) \neq 0$.
 ///
-/// Opens both sides, the interpolant, the quotient and the selected output
-/// once each at $\zeta$.
+/// The challenge binds both input headers, their online commitments, and the
+/// staged child bit, and does not absorb the output header. The step computes
+/// $R = R_0 + \mathsf{depth}$ from the input header without hashing or staging
+/// $R$ separately. The circuit constrains the witness bit $b$ to be Boolean
+/// and equal to the staged `class`. Thus $b$, input slot polynomials
+/// $q_0, q_1, u, h$, committed output contents, and $R = R_0 + j$ are all fixed
+/// before $\zeta$.
+///
+/// Selecting child $q_b$ and sibling $q$ by $b$, the circuit checks the output
+/// equals $q_b$ and the [class
+/// identity](crate::collections::qr#class-decomposition)
+/// $u(X)^2-m(X+R)=q(X)h(X)$ at $\zeta$, with interpolant $u$ and quotient $h$.
+/// For fixed non-residue $c$, $m=1+b(c-1)$ tests the sibling, opposite the
+/// queried child. At any sibling root $x$, $u(x)^2=m(x+R)$; with $q_0(-R)\ne0$,
+/// no such root takes side $b$.
+///
+/// Copying `epoch`, anchors and `discriminant` preserves the chain of product
+/// $P$, while `profile.descend` appends $b$ at depth $j$ (discriminant $R$).
+/// The child $q_b$ divides $q_0 \cdot q_1$ and thus $P$. Every root of $P$ in
+/// the child's class lies in the parent's class and hence in $q_0 \cdot q_1$ by
+/// the parent assertion. No root of the sibling $q$ takes side $b$ at $R$,
+/// placing the root in $q_b$. The child may retain roots outside its class.
+///
+/// Holding $q_0(\zeta) - q_1(\zeta)$ nonzero forces $q_0 \neq q_1$, so the
+/// selected polynomial identifies its bit within the split and identical halves
+/// of a doubled set fail. Distinct scalar multiples pass this check unless
+/// $\zeta$ is a common root, while distinct constants pass it and can pass both
+/// descents. Class completeness does not rely on it.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -961,15 +1017,36 @@ impl Step<Pasta> for QrSideDescend {
     }
 }
 
-/// One profile's members over a whole epoch.
+/// One profile's members between two boundary digests of one epoch.
 ///
-/// The bucket covers `[anchor_start, anchor_next)`. Both bounds are boundary
-/// digests. The range excludes `anchor_next`. In a bucket that a
-/// consensus-accepted spend uses, `anchor_start` is the entry anchor of `epoch`
-/// and `anchor_next` is the entry anchor of `epoch + 1`. [`QrBucketSeal`]
-/// computes `anchor_next` from the intake's `anchor_end`.
-/// The [`TachygramSetPoly`] holds the contents. `contents_hash` is its
-/// certified bridge hash.
+/// Its [`TachygramSetPoly`] holds the contents over `[anchor_start,
+/// anchor_next)`.
+///
+/// # Injectivity
+///
+/// [`QrBucketSeal`] and
+/// [`EvidenceTreeOpen`](super::evidence::EvidenceTreeOpen) output this header.
+/// Every verified `QrBucket` with contents $C$ asserts a prover-known anchor
+/// $a$ where
+///
+/// - `epoch` is an integer $e < \text{EPOCH\_MAX}$,
+/// - `anchor_start` is the [boundary digest](poseidon::anchor_next_epoch) into
+///   $e$ of a prover-known anchor and `anchor_next` is the boundary digest of
+///   $a$ into $e + 1$,
+/// - [`QrIntake`] holds for `(epoch, anchor_start, a, discriminant, profile)`
+///   with contents $C$,
+/// - `contents_hash` is a [bridge hash](TachygramSetBridge) of $C$'s
+///   accumulator.
+///
+/// Unlike an intake, a bucket's header determines its chain, product $P$ and
+/// class. `anchor_next` determines $a$ and $e + 1$, and `anchor_start`
+/// determines $e$ and the anchor value it absorbs. Any two stamp chains from
+/// `anchor_start` to $a$ match step-for-step walking back from $a$, and
+/// distinct tags prevent any post-start stamp absorption from equalling the
+/// boundary digest `anchor_start`, so neither chain extends past the other's
+/// start.
+///
+/// `contents_hash` determines $C$, whereas $C$ admits many bridge hashes.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -1066,44 +1143,28 @@ impl Header<Fp> for QrBucket {
 /// Seal a routed [`QrIntake`] into a [`QrBucket`] that runs boundary to
 /// boundary.
 ///
-/// The intake's `anchor_prev` must be the boundary digest of
-/// `anchor_final_prev` into `epoch`. It becomes the bucket's `anchor_start`.
-/// The step computes the boundary digest of the intake's `anchor_end` into
-/// `epoch + 1`, and outputs it as the bucket's `anchor_next`.
-///
-/// The intake covers stamp absorptions over `(anchor_prev, anchor_end]` within
-/// `epoch`. The bucket covers `[anchor_start, anchor_next)`. This range also
-/// contains `anchor_start`. `anchor_start` absorbs no tachygrams. Both bucket
-/// bounds are boundary digests.
+/// The intake covers `(anchor_prev, anchor_end]` within `epoch`. Its
+/// `anchor_prev` becomes the bucket's `anchor_start`, a boundary absorbing no
+/// tachygrams.
 ///
 /// # Soundness
 ///
-/// Only a boundary digest hashes under the epoch domain. The check shows that
-/// `anchor_prev` absorbs `epoch`. This step does not check whether
-/// `anchor_prev` is the published entry anchor of `epoch`. `anchor_final_prev`
-/// is a free witness. Consensus membership of the consuming lineage's spend
-/// anchor binds `anchor_final_prev`. [`Anchor::default`] is the entry anchor of
-/// epoch zero. It is the boundary digest of zero into epoch zero.
+/// `epoch.next` range-checks the successor $e+1$. The step matches
+/// `intake.anchor_prev` to the [boundary digest](poseidon::anchor_next_epoch)
+/// of `anchor_final_prev`, the step's only witness, into $e$, and sets
+/// `anchor_next` to the boundary digest of `intake.anchor_end` into $e+1$.
+/// These digests determine their predecessors without establishing that
+/// either is an epoch's final anchor.
 ///
-/// The crossing makes a bucket used in a consensus-accepted spend cover the
-/// whole epoch. In the accepted chain, the only boundary digest into
-/// `epoch + 1` is the one computed from `final(epoch)`. This step outputs
-/// `H_epoch(a, epoch + 1)` for the intake's own `a`. If `a` is not
-/// `final(epoch)`, the result is outside the accepted chain. A later fold can
-/// reach the accepted chain only by producing a Poseidon collision. A bucket
-/// sealed before the final anchor cannot support a spend that consensus
-/// accepts. Consensus acknowledges every end-of-block anchor. Membership of an
-/// end-of-block anchor does not establish whole-epoch coverage.
-///
-/// The seal copies `discriminant`. See [Choosing the first
-/// discriminant](QrDiscriminant#choosing-the-first-discriminant). The left and
-/// output contents open once each to preserve the contents and certify their
-/// bridge hash.
+/// Matching the pre-committed output contents to the input at $\zeta$
+/// preserves the polynomial. Its bridge hash becomes `contents_hash`;
+/// `discriminant` and `profile` are copied.
 ///
 /// # Caller contract
 ///
-/// The caller confirms that the intake's epoch is before `EPOCH_MAX`, or it
-/// risks producing a proof that is false.
+/// Callers must pass an intake with `epoch < EPOCH_MAX`. At `EPOCH_MAX` the
+/// circuit has no assignment, so a bucket constructed for that epoch cannot
+/// verify.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -1202,62 +1263,29 @@ impl Step<Pasta> for QrBucketSeal {
 
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// `path` gives the value's class at each of the 32 depths, its QR path. Its
-/// first `depth` classes pack to the bucket's profile. `roots[j]` is the class
-/// root witnessing class `j`, including positions past that prefix. The step
-/// also opens the bucket at the value for nonzero. The `MAX_DEPTH` positions
-/// $j = 0, 1, \dots$ index the progression, so position $j$
-/// classifies at $R_j = R_0 + j$. With tachygram $x$, each position witnesses
-/// a class bit $b_j$ and class root $r_j$. The multiplier is
-/// $m_j = c - (c - 1)b_j$ for the fixed non-residue $c$. Unlike descent,
-/// this uses the queried class rather than its sibling.
-///
-/// $$
-///   r_j^2 = m_j \cdot (x + R_j),
-///   \qquad
-///   b_j = 0 \implies x + R_j \neq 0.
-/// $$
-///
-/// A mask $e_j$ selects the bucket's path through two sums and a fold,
-///
-/// $$
-///   \sum_j e_j = \mathsf{depth},
-///   \qquad
-///   \sum_j j \cdot e_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
-///   \qquad
-///   a_{j+1} = a_j + e_j \cdot (a_j + b_j),
-/// $$
-///
-/// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
-/// bucket's sides are the value's.
-///
-/// The emitted segment reads the value as a nullifier and takes the bucket's
-/// extent, `[anchor_start, anchor_next)`, with epochs `[epoch, epoch + 1)`.
-/// Its one member is the value at `epoch`. `anchor_next` is the entry anchor
-/// of `epoch + 1`, excluded, so that epoch's nullifier is the next segment's
-/// to test. Consecutive epochs' segments meet on that boundary and fuse
-/// directly, or [`UnspentLift`](super::pool::UnspentLift) appends the next
-/// epoch's bucket in one step.
+/// The one-member segment covers the bucket's `[epoch, epoch + 1)` and can fuse
+/// at its far boundary or extend by [`UnspentLift`](super::pool::UnspentLift).
 ///
 /// # Soundness
 ///
-/// Since $c$ is a non-residue, for nonzero $x + R_j$ exactly one of
-/// $x + R_j$ and $c \cdot (x + R_j)$ is a square, fixing $b_j$. For
-/// $x + R_j = 0$ the nonzero
-/// rule forces the residue side, where [`QrSideSelect`] files the exceptional
-/// value. Among boolean vectors of weight `depth` only the leading positions
-/// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
-/// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
-/// then equals `bits` iff the bucket's sides are the value's first `depth`
-/// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
-/// the bucket's `discriminant`, so the exclusion holds for the
-/// network the bucket belongs to. `value` is a free witness. The challenge
-/// $\zeta$ binds it, so the sequence identity fixes the one member to it;
-/// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
-/// note's genuine derivation.
+/// - Holding `value` wire $x$ from `Step::Witness` nonzero and equal to the
+///   staged value fixes $x \neq 0$ before $\zeta$.
+/// - [`enforce_sides_of`](gadgets::qr::QrProfile::enforce_sides_of) checks
+///   `path`, `roots` and `mask` to match `bucket.profile` to the first `depth`
+///   sides of $x$ at `bucket.discriminant`, placing $x$ in the bucket's class.
+///   It also checks the sides past `depth` without comparing them against the
+///   profile.
+/// - Holding the bucket contents' opening at $x$ nonzero proves $x$ absent from
+///   those contents.
+/// - Equating the pre-committed output sequence at $\zeta$ with $F_{e,\
+///   x}(\zeta)$ for $e = \text{bucket.epoch}$ sets the sequence to the
+///   [encoding](crate::collections::indexed_multiset) of $(e, x)$.
+/// - Calling `next` on `epoch` range-checks `epoch_next` to $e + 1$.
 ///
-/// [`QrBucketSeal`] performs the boundary digest, and so establishes
-/// whole-epoch coverage. This step and every fuse and lift preserve it.
+/// Copying both anchors establishes that $x$ is
+/// [excluded](ArbitraryUnspent#injectivity) at $e$ between them, while
+/// [`UnspentBind`](super::pool::UnspentBind) later proves that $x$ is a
+/// nullifier.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 

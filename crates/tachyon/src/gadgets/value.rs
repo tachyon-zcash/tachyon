@@ -16,7 +16,8 @@ use ragu::{
 use super::uint::Uint;
 use crate::{constants::MAX_MONEY, pasta::Fp, value};
 
-/// A [`value::Positive`] inside a circuit: an amount in `0..=MAX_MONEY`.
+/// An in-circuit [`value::Positive`]. Every constructor bounds the element to
+/// `0..=MAX_MONEY`, below both $2^{51}$ and the modulus.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,
@@ -35,7 +36,7 @@ impl<'dr, D: Driver<'dr>> Deref for Positive<'dr, D> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
-    /// Allocates `value` and bounds it to `0..=MAX_MONEY`.
+    /// Allocates `value` and bounds its 51-bit decomposition by `MAX_MONEY`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
@@ -51,7 +52,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         Ok(Self { element })
     }
 
-    /// The amount `bits` encodes, bounded by `MAX_MONEY`.
+    /// Bounds `bits` by `MAX_MONEY` and packs them into the amount. These same
+    /// 51 bits uniquely encode the amount for fixed-base multiplication.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_bits(
         dr: &mut D,
@@ -63,7 +65,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         })
     }
 
-    /// The amount `MAX_MONEY - slack`, with `slack` bounded by `MAX_MONEY`.
+    /// Bounding `slack` by `MAX_MONEY` makes `MAX_MONEY - slack` an unwrapped
+    /// amount that uniquely determines `slack`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_slack(
         dr: &mut D,
@@ -83,8 +86,12 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         Ok(Self { element })
     }
 
-    /// `(part, self - part)`. Both fit the width of `MAX_MONEY` and sum to
-    /// `self`, so neither wraps and both are amounts.
+    /// `(part, self - part)`.
+    ///
+    /// Packs `part` from 51 freely chosen Boolean wires and decomposes `self -
+    /// part` into 51 bits. Two integers below $2^{51}$ sum to less than the
+    /// modulus, so they sum to `self` over the integers and both lie in
+    /// `0..=self` as amounts.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn split(&self, dr: &mut D, part: DriverValue<D, Fp>) -> Result<(Self, Self)> {
         let packed = Uint::<_, { MAX_MONEY.bit_width() as usize }>::alloc(dr, part)?.pack(dr)?;
@@ -93,7 +100,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         Ok((Self { element: packed }, Self { element: rest }))
     }
 
-    /// The amount's bits.
+    /// The amount's unique 51-bit decomposition.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn to_bits(
         &self,

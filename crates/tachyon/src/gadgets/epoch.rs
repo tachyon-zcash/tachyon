@@ -15,9 +15,10 @@ use ragu::{
 use super::uint::Uint;
 use crate::{constants::EPOCH_MAX, pasta::Fp, primitives};
 
-/// A [`primitives::EpochIndex`] inside a circuit: an index in
-/// `0..=EPOCH_MAX`. `EPOCH_MAX + 1` is a power of two, so the bits of the
-/// epoch width bound it exactly.
+/// An in-circuit [`primitives::EpochIndex`] in `0..=EPOCH_MAX`. Because
+/// `EPOCH_MAX + 1` is a power of two, the epoch-width bits bound it exactly.
+/// Every constructor holds its wire to that range, so equations between two
+/// indices hold over the integers.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,
@@ -87,8 +88,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> EpochIndex<'dr, D> {
         Self::from_element(dr, element)
     }
 
-    /// Splits this index into the first epoch of its nullifier group and the
-    /// two low bits that select within the group.
+    /// The two low bits of the unique epoch-width decomposition select the
+    /// nullifier within its group. Subtracting their value gives the group's
+    /// first epoch, a multiple of four.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn group(&self, dr: &mut D) -> Result<(Element<'dr, D>, [Boolean<'dr, D>; 2])> {
         let bits =

@@ -58,26 +58,16 @@ impl QrClass {
 }
 
 /// A QR discriminant $R$: a term of the class equation
-/// $r^2 = m \cdot (x + R)$. Discriminants progress by one. A network samples
-/// a first discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
+/// $r^2 = m \cdot (x + R)$. Discriminants progress by one. A network's builder
+/// chooses a first discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
+/// No step proves that $R_0$ is random, secret, or selected by the chain.
 ///
-/// # Choosing the first discriminant
+/// # Injectivity
 ///
-/// The builder chooses $R_0$. No step proves that it is random, secret, or
-/// selected by the chain. Keeping it private until the epoch closes is a
-/// load-balancing policy. A biased or early-revealed choice affects that
-/// builder's buckets.
-///
-/// A seed fixes its own $R_0$. Routing headers carry it unchanged. A merge
-/// requires equal first discriminants on its inputs, and a descent requires
-/// equality between the split and the selection. Reopening an evidence leaf
-/// binds the same $R_0$.
-///
-/// A descent's challenge binds both input headers, their online commitments,
-/// and the staged child bit. The step computes $R = R_0 + \mathsf{depth}$
-/// from the header. It neither hashes nor stages $R$ separately, and the
-/// challenge does not absorb the output header. The seal copies $R_0$;
-/// its free witness is `anchor_final_prev`.
+/// For any field element $R_0$, each value has one
+/// [side](crate::collections::qr#sides) at each $R_0+j$ in the field. Its first
+/// $d$ sides therefore place it in exactly one depth-$d$ [`QrProfile`] class
+/// for that $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
@@ -241,6 +231,10 @@ impl QrSplit {
 
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
+///
+/// Descent checks the [class
+/// identity](crate::collections::qr#class-decomposition), not how the prover
+/// constructs the hint.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -265,6 +259,9 @@ pub struct QrInterpolantCommit(EqAffine);
 
 /// Witness polynomial for the class decomposition quotient $h$ in
 /// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
+///
+/// Like [`QrInterpolantPoly`], this is a hint whose construction is not
+/// checked.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
@@ -289,8 +286,15 @@ pub struct QrQuotientCommit(EqAffine);
 
 /// A QR profile: the number of splits taken and the side taken at each.
 ///
-/// A profile descends at most [`MAX_DEPTH`](Self::MAX_DEPTH) times; within
-/// that bound two paths never share an encoding.
+/// # Injectivity
+///
+/// At `depth` $d\le$ [`MAX_DEPTH`](Self::MAX_DEPTH), `bits` uniquely packs
+/// the path as $\sum_{j<d}b_j2^{d-1-j}<2^d$, with $b_j=1$ for residue.
+/// `depth` distinguishes paths that differ only by leading non-residue zeros.
+///
+/// The native fields accept any `u32` pair, and out-of-bounds pairs represent
+/// no path. In circuits, `descend` extends a path into a path, and
+/// `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct QrProfile {
     /// The number of splits taken.
@@ -341,6 +345,9 @@ impl QrProfile {
 
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
 /// It carries no class and is distinct from a root $x$ of a set polynomial.
+///
+/// See [Sides](crate::collections::qr#sides) for how $r$ and the multiplier
+/// determine the side, including the case $x + R = 0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

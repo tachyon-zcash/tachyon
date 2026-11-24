@@ -1,3 +1,22 @@
+//! # Multiset
+//!
+//! A *set polynomial* encodes a multiset of field elements as the monic
+//! polynomial with those members as roots.
+//!
+//! $$
+//!   S(X) = \prod_{m \in S}{(X - m)}
+//! $$
+//!
+//! The constant one encodes the empty multiset.
+//!
+//! ## Injectivity
+//!
+//! A set polynomial determines its members and their multiplicities because
+//! $\mathbb{F}_p\[X\]$ factors uniquely and each $X - m$ is monic and
+//! irreducible. Multiplying two set polynomials gives the set polynomial of the
+//! multiset sum. Any divisor of a set polynomial is a scalar multiple of a
+//! sub-multiset's set polynomial, and $S(x) = 0$ holds iff $x$ is a member.
+
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
