@@ -58,8 +58,10 @@ impl QrClass {
 }
 
 /// A QR discriminant $R$: a term of the class equation
-/// $r^2 = m \cdot (x + R)$. Discriminants progress by one. A network's builder
-/// chooses a first discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
+/// $r^2 = m \cdot (x + R)$.
+///
+/// Discriminants progress by one. A network's builder chooses a first
+/// discriminant $R_0$ and splits at depth $j$ under $R_0 + j$.
 /// No step proves that $R_0$ is random, secret, or selected by the chain.
 ///
 /// # Injectivity
