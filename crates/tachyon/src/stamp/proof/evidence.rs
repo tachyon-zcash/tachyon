@@ -39,8 +39,8 @@ use crate::{
 
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
-/// A one-leaf tree's root is that leaf's digest. Such a tree comes from
-/// [`EvidenceTreeDescend`], which can also return a larger subtree.
+/// A one-leaf tree's root is that leaf's digest, produced when
+/// [`EvidenceTreeDescend`] reaches a leaf rather than an internal subtree.
 ///
 /// # Injectivity
 ///

@@ -76,11 +76,11 @@ use crate::{
 /// polynomials are [set polynomials](crate::collections::multiset), which no
 /// constraint here enforces.
 ///
-/// Neither `QrIntake` nor [`QrBucket`] records an absorption count. A sealed
-/// bucket's endpoints determine its chain; the intake's assertion does not
-/// establish that. When the chain has zero
-/// absorptions, $P = 1$ and nothing absorbs `epoch`, leaving `epoch` arbitrary
-/// in range until [`QrBucketSeal`] absorbs it.
+/// Neither `QrIntake` nor [`QrBucket`] records an absorption count. Only the
+/// sealed bucket's assertion establishes that its endpoints determine a single
+/// chain. When the chain has zero absorptions, $P = 1$ and nothing absorbs
+/// `epoch`, leaving `epoch` arbitrary in range until [`QrBucketSeal`] absorbs
+/// it.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
@@ -594,15 +594,15 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// Equating `epoch`, `discriminant` and both `profile` wires across the inputs
 /// and matching `left.anchor_end` to `right.anchor_prev` concatenates their
-/// chains into one. Write $P_L$ and $P_R$ for their respective products;
-/// the joined chain has product $P_L \cdot P_R$.
+/// chains of products $P_L$ and $P_R$ into one chain of product $P_L \cdot
+/// P_R$.
 ///
 /// With input contents $C_L, C_R$ and output contents fixed before $\zeta$,
 /// equating the output's opening at $\zeta$ with $C_L(\zeta) \cdot C_R(\zeta)$
 /// sets the output contents to $C_L \cdot C_R$, which divides $P_L \cdot P_R$.
 /// Each root of $P_L \cdot P_R$ in the shared class is a root of $P_L$ or
-/// $P_R$, hence of $C_L$ or $C_R$ by the corresponding intake assertion.
-/// This does not require disjoint roots.
+/// $P_R$ and therefore of $C_L$ or $C_R$ by the corresponding intake assertion,
+/// without requiring disjoint roots.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -912,17 +912,16 @@ impl Step<Pasta> for QrSideSelect {
 ///
 /// Copying `epoch`, anchors and `discriminant` preserves the chain of product
 /// $P$, while `profile.descend` appends $b$ at depth $j$ (discriminant $R$).
-/// The child $q_b$ divides $q_0 q_1$ and hence $P$. Each root of $P$ in the
-/// child's class belongs to the parent's class, so the parent assertion puts
-/// it in $q_0 q_1$. It cannot lie in the sibling $q$, whose roots do not take
-/// side $b$ at $R$, so it lies in $q_b$. The child may retain roots outside its
-/// class.
+/// The child $q_b$ divides $q_0 \cdot q_1$ and thus $P$. Every root of $P$ in
+/// the child's class lies in the parent's class and hence in $q_0 \cdot q_1$ by
+/// the parent assertion. No root of the sibling $q$ takes side $b$ at $R$,
+/// placing the root in $q_b$. The child may retain roots outside its class.
 ///
-/// Holding $q_0(\zeta) - q_1(\zeta)$ nonzero forces $q_0 \neq q_1$, so $b$
-/// is the only bit selecting that child polynomial in this split. Identical
-/// halves of a doubled set fail. Distinct scalar multiples can pass when their
-/// openings differ; at a common root they fail. Distinct constants pass this
-/// check and can pass both descents. Class completeness does not rely on it.
+/// Holding $q_0(\zeta) - q_1(\zeta)$ nonzero forces $q_0 \neq q_1$, so the
+/// selected polynomial identifies its bit within the split and identical halves
+/// of a doubled set fail. Distinct scalar multiples pass this check unless
+/// $\zeta$ is a common root, while distinct constants pass it and can pass both
+/// descents. Class completeness does not rely on it.
 #[derive(Debug)]
 pub struct QrSideDescend;
 

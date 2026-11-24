@@ -114,9 +114,9 @@ impl Header<Fp> for Actions {
 ///
 /// [`FeeFuse`], [`FeeSeed`], [`StampMerge`], [`StampLift`] and [`StampUnmerge`]
 /// output this header. Every verified `Stamp` asserts the same leaf multiset
-/// structure as [`Actions`], extended with single-tachygram fee leaves and
-/// allowing an empty multiset ($A = T = 1$, which [`StampUnmerge`] can
-/// produce), plus a [bridge hash](TachygramSetBridge) `tachygram_set_bridge` of
+/// structure as [`Actions`], extended with optional single-tachygram fee leaves
+/// and allowing an empty multiset ($A = T = 1$, as from [`StampUnmerge`]),
+/// plus a [bridge hash](TachygramSetBridge) `tachygram_set_bridge` of
 /// $T$'s accumulator. Even a nonempty `Stamp` need not contain a fee leaf.
 ///
 /// Each *fee leaf* consists of a prover-known note $(\mathsf{rcm}, \mathsf{pk},
@@ -358,8 +358,8 @@ impl Step<Pasta> for OutputAction {
 ///
 /// - Allocating curve point $\mathsf{ak}$ and unconstrained wire $\mathsf{nk}$
 ///   and equating their payment-key digest with `pk` ties both to the note's
-///   [`NoteSecret`](super::delegation::NoteSecret). The challenge identity does
-///   not require either witness wire to be staged before $\zeta$.
+///   [`NoteSecret`](super::delegation::NoteSecret), and neither witness wire
+///   need be fixed before $\zeta$.
 /// - Computing $\mathsf{rk}$ by multiplying `G_BASE` by $\alpha$'s bits and
 ///   adding $\mathsf{ak}$ introduces [unassigned
 ///   cases](fixed_base#cases-without-an-assignment) for at most five $\alpha$
@@ -788,7 +788,8 @@ impl Step<Pasta> for StampLift {
 /// Opening the span's members polynomial $M$ at the left `anchor` wire and
 /// holding $M(\text{anchor}) \cdot (\text{anchor} - \text{anchor\_start}) = 0$
 /// forces `anchor` to equal `anchor_start` or a root of $M$, extending every
-/// spend leaf's stamp chain to the span's `anchor_end`, the output's `anchor`.
+/// spend leaf's stamp chain along [`AnchorSpan`] to `anchor_end`, the output's
+/// `anchor`.
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -874,7 +875,8 @@ impl Step<Pasta> for ActionLift {
 /// [`cv_feemax`](gadgets::note::Note::cv_feemax) computes
 /// $\mathsf{cv}_\mathsf{feemax}$ from the same `slack` bits, and the note
 /// commitment circuit computes $\mathsf{cm}_\mathsf{chg}$ from `rcm`,
-/// `pk`, `psi` and $m - f$. The step holds that commitment nonzero.
+/// `pk`, `psi` and $m - f$, and the step holds the resulting commitment
+/// nonzero.
 ///
 /// Equating `pk`, `psi`, `rcm`, $m$ and $f$ with staged values fixes $d$ and
 /// $\mathsf{cm}_\mathsf{chg}$ before $\zeta$, because staged values determine
@@ -1054,9 +1056,9 @@ impl Step<Pasta> for FeeFuse {
 /// value wire to zero with constant zero fee makes the note its own change for
 /// $\mathsf{cm}_\mathsf{chg}$, while
 /// [`cv_feemax_zero`](gadgets::note::Note::cv_feemax_zero) computes
-/// $\mathsf{cv}_\mathsf{feemax}$ from the blind bits alone. The circuit holds
-/// `pk`, `psi` and `rcm` equal to their staged values. With value and fee both
-/// zero, this fixes both $d$ and $\mathsf{cm}_\mathsf{chg}$ before $\zeta$.
+/// $\mathsf{cv}_\mathsf{feemax}$ from the blind bits alone. Equating `pk`,
+/// `psi` and `rcm` with staged values while value and fee are zero fixes $d$
+/// and $\mathsf{cm}_\mathsf{chg}$ before $\zeta$.
 ///
 /// Equating the pre-committed action and tachygram sets at $\zeta$ with
 /// $\zeta - d$ and $\zeta - \mathsf{cm}_\mathsf{chg}$

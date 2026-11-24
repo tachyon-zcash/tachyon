@@ -60,9 +60,9 @@ use crate::{
 /// [`QrUnspentInit`](super::qr::QrUnspentInit), [`UnspentLift`] and
 /// [`UnspentFuse`] output this header. Every verified `ArbitraryUnspent`
 /// asserts `epoch_start < epoch_next <= EPOCH_MAX` over the integers
-/// ([`EpochIndex`](gadgets::epoch::EpochIndex)). Its prover knows anchors $b_e$
+/// ([`EpochIndex`](gadgets::epoch::EpochIndex)), prover-known anchors $b_e$
 /// across $e \in \text{epoch\_start}..=\text{epoch\_next}$ from `anchor_start`
-/// to `anchor_next`, and nonzero values $v_e$ across
+/// to `anchor_next`, and prover-known nonzero values $v_e$ across
 /// $e \in \text{epoch\_start}..\text{epoch\_next}$ where each $v_e$ is
 /// *excluded at* $e$ *between* $b_e$ and $b_{e+1}$ and the [`NfSeqPoly`] equals
 /// $E(X) = \prod_{e} F_{e,\ v_e}(X)$ under the
@@ -227,9 +227,8 @@ impl Header<Fp> for NoteUnspent {
 /// Each stamp absorbed into the span contributes its resulting anchor as a root
 /// of the members polynomial. [`StampLift`](super::stamp::StampLift) and
 /// [`ActionLift`](super::stamp::ActionLift) advance anchors across spans.
-/// To advance a spendable, `SpendableLift` takes a [`NoteUnspent`] after
-/// [`UnspentBind`] ties the arbitrary segment's exclusions to that note's
-/// nullifiers.
+/// Spendables advance via [`NoteUnspent`], after [`UnspentBind`] ties an
+/// [`ArbitraryUnspent`]'s exclusions to the note's nullifiers.
 ///
 /// # Injectivity
 ///
@@ -509,13 +508,12 @@ impl Step<Pasta> for AnchorSpanFuse {
 /// # Soundness
 ///
 /// Equating `left.epoch_next` with `right.epoch_start` over the integers and
-/// `left.anchor_next` with `right.anchor_start` joins the half-open epoch
-/// ranges without gap or overlap. The anchor sequences meet at their shared
-/// endpoint, preserving each value's exclusion.
-/// Because all three sequences are committed before $\zeta$ and the circuit
-/// equates the output's opening at $\zeta$ with the product of the inputs'
-/// openings, the output sequence multiplies the inputs to hold one factor per
-/// epoch across `left.epoch_start..right.epoch_next`.
+/// `left.anchor_next` with `right.anchor_start` joins the two epoch ranges and
+/// merges the anchor sequences at their shared boundary, preserving each
+/// value's exclusion. Because all three sequences are committed before $\zeta$
+/// and the circuit equates the output's opening at $\zeta$ with the product of
+/// the inputs' openings, the output sequence multiplies the inputs to hold one
+/// factor per epoch across `left.epoch_start..right.epoch_next`.
 ///
 /// Opens both input sequences and their product once each.
 #[derive(Debug)]
