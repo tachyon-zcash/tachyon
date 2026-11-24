@@ -132,8 +132,6 @@ impl Header<Fp> for Actions {
 /// - $d$ is the [fee digest](poseidon::fee_digest) of
 ///   $\mathsf{cv}_\mathsf{feemax}$, $f$ and $\mathsf{cm}_\mathsf{chg}$.
 ///
-/// Alongside the [`Actions`] determinations, four properties hold.
-///
 /// - Fee leaves, like output leaves, place no constraint on `anchor`.
 /// - Because fee digests use a dedicated tag, $d$ identifies fee leaves and
 ///   determines $\mathsf{cv}_\mathsf{feemax}$, $f$ and
@@ -345,10 +343,9 @@ impl Step<Pasta> for OutputAction {
 ///   and equating their payment-key digest with `pk` ties both to the note's
 ///   [`NoteSecret`](super::delegation::NoteSecret), and neither witness wire
 ///   need be fixed before $\zeta$.
-/// - Computing $\mathsf{rk}$ by multiplying `G_BASE` by $\alpha$'s bits and
-///   adding $\mathsf{ak}$ introduces [unassigned
-///   cases](fixed_base#cases-without-an-assignment) for at most five $\alpha$
-///   values per $\mathsf{ak}$.
+/// - [`mul_and_add`](ragu::primitives::FixedBase::mul_and_add) computes
+///   $\mathsf{rk}=\mathsf{ak}+\[\alpha\]\mathcal{G}$. Its exceptional cases
+///   exclude at most five 254-bit $\alpha$ values per $\mathsf{ak}$.
 /// - Copying the input header's `anchor` forms a zero-absorption stamp chain.
 #[derive(Debug)]
 pub struct SpendAction;
@@ -575,14 +572,11 @@ impl Step<Pasta> for StampMerge {
 ///
 /// # Soundness
 ///
-/// With all six polynomials fixed before $\zeta$, equating each output set's
-/// opening at $\zeta$ with the product of the two inputs' openings
-/// ([checks at the challenge](super#checks-at-the-challenge)) sets each output
-/// polynomial to the product of the inputs', forming the multiset-sum
-/// [set polynomial](crate::collections::multiset) over both inputs' leaves.
-///
-/// Equating both `anchor` wires and outputting the left one terminates every
-/// spend leaf's stamp chain at the output `anchor`.
+/// All six polynomials precede $\zeta$. Checking each output against the
+/// product of its inputs there adds the
+/// [multisets](crate::collections::multiset) with multiplicity. Matching and
+/// copying the input anchors preserves the endpoint of every spend leaf's stamp
+/// chain.
 #[derive(Debug)]
 pub struct ActionMerge;
 
@@ -765,16 +759,10 @@ impl Step<Pasta> for StampLift {
 ///
 /// # Soundness
 ///
-/// With all four action and tachygram polynomials fixed before $\zeta$,
-/// equating each output set's opening at $\zeta$ with the left input's
-/// ([checks at the challenge](super#checks-at-the-challenge)) preserves the
-/// left input's polynomials and leaves.
-///
-/// Opening the span's members polynomial $M$ at the left `anchor` wire and
-/// holding $M(\text{anchor}) \cdot (\text{anchor} - \text{anchor\_start}) = 0$
-/// forces `anchor` to equal `anchor_start` or a root of $M$, extending every
-/// spend leaf's stamp chain along [`AnchorSpan`] to `anchor_end`, the output's
-/// `anchor`.
+/// All four set polynomials precede $\zeta$; matching both output openings
+/// to the left input's preserves its leaves. For the left anchor $a$ and
+/// span start $s$, $M(a)(a-s)=0$ puts $a$ at the start or a member of the
+/// [`AnchorSpan`]. Each spend leaf's chain thus extends to `anchor_end`.
 #[derive(Debug)]
 pub struct ActionLift;
 
@@ -854,27 +842,18 @@ impl Step<Pasta> for ActionLift {
 ///
 /// # Soundness
 ///
-/// On its own wires, [`from_slack`](gadgets::value::Positive::from_slack)
-/// bounds $m$ to `0..=MAX_MONEY`, [`split`](gadgets::value::Positive::split)
-/// bounds $f$ and $m - f$ to `0..=m`,
-/// [`cv_feemax`](gadgets::note::Note::cv_feemax) computes
-/// $\mathsf{cv}_\mathsf{feemax}$ from the same `slack` bits, and the note
-/// commitment circuit computes $\mathsf{cm}_\mathsf{chg}$ from `rcm`,
-/// `pk`, `psi` and $m - f$, and the step holds the resulting commitment
-/// nonzero.
+/// [`from_slack`](gadgets::value::Positive::from_slack) bounds the maximum
+/// $m$ by `MAX_MONEY`; [`split`](gadgets::value::Positive::split) bounds both
+/// fee $f$ and change $m-f$ to `0..=m`. The step stages $m,f$ and the note's
+/// `pk`, `psi`, `rcm`. These fix the 51-bit encodings of `MAX_MONEY - m`
+/// and $f$, and the unique 254-bit decomposition of the derived blind.
+/// [`cv_feemax`](gadgets::note::Note::cv_feemax) uses the same slack bits;
+/// the nonzero change commitment uses the same note fields with value $m-f$.
+/// Thus both the fee digest $d$ and change commitment precede $\zeta$.
 ///
-/// Equating `pk`, `psi`, `rcm`, $m$ and $f$ with staged values fixes $d$ and
-/// $\mathsf{cm}_\mathsf{chg}$ before $\zeta$, because staged values determine
-/// every intermediate bit string. `slack` is the unique 51-bit packing of
-/// `MAX_MONEY - m`, `split` allocates the unique 51-bit packing of $f$ with
-/// change $m - f$, and the blind bits form the unique 254-bit decomposition of
-/// the blind digest of `(pk, psi, rcm)`.
-///
-/// With all four polynomials fixed before $\zeta$, equating each output set's
-/// opening at $\zeta$ with the left opening times $\zeta - d$ or $\zeta -
-/// \mathsf{cm}_\mathsf{chg}$
-/// ([checks at the challenge](super#checks-at-the-challenge)) appends the fee
-/// leaf while copying `anchor` from the left input.
+/// With all four polynomials fixed, the openings at $\zeta$ check each output
+/// against its input times $\zeta-d$ or $\zeta-\mathsf{cm}_\mathsf{chg}$.
+/// This appends one fee leaf at the input anchor.
 ///
 /// # Caller contract
 ///

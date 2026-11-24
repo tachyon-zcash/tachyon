@@ -17,12 +17,11 @@
 //! multiset sum. Any divisor of a set polynomial is a scalar multiple of a
 //! sub-multiset's set polynomial, and $S(x) = 0$ holds iff $x$ is a member.
 //!
-//! No constraint forces a slot's polynomial to split into linear factors. A
-//! step proves claims about a slot polynomial's roots and factors, and those
-//! claims describe a multiset only after something establishes a set
-//! polynomial. Two mechanisms do so. A step checks a challenge identity against
-//! in-circuit factors built from values fixed before the challenge, or a
-//! verifier recomputes the accumulator from published members.
+//! A slot alone need not hold a product of monic linear factors. Steps can
+//! establish that product by checking factors fixed before the challenge;
+//! [`AnchorSpanSeed`](crate::stamp::proof::pool::AnchorSpanSeed) gives the
+//! separate argument for its unfixed root. A verifier can also recompute the
+//! accumulator from published members.
 
 extern crate alloc;
 

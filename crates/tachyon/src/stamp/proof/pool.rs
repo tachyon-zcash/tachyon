@@ -67,13 +67,11 @@ use crate::{
 /// every bucket sharing `(e, b, b')`, and $b'$ determines $e + 1$ and the
 /// chain's end.
 ///
-/// Each $v_e$ is nonzero. Since [`UnspentBind`] equates it with the note's
-/// nullifier, a note with a zero nullifier at epoch $e$ has no [`NoteUnspent`]
-/// across $e$ and cannot lift past it.
+/// [`UnspentBind`] matches each nonzero $v_e$ to the note's nullifier. A zero
+/// nullifier at $e$ therefore prevents a [`NoteUnspent`] or lift across $e$.
 ///
-/// Because $E$ holds one factor per epoch in range within the index bound, $E$
-/// determines every $(e, v_e)$ pair, while `anchor_next` from the final bucket
-/// determines `epoch_next` and that bucket's chain end.
+/// With one factor per bounded epoch, $E$ determines every $(e,v_e)$ pair.
+/// The final bucket's boundary digest fixes `epoch_next` and its chain end.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -211,11 +209,9 @@ impl Header<Fp> for NoteUnspent {
 
 /// An anchor path with a commitment to the anchors inside it.
 ///
-/// Each stamp absorbed into the span contributes its resulting anchor as a root
-/// of the members polynomial. [`StampLift`](super::stamp::StampLift) and
-/// [`ActionLift`](super::stamp::ActionLift) advance anchors across spans.
-/// Spendables advance via [`NoteUnspent`], after [`UnspentBind`] ties an
-/// [`ArbitraryUnspent`]'s exclusions to the note's nullifiers.
+/// [`StampLift`](super::stamp::StampLift) and
+/// [`ActionLift`](super::stamp::ActionLift) advance across spans. Spendables
+/// instead require [`NoteUnspent`] exclusions bound to their nullifiers.
 ///
 /// # Injectivity
 ///
@@ -278,9 +274,6 @@ impl Header<Fp> for AnchorSpan {
 }
 
 /// Start an [`AnchorSpan`] from one stamp.
-///
-/// The step absorbs the stamp's bridge hash into `anchor_start`.
-/// The span's only member is the resulting anchor.
 ///
 /// # Soundness
 ///
@@ -411,12 +404,10 @@ impl Step<Pasta> for AnchorSpanSeed {
 ///
 /// # Soundness
 ///
-/// Equating `left.anchor_end` with `right.anchor_start` joins the two chains
-/// into one from `left.anchor_start` to `right.anchor_end`. Because all three
-/// member polynomials are committed before $\zeta$ and the circuit equates the
-/// output's opening at $\zeta$ with the product of the inputs' openings, the
-/// output polynomial multiplies the input polynomials to hold one factor per
-/// anchor after `left.anchor_start`. The output's second slot goes unopened.
+/// The shared endpoint joins the chains. All three member polynomials precede
+/// $\zeta$, so checking their product there preserves one factor per absorption
+/// from `left.anchor_start` to `right.anchor_end`. The second slot goes
+/// unopened.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
@@ -494,15 +485,11 @@ impl Step<Pasta> for AnchorSpanFuse {
 ///
 /// # Soundness
 ///
-/// Equating `left.epoch_next` with `right.epoch_start` over the integers and
-/// `left.anchor_next` with `right.anchor_start` joins the two epoch ranges and
-/// merges the anchor sequences at their shared boundary, preserving each
-/// value's exclusion. Because all three sequences are committed before $\zeta$
-/// and the circuit equates the output's opening at $\zeta$ with the product of
-/// the inputs' openings, the output sequence multiplies the inputs to hold one
-/// factor per epoch across `left.epoch_start..right.epoch_next`.
-///
-/// Opens both input sequences and their product once each.
+/// Matching `left.(epoch_next, anchor_next)` to `right.(epoch_start,
+/// anchor_start)` joins the integer epoch ranges and preserves each exclusion.
+/// Both inputs and their product are committed before $\zeta$. Checking the
+/// product with one opening each preserves one factor per epoch across
+/// `left.epoch_start..right.epoch_next`.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -594,23 +581,16 @@ impl Step<Pasta> for UnspentFuse {
 ///
 /// # Soundness
 ///
-/// Equating `(epoch_next, anchor_next)` on the segment with `(epoch,
-/// anchor_start)` on the bucket, outputting the range-checked successor of
-/// `bucket.epoch` and `bucket.anchor_next`, and holding the prover-chosen
-/// `value` wire nonzero and equal to the staged value fixes `value` before
-/// $\zeta$. [`enforce_sides_of`](gadgets::qr::QrProfile::enforce_sides_of)
-/// places `value` in the class of `bucket.profile` at `bucket.discriminant`,
-/// and holding the bucket contents' opening at `value` nonzero establishes its
-/// [exclusion](ArbitraryUnspent#injectivity) across the bucket, extending the
-/// segment by one epoch.
+/// The segment ends at the bucket's `(epoch, anchor_start)` and advances to
+/// its range-checked successor epoch and `anchor_next`.
+/// [`enforce_sides_of`](gadgets::qr::QrProfile::enforce_sides_of) puts the
+/// nonzero witnessed value $v$ in the bucket's class at its discriminant;
+/// a nonzero contents opening there establishes
+/// [exclusion](ArbitraryUnspent#injectivity).
 ///
-/// With both sequences committed before $\zeta$, $e = \text{bucket.epoch}$ in
-/// the input header, and $v = \text{value}$ staged, equating the output
-/// sequence's opening at $\zeta$ with the input's opening times $F_{e,\
-/// v}(\zeta)$ multiplies that factor onto the input sequence across the
-/// extended epoch range.
-///
-/// Opens three committed polynomials once each.
+/// The input header fixes $e$ and staging fixes $v$. Both sequences precede
+/// $\zeta$, so checking $E'(\zeta)=E(\zeta)F_{e,v}(\zeta)$ appends precisely
+/// that epoch's factor. Each of the three polynomials opens once.
 #[derive(Debug)]
 pub struct UnspentLift;
 

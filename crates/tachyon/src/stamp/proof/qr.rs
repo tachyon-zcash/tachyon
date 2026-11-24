@@ -55,11 +55,9 @@ use crate::{
 /// divides $P$ and holds every root of $P$ in the
 /// [class](QrDiscriminant#injectivity) of `profile` at `discriminant`.
 ///
-/// Standing for $P$'s roots in that class, $C$ contains all of them, adds no
-/// root outside $P$, and may retain roots of $P$ outside the class. Roots of
-/// $P$ represent tachygrams once something establishes that the chain's
-/// polynomials are [set polynomials](crate::collections::multiset), which no
-/// constraint here enforces.
+/// Divisibility rules out roots outside $P$, but $C$ may retain roots outside
+/// the class. Roots represent tachygrams only when the chain holds
+/// [set polynomials](crate::collections::multiset); no intake checks this.
 ///
 /// Neither `QrIntake` nor [`QrBucket`] records an absorption count. Only the
 /// sealed bucket's assertion establishes that its endpoints determine a single
@@ -778,17 +776,14 @@ impl Step<Pasta> for QrIntakeSplit {
 
 /// Fix a split's hint commitments and check its exceptional-value assignment.
 ///
-/// The non-residue set polynomial $q_0$ opens once at $-R$; the two hint
-/// polynomials supply output commitments. [`QrSideDescend`] checks their class
-/// identity and rejects a split whose two sides are the same set.
+/// [`QrSideDescend`] checks the hints' class identity and requires unequal
+/// side openings, which need not mean different roots.
 ///
 /// # Soundness
 ///
-/// Opening the input's $q_0$ at $-(R_0 + j)$ (computed from the input header's
-/// `discriminant` and `depth`) and holding the evaluation nonzero, while
-/// copying all eight header elements, establishes [`QrSideSelection`] on that
-/// [`QrIntakeSides`]. Unconstrained openings of both output slots at $\zeta$
-/// bind them to the prover's committed hints.
+/// The step copies all eight split fields and checks $q_0(-(R_0+j))\ne0$
+/// using the input's `discriminant` and `depth`. Unconstrained openings at
+/// $\zeta$ bind both output slots to the committed hints.
 #[derive(Debug)]
 pub struct QrSideSelect;
 

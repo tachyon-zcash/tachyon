@@ -16,11 +16,10 @@
 //!
 //! # Soundness
 //!
-//! Digests, encodings and gadgets state what their outputs determine. Each
-//! header's **Injectivity** section states what its verified PCD asserts about
-//! its fields, polynomials and named verified PCDs, not the published chain.
-//! Each step's **Soundness** section gives the constraints establishing its
-//! output assertion. These arguments cite the lower-level items they rely on.
+//! Each header's **Injectivity** section states what its verified PCD asserts
+//! about its fields, polynomials and input history, independently of the
+//! published chain. Each step's **Soundness** section establishes its output
+//! assertion from its constraints.
 //!
 //! A value *determines* a thing when two distinct things sharing that value
 //! yield a Poseidon collision or a discrete-log relation that the assumptions
@@ -29,19 +28,16 @@
 //! ## Assumptions
 //!
 //! - **Recursion.** Ragu is an argument of knowledge. Parties jointly producing
-//!   a verified PCD can also produce the step tree that built it, with every
-//!   step's wires satisfying its circuit. In a header's assertion, "its prover
-//!   knows" means that the tree contains the named value, chain or verified
-//!   PCD, known to the party that ran that step. Extending a received PCD
-//!   credits the party only with the steps it ran and nothing beneath them
-//!   ([full proofs](self#full-proofs-between-parties)). Every step input is a
-//!   verified PCD of the declared header. Headers reach steps and verifiers as
+//!   a verified PCD know its step tree and satisfying wires. “Its prover knows”
+//!   attributes a value, chain or PCD to the party running that step; extending
+//!   a received PCD implies no knowledge of its witnesses ([full stamp
+//!   proofs](self#full-proofs-between-parties)). Every step input is a verified
+//!   PCD of the declared header. Headers reach steps and verifiers as
 //!   [`HEADER_SIZE`] elements ending in a unique suffix. Opening a slot yields
 //!   the evaluation of the polynomial committed when producing that slot.
 //!   Unopened output slots hold the constant one, and no registered step can
-//!   open a `Padding` slot. Ragu constrains a step's two bridge hash wires to a
-//!   bridge hash of the accumulator in the step's last output slot without
-//!   step-circuit constraints.
+//!   open a `Padding` slot. Ragu binds the two bridge hash wires to a bridge
+//!   hash of the last output slot's accumulator outside the step circuit.
 //!
 //!   Every tree consists of steps registered in [`new_application`], Ragu's
 //!   unit-header bootstrap step, and Ragu's rerandomization step, which
@@ -87,13 +83,11 @@
 //! of fixed inputs are fixed too. Other wires, including bridge hash and output
 //! header fields, need not be fixed before $\zeta$.
 //!
-//! Equating two expressions in openings at $\zeta$ compares two polynomials at
-//! a random point. If the polynomials are distinct and fixed before $\zeta$,
-//! the check passes only at a root of their nonzero difference. A product of
+//! Two distinct polynomials fixed before $\zeta$ agree there only at a root
+//! of their difference. A product of
 //! two slots has degree below $2^{14}$, so one attempt at a false identity of
 //! this degree passes with probability below $2^{14}/p$. These bounds add
-//! across tree steps and prover attempts. Each step explains why its identity
-//! inputs are fixed.
+//! across tree steps and prover attempts.
 //!
 //! Opening at any other point evaluates the committed polynomial there, so a
 //! zero opening proves a root.

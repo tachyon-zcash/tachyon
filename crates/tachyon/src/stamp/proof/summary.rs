@@ -128,14 +128,10 @@ impl Header<Fp> for Summary {
 ///
 /// # Soundness
 ///
-/// The step [adds an absorption](Anchor#chains-in-a-step) of prover-chosen
-/// `anchor_prev` and `epoch` with the pre-committed polynomial in
-/// [`Summary::LAST_STAMP`]. Equating both pre-committed output slots at $\zeta$
-/// shows they hold the same polynomial. Requiring its opening to differ from
-/// one rules out the constant one, not other nonzero constants.
-///
-/// Opens [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] once each at
-/// $\zeta$.
+/// The step [absorbs](Anchor#chains-in-a-step) [`Summary::LAST_STAMP`] into
+/// prover-chosen `anchor_prev` at `epoch`. Both output slots precede $\zeta$;
+/// matching their openings there sets [`Summary::ACCUMULATED`] to that stamp.
+/// Requiring the opening to differ from one permits other nonzero constants.
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -235,16 +231,12 @@ impl Step<Pasta> for SummarySeed {
 ///
 /// # Soundness
 ///
-/// Copying `epoch` and `anchor_prev` while ignoring the input's
-/// [`Summary::LAST_STAMP`], the step
-/// [adds an absorption](Anchor#chains-in-a-step) of the input's `anchor_end`
-/// and `epoch` with the output's [`Summary::LAST_STAMP`] polynomial $P$,
-/// extending the chain in `epoch`.
-///
-/// With the input's [`Summary::ACCUMULATED`] $A$ fixed in the input PCD and
-/// both output slots committed before $\zeta$, equating the output's
-/// [`Summary::ACCUMULATED`] at $\zeta$ with $A(\zeta) \cdot P(\zeta)$ sets it
-/// to $A \cdot P$, and holding $P(\zeta) \neq 1$ rules out the constant one.
+/// The step keeps `epoch` and `anchor_prev` and
+/// [absorbs](Anchor#chains-in-a-step) the new stamp $P$ into `anchor_end`. Only
+/// the accumulated product $A$ is read from the input slots. It and both output
+/// polynomials precede $\zeta$, so checking $A'(\zeta)=A(\zeta)P(\zeta)$
+/// extends the product by $P$. Requiring $P(\zeta)\ne1$ rules out the constant
+/// one.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 

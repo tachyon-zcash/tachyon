@@ -22,11 +22,8 @@ pub struct NoteMasterKey<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr, F = Fp>> NoteMasterKey<'dr, D> {
     /// The nullifier for `epoch`: entry $b_0 + 2 b_1$ of the
-    /// `PoseidonFp::RATE`-element group starting at `epoch` with its two low
-    /// bits $b_0, b_1$ cleared.
-    ///
-    /// Returns this key's one nullifier at `epoch` by selecting the group and
-    /// entry that [`nullifier_group`](poseidon::nullifier_group) assigns.
+    /// [group](poseidon::nullifier_group) of `PoseidonFp::RATE` outputs
+    /// starting at `epoch` with its two low bits $b_0, b_1$ cleared.
     pub(crate) fn derive_nullifier(
         &self,
         dr: &mut D,

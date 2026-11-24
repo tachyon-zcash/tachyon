@@ -121,9 +121,7 @@ impl Header<Fp> for EvidenceTree {
 
 /// Two sibling subtree roots of one network: half of a node.
 ///
-/// Each [`Step`] takes at most two predecessor proofs. Two pairs of ordered
-/// children under the same network fields supply one
-/// [`EVIDENCE_TREE_ARITY`]-child node hash.
+/// A [`Step`] takes at most two inputs, so one four-way node needs two pairs.
 ///
 /// # Injectivity
 ///
@@ -215,10 +213,8 @@ impl Header<Fp> for EvidenceTreePair {
 ///
 /// # Soundness
 ///
-/// Equating both inputs' network fields and copying the left's, the circuit
-/// hashes each input's eight header elements in header order via the leaf
-/// digest circuit to produce `first` and `second`, making each valid under the
-/// first rule of [`EvidenceTree`].
+/// The circuit equates and copies the network fields. Hashing each bucket's
+/// eight elements in header order gives two valid leaves for that network.
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
@@ -314,9 +310,8 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 ///
 /// # Soundness
 ///
-/// Equating both inputs' network fields and copying the left's makes both input
-/// roots valid for the output's network fields, and the circuit copies them as
-/// `first` and `second`.
+/// Matching and copying the network fields preserves the validity of both
+/// roots, copied as `first` and `second`.
 #[derive(Debug)]
 pub struct EvidenceTreePairFuse;
 
@@ -391,17 +386,13 @@ impl Step<Pasta> for EvidenceTreePairFuse {
 
 /// Hash two [`EvidenceTreePair`]s of one network into a node.
 ///
-/// The children are ordered `(left.0, left.1, right.0, right.1)`, which is the
-/// order [`EvidenceTreeDescend`] witnesses them in.
-///
 /// One permutation (the node).
 ///
 /// # Soundness
 ///
-/// Equating both inputs' network fields and copying the left's makes all four
-/// input elements valid for the output's network fields, and hashing them in
-/// order via the node digest circuit makes `root` valid under the second rule
-/// of [`EvidenceTree`].
+/// Matching and copying the network fields gives four valid roots for one
+/// network. Their node digest in `(left.0, left.1, right.0, right.1)` order
+/// is valid by [`EvidenceTree`]'s node rule and matches descent order.
 #[derive(Debug)]
 pub struct EvidenceTreeFuse;
 
@@ -480,12 +471,10 @@ impl Step<Pasta> for EvidenceTreeFuse {
     }
 }
 
-/// Raise a [`EvidenceTree`] one level by making its root the only child of a
-/// new root.
+/// Raise an [`EvidenceTree`] one level.
 ///
 /// [`EvidenceTreeDescend`] walks [`EvidenceTreeDescend::LEVELS`] levels at a
-/// time. A builder caps a tree at most `LEVELS - 1` times, until its depth is a
-/// multiple of that.
+/// time. At most `LEVELS - 1` caps make the depth a multiple of `LEVELS`.
 ///
 /// One permutation (the node).
 ///
@@ -558,24 +547,15 @@ impl Step<Pasta> for EvidenceTreeCap {
 /// Walk [`LEVELS`](Self::LEVELS) levels of a Merkle path, emitting the subtree
 /// the path reaches.
 ///
-/// Each level is a node's children, ordered as the node hashes them, and two
-/// side bits, outer first: the outer bit selects a half and the inner bit
-/// selects within it.
-///
 /// Four permutations (one node per level).
 ///
 /// # Soundness
 ///
-/// Starting at the input's `root`, each level allocates four elements, equates
-/// their node digest with the current element, and selects the next element via
-/// two freely chosen Boolean wires from `Step::Witness`.
-///
-/// Because a valid element matching a node digest cannot also be known as a
-/// leaf digest, the second rule of [`EvidenceTree`] applies and the node digest
-/// determines all four absorbed elements as valid regardless of which one the
-/// booleans select. Copying the network fields and outputting the final
-/// selection yields a valid `EvidenceTree`. No step depends on which path a
-/// descent takes.
+/// At each level, four witnessed roots must hash to the current root. A valid
+/// node digest cannot also open as a leaf and determines four valid roots for
+/// the same network. Either choice of half and either position within it
+/// therefore preserve validity. The prover chooses both bits freely; the
+/// output keeps the network fields, and no step depends on the path taken.
 #[derive(Debug)]
 pub struct EvidenceTreeDescend;
 

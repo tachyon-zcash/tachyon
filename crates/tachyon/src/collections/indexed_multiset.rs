@@ -14,9 +14,8 @@
 //!
 //! where $c = 2$ is selected because it is the smallest cubic non-residue.
 //!
-//! $Y^3 - c$ has no root, so this cubic is irreducible. The substitution
-//! $Y = m + (i+1)X$ sends $Y^3 - c$ to $F_{i,m}$. Because $i + 1 \neq 0$, the
-//! substitution is invertible and $F_{i,m}$ is irreducible.
+//! The rootless cubic $Y^3-c$ remains irreducible under the invertible
+//! substitution $Y=m+(i+1)X$, since $i+1\ne0$.
 //!
 //! ## Product composition
 //!
@@ -26,32 +25,12 @@
 //!   S(X) = \prod_{(i,m) \in S}{F_{i,m}(X)}
 //! $$
 //!
-//! Combined indexed multisets will maintain input multiplicity. The inputs
-//! may be contiguous, disjoint, or overlapping.
+//! Multiplication adds multiplicities even when the inputs overlap.
 //!
 //! ## Quotient decomposition
 //!
-//! Since a union is a product of irreducible factors, we may demonstrate
-//! correct division to confirm membership.
-//!
-//! $$
-//!   \begin{aligned}
-//!
-//!   Q \uplus R &= S
-//!       &\quad \iff &\quad
-//!   &R &= S \setminus Q
-//!
-//!   \\ \\
-//!
-//!   Q(X) \cdot R(X) &= S(X)
-//!       &\quad \iff &\quad
-//!   &R(X) &= \frac{S(X)}{Q(X)}
-//!
-//!   \end{aligned}
-//! $$
-//!
-//! Sequences $Q$ and $R$ combine to produce $S$, or, subsequence $R$ is
-//! extracted from $S$ by complement $Q$. Select a challenge and evaluate.
+//! To show that $R$ is a sub-multiset of $S$, commit its complement $Q$ and
+//! check $Q(X)R(X)=S(X)$ at the challenge.
 //!
 //! ## Injectivity
 //!
@@ -60,35 +39,15 @@
 //! a sub-multiset's encoding. The bound exceeds $2^{126}$. Every step indexes
 //! by an epoch, which is at most `EPOCH_MAX`.
 //!
-//! Unique factorization in $\mathbb{F}_p\[X\]$ means $S$ determines its
-//! irreducible factors up to scalars. Scalar-multiple encodings are equal. If
-//! $F_{i_1,m_1} = \lambda F_{i_2,m_2}$ then
+//! Unique factorization fixes each irreducible factor up to a scalar. Write
+//! $L_k=m_k+a_kX$, with $a_k=i_k+1$. If $L_1^3-c=\lambda(L_2^3-c)$, then
+//! differentiation gives $a_1L_1^2=\lambda a_2L_2^2$. Thus the linear terms
+//! have the same root. At that root $-c=-\lambda c$, so $\lambda=1$ and
+//! $L_1/L_2$ is a cube root of unity.
 //!
-//! $$
-//!   (m_1 + (i_1+1)X)^3 - \lambda \cdot (m_2 + (i_2+1)X)^3
-//! $$
-//!
-//! equals $c \cdot (1 - \lambda)$ and is constant. Its derivative vanishes, so
-//! the two linear terms are proportional. A multiple of a cube is constant only
-//! when zero, so $\lambda = 1$ and the two cubes are equal.
-//!
-//! Single-member encodings collide when the ratio of their linear terms is a
-//! cube root of unity.
-//!
-//! Precisely, if
-//!
-//! $$
-//!   \frac{m_1 + (i_1+1)X}{m_2 + (i_2+1)X} \in \{1, \omega, \omega^2\}
-//! $$
-//!
-//! then $(i_1, m_1)$ cannot be distinguished from $(i_2, m_2)$ in an
-//! indexed multiset.
-//!
-//! Specifying $i_\mathsf{max} + 1$ below $\lfloor\sqrt{p/3}\rfloor$ prevents
-//! collisions. A ratio $\omega \neq 1$ satisfies $\omega^2 + \omega + 1 = 0$.
-//! Setting $a_k = i_k + 1$ and $a_1 = \omega a_2$ gives $a_1^2 + a_1 a_2 +
-//! a_2^2 \equiv 0 \pmod p$. For integers $1 \leq a_k < \sqrt{p/3}$, the left
-//! side is positive and below $p$.
+//! A nontrivial ratio $\omega=a_1/a_2$ satisfies $\omega^2+\omega+1=0$,
+//! so $a_1^2+a_1a_2+a_2^2\equiv0\pmod p$. But $1\le a_k<\sqrt{p/3}$ makes
+//! that sum positive and below $p$. Hence $L_1=L_2$ and both tuples agree.
 
 #![allow(clippy::min_ident_chars, reason = "just for fun")]
 
