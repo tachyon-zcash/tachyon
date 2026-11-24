@@ -704,7 +704,8 @@ fn fee_seed_binds_its_singleton_and_header() {
         ((action_commit, other_anchor), false),
     ] {
         assert_eq!(proof.verify(rng, app, header).unwrap(), expected);
-        assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
+        // A low-level compression of the working seed is not a finalized wallet proof.
+        assert!(!compressed.verify(rng, app, header).unwrap());
     }
     let tachygram_commit = TachygramSetPoly::from_iter([valid.0.commitment().into()]).commit();
     for (accumulator, expected) in [

@@ -1,6 +1,10 @@
 //! Working transaction header and stamp-producing/transforming steps.
 
+#[cfg(test)]
+mod tests;
+
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
@@ -72,6 +76,7 @@ impl Header<Fp> for Actions {
 }
 
 /// A multiset of valid action and fee leaves at `anchor`.
+/// This is a working stamp statement, not a signed ledger transaction.
 ///
 /// Every spend has proved history reaching that anchor. The last slot holds the
 /// monic product of the leaves' digest factors, with multiplicity.
@@ -116,15 +121,11 @@ impl Header<Fp> for Transaction {
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
-        #[expect(
-            clippy::expect_used,
-            reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
-        )]
-        let action_set_bridge = witness.as_ref().map(|fields| {
-            EpAffine::from(fields.0)
+        let action_set_bridge = D::try_just(|| {
+            EpAffine::from(witness.as_ref().take().0)
                 .coordinates()
-                .expect("bridge hash is not the identity")
-        });
+                .ok_or_else(|| ragu::Error::InvalidWitness("identity action bridge".into()))
+        })?;
         Ok(TransactionOutput {
             anchor: Element::alloc(
                 dr,
@@ -144,6 +145,113 @@ impl Header<Fp> for Transaction {
                 )?,
             ],
         })
+    }
+}
+
+/// One working [`Transaction`] at the stated anchor has this action-set
+/// binding.
+///
+/// The encoded fields are the reference and the portable point's `x,y`.
+/// A point has no intrinsic set tag: its position under suffix 17 and
+/// [`TransactionDehydrate`]'s copy from the certified working field identify
+/// the action/fee accumulator. Its only ordinary issuer also pins the bridge of
+/// **its own last padding slot** to the canonical wallet-rank value. This
+/// establishes wallet origin, not canonical encoding of the separate action
+/// bridge. Rerandomization preserves the statement; an aggregator import
+/// must authenticate this same wallet statement, not issue a local one.
+/// Ordinary dehydration leaves two padding slots; neither supplies the action
+/// binding. The set may be empty after division. The header does not
+/// certify a trailer or a signed body.
+#[derive(Debug)]
+pub struct PublicTransaction;
+
+impl Header<Fp> for PublicTransaction {
+    type Data = (ActionSetBridge, Anchor);
+    type OnlinePolyCommit = (Padding, Padding);
+    type Output = <Transaction as Header<Fp>>::Output;
+
+    const SUFFIX: Suffix = Suffix::new(17);
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> ragu::Result<Bound<'dr, D, Self::Output>> {
+        Transaction::encode(dr, allocator, witness)
+    }
+}
+
+/// Dehydrates an authenticated working [`Transaction`] into a
+/// [`PublicTransaction`].
+///
+/// Every working writer binds its last action slot to the point it emits.
+/// At wallet rank the local and portable bases coincide, so copying the
+/// anchor and both coordinate wires exports that same binding. No output is
+/// queried: Ragu holds both output polynomials to one at its challenge.
+/// Independently, both coordinates of the last output oracle must equal
+/// the fixed wallet bridge of the commitment to one. The aggregator mask
+/// excludes the wallet coordinate degrees of this canonical point: a stage
+/// in that basis cannot open it without violating commitment binding. No
+/// assumption that arbitrary bridge stages are canonical is needed.
+#[derive(Debug)]
+pub struct TransactionDehydrate;
+
+impl TransactionDehydrate {
+    fn enforce_wallet_padding<'dr, D: Driver<'dr, F = Fp>>(
+        dr: &mut D,
+        x: &Element<'dr, D>,
+        y: &Element<'dr, D>,
+    ) -> ragu::Result<()> {
+        // Canonical little-endian x,y of h13(C([1])) under the baked setup.
+        // These coefficients never depend on the enclosing rank or a witness.
+        const K_W: [[u8; 32]; 2] = [
+            *b"\xa3\x5e\x57\x0c\x9a\xe1\xe5\xe9\x80\xc5\xb5\xff\x16\xa8\xd4\xa0\x8b\x47\x73\x32\x5a\xaf\xc7\x94\x18\x90\xf6\xc8\xd1\x1c\xdc\x30",
+            *b"\xb0\x19\x9c\x1d\x8d\xdb\x33\x44\xe3\xfb\x9a\xb4\xce\xd5\xa3\xc5\xb2\x93\xc2\x98\x23\x62\x51\xdd\xa5\xda\x86\x70\xec\xc1\xde\x09",
+        ];
+        for (coordinate, bytes) in [x, y].into_iter().zip(K_W) {
+            let expected = Fp::from_bytes(bytes).ok_or_else(|| {
+                ragu::Error::Initialization("invalid wallet padding constant".into())
+            })?;
+            let fixed = Element::constant(dr, expected);
+            coordinate.enforce_equal(dr, &fixed)?;
+        }
+        Ok(())
+    }
+}
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionDehydrate {
+    type Aux<'source> = ();
+    type Left = Transaction;
+    type Output = PublicTransaction;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(39);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+        _: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, ()>,
+    ) -> ragu::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        Self::enforce_wallet_padding(dr, oracles.bridge_hash().x(), oracles.bridge_hash().y())?;
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::new(dr, &mut (), right)?;
+        let output = Encoded::from_gadget(left_encoded.as_gadget().clone());
+        Ok(((left_encoded, right_encoded, output), left, D::unit()))
     }
 }
 

@@ -38,11 +38,31 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ## Aggregation Process
 
+### Finalize a wallet stamp
+
+At step 39, `TransactionDehydrate` copies the reference anchor and both coordinates
+of a working `Transaction`'s certified action-set bridge into a `PublicTransaction`.
+The wallet rerandomizes the full padded proof with fresh randomness and a shared
+verified bootstrap before compressing it. Neither published slot carries an action or tachygram
+polynomial. The step checks its own last-slot padding bridge against the fixed
+wallet-rank bridge of the commitment to one. This check establishes the origin
+of the public proof; the action bridge comes from its input. Dehydration does not encrypt
+the header.
+
+The compressed proof verifier requires both published commitments to equal
+the commitment to one, then verifies `PublicTransaction` against the expected
+action accumulator and reference. An empty quotient is a possible proof statement.
+
+Bundle coverage derives the action and fee digests from the supplied bodies
+and checks the trailer's tachygram commitment against the pairs and fee
+changes. Each covered bundle contributes a fee digest and a change tachygram.
+Signature verification uses each transaction's own sighash.
+
 ### Merge to produce Aggregate
 
 The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. This crate registers wallet-rank proofs; it does not yet implement an aggregator application that can import a compressed stamp.
 
-In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
+`Plan::prove` returns the full working `Transaction` used for lifting, merging and unmerging. At publication the wallet calls `ProofStamp::finalize` once: it dehydrates, rerandomizes, and compresses. The resulting `PublicTransaction` uses the existing compressed stamp type and wire format. Compressing a working `Transaction` directly with Ragu still leaves the action commitment in its last slot; that proof is not accepted as a wallet publication.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -206,7 +226,7 @@ Moving an aggregate to another host is `merge` then `unmerge`.
 The new host absorbs the aggregate with its host's `txid`, which lists that host and everything the aggregate listed, then divides out the old host's own stamp with the same `txid`.
 
 A wrong list carries no soundness risk.
-An extra bundle adds its action and fee digests as roots of the derived action set polynomial. An omitted bundle leaves those roots out. The changed polynomial yields an action accumulator that fails the stamp proof's last slot comparison.
+An extra bundle adds its action and fee digests as roots of the derived action set polynomial. An omitted bundle leaves those roots out. The changed accumulator fails the working proof's last-slot comparison or the public wallet proof's action-bridge check.
 
 A `txid` names a transaction and not one of its authorization forms.
 Several forms of one `txid` can sit in a mempool, differing in fee, fee change or pairs.

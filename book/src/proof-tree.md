@@ -83,7 +83,7 @@ A wallet lifts its stamp along the published spans to the end of the latest one.
 For the stamps published after that, it builds its own span.
 
 On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
-For proof verification, the validator derives the action commitment from the published action and fee digests, compares it to the last slot, and verifies the `Transaction` header at the supplied anchor.
+The working proof binds the action commitment in its last slot. The [finalized wallet proof](./aggregation.md#finalize-a-wallet-stamp) binds its bridge in the header and has two padding slots.
 
 [Bundle coverage](./bundle.md#stamp-trailer) checks the trailer's tachygram commitment against the published pairs and fee changes. [Anchor eligibility](./anchor.md) is a separate chain check.
 
@@ -102,7 +102,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 
 `Actions` and `Transaction` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
 `Actions` carries its anchor and has slots `(ActionSetPoly, TachygramSetPoly)`: the leaves check both sets, `ActionMerge` multiplies them, and `ActionLift` checks that both are preserved. `Transaction` has slots `(Padding, ActionSetPoly)` and encodes the anchor followed by the two coordinates of the bridge for its last slot. Its digest roots bind the individual action pairs and fee changes; the proof has no tachygram slot.
-Verification rebuilds `Pcd<Transaction>` under the working registry. Historical blocks use `stamp::proof::historical::Stamp`: the old registry expects slots `(ActionSetPoly, TachygramSetPoly)` and the bridge of the tachygram accumulator. The trailer format and working suffix do not distinguish the two registries.
+For full wallet work, verification attaches `Transaction` and checks the last-slot action commitment. For a compressed wallet publication it checks both padding commitments, attaches `PublicTransaction`, and verifies the expected action bridge and anchor. Historical blocks use a different registry: its `Stamp` expects slots `(ActionSetPoly, TachygramSetPoly)` and the tachygram bridge. The chain selects that verifier before inspecting the proof bytes.
 
 ## Roles
 
@@ -507,7 +507,7 @@ A stamp crosses a trust boundary each time that happens: a wallet broadcasts an 
 Rerandomizing a working stamp replaces its stamp proof with a new one for the same `Transaction` header.
 Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
-`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Transaction` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
+`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Transaction` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. Finalization dehydrates the working stamp, rerandomizes the padded result, and compresses it.
 The implementation rerandomizes no other PCD.
 
 ## Simple transaction
@@ -663,6 +663,7 @@ flowchart LR
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) | — |
 | Actions | (anchor) | ActionSetPoly: action set; TachygramSetPoly: tachygram set |
 | Transaction | (action_set_bridge, anchor) | padding; ActionSetPoly: action and fee digests |
+| PublicTransaction | (action_set_bridge, anchor) | — |
 
 Slots lists each header's polynomial types in slot order, with the slot's name where a header holds two of one type and the contents consumers read; — marks a header whose slots are padding. A type listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeqPoly` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, the `TachygramSetPoly` in the second slot (`LAST_STAMP` in a summary) holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
@@ -711,6 +712,7 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | TransactionMerge | Transaction | Transaction | merged action_set | Transaction |
 | TransactionLift | Transaction | AnchorSpan | action_set | Transaction |
 | TransactionUnmerge | Transaction | Transaction | quotient action_set | Transaction |
+| TransactionDehydrate | Transaction | — | — | PublicTransaction |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.

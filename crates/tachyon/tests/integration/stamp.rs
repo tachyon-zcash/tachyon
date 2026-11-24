@@ -443,7 +443,7 @@ fn read_rejects_wrong_proof_size() {
         assert_eq!(reader.len(), proof.len() - compressed_size);
     }
 
-    let compressed = stamp.compress(rng, app).unwrap();
+    let compressed = stamp.finalize(rng, app).unwrap();
     {
         let proof = compressed.proof.to_bytes().unwrap();
         let mut bytes = Vec::new();
@@ -484,7 +484,7 @@ fn output_stamp_round_trips_and_bundle_checks_its_tachygram_set() {
             .verify_proof(rng, app, digests.iter().copied())
             .unwrap()
     );
-    let compressed = decoded.clone().compress(rng, app).unwrap();
+    let compressed = decoded.clone().finalize(rng, app).unwrap();
     assert!(compressed.verify_proof(rng, app, digests).unwrap());
     let bundle = zcash_tachyon::Bundle {
         stamp: decoded,

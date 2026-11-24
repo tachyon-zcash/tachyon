@@ -20,6 +20,8 @@
 #[cfg(test)]
 mod bundle;
 #[cfg(test)]
+mod dehydrate;
+#[cfg(test)]
 mod evidence;
 #[cfg(test)]
 mod fee;

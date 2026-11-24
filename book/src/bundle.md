@@ -149,9 +149,9 @@ end
 
     rk1 & rk2 & rk3 & cv1 & cv2 & cv3 --> action_acc["action accumulator"]
     cv_feemax & fee & fee_change & tg1 & tg2 & tg3 --> action_acc
-    action_acc -->|bridge hash| stamp_header["Transaction header"]
+    action_acc -->|bridge hash| stamp_header["PublicTransaction header"]
     anchor --> stamp_header
-    action_acc -->|last slot comparison| verify_stamp["stamp proof verification"]
+    stamp_proof -->|require two padding commitments| verify_stamp["wallet stamp proof verification"]
     stamp_header & stamp_proof --> verify_stamp
     fee_change & tg1 & tg2 & tg3 --> tg_acc["tachygram accumulator"]
     tg_acc & tachygram_set --> check_tg["cTachygrams check"]

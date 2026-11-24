@@ -102,6 +102,7 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(transaction::FeeSeed)?
         .register(transaction::TransactionUnmerge)?
         .register(qr::QrSideSelect)?
+        .register(transaction::TransactionDehydrate)?
         .finalize(pasta::baked())
         .map(Box::new)
 }

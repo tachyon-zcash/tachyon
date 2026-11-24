@@ -276,7 +276,7 @@ flowchart LR
 ```
 
 - **Signatures:** The bundle commitment's ordered BLAKE2b digest binds the action descriptors into the sighash. Modifying a descriptor invalidates the signatures.
-- **Stamp proof:** The last slot must match the action accumulator derived from the covered digests. The `Transaction` header uses that accumulator's bridge hash and the supplied anchor. Changing a pair's members changes its action digest; exchanging the two members leaves that digest unchanged.
+- **Stamp proof:** For full work, `Transaction` binds the action accumulator in its last slot. For a compressed wallet stamp, verify `PublicTransaction` with the derived action bridge and supplied anchor, and require two padding commitments. Changing a pair's members changes its action digest; exchanging the two members leaves that digest unchanged.
 - **Bundle coverage:** The tachygram accumulator derived from the covered pairs and fee changes must match the trailer's `cTachygrams`.
 
 The [authorization digest](./transaction-identifiers.md) includes the pair in wire order, so even exchanging its two members changes that digest.
@@ -463,6 +463,7 @@ break verify_proof
 end
 
 create participant Consensus
+note over User: finalize the wallet stamp: dehydrate, rerandomize, compress
 note over User: transaction { actions[], action_auth[], value_balance, cv_feemax, binding_sig, memo, fee, cm_change, stamp { anchor, tachygram_set, adjuncts, proof } }
 deactivate User
 destroy User
@@ -485,7 +486,7 @@ break verify_covered
 end
 break verify_proof
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
-    note over Consensus: compare action_acc to the last slot commitment
-    note over Consensus: verify proof against Transaction header (bridge(action_acc), anchor)
+    note over Consensus: for a finalized wallet publication, require two padding commitments
+    note over Consensus: verify proof against PublicTransaction header (bridge(action_acc), anchor)
 end
 ```

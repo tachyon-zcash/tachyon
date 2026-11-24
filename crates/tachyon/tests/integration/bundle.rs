@@ -515,7 +515,7 @@ fn stamped_bundle_round_trips() {
         .verify(rng, app, &mock_sighash(decoded.commitment()), &[])
         .unwrap();
     let compressed = Bundle {
-        stamp: stamped.stamp.compress(rng, app).unwrap(),
+        stamp: stamped.stamp.finalize(rng, app).unwrap(),
         actions: stamped.actions,
         action_auth: stamped.action_auth,
         fee: stamped.fee,
@@ -1125,7 +1125,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     assert_eq!(overcap_error.to_string(), "too many adjuncts");
     let rng = &mut StdRng::seed_from_u64(0);
     let compressed = Bundle {
-        stamp: oversized.stamp.compress(rng, app).unwrap(),
+        stamp: oversized.stamp.finalize(rng, app).unwrap(),
         actions: oversized.actions,
         action_auth: oversized.action_auth,
         value_balance: oversized.value_balance,
@@ -1525,7 +1525,7 @@ fn bundle_lift_over_an_aggregate() {
     lifted.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert!(decoded.verify_proof(rng, app, &digests).unwrap());
-    let compressed = decoded.stamp.compress(rng, app).unwrap();
+    let compressed = decoded.stamp.finalize(rng, app).unwrap();
     bytes.clear();
     compressed.write(&mut bytes).unwrap();
     let decoded_stamp = ProofStamp::<stamp::Compressed>::read(&*bytes).unwrap();

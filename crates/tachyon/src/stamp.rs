@@ -26,8 +26,9 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
     App, output,
     transaction::{
-        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Transaction,
-        TransactionLift, TransactionMerge, TransactionUnmerge,
+        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, PublicTransaction,
+        SpendAction, Transaction, TransactionDehydrate, TransactionLift, TransactionMerge,
+        TransactionUnmerge,
     },
 };
 use ragu::{
@@ -146,9 +147,9 @@ pub trait Proof: sealed::Sealed {
     where
         Self: Sized;
 
-    /// Verify the action set and the stamp's anchor. The [`Transaction`] header
-    /// uses the canonical bridge hash of the supplied action accumulator.
-    /// The last online commitment must equal that accumulator.
+    /// Verify the expected action set and reference. Full wallet work uses
+    /// [`Transaction`]; a compressed wallet publication uses
+    /// [`PublicTransaction`].
     ///
     /// # Errors
     ///
@@ -218,12 +219,12 @@ impl Proof for Compressed {
         app: &App<'_>,
         (action_set, anchor): (ActionSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let [_, action_slot] = self.online_commitments();
-        if action_slot != EqAffine::from(action_set) || action_slot.is_identity() {
+        let padding = app.commit(&[Fp::ONE])?;
+        if self.online_commitments() != [padding; 2] {
             return Ok(false);
         }
-        let bridge = ActionSetBridge::from(bridge_hash(action_set.into()));
-        app.verify_compressed(&self.clone().carry::<Transaction>((bridge, anchor)))
+        let bridge = ActionSetBridge::from(app.bridge_hash(action_set.into())?);
+        app.verify_compressed(&self.clone().carry::<PublicTransaction>((bridge, anchor)))
     }
 }
 
@@ -655,11 +656,12 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
 /// The verifier reconstructs the PCD header `(action_set_bridge, anchor)`
-/// from public data and checks the proof's last output slot against the
-/// supplied action and fee digests.
+/// from the supplied action and fee digests and the stamp's reference. Full
+/// work carries the action accumulator in its last slot. Wallet publications
+/// retain its bridge in the public header and carry two padding commitments.
 ///
 /// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
-/// proof. [`Self::compress`] produces a stamp with a [`Compressed`] proof.
+/// proof. [`Self::finalize`] produces a stamp with a [`Compressed`] proof.
 /// A stamp with either proof type can be read, written and verified.
 #[derive(Clone, Debug)]
 pub struct ProofStamp<P: Proof> {
@@ -1187,13 +1189,18 @@ impl ProofStamp<Uncompressed> {
         })
     }
 
-    /// Compresses the stamp's proof.
+    /// Dehydrate the working statement, rerandomize the padded proof, and
+    /// compress it for wallet publication. The trailer metadata moves
+    /// unchanged.
+    ///
+    /// Use fresh cryptographic randomness and a wallet application whose
+    /// bootstrap is verified and matches the shared configuration.
     ///
     /// # Errors
     ///
     /// Returns [`ragu::Error`] if the proof system fails or the proof's last
     /// commitment has no affine coordinates for the bridge hash.
-    pub fn compress<RNG: CryptoRng>(
+    pub fn finalize<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
@@ -1201,15 +1208,13 @@ impl ProofStamp<Uncompressed> {
         // The uncompressed proof exposes its commitments through a PCD.
         let untyped = self.proof.carry::<()>(());
         let [_, action_slot] = untyped.commitments();
-        if action_slot.is_identity() {
-            return Err(ragu::Error::InvalidWitness(
-                "identity action commitment".into(),
-            ));
-        }
         let (proof, ()) = untyped.into_parts();
-        let bridge = ActionSetBridge::from(bridge_hash(action_slot));
+        let bridge = ActionSetBridge::from(app.bridge_hash(action_slot)?);
         let pcd = proof.carry::<Transaction>((bridge, self.anchor));
-        let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
+        let unit = app.bootstrap_proof().clone().carry::<()>(());
+        let (public, ()) = app.fuse(rng, TransactionDehydrate, (), pcd, unit)?;
+        let refreshed = app.rerandomize(public, &mut *rng)?;
+        let (compressed, _) = app.compress(&refreshed, rng)?.into_parts();
         Ok(ProofStamp {
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
@@ -1224,11 +1229,13 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Soundness
     ///
-    /// The PCD is verified as a [`Transaction`] whose `anchor` is
-    /// [`Self::anchor`] and whose bridge hash is the one [`bridge_hash`]
-    /// computes from the action accumulator recomputed from
-    /// `action_digests`, a multiset. The stamp proof's last online
-    /// commitment is compared with that accumulator.
+    /// Both wallet forms bind [`Self::anchor`] and the canonical bridge of
+    /// the action accumulator recomputed from `action_digests`, a multiset.
+    /// Full working proofs verify as [`Transaction`] with that accumulator
+    /// in the last slot. Compressed wallet proofs require two commitments to
+    /// one and verify as [`PublicTransaction`].
+    /// The action-binding-only registry was never activated on a network, so
+    /// no wallet verifier for its compressed working `Transaction` is retained.
     /// The commitment computationally binds the prover to its polynomial. A
     /// [set polynomial](crate::collections::multiset) determines its roots
     /// with their multiplicities. An accepted stamp therefore has what
