@@ -40,7 +40,7 @@ An intermediate `Actions` proof, built from actions and merges before the bundle
 
 A published stamp has every covered bundle's fee applied. Its tachygram set is the union of the covered actions' pairs and each covered bundle's [fee change note](./fee.md#fee-change-note) commitment. These members are read from the covered bundle bodies[^bundle], each of which carries its own bundle's pairs and fee change; the covering stamp carries only the set commitment, not the members. Ideally, the consensus chain contains aggregated[^aggregation] bundles.
 
-The stamp proof binds a commitment to the unordered set of those tachygrams.
+The stamp trailer's `cTachygrams` commits to the unordered set of those tachygrams.
 
 $$
 \mathsf{tachygram\_acc}(X) =
@@ -57,7 +57,7 @@ Consensus derives the union from the covered bundles, rejects any member repeate
 
 The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
 
-A stamp's anchor lies in the current or immediately preceding epoch and may have been advanced within its epoch via `ActionLift` or `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in that anchor's epoch. The duplicate check therefore includes tachygrams published before the anchor.
+A stamp's anchor lies in the current or immediately preceding epoch and may have been advanced within its epoch via `ActionLift` or `TransactionLift`[^proof-tree], so the stamp could have been built at any earlier height in that anchor's epoch. The duplicate check therefore includes tachygrams published before the anchor.
 
 A spend anchored in epoch $e$ publishes the nullifiers for $e$ and $e+1$[^nullifiers-pair], even if the stamp is mined in $e+1$. A spend of the same note anchored in $e+1$ shares the nullifier for $e+1$. The duplicate check catches that collision within the publication window.
 
@@ -71,6 +71,6 @@ A spend anchored in epoch $e$ publishes the nullifiers for $e$ and $e+1$[^nullif
 
 [^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment.
 
-[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `ActionLift` and `StampLift` advance an anchor within an epoch.
+[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `ActionLift` and `TransactionLift` advance an anchor within an epoch.
 
 [^nullifiers-pair]: See [Nullifiers](./nullifiers.md) for the present/future nullifier pair published with each spend.

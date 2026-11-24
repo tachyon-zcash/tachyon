@@ -22,8 +22,8 @@ pub use qr::{
 };
 pub use seq::{NfSeqCommit, NfSeqPoly};
 pub use sets::{
-    ActionSetCommit, ActionSetPoly, AnchorSetCommit, AnchorSetPoly, TachygramSetBridge,
-    TachygramSetCommit, TachygramSetPoly,
+    ActionSetBridge, ActionSetCommit, ActionSetPoly, AnchorSetCommit, AnchorSetPoly,
+    TachygramSetBridge, TachygramSetCommit, TachygramSetPoly,
 };
 pub use slot::PolySlot;
 pub use tachygram::Tachygram;

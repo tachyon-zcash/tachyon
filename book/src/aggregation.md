@@ -40,7 +40,7 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. The crate does not implement this yet because the pinned Ragu version lacks the support Tachyon stamps need.
+The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. This crate registers wallet-rank proofs; it does not yet implement an aggregator application that can import a compressed stamp.
 
 In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
 
@@ -58,14 +58,11 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
-Tachygrams covered by a stamp must be distinct.
-[Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
-[`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
-Validation recomputes `cTachygrams` from the derived union, so such a stamp fails verification.
-An honest aggregator never merges stamps whose tachygram sets overlap.
+**Merge proof.** [`TransactionMerge`](./proof-tree.md#stamp-construction) checks that the merged action polynomial is the product of its inputs. A digest present on both sides is a repeated root; distinct digests can share a tachygram without violating the product relation. For $N$ actions and $B$ fees, the output slot requires $N+B \le 8191$ but does not establish $2N+B \le 8191$. Proof verification compares the last slot commitment to the accumulator derived from the covered digests, with their multiplicities.
 
-The derived union holds at most $2^{13} - 1$ tachygrams, so one aggregate covers at most 4,095 actions, with each covered bundle's fee change also taking space.
-This follows from Ragu's production rank and is not a policy limit.
+**Trailer construction.** The aggregator commits to the tachygrams from the merged records. After division it computes the quotient's trailer from the surviving action pairs and fee changes.
+
+**Bundle coverage.** [Bundle validation](./bundle.md#stamp-trailer) counts two tachygrams per covered action and one fee change per covered bundle, and requires $2N+B \le 8191$. It rejects repeated action descriptors, fee descriptors, and tachygrams, including a tachygram shared by actions with different digests. It checks the commitment computed from the covered bodies against `cTachygrams` before anchor advancement.
 
 ### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
 
@@ -195,7 +192,7 @@ Node test vectors:
 ## Adjunct list {#adjunct-list}
 
 An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header.
-A verifier reconstructs the header from the covered bundles.
+A verifier constructs the working `Transaction` header from `anchorTachyon` and the bridge hash of the action accumulator it derives from the covered bundles.
 The stamp's `vAdjunctsTachyon` lists the `txid` of every other transaction whose bundle it covers (see [Bundles → Wire Format](./bundle.md#stamp-trailer)), so a node gathers the covered bundles by lookup.
 In the mempool those transactions are still stamped, and in a block they are stripped.
 The carrying bundle is never in its own list, and an autonome's list is empty.
@@ -209,7 +206,7 @@ Moving an aggregate to another host is `merge` then `unmerge`.
 The new host absorbs the aggregate with its host's `txid`, which lists that host and everything the aggregate listed, then divides out the old host's own stamp with the same `txid`.
 
 A wrong list carries no soundness risk.
-A listed bundle the stamp does not cover adds to the derived tachygram union, and a covered bundle the list omits is missing from it, so verification fails either way.
+An extra bundle adds its action and fee digests as roots of the derived action set polynomial. An omitted bundle leaves those roots out. The changed polynomial yields an action accumulator that fails the stamp proof's last slot comparison.
 
 A `txid` names a transaction and not one of its authorization forms.
 Several forms of one `txid` can sit in a mempool, differing in fee, fee change or pairs.

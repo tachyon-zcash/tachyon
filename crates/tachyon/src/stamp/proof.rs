@@ -29,13 +29,14 @@
 
 pub mod delegation;
 pub mod evidence;
+pub mod historical;
 pub mod output;
 pub mod pool;
 pub mod qr;
 pub mod spend;
 pub mod spendable;
-pub mod stamp;
 pub mod summary;
+pub mod transaction;
 
 use alloc::boxed::Box;
 
@@ -69,11 +70,11 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
         .register(output::OutputBind)?
-        .register(stamp::OutputAction)?
+        .register(transaction::OutputAction)?
         .register(spend::SpendBind)?
-        .register(stamp::SpendAction)?
-        .register(stamp::StampMerge)?
-        .register(stamp::StampLift)?
+        .register(transaction::SpendAction)?
+        .register(transaction::TransactionMerge)?
+        .register(transaction::TransactionLift)?
         .register(delegation::NullifierFuse)?
         .register(summary::SummarySeed)?
         .register(summary::SummaryAdvance)?
@@ -95,11 +96,11 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(evidence::EvidenceTreeLeafPair)?
         .register(pool::AnchorSpanSeed)?
         .register(pool::AnchorSpanFuse)?
-        .register(stamp::FeeFuse)?
-        .register(stamp::ActionMerge)?
-        .register(stamp::ActionLift)?
-        .register(stamp::FeeSeed)?
-        .register(stamp::StampUnmerge)?
+        .register(transaction::FeeFuse)?
+        .register(transaction::ActionMerge)?
+        .register(transaction::ActionLift)?
+        .register(transaction::FeeSeed)?
+        .register(transaction::TransactionUnmerge)?
         .register(qr::QrSideSelect)?
         .finalize(pasta::baked())
         .map(Box::new)

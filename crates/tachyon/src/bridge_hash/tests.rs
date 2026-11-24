@@ -22,7 +22,7 @@ fn bridge_hash_matches_application() {
 }
 
 #[test]
-#[should_panic(expected = "tachygram set commitment is not the identity")]
+#[should_panic(expected = "set commitment is not the identity")]
 fn bridge_hash_panics_on_the_identity() {
     let _bridge = bridge_hash(EqAffine::identity());
 }

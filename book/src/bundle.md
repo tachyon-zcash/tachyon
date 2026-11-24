@@ -133,14 +133,7 @@ subgraph shielded_data["Bundle"]
         adjuncts
         anchor@{shape: odd}
         stamp_proof@{shape: notch-rect, label: "stamp proof"}
-
-        anchor ---> stamp_proof
-        fee & fee_change & tachygram_set ---> stamp_proof
-        tg1 & tg2 & tg3 ---> stamp_proof
     end
-
-    rk1 & rk2 & rk3 ---> stamp_proof
-    cv1 & cv2 & cv3 ---> stamp_proof
 
     subgraph signing_data["body: signing data"]
         sig1:::signature@{shape: hex, label: "sig 1"}
@@ -152,9 +145,16 @@ subgraph shielded_data["Bundle"]
     cv_feemax["cv_feemax"]
     memo
 
-    cv_feemax ---> stamp_proof
-
 end
+
+    rk1 & rk2 & rk3 & cv1 & cv2 & cv3 --> action_acc["action accumulator"]
+    cv_feemax & fee & fee_change & tg1 & tg2 & tg3 --> action_acc
+    action_acc -->|bridge hash| stamp_header["Transaction header"]
+    anchor --> stamp_header
+    action_acc -->|last slot comparison| verify_stamp["stamp proof verification"]
+    stamp_header & stamp_proof --> verify_stamp
+    fee_change & tg1 & tg2 & tg3 --> tg_acc["tachygram accumulator"]
+    tg_acc & tachygram_set --> check_tg["cTachygrams check"]
 
     v_balance & cv_feemax & memo ===> sighash["transaction sighash"]
     cv1 & rk1 & cv2 & rk2 & cv3 & rk3 ===> sighash
@@ -238,7 +238,7 @@ The reader rejects a size above Ragu's transport bound before buffering `sizePro
 
 In the crate today, a stamped block item carries a compressed proof in `proofTachyon`. The crate uses the same trailer for an uncompressed proof when [lifting](./proof-tree.md#stamp-anchor), [merging or unmerging](./aggregation.md#merge-to-produce-aggregate) a stamp.
 
-[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
+[`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the anchor and the action accumulator derived from the covered bodies. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 
 ### Stripped trailer
 

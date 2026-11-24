@@ -8,11 +8,10 @@ use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
-    VerifyCoverageError, bundle,
+    ActionSetPoly, Anchor, BlockHeight, VerificationError, VerifyCoverageError, bundle,
     stamp::{
         self, ProofStamp,
-        proof::stamp::{Stamp, StampUnmerge},
+        proof::transaction::{Transaction, TransactionUnmerge},
     },
     value, witness,
 };
@@ -529,81 +528,40 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
 }
 
 #[test]
-fn unmerge_binds_its_sets() {
+fn unmerge_rejects_a_swapped_quotient_member() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, alice) = alice(app);
     let (_, bob) = bob(app);
     let alice_bob = merged(app, &alice, &bob).stamp;
 
-    let alice_members = alice
-        .action_auth
-        .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .chain([alice.fee_auth]);
-    let bob_members = bob
-        .action_auth
-        .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .chain([bob.fee_auth]);
-    let alice_bob_tachygrams: TachygramSetPoly =
-        alice_members.clone().chain(bob_members.clone()).collect();
-    let alice_actions: ActionSetPoly = alice.verify_covered(&[]).unwrap().0.into_iter().collect();
-    let alice_tachygrams: TachygramSetPoly = alice_members.clone().collect();
-    let bob_actions: ActionSetPoly = bob.verify_covered(&[]).unwrap().0.into_iter().collect();
-    let bob_tachygrams: TachygramSetPoly = bob_members.clone().collect();
+    let (mut alice_digests, _) = alice.verify_covered(&[]).unwrap();
+    let (bob_digests, _) = bob.verify_covered(&[]).unwrap();
+    let alice_bob_actions: ActionSetPoly =
+        alice_digests.iter().chain(&bob_digests).copied().collect();
+    let bob_actions = ActionSetPoly::from_iter(bob_digests.iter().copied());
     let dividend_header = (
-        app.bridge_hash(alice_bob_tachygrams.commit().into())
+        app.bridge_hash(alice_bob_actions.commit().into())
             .unwrap()
             .into(),
         alice_bob.anchor,
     );
     let divisor_header = (
-        app.bridge_hash(bob_tachygrams.commit().into())
-            .unwrap()
-            .into(),
+        app.bridge_hash(bob_actions.commit().into()).unwrap().into(),
         bob.stamp.anchor,
     );
-    let valid = witness::stamp_unmerge(
-        (dividend_header, divisor_header),
-        alice_actions,
-        alice_tachygrams,
-    );
-
-    for (corrupt, expected) in [
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.0 = bob_actions;
-                corrupt
-            },
-            "a substituted quotient action set",
-        ),
-        (
-            {
-                let mut corrupt = valid;
-                let dropped = alice_members.clone().next().unwrap();
-                corrupt.1 = alice_members
-                    .filter(|&tachygram| tachygram != dropped)
-                    .chain(bob_members.take(1))
-                    .collect();
-                corrupt
-            },
-            "a quotient tachygram set with a swapped member",
-        ),
-    ] {
-        let (forged, ()) = app
-            .fuse(
-                rng,
-                StampUnmerge,
-                corrupt,
-                alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-                bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
-            )
-            .unwrap();
-        assert!(
-            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
-            "{expected}"
-        );
-    }
+    alice_digests[0] = bob_digests[0];
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            TransactionUnmerge,
+            witness::transaction_unmerge(
+                (dividend_header, divisor_header),
+                ActionSetPoly::from_iter(alice_digests),
+            ),
+            alice_bob.proof.carry::<Transaction>(dividend_header),
+            bob.stamp.proof.carry::<Transaction>(divisor_header),
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }

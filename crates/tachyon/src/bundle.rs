@@ -766,8 +766,8 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
         let n_fees = 1 + adjuncts.len();
 
-        // A set polynomial with n roots has n + 1 coefficients, so no
-        // commitment matches a larger set.
+        // The covered bodies contribute two tachygrams per action and one per
+        // fee. Their polynomial needs one more coefficient than it has roots.
         if 2 * n_actions + n_fees > WalletRank::num_coeffs() - 1 {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }

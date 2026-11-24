@@ -9,7 +9,7 @@ Values defined outside the crate come from Ragu at the pinned revision and from 
 | Parameter | Value | Defined in |
 | --------- | ----- | ---------- |
 | Value commitments, verification keys and RedPallas signatures | Pallas | `value.rs`, `keys/`, `reddsa.rs` |
-| Tachygram-set bridge hash | Pallas | `primitives/sets.rs`, `bridge_hash.rs` |
+| Action-set and tachygram-set bridge hashes | Pallas | `primitives/sets.rs`, `bridge_hash.rs` |
 | Set commitments | Vesta | `primitives/sets.rs` |
 | Notes, tachygrams, anchors and Poseidon | $\F_p$, the Pallas base field | `note.rs`, `primitives/`, `digest/poseidon.rs` |
 | Value trapdoors and signing keys | $\F_q$, the Pallas scalar field | `value.rs`, `keys/private.rs` |
@@ -21,9 +21,9 @@ Values defined outside the crate come from Ragu at the pinned revision and from 
 | --------- | ----- | ---------- |
 | `MAX_MONEY` | $2.1 \times 10^{15}$ zatoshi | `constants.rs` |
 | Note value | $0 \leq v \leq \mathsf{MAX\_MONEY}$ | `value.rs` |
-| Fee | $0 \leq \fee \leq \feemax \leq \mathsf{MAX\_MONEY}$ | `fee.rs`, `stamp/proof/stamp.rs` |
+| Fee | $0 \leq \fee \leq \feemax \leq \mathsf{MAX\_MONEY}$ | `fee.rs`, `stamp/proof/transaction.rs` |
 | Value balance | $-\mathsf{MAX\_MONEY} \leq v^{\mathsf{bal}} \leq \mathsf{MAX\_MONEY}$ | `value.rs` |
-| Action randomizer $\alpha$ and max-fee blind $r$ | $< 2^{254}$ | `stamp/proof/stamp.rs`, `gadgets/note.rs` |
+| Action randomizer $\alpha$ and max-fee blind $r$ | $< 2^{254}$ | `stamp/proof/transaction.rs`, `gadgets/note.rs` |
 
 ## Chain and epochs
 

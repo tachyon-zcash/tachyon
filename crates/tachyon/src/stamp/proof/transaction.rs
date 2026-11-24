@@ -1,9 +1,9 @@
-//! Stamp header and stamp-producing/transforming steps.
+//! Working transaction header and stamp-producing/transforming steps.
 
 use ragu::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     maybe::Maybe as _,
     pasta::Pasta,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
@@ -26,19 +26,18 @@ use crate::{
     note::{self, Note},
     pasta::{EpAffine, Fp},
     primitives::{
-        ActionDigest, Anchor, AnchorSetPoly, PolySlot, Tachygram, TachygramSetBridge, effect,
+        ActionDigest, ActionSetBridge, Anchor, AnchorSetPoly, PolySlot, Tachygram, effect,
     },
     value,
 };
 
 /// Non-empty proven action content with no fee in its lineage.
 ///
-/// The output polynomials are the action-digest and tachygram sets. Each leaf
-/// step ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
-/// and enforces them against their roots at a Fiat-Shamir challenge.
-/// The action set is enforced against the action the step derives,
-/// the tachygram set against the pair bound on the left bind header.
-/// [`ActionMerge`] enforces each output set as the product of its inputs.
+/// [`OutputAction`] and [`SpendAction`] check both the action-digest factor
+/// and the tachygram factors for the pair on their input header.
+/// [`ActionMerge`] checks the product in each slot, and [`ActionLift`] checks
+/// that both are preserved. [`FeeFuse`] carries only the action polynomial into
+/// [`Transaction`]: each action digest already binds its pair.
 ///
 /// `anchor` is a free witness at [`OutputAction`]. At [`SpendAction`] it comes
 /// from the left [`SpendHeader`]. At [`ActionMerge`] the step requires
@@ -72,34 +71,43 @@ impl Header<Fp> for Actions {
     }
 }
 
-/// Header for one or more fee-bearing lineages.
+/// A multiset of valid action and fee leaves at `anchor`.
 ///
-/// The polynomials are an [`ActionSetPoly`] and a [`TachygramSetPoly`].
-/// `tachygram_set_bridge` holds the bridge hash of the [`TachygramSetPoly`].
-/// [`StampMerge`] enforces both output sets as input products.
+/// Every spend has proved history reaching that anchor. The last slot holds the
+/// monic product of the leaves' digest factors, with multiplicity.
+/// `action_set_bridge` binds the commitment to that same polynomial: every
+/// writer returns both coordinates of its own last-slot oracle and
+/// rerandomization preserves fields and slots. [`TransactionUnmerge`] may leave
+/// no fees or even no leaves (the polynomial one).
 ///
-/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
-/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
+/// The bridge stage binds the coordinates of the last slot's accumulator;
+/// its point need not be a unique encoding of that accumulator. Native
+/// verification supplies the canonical zero-blind bridge of the publicly
+/// reconstructed accumulator and compares that accumulator to the last slot.
+/// No set identity relies on the bridge point being fixed before $\zeta$.
 ///
-/// `anchor` is a free witness at [`FeeSeed`]. At [`FeeFuse`] it comes from
-/// the left [`Actions`]. At [`StampMerge`] the step requires
-/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
-/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
-/// and moves it to the span's `anchor_end`.
+/// An action digest binds the descriptor and the sum and product of the pair,
+/// which determine its unordered tachygrams with multiplicity. A fee digest
+/// binds the max-fee commitment, bounded fee and change commitment in a
+/// separate domain. Under hash collision resistance the digest roots therefore
+/// bind those public contributions. No slot carries a tachygram polynomial.
+/// With $N$ action leaves and $B$ fee leaves, the last slot bounds $N+B$ by
+/// its maximum degree, 8191. A merge can fit that slot even when the $2N+B$
+/// tachygram contributions, counting multiplicity, would exceed that degree.
 #[derive(Debug)]
-pub struct Stamp;
+pub struct Transaction;
 
 #[derive(Gadget, Write)]
-pub struct StampOutput<'dr, D: Driver<'dr>> {
+pub struct TransactionOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
-    pub tachygram_set_bridge: [Element<'dr, D>; 2],
+    pub action_set_bridge: [Element<'dr, D>; 2],
 }
 
-impl Header<Fp> for Stamp {
-    /// `(tachygram_set_bridge, anchor)`
-    type Data = (TachygramSetBridge, Anchor);
-    type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
-    type Output = Kind![Fp; StampOutput<'_, _>];
+impl Header<Fp> for Transaction {
+    /// `(action_set_bridge, anchor)`
+    type Data = (ActionSetBridge, Anchor);
+    type OnlinePolyCommit = (Padding, PolySlot<ActionSetPoly>);
+    type Output = Kind![Fp; TransactionOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
 
@@ -112,31 +120,27 @@ impl Header<Fp> for Stamp {
             clippy::expect_used,
             reason = "a bridge hash is the identity only under a discrete-log relation between its generators"
         )]
-        let tachygram_set_bridge = witness.as_ref().map(|fields| {
+        let action_set_bridge = witness.as_ref().map(|fields| {
             EpAffine::from(fields.0)
                 .coordinates()
                 .expect("bridge hash is not the identity")
         });
-        Ok(StampOutput {
+        Ok(TransactionOutput {
             anchor: Element::alloc(
                 dr,
                 allocator,
                 witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?,
-            tachygram_set_bridge: [
+            action_set_bridge: [
                 Element::alloc(
                     dr,
                     allocator,
-                    tachygram_set_bridge
-                        .as_ref()
-                        .map(|coordinates| coordinates.0),
+                    action_set_bridge.as_ref().map(|coordinates| coordinates.0),
                 )?,
                 Element::alloc(
                     dr,
                     allocator,
-                    tachygram_set_bridge
-                        .as_ref()
-                        .map(|coordinates| coordinates.1),
+                    action_set_bridge.as_ref().map(|coordinates| coordinates.1),
                 )?,
             ],
         })
@@ -403,18 +407,27 @@ impl Step<Pasta> for SpendAction {
 
 /// Transaction assembly and aggregation.
 ///
-/// Opens both inputs' action and tachygram sets and both products at one
+/// Opens both inputs' action set polynomials and their product at one
 /// challenge.
+///
+/// # Soundness
+///
+/// Both input polynomials and the output are committed before $\zeta$.
+/// The product check at that challenge therefore binds the output to the
+/// product polynomial, adding the digest multiplicities of the two valid
+/// inputs. The circuit equates their anchors and emits that shared wire, so
+/// every spend's history still reaches the output anchor. The output bridge
+/// wires bind the product as described in [`Transaction`].
 #[derive(Debug)]
-pub struct StampMerge;
+pub struct TransactionMerge;
 
-impl Step<Pasta> for StampMerge {
+impl Step<Pasta> for TransactionMerge {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
-    type Right = Stamp;
-    /// `(action_set, tachygram_set)`
-    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
+    type Left = Transaction;
+    type Output = Transaction;
+    type Right = Transaction;
+    /// `(action_set,)`
+    type Witness<'source> = (ActionSetPoly,);
 
     const INDEX: Index = Index::new(10);
 
@@ -424,9 +437,7 @@ impl Step<Pasta> for StampMerge {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let (action_set, tachygram_set) = (&witness.0, &witness.1);
-        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
-        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
+        Ok(ActionSetPoly::SLOT.poly(Prepared::new(), &witness.0))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -458,18 +469,13 @@ impl Step<Pasta> for StampMerge {
         let merged_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let expected_actions = left_actions.mul(dr, &right_actions)?;
         merged_actions.enforce_equal(dr, &expected_actions)?;
-        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let right_tachygrams = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let merged_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let expected_tachygrams = left_tachygrams.mul(dr, &right_tachygrams)?;
-        merged_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
-        let tachygram_set_bridge = [
+        let action_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let [x, y] = action_set_bridge.each_ref().map(Element::value);
         let anchor_value = left_anchor_element.value();
         let data = D::just(|| {
             #[expect(
@@ -479,13 +485,13 @@ impl Step<Pasta> for StampMerge {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
                 .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                ActionSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: left_anchor_element,
-            tachygram_set_bridge,
+            action_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
@@ -568,29 +574,34 @@ impl Step<Pasta> for ActionMerge {
 
 /// Advance a stamp's anchor to the end of an [`AnchorSpan`].
 ///
-/// The stamp's `anchor` must be the span's `anchor_start` or one of its
-/// members:
+/// The stamp's `anchor` $a$ must be the span's `anchor_start` $s$ or one of
+/// its members:
 ///
 /// $$
-///   M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0
+///   M(a) \cdot (a - s) = 0
 /// $$
 ///
 /// The output anchor is always `anchor_end`, because the members polynomial
 /// does not record the order of its members. A stamp already at `anchor_end`
 /// keeps its anchor.
 ///
-/// Opens the span members and both input and output action and tachygram sets.
+/// Opens the span members polynomial and both action set polynomials.
 ///
 /// # Soundness
 ///
-/// The span's member polynomial $M$ is bound by the right input proof.
+/// Equality of the two openings at $\zeta$ binds the output's committed
+/// polynomial to the input's, preserving every leaf with its multiplicity.
+/// The right input authenticates its start, end and member polynomial. The
+/// product above can vanish only at the start or a member, so each spend
+/// history continues along that span to the end wire the circuit emits. Both
+/// bridge coordinates come from the output oracle for the preserved set.
 #[derive(Debug)]
-pub struct StampLift;
+pub struct TransactionLift;
 
-impl Step<Pasta> for StampLift {
+impl Step<Pasta> for TransactionLift {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
+    type Left = Transaction;
+    type Output = Transaction;
     type Right = AnchorSpan;
     /// `(action_set,)`
     type Witness<'source> = (ActionSetPoly,);
@@ -599,17 +610,15 @@ impl Step<Pasta> for StampLift {
 
     // The output action set is the one the caller states, where other
     // pass-through steps copy their input's polynomial; the opening against the
-    // left action set holds it to the input. The output tachygram set copies
-    // the left one. The right anchor set supplies the span membership opening.
+    // left action set holds it to the input. The right anchor set supplies the
+    // span membership opening.
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
-        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let action_set = &witness.0;
-        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
-        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
+        Ok(ActionSetPoly::SLOT.poly(Prepared::new(), &witness.0))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -642,27 +651,29 @@ impl Step<Pasta> for StampLift {
         let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
         let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         left_actions.enforce_equal(dr, &output_actions)?;
-        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
-        let StampOutput { anchor, .. } = left_encoded.as_gadget().clone();
+        let TransactionOutput { anchor, .. } = left_encoded.as_gadget().clone();
         let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
-        // The output tachygram set copies the left one, so the output's bridge
-        // hash is the left stamp's.
+        let action_set_bridge = [
+            oracles.bridge_hash().x().clone(),
+            oracles.bridge_hash().y().clone(),
+        ];
+        let [x, y] = action_set_bridge.each_ref().map(Element::value);
         let data = D::just(|| {
-            let (stamp_bridge, _) = left.take();
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
             let (_, span_anchor_end) = right.take();
-            (stamp_bridge, span_anchor_end)
+            (ActionSetBridge::from(bridge_hash), span_anchor_end)
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: anchor_end,
-            tachygram_set_bridge: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            action_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
@@ -745,27 +756,56 @@ impl Step<Pasta> for ActionLift {
     }
 }
 
-/// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
-/// note's commitment to the action and tachygram sets.
+/// Turns [`Actions`] into a [`Transaction`] by adding the fee digest to the
+/// action set.
 ///
-/// Opens both input and output sets. The fee note and fee are fixed before
-/// the challenge.
+/// The pre-fee tachygram polynomial is checked by [`ActionMerge`] and
+/// [`ActionLift`], but is not an operand here. [`Transaction`] carries only the
+/// action polynomial: the action digests bind their pairs and the new fee
+/// digest binds the change.
+///
+/// # Soundness
+///
+/// The circuit computes a fee leaf of [`Transaction`] on its own wires.
+/// [`from_slack`](gadgets::value::Positive::from_slack) makes the value $m$
+/// an integer in `0..=MAX_MONEY` and
+/// [`split`](gadgets::value::Positive::split) makes $f$ and $m - f$ integers
+/// in `0..=m`. $\mathsf{cv}_\mathsf{feemax}$ comes from
+/// [`cv_feemax`](gadgets::note::Note::cv_feemax) on the same `slack` bits,
+/// and $\mathsf{cm}_\mathsf{chg}$, held nonzero, from the note commitment
+/// circuit on the note's nonzero `rcm`, `pk` and `psi` wires and the change.
+///
+/// Those three wires, $m$ and $f$ are each held equal to a staged value.
+/// $d$ is fixed before $\zeta$, because every wire it is computed from is a
+/// staged value or is determined by staged values.
+///
+/// - The `slack` bits are the only 51-bit string that packs to `MAX_MONEY - m`.
+/// - The bits that `split` allocates are the only 51-bit string that packs to
+///   $f$, and the change is the element $m - f$.
+/// - The blind bits are the only 254-bit decomposition of the blind digest of
+///   `pk`, `psi` and `rcm`.
+///
+/// The circuit equates the output opening at $\zeta$ with the left
+/// opening times $\zeta - d$. Both polynomials are fixed before $\zeta$, so
+/// by the [check at the challenge](super) the output's
+/// leaves are the left input's and the fee leaf. The output's `anchor` is
+/// the left `anchor` wire. Its bridge wires bind the resulting polynomial as
+/// described in [`Transaction`].
 ///
 /// # Caller contract
 ///
 /// The caller confirms that the max fee note's value is within `MAX_MONEY`
-/// and the fee is at most that value, or it risks producing a proof that is
-/// false.
+/// and the fee is at most that value. Otherwise no proof can verify.
 #[derive(Debug)]
 pub struct FeeFuse;
 
 impl Step<Pasta> for FeeFuse {
     type Aux<'source> = ();
     type Left = Actions;
-    type Output = Stamp;
+    type Output = Transaction;
     type Right = ();
-    /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`
-    type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
+    /// `(max_fee_note, fee, output_action_set)`
+    type Witness<'source> = (Note, value::Positive, ActionSetPoly);
 
     const INDEX: Index = Index::new(33);
     const NUM_STAGED: usize = 5;
@@ -776,10 +816,8 @@ impl Step<Pasta> for FeeFuse {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let (output_action_set, output_tachygram_set) = (&witness.2.0, &witness.2.1);
-        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), output_action_set);
-        Ok(TachygramSetPoly::SLOT
-            .poly(prepared, output_tachygram_set)
+        Ok(ActionSetPoly::SLOT
+            .poly(Prepared::new(), &witness.2)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -865,27 +903,20 @@ impl Step<Pasta> for FeeFuse {
         }
         .commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &fee, &fee_change)?;
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        fee_change.clone().enforce_nonzero(dr)?;
+        // The fee change is held nonzero. No step relies on it.
+        fee_change.enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
         let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
-        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        for (left_value, output_value, root) in [
-            (left_actions, output_actions, fee_digest),
-            (left_tachygrams, output_tachygrams, fee_change),
-        ] {
-            let factor = z.sub(dr, &root);
-            let expected = left_value.mul(dr, &factor)?;
-            output_value.enforce_equal(dr, &expected)?;
-        }
+        let factor = z.sub(dr, &fee_digest);
+        let expected_actions = left_actions.mul(dr, &factor)?;
+        output_actions.enforce_equal(dr, &expected_actions)?;
         let ActionsOutput { anchor } = left_encoded.as_gadget().clone();
-        let tachygram_set_bridge = [
+        let action_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let [x, y] = action_set_bridge.each_ref().map(Element::value);
         let data = D::just(|| {
             #[expect(
                 clippy::expect_used,
@@ -894,13 +925,13 @@ impl Step<Pasta> for FeeFuse {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
                 .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                ActionSetBridge::from(bridge_hash),
                 Anchor::from(*anchor.value().take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor,
-            tachygram_set_bridge,
+            action_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
@@ -908,17 +939,36 @@ impl Step<Pasta> for FeeFuse {
 
 /// Proves a zero-action bundle's zero fee.
 ///
-/// Opens both singleton sets. The fee note is fixed before the challenge.
+/// Unlike [`FeeFuse`], this seed has no pre-fee [`Actions`] input or pair
+/// polynomial. It emits the same action-only [`Transaction`]: the singleton fee
+/// digest binds the change commitment derived from the zero-valued note.
+///
+/// # Soundness
+///
+/// The argument is [`FeeFuse`]'s with no input and $m = f = 0$. The note's
+/// value wire is held to zero and the fee is the constant zero, so the change
+/// is the note itself and $\mathsf{cm}_\mathsf{chg}$ is the commitment of
+/// the note's own four wires. $\mathsf{cv}_\mathsf{feemax}$ comes from
+/// [`cv_feemax_zero`](gadgets::note::Note::cv_feemax_zero). The step stages
+/// `pk`, `psi` and `rcm` alone, each held equal to its wire, and of the
+/// three sets of bits only the blind bits remain.
+///
+/// The circuit equates the action set polynomial's opening at $\zeta$ with
+/// $\zeta - d$. The polynomial is committed before $\zeta$ and the root is
+/// fixed before it, so by the
+/// [check at the challenge](super) the polynomial is
+/// one fee leaf's. The output's `anchor` is a wire with no constraint. The
+/// output bridge wires bind the polynomial as described in [`Transaction`].
 #[derive(Debug)]
 pub struct FeeSeed;
 
 impl Step<Pasta> for FeeSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = Stamp;
+    type Output = Transaction;
     type Right = ();
-    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
-    type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
+    /// `(max_fee_note, anchor, fee_action_set)`
+    type Witness<'source> = (Note, Anchor, ActionSetPoly);
 
     const INDEX: Index = Index::new(36);
     const NUM_STAGED: usize = 3;
@@ -929,10 +979,8 @@ impl Step<Pasta> for FeeSeed {
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let (fee_action_set, fee_tachygram_set) = (&witness.2, &witness.3);
-        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), fee_action_set);
-        Ok(TachygramSetPoly::SLOT
-            .poly(prepared, fee_tachygram_set)
+        Ok(ActionSetPoly::SLOT
+            .poly(Prepared::new(), &witness.2)
             .stage([
                 Fp::from(witness.0.pk),
                 Fp::from(witness.0.psi),
@@ -1007,20 +1055,17 @@ impl Step<Pasta> for FeeSeed {
         // With a zero maximum and fee, the change note is the max-fee note.
         let fee_change = max_fee_note.commitment(dr)?;
         let fee_digest = poseidon::circuit::fee_digest(dr, &cv, &zero, &fee_change)?;
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        fee_change.clone().enforce_nonzero(dr)?;
+        // The fee change is held nonzero. No step relies on it.
+        fee_change.enforce_nonzero(dr)?;
         let z = oracles.zeta().clone();
         let action_set = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
         let action_factor = z.sub(dr, &fee_digest);
         action_set.enforce_equal(dr, &action_factor)?;
-        let tachygram_set = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let tachygram_factor = z.sub(dr, &fee_change);
-        tachygram_set.enforce_equal(dr, &tachygram_factor)?;
-        let tachygram_set_bridge = [
+        let action_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let [x, y] = action_set_bridge.each_ref().map(Element::value);
         let anchor_value = anchor_element.value();
         let data = D::just(|| {
             #[expect(
@@ -1030,13 +1075,13 @@ impl Step<Pasta> for FeeSeed {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
                 .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                ActionSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: anchor_element,
-            tachygram_set_bridge,
+            action_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
@@ -1044,60 +1089,52 @@ impl Step<Pasta> for FeeSeed {
 
 /// Removes a divisor stamp's leaves from a dividend stamp at the same anchor.
 ///
-/// Every [`Stamp`] is leaf-generated: its action polynomial is the monic
-/// product $\prod_i (X - d_i)$ over a multiset of leaf digests, and its
-/// tachygram polynomial is the product over exactly those leaves'
-/// tachygrams. The output is leaf-generated over the dividend's leaf
-/// multiset minus the divisor's, at the shared anchor.
+/// The left input is the dividend and the right input the divisor. The
+/// output holds the dividend's leaves less the divisor's.
+///
+/// Three action set polynomials open once each at one shared challenge.
 ///
 /// # Soundness
 ///
-/// The quotient is witnessed but not free. Each product relation opens the
-/// dividend, divisor and quotient slots at the framework's challenge, so
-/// $\mathsf{divisor} \cdot \mathsf{quotient} = \mathsf{dividend}$ holds as a
-/// polynomial identity in each column.
+/// The circuit equates the dividend's opening at $\zeta$ with the
+/// product of the divisor's and the output's. All three polynomials are fixed
+/// before $\zeta$, so by the
+/// [check at the challenge](super) the divisor's
+/// polynomial times the output's is the dividend's.
 ///
-/// Both columns are products of linear factors, so unique factorization in
-/// $\mathbb{F}_p\[X\]$ places the divisor's digest multiset inside the
-/// dividend's. Repeated roots subtract by multiplicity. Each action digest
-/// absorbs its tachygram pair's sum and product, which fix the pair as a
-/// multiset, and each fee digest absorbs its fee change. By Poseidon
-/// collision resistance a digest determines its tachygrams, and the tachygram
-/// quotient is exactly the removed leaves' tachygrams.
+/// The dividend's and the divisor's action polynomials are set polynomials
+/// by their own inputs' assertions. A polynomial that divides a set
+/// polynomial is a scalar times the set polynomial of a sub-multiset,
+/// and the divisor's is monic,
+/// so its digests are a sub-multiset of the dividend's. The quotient of two
+/// monic polynomials is monic, so the output's action polynomial is the set
+/// polynomial of the dividend's digests less the divisor's.
 ///
-/// This quotient argument rests on the product check at a challenge fixed
-/// after every set commitment, the commitments' binding, and collision
-/// resistance of the domain-separated action and fee digests.
-///
-/// Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in
-/// hand, and merging in a complement first lets division remove any leaf
-/// multiset the stamps in hand combine to express.
-///
-/// Six online polynomials open once each at one shared challenge.
+/// The circuit holds the two `anchor` wires equal and outputs the left one,
+/// where the output's spend leaves' stamp chains end. Any verified
+/// `Transaction` at that anchor whose slot digests are a sub-multiset of the
+/// dividend's divides it, whether or not it was merged into it. The output
+/// bridge wires bind the quotient as described in [`Transaction`].
 #[derive(Debug)]
-pub struct StampUnmerge;
+pub struct TransactionUnmerge;
 
-impl Step<Pasta> for StampUnmerge {
+impl Step<Pasta> for TransactionUnmerge {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
-    type Right = Stamp;
-    /// `(action_set, tachygram_set)`
-    type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
+    type Left = Transaction;
+    type Output = Transaction;
+    type Right = Transaction;
+    /// `(action_set,)`
+    type Witness<'source> = (ActionSetPoly,);
 
     const INDEX: Index = Index::new(37);
 
-    // The output sets are quotients; each right set times its output set must
-    // equal the left one.
     fn prepare(
         &self,
         witness: &Self::Witness<'_>,
         _: HeaderInput<'_, Fp, Self::Left>,
         _: HeaderInput<'_, Fp, Self::Right>,
     ) -> ragu::Result<Prepared<Fp, Self::Output>> {
-        let (action_set, tachygram_set) = (&witness.0, &witness.1);
-        let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
-        Ok(TachygramSetPoly::SLOT.poly(prepared, tachygram_set))
+        Ok(ActionSetPoly::SLOT.poly(Prepared::new(), &witness.0))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
@@ -1128,18 +1165,13 @@ impl Step<Pasta> for StampUnmerge {
         let dividend_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
         let expected_actions = divisor_actions.mul(dr, &quotient_actions)?;
         dividend_actions.enforce_equal(dr, &expected_actions)?;
-        let divisor_tachygrams = oracles.right(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let quotient_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let dividend_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
-        let expected_tachygrams = divisor_tachygrams.mul(dr, &quotient_tachygrams)?;
-        dividend_tachygrams.enforce_equal(dr, &expected_tachygrams)?;
         let left_anchor_element = left_encoded.as_gadget().anchor.clone();
         left_anchor_element.enforce_equal(dr, &right_encoded.as_gadget().anchor)?;
-        let tachygram_set_bridge = [
+        let action_set_bridge = [
             oracles.bridge_hash().x().clone(),
             oracles.bridge_hash().y().clone(),
         ];
-        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let [x, y] = action_set_bridge.each_ref().map(Element::value);
         let anchor_value = left_anchor_element.value();
         let data = D::just(|| {
             #[expect(
@@ -1149,13 +1181,13 @@ impl Step<Pasta> for StampUnmerge {
             let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
                 .expect("the bridge hash commitment is a curve point");
             (
-                TachygramSetBridge::from(bridge_hash),
+                ActionSetBridge::from(bridge_hash),
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: left_anchor_element,
-            tachygram_set_bridge,
+            action_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }

@@ -1,7 +1,7 @@
 //! Anchor-bound primitives over consensus state.
 //!
 //! Hosts the nf-free anchor path ([`AnchorSpan`]) used by
-//! [`super::stamp::StampLift`] to advance a stamp's anchor, and the
+//! [`super::transaction::TransactionLift`] to advance a stamp's anchor, and the
 //! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
@@ -192,7 +192,7 @@ impl Header<Fp> for NoteUnspent {
 ///
 /// The members polynomial has one root for each stamp folded into the span. The
 /// root is the anchor that fold produces. `anchor_end` is a member and
-/// `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// `anchor_start` is not. [`super::transaction::TransactionLift`] uses spans to
 /// advance a stamp's anchor. A spendable's anchor advances through
 /// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
 ///
@@ -206,7 +206,7 @@ impl Header<Fp> for NoteUnspent {
 ///
 /// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
 /// is not tied to the published chain. Consensus ties it when it checks the
-/// anchor of the stamp that [`super::stamp::StampLift`] outputs.
+/// anchor of the stamp that [`super::transaction::TransactionLift`] outputs.
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 

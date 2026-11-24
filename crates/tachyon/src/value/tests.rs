@@ -7,11 +7,11 @@ use crate::{
     note::{self, Note},
     nullifier,
     pasta::Fp,
-    primitives::{ActionSetPoly, Anchor, TachygramSetPoly},
+    primitives::{ActionSetPoly, Anchor},
     stamp::proof::{
         new_application,
         output::OutputBind,
-        stamp::{FeeFuse, OutputAction},
+        transaction::{FeeFuse, OutputAction},
     },
     witness,
 };
@@ -68,10 +68,7 @@ fn fee_fuse_rejects_maximum_above_max_money() {
             ..note
         },
         Positive::ZERO,
-        (
-            ActionSetPoly::from_iter([]),
-            TachygramSetPoly::from_iter([]),
-        ),
+        ActionSetPoly::from_iter([]),
     );
     let (forged, ()) = app
         .fuse(

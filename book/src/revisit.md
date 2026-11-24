@@ -2,7 +2,9 @@
 
 > This essay was written while the proof tree was being settled and has not
 > tracked every change since. The maintained chapters are authoritative where
-> they differ.
+> they differ. The `StampMerge` and `StampLift` diagrams below use the earlier
+> two-accumulator design; see the [current proof tree](./proof-tree.md#stamp-construction)
+> for `TransactionMerge`, `TransactionLift`, and `TransactionUnmerge`.
 
 Although Tachyon’s central contribution is its use of prunable nullifiers to
 scale Zcash without compromising privacy, we begin from a different vantage point.

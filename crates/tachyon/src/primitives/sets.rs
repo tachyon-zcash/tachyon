@@ -64,6 +64,10 @@ impl Default for TachygramSetCommit {
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionSetCommit(EqAffine);
 
+/// Bridge hash of the commitment to a stamp's action and fee digests.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct ActionSetBridge(EpAffine);
+
 /// Pedersen commitment to an anchor span's member set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct AnchorSetCommit(EqAffine);

@@ -33,11 +33,11 @@ use crate::{
         },
         spend::SpendBind,
         spendable::SpendableInit,
-        stamp::{
-            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift, StampMerge,
-            StampUnmerge,
-        },
         summary::{SummaryAdvance, SummarySeed},
+        transaction::{
+            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, TransactionLift,
+            TransactionMerge, TransactionUnmerge,
+        },
     },
     value,
 };
@@ -501,22 +501,21 @@ pub fn spend_action(
     )
 }
 
-/// Prepare the witness for [`StampMerge`]: `(action_set, tachygram_set)`.
+/// Prepare the witness for [`TransactionMerge`]: `(action_set,)`.
 #[must_use]
-pub const fn stamp_merge(
-    (_left, _right): (StepLeft<StampMerge>, StepRight<StampMerge>),
+pub const fn transaction_merge(
+    (_left, _right): (StepLeft<TransactionMerge>, StepRight<TransactionMerge>),
     action_set: ActionSetPoly,
-    tachygram_set: TachygramSetPoly,
-) -> StepWitness<'static, StampMerge> {
-    (action_set, tachygram_set)
+) -> StepWitness<'static, TransactionMerge> {
+    (action_set,)
 }
 
-/// Prepare the witness for [`StampLift`]: `(action_set,)`.
+/// Prepare the witness for [`TransactionLift`]: `(action_set,)`.
 #[must_use]
-pub const fn stamp_lift(
-    (_left, _right): (StepLeft<StampLift>, StepRight<StampLift>),
+pub const fn transaction_lift(
+    (_left, _right): (StepLeft<TransactionLift>, StepRight<TransactionLift>),
     action_set: ActionSetPoly,
-) -> StepWitness<'static, StampLift> {
+) -> StepWitness<'static, TransactionLift> {
     (action_set,)
 }
 
@@ -530,22 +529,19 @@ pub const fn action_merge(
     (action_set, tachygram_set)
 }
 
-/// Prepare the witness for [`StampUnmerge`]: `(action_set, tachygram_set)`.
+/// Prepare the witness for [`TransactionUnmerge`]: `(action_set,)`.
 #[must_use]
-pub const fn stamp_unmerge(
-    (_left, _right): (StepLeft<StampUnmerge>, StepRight<StampUnmerge>),
+pub const fn transaction_unmerge(
+    (_left, _right): (StepLeft<TransactionUnmerge>, StepRight<TransactionUnmerge>),
     action_set: ActionSetPoly,
-    tachygram_set: TachygramSetPoly,
-) -> StepWitness<'static, StampUnmerge> {
-    (action_set, tachygram_set)
+) -> StepWitness<'static, TransactionUnmerge> {
+    (action_set,)
 }
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
-/// (output_action_set, output_tachygram_set))`.
+/// output_action_set)`.
 ///
-/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
-/// singleton set contains one element: the fee digest or the fee change note's
-/// commitment. The output set polynomials represent the unions.
+/// The output polynomial represents `action_digests` with the fee digest added.
 ///
 /// # Panics
 ///
@@ -556,7 +552,6 @@ pub fn fee_fuse(
     max_fee_note: Note,
     fee: value::Positive,
     action_digests: &BTreeSet<ActionDigest>,
-    tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, FeeFuse> {
     #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
     let fee_change_note = Note {
@@ -573,21 +568,15 @@ pub fn fee_fuse(
 
     let mut output_action_digests = action_digests.clone();
     output_action_digests.insert(fee_digest);
-    let mut output_tachygrams = tachygrams.clone();
-    output_tachygrams.insert(fee_change_commitment);
-
     (
         max_fee_note,
         fee,
-        (
-            output_action_digests.into_iter().collect(),
-            output_tachygrams.into_iter().collect(),
-        ),
+        output_action_digests.into_iter().collect(),
     )
 }
 
 /// Prepare the witness for [`FeeSeed`]: `(max_fee_note, anchor,
-/// fee_action_set, fee_tachygram_set)`.
+/// fee_action_set)`.
 ///
 /// # Panics
 ///
@@ -613,10 +602,5 @@ pub fn fee_seed(
         v_fee: value::Positive::ZERO,
     }
     .digest(fee_change_commitment);
-    (
-        max_fee_note,
-        anchor,
-        ActionSetPoly::from_iter([fee_digest]),
-        TachygramSetPoly::from_iter([fee_change_commitment]),
-    )
+    (max_fee_note, anchor, ActionSetPoly::from_iter([fee_digest]))
 }

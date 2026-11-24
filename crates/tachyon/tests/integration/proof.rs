@@ -15,7 +15,7 @@ use zcash_tachyon::{
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::{EqAffine, Fp},
-    stamp::proof::{App, delegation, output, pool, spend, spendable, stamp},
+    stamp::proof::{App, delegation, output, pool, spend, spendable, transaction},
     value, witness,
 };
 
@@ -175,7 +175,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
 }
 
 #[test]
-fn stamp_lift_accepts_only_anchors_the_span_holds() {
+fn transaction_lift_accepts_only_anchors_the_span_holds() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -216,18 +216,16 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     ] {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
-        let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
-            app.bridge_hash(stamp.tachygram_set.into()).unwrap().into(),
+        let action_set = ActionSetPoly::from_iter(digests);
+        let stamp_pcd = stamp.proof.carry::<transaction::Transaction>((
+            app.bridge_hash(action_set.commit().into()).unwrap().into(),
             stamp_anchor,
         ));
         let (lifted, ()) = app
             .fuse(
                 rng,
-                stamp::StampLift,
-                witness::stamp_lift(
-                    (*stamp_pcd.data(), *span.data()),
-                    ActionSetPoly::from_iter(digests),
-                ),
+                transaction::TransactionLift,
+                witness::transaction_lift((*stamp_pcd.data(), *span.data()), action_set),
                 stamp_pcd,
                 span.clone(),
             )
@@ -240,6 +238,33 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
             assert_eq!(lifted.data().1, anchor_end);
         }
     }
+}
+
+#[test]
+fn transaction_lift_rejects_a_substituted_action_set() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_, bundle) = alice(app);
+    let span = PoolSim::shared().anchor_span(app, BlockHeight(1)..=BlockHeight(2));
+    let (mut digests, _) = bundle.verify_covered(&[]).unwrap();
+    let commit = ActionSetPoly::from_iter(digests.iter().copied()).commit();
+    let header = (
+        app.bridge_hash(commit.into()).unwrap().into(),
+        bundle.stamp.anchor,
+    );
+    let input = bundle.stamp.proof.carry::<transaction::Transaction>(header);
+    let (cm, _) = bundle.action_auth[0].1;
+    digests[0] = bundle.actions[0].digest((cm, Tachygram::random(rng)));
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            transaction::TransactionLift,
+            witness::transaction_lift((header, *span.data()), ActionSetPoly::from_iter(digests)),
+            input,
+            span,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
 }
 
 #[test]
@@ -334,7 +359,7 @@ fn spend_rejects_invalid_note() {
     let (forged_action, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -398,7 +423,7 @@ fn step_accepts_zero_value_note() {
     let (output_action, ()) = app
         .fuse(
             rng,
-            stamp::OutputAction,
+            transaction::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -414,7 +439,7 @@ fn step_accepts_zero_value_note() {
     let (spend_action, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
             spend_bind,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -451,6 +476,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         )
         .unwrap();
     let valid = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
+    let wrong_pair = plan.digest((Tachygram::random(rng), Tachygram::random(rng)));
     let (.., foreign_action_set, _) =
         witness::spend_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), user.pak);
 
@@ -465,6 +491,14 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         ),
         (
             {
+                let mut witness = valid.clone();
+                witness.2 = ActionSetPoly::from_iter([wrong_pair]);
+                witness
+            },
+            "a digest for a substituted nullifier pair",
+        ),
+        (
+            {
                 let mut witness = valid;
                 witness.2 = foreign_action_set;
                 witness
@@ -475,7 +509,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         let (forged, ()) = app
             .fuse(
                 rng,
-                stamp::SpendAction,
+                transaction::SpendAction,
                 action_witness,
                 bind_pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
@@ -490,7 +524,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let (pcd, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -952,6 +986,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         )
     );
     let valid = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
+    let wrong_pair = plan.digest((Tachygram::from(note.commitment()), Tachygram::random(rng)));
     let (.., foreign_action_set, _) =
         witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
@@ -966,6 +1001,14 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         ),
         (
             {
+                let mut witness = valid.clone();
+                witness.2 = ActionSetPoly::from_iter([wrong_pair]);
+                witness
+            },
+            "a digest for a substituted output pair",
+        ),
+        (
+            {
                 let mut witness = valid;
                 witness.2 = foreign_action_set;
                 witness
@@ -976,7 +1019,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         let (forged, ()) = app
             .fuse(
                 rng,
-                stamp::OutputAction,
+                transaction::OutputAction,
                 action_witness,
                 bind_pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
@@ -991,7 +1034,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let (pcd, ()) = app
         .fuse(
             rng,
-            stamp::OutputAction,
+            transaction::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -1017,6 +1060,24 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         ..plan
     };
     assert_ne!(foreign.digest(pair), plan.digest(pair));
+
+    let (forged, ()) = app
+        .fuse(
+            rng,
+            transaction::ActionMerge,
+            witness::action_merge(
+                (anchor, anchor),
+                ActionSetPoly::from_iter([plan.digest(pair)]),
+                TachygramSetPoly::from_iter([pair.0, pair.1, pair.0, pair.1]),
+            ),
+            pcd.clone(),
+            pcd,
+        )
+        .unwrap();
+    assert!(
+        !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
+        "dropped action with the correct tachygram product"
+    );
 }
 
 #[test]

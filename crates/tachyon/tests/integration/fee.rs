@@ -9,16 +9,16 @@ use core::assert_matches;
 use ragu::udon::field::Field as _;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
+    ActionSetPoly, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
-    note,
+    fee, note,
     pasta::Fp,
     stamp::{
         self, Proof as _, ProofStamp,
         proof::{
             App, output,
-            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
+            transaction::{Actions, FeeFuse, FeeSeed, OutputAction, Transaction},
         },
     },
     value, witness,
@@ -94,7 +94,7 @@ fn fee_less_output_bundle(
 }
 
 #[test]
-fn fee_fuse_binds_its_sets() {
+fn fee_fuse_binds_its_action_set() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
@@ -103,51 +103,40 @@ fn fee_fuse_binds_its_sets() {
     let left = fee_less_output_bundle(app, max_fee_note);
 
     let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
-    let action_tachygrams = left
-        .action_auth
-        .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .collect();
     let valid = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
-        &action_tachygrams,
     );
     let other = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
-        &action_tachygrams,
     );
+    let foreign_change = fee::Descriptor {
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: valid.1,
+    }
+    .digest(Tachygram::random(rng));
 
-    for (corrupt, expected) in [
+    for corrupt in [
         (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.1 = value::Positive::try_from(301).unwrap();
-                corrupt
-            },
-            "a fee above the maximum",
+            max_fee_note,
+            valid.1,
+            action_digests
+                .iter()
+                .copied()
+                .chain([foreign_change])
+                .collect(),
         ),
         (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2.0 = other.2.0.clone();
-                corrupt
-            },
-            "a substituted output action set",
+            max_fee_note,
+            value::Positive::try_from(301).unwrap(),
+            valid.2,
         ),
-        (
-            {
-                let mut corrupt = valid;
-                corrupt.2.1 = other.2.1;
-                corrupt
-            },
-            "a substituted output tachygram set",
-        ),
+        (max_fee_note, valid.1, other.2),
     ] {
         let (forged, ()) = app
             .fuse(
@@ -158,10 +147,7 @@ fn fee_fuse_binds_its_sets() {
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        assert!(
-            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
-            "{expected}"
-        );
+        assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     }
 }
 
@@ -174,11 +160,6 @@ fn fee_fuse_and_fee_seed_reject_zero_rcm() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, max_fee_note);
     let action_digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
-    let action_tachygrams = left
-        .action_auth
-        .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .collect();
     let zero_rcm = note::CommitmentTrapdoor::from(Fp::ZERO);
 
     let mut fuse_witness = witness::fee_fuse(
@@ -186,7 +167,6 @@ fn fee_fuse_and_fee_seed_reject_zero_rcm() {
         max_fee_note,
         value::Positive::try_from(120).unwrap(),
         &action_digests,
-        &action_tachygrams,
     );
     fuse_witness.0.rcm = zero_rcm;
     let fuse = app.fuse(
@@ -218,11 +198,6 @@ fn fee_fuse_slack_boundaries() {
     let anchor = PoolSim::shared().mint_anchor();
     let left = fee_less_output_bundle(app, wallet.random_note(300));
     let digests = BTreeSet::from([left.actions[0].digest(left.action_auth[0].1)]);
-    let action_tachygrams = left
-        .action_auth
-        .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-        .collect();
     let left_pcd = left.stamp.proof.carry::<Actions>(anchor);
     for (maximum, fee) in [
         (0, 0),
@@ -238,7 +213,6 @@ fn fee_fuse_slack_boundaries() {
             note,
             value::Positive::try_from(fee).unwrap(),
             &digests,
-            &action_tachygrams,
         );
         let (pcd, ()) = app
             .fuse(
@@ -321,39 +295,17 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         max_fee_note,
         value::Positive::try_from(0).unwrap(),
         &digests,
-        &once
-            .action_auth
-            .iter()
-            .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
-            .chain([once.fee_auth])
-            .collect(),
     );
     let (repeated, ()) = app
         .fuse(
             rng,
             FeeFuse,
-            repeated_witness.clone(),
-            once.stamp.proof.clone().carry::<Actions>(anchor),
+            repeated_witness,
+            once.stamp.proof.carry::<Actions>(anchor),
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
     assert!(!app.verify_uncompressed(&repeated, &mut *rng).unwrap());
-    let mut twice_stamp = once.stamp.clone();
-    twice_stamp.tachygram_set = repeated_witness.2.1.commit();
-    let twice = Bundle {
-        stamp: twice_stamp,
-        ..once
-    };
-
-    assert_matches!(
-        twice.verify(rng, app, &sighash, &[]),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::WrongTachygramSet
-        ))
-    );
-
-    let published_digests: Vec<ActionDigest> = digests.into_iter().collect();
-    assert!(!twice.verify_proof(rng, app, &published_digests).unwrap());
 }
 
 #[test]
@@ -696,7 +648,7 @@ fn innocent_seed_merges_and_strips() {
 }
 
 #[test]
-fn fee_seed_binds_its_singletons_and_header() {
+fn fee_seed_binds_its_singleton_and_header() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
@@ -704,41 +656,37 @@ fn fee_seed_binds_its_singletons_and_header() {
     let other_anchor = Anchor::random(rng);
     let valid = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
     let other = witness::fee_seed(((), ()), wallet.random_note(0), anchor);
+    let foreign_change = fee::Descriptor {
+        cv_feemax: valid.0.cv_feemax(),
+        v_fee: value::Positive::ZERO,
+    }
+    .digest(Tachygram::random(rng));
 
-    for (corrupt, expected) in [
+    for corrupt in [
         (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.0.value = value::Positive::try_from(1).unwrap();
-                corrupt
+            Note {
+                value: value::Positive::try_from(1).unwrap(),
+                ..valid.0
             },
-            "a nonzero maximum fee",
+            anchor,
+            valid.2.clone(),
         ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.2 = other.2.clone();
-                corrupt
-            },
-            "a substituted fee action set",
-        ),
-        (
-            {
-                let mut corrupt = valid.clone();
-                corrupt.3 = other.3.clone();
-                corrupt
-            },
-            "a substituted fee tachygram set",
-        ),
+        (valid.0, anchor, other.2.clone()),
+        (valid.0, anchor, ActionSetPoly::from_iter([foreign_change])),
     ] {
         let (forged, ()) = app.seed(rng, FeeSeed, corrupt).unwrap();
-        assert!(
-            !app.verify_uncompressed(&forged, &mut *rng).unwrap(),
-            "{expected}"
-        );
+        assert!(!app.verify_uncompressed(&forged, &mut *rng).unwrap());
     }
 
     let (seed_pcd, ()) = app.seed(rng, FeeSeed, valid.clone()).unwrap();
+    assert_eq!(
+        seed_pcd.commitments(),
+        [
+            ActionSetPoly::from_iter([]).commit().into(),
+            valid.2.commit().into()
+        ],
+        "the fee seed leaves padding in slot zero and its fee digest in slot one"
+    );
     let compressed = {
         let compressed = app.compress(&seed_pcd, rng).unwrap();
         let bytes = compressed.proof().to_bytes().unwrap();
@@ -748,18 +696,89 @@ fn fee_seed_binds_its_singletons_and_header() {
         let bytes = seed_pcd.proof().to_bytes().unwrap();
         stamp::Uncompressed::from_bytes(&bytes).unwrap()
     };
+    let action_commit = valid.2.commit();
+    let other_commit = other.2.commit();
     for (header, expected) in [
-        ((valid.2.commit(), valid.3.commit(), anchor), true),
-        ((other.2.commit(), valid.3.commit(), anchor), false),
-        ((valid.2.commit(), other.3.commit(), anchor), false),
-        ((valid.2.commit(), valid.3.commit(), other_anchor), false),
+        ((action_commit, anchor), true),
+        ((other_commit, anchor), false),
+        ((action_commit, other_anchor), false),
     ] {
         assert_eq!(proof.verify(rng, app, header).unwrap(), expected);
         assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
     }
-    let pcd = seed_pcd.proof().clone().carry::<Stamp>((
-        app.bridge_hash(valid.3.commit().into()).unwrap().into(),
+    let tachygram_commit = TachygramSetPoly::from_iter([valid.0.commitment().into()]).commit();
+    for (accumulator, expected) in [
+        (action_commit.into(), true),
+        (other_commit.into(), false),
+        (tachygram_commit.into(), false),
+    ] {
+        let header = (app.bridge_hash(accumulator).unwrap().into(), anchor);
+        let carried = proof.clone().carry::<Transaction>(header);
+        assert_eq!(
+            app.verify_differential(&carried, &mut *rng).unwrap(),
+            expected
+        );
+        let carried_compressed = compressed.clone().carry::<Transaction>(header);
+        assert_eq!(
+            app.verify_compressed(&carried_compressed).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn historical_fee_seed_verifies_under_its_original_registry() {
+    use stamp::proof::historical;
+
+    let historical = historical::new_application().unwrap();
+    // Registry tags of d1f5ffb0 with test-epoch-size. Keeping the old
+    // header alone is not enough: changing another registration also changes
+    // which historical proofs verify.
+    #[cfg(feature = "test-epoch-size")]
+    {
+        assert_eq!(
+            historical.native_registry().tag().to_bytes(),
+            [
+                79, 208, 109, 73, 234, 227, 217, 0, 0, 193, 238, 153, 127, 15, 1, 3, 249, 235, 80,
+                99, 142, 203, 0, 243, 157, 87, 104, 55, 73, 16, 31, 45
+            ]
+        );
+        assert_eq!(
+            historical.nested_registry().tag().to_bytes(),
+            [
+                202, 56, 202, 144, 142, 231, 212, 109, 243, 209, 26, 104, 178, 82, 93, 198, 252,
+                97, 242, 57, 240, 60, 157, 35, 210, 152, 42, 206, 63, 121, 85, 7
+            ]
+        );
+    }
+    let current = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let anchor = Anchor::random(rng);
+    let note = WalletSim::new(shared_sk()).random_note(0);
+    let change = Tachygram::from(note.commitment());
+    let digest = fee::Descriptor {
+        cv_feemax: note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
+    }
+    .digest(change);
+    let actions = ActionSetPoly::from_iter([digest]);
+    let tachygrams = TachygramSetPoly::from_iter([change]);
+    let tachygram_set = tachygrams.commit();
+    let (pcd, ()) = historical
+        .seed(
+            rng,
+            historical::FeeSeed,
+            (note, anchor, actions, tachygrams),
+        )
+        .unwrap();
+    let proof = historical.compress(&pcd, rng).unwrap();
+    let stamp = ProofStamp {
         anchor,
-    ));
-    assert!(app.verify_differential(&pcd, rng).unwrap());
+        tachygram_set,
+        adjuncts: BTreeSet::new(),
+        proof: Box::new(proof.into_parts().0),
+    };
+    assert!(historical::verify_proof(&historical, &stamp, [digest]).unwrap());
+    assert!(!historical::verify_proof(current, &stamp, [digest]).unwrap());
+    assert!(!stamp.verify_proof(rng, current, [digest]).unwrap());
 }

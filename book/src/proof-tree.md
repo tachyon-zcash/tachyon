@@ -72,36 +72,37 @@ An output operation also takes two steps, `OutputBind` and `OutputAction`.
 A transaction with multiple spend and output actions composes them with `ActionMerge`.
 The output is `Actions` whose multisets are the union of the two inputs' at the shared anchor.
 If a spend's lineage is at an earlier anchor of the same epoch, the wallet first runs `ActionLift` along one or more `AnchorSpan`s to move the actions to the transaction's anchor.
-After the merges, `FeeFuse` applies the bundle's fee to those actions, adding the fee digest to the action set and the [fee change note](./fee.md#fee-change-note) commitment to the tachygram set, and emits a `Stamp`.
+After the merges, `FeeFuse` adds the fee digest, including the [fee change note](./fee.md#fee-change-note) commitment, to the action set. The resulting `Transaction` carries no tachygram polynomial and does not prove that one would fit the wallet rank.
 A bundle with no actions uses `FeeSeed` instead.
 
-After the transaction stamp is composed, the wallet may run `StampLift` along more spans to move the stamp's anchor closer to the chain's latest anchor before publication.
+After the transaction stamp is composed, the wallet may run `TransactionLift` along more spans to move the stamp's anchor closer to the chain's latest anchor before publication.
 An `AnchorSpan` commits to every anchor produced inside it.
-`StampLift` moves a stamp from the span's start, or from any of those anchors, to the span's end.
+`TransactionLift` moves a stamp from the span's start, or from any of those anchors, to the span's end.
 Consensus and sync services publish spans as an epoch progresses.
 A wallet lifts its stamp along the published spans to the end of the latest one.
 For the stamps published after that, it builds its own span.
 
 On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
-Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
+For proof verification, the validator derives the action commitment from the published action and fee digests, compares it to the last slot, and verifies the `Transaction` header at the supplied anchor.
 
-After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
+[Bundle coverage](./bundle.md#stamp-trailer) checks the trailer's tachygram commitment against the published pairs and fee changes. [Anchor eligibility](./anchor.md) is a separate chain check.
+
+An aggregator combines working `Transaction` proofs from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
 Each input is anchored at the height its wallet chose.
-The aggregator runs `StampLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
-`StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
+The aggregator runs `TransactionLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
+`TransactionMerge` then fuses the aligned stamps pairwise into a single `Transaction` whose action and fee digest multiset is the sum of the inputs'.
 The merged stamp stays with one receiving bundle and keeps that bundle's fee and fee change, and the receiver's stamp lists by `txid` the other transactions it covers, which a block holds stripped.
 An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
-`StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
+`TransactionUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
 It undoes a merge: the quotient stays with the dividend's bundle and keeps that bundle's fee and fee change.
 An aggregator uses it when a block includes some of its contributors while the aggregate is still being built: it divides the aggregate by the included contributors' stamps and keeps building from the quotient.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 
 ### Fee states and flows
 
-`Actions` and `Stamp` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
-`Actions` carries only its anchor. `Stamp` carries `(tachygram_set_bridge, anchor)`, where `tachygram_set_bridge` is the bridge hash of the tachygram set.
-Both hold the action set as an `ActionSetPoly` and the tachygram set as a `TachygramSetPoly`.
-Verification always rebuilds `Pcd<Stamp>`.
+`Actions` and `Transaction` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
+`Actions` carries its anchor and has slots `(ActionSetPoly, TachygramSetPoly)`: the leaves check both sets, `ActionMerge` multiplies them, and `ActionLift` checks that both are preserved. `Transaction` has slots `(Padding, ActionSetPoly)` and encodes the anchor followed by the two coordinates of the bridge for its last slot. Its digest roots bind the individual action pairs and fee changes; the proof has no tachygram slot.
+Verification rebuilds `Pcd<Transaction>` under the working registry. Historical blocks use `stamp::proof::historical::Stamp`: the old registry expects slots `(ActionSetPoly, TachygramSetPoly)` and the bridge of the tachygram accumulator. The trailer format and working suffix do not distinguish the two registries.
 
 ## Roles
 
@@ -111,8 +112,8 @@ It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideSelect`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
-The aggregator works with published `Stamp`s.
-It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), fuses with `StampMerge`, removes contributors with `StampUnmerge`, and proves an innocent aggregate's zero fee with `FeeSeed`.
+The aggregator works with full `Transaction` proofs.
+It aligns anchors with `TransactionLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), fuses with `TransactionMerge`, removes contributors with `TransactionUnmerge`, and proves an innocent aggregate's zero fee with `FeeSeed`.
 
 | step | wallet | sync service | aggregator |
 | ---- | ------ | ------------ | ---------- |
@@ -152,9 +153,9 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 | ActionLift | yes | no | no |
 | FeeFuse | yes | no | no |
 | FeeSeed | yes | no | yes |
-| StampMerge | yes | no | yes |
-| StampLift | yes | possible | yes |
-| StampUnmerge | no | no | yes |
+| TransactionMerge | yes | no | yes |
+| TransactionLift | yes | possible | yes |
+| TransactionUnmerge | no | no | yes |
 
 ## Proof framework
 
@@ -177,20 +178,20 @@ The subsections below walk each subtree bottom-up.
 
 `AnchorSpanSeed`, `SummarySeed`, and `QrStampIntakeSeed` each witness a predecessor anchor and a range-checked epoch and prove one anchor step from them, and the fuses compose adjacent segments by checking endpoint equality.
 These seeds and `SummaryAdvance` reject an empty stamp: the stamp's tachygram set must not open to one at $\zeta$.
-A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
+A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `TransactionLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
 
 An `AnchorSpan` covers `[anchor_start, anchor_end]`.
 Its proof carries `members`, the polynomial whose roots are the anchors in `(anchor_start, anchor_end]`.
 Each stamp folded into the span adds one member.
 `anchor_end` is a member and `anchor_start` is not.
-`AnchorSpanSeed` folds one stamp's bridge hash into `anchor_start`, and the resulting anchor is the only root of its members polynomial.
+`AnchorSpanSeed` folds the bridge hash of its own witnessed tachygram set into `anchor_start`, and the resulting anchor is the only root of its members polynomial. This hash is distinct from the stamp proof's action-set bridge.
 `AnchorSpanFuse` requires the left span's `anchor_end` to equal the right span's `anchor_start`, and proves that the combined members polynomial is the product of the two halves' polynomials.
 
-`StampLift` moves a stamp from `anchor_start` or from any member to `anchor_end`.
+`TransactionLift` moves a stamp from `anchor_start` or from any member to `anchor_end`.
 It checks $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, where $M$ is the members polynomial and $\mathsf{anchor}$ is the stamp's anchor.
 The members polynomial records which anchors are in the span and not their order.
-`StampLift` therefore always moves the stamp to `anchor_end`.
-`StampLift` opens $M$ at the stamp's anchor, a point the left input fixes, not a random challenge.
+`TransactionLift` therefore always moves the stamp to `anchor_end`.
+`TransactionLift` opens $M$ at the stamp's anchor, a point the left input fixes, not a random challenge.
 The right input proof binds $M$.
 Its witness is the caller's stated action set, which becomes the output action set and must equal the input stamp's.
 
@@ -212,9 +213,9 @@ for the witnessed `extended` $E$, the input's `elapsed` $P$ in its `NfSeqPoly`, 
 
 ### Summaries
 
-A `Summary` carries `(epoch, anchor_prev, anchor_end)` with two `TachygramSetPoly` slots, the accumulated set `ACCUMULATED` first and the last stamp's tachygram set `LAST_STAMP` second: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs each stamp's bridge hash.
-`SummarySeed` places one stamp's tachygram set in both slots and checks them equal at $\zeta$. The anchor absorbs the stamp's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
-`SummaryAdvance` takes the next stamp's set as its `LAST_STAMP` and checks at $\zeta$ that its `ACCUMULATED` is the input's `ACCUMULATED` times that set. The anchor absorbs that stamp's bridge hash to advance `anchor_end`.
+A `Summary` carries `(epoch, anchor_prev, anchor_end)` with two `TachygramSetPoly` slots, the accumulated set `ACCUMULATED` first and the last stamp's tachygram set `LAST_STAMP` second. The summary folds one epoch's tachygram sets into one accumulator while the anchor absorbs each set's bridge hash.
+`SummarySeed` places one stamp's tachygram set in both slots and checks them equal at $\zeta$. The anchor absorbs the last slot's bridge hash using $\texttt{Tachyon-AnchorSt}$ to produce `anchor_end`, just as in `AnchorSpanSeed`.
+`SummaryAdvance` takes the next stamp's set as its `LAST_STAMP` and checks at $\zeta$ that its `ACCUMULATED` is the input's `ACCUMULATED` times that set. The anchor absorbs the new `LAST_STAMP` bridge hash to advance `anchor_end`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
 No step joins two summaries directly: each enters through `QrSummaryIntake`, and `QrIntakeMerge` joins the intakes when the first's `anchor_end` meets the second's `anchor_prev`.
@@ -462,7 +463,7 @@ The note's age never becomes public. The lineage carries only its current epoch,
 
 ### Stamp construction {#stamp-construction}
 
-A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
+Before fees the proof tracks both action digests and their tachygrams[^tachygrams]. After fees the stamp proof tracks only action and fee digests.
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. It requires a nonzero trapdoor $\mathsf{rcm}$ and nonzero tachygrams. Deriving the pad from the note opening hides which member is the commitment and whether the action is an output[^tachygrams].
 Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
 `OutputAction` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
@@ -486,19 +487,16 @@ The work splits as follows, each stamp step also opening its action-set and tach
 | SpendBind | 2 (nullifier pair) | 2 (`cv`) |
 | SpendAction | 4 (1 `pk`, 1 `alpha`, 2 action digest) | 1 (`rk`) |
 
-`StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
-`ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
-`StampUnmerge` checks anchor equality, witnesses the quotient sets, and enforces, for each set, that the dividend's set polynomial is the product of the divisor's and the quotient's.
-Every stamp's action set polynomial is a product of linear factors, one per action or fee digest, and its tachygram set polynomial is the product over exactly those digests' tachygrams.
-Unique factorization makes the division exact: the divisor's digests are a sub-multiset of the dividend's. Each digest determines its tachygrams by Poseidon collision resistance, so the tachygram quotient holds exactly the remaining digests' tachygrams.
+`TransactionMerge` checks anchor equality and enforces that the output action polynomial is the product of its inputs. Before fees `ActionMerge` checks products for both action digests and tachygrams.
+`TransactionUnmerge` checks anchor equality and enforces that the dividend's action polynomial is the product of the divisor's and the quotient's. Unique factorization makes the division exact: repeated digest roots subtract by multiplicity. Each digest binds its leaf's tachygrams by Poseidon collision resistance.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
 
-[`FeeFuse`](./fee.md#fee-steps) transforms `Actions` into a `Stamp` by multiplying each set polynomial by its linear fee factor. Its fee digest absorbs the same fee change commitment that the step adds to the tachygram set. `FeeSeed` establishes the same binding for a zero-action bundle.
+[`FeeFuse`](./fee.md#fee-steps) multiplies the action polynomial in `Actions` slot zero by the linear factor for the fee digest, which absorbs the derived fee change. `FeeSeed` produces the singleton fee factor for a zero-action bundle. Both writers publish the bridge of the resulting action polynomial in the last output slot.
 
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
-The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
+The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `TransactionMerge`, `TransactionUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `TransactionLift`).
 Consensus verifies the published anchor against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
@@ -506,10 +504,10 @@ Consensus verifies the published anchor against the chain before accepting the s
 Whoever releases a stamp must rerandomize it first, but rerandomization alone does not establish zero knowledge or unlinkability for current stamp proofs.
 A stamp crosses a trust boundary each time that happens: a wallet broadcasts an autonome, and an aggregator broadcasts an aggregate.
 
-Rerandomizing a stamp replaces its stamp proof with a new one for the same `Stamp` header.
+Rerandomizing a working stamp replaces its stamp proof with a new one for the same `Transaction` header.
 Where a stamp is both rerandomized and compressed, rerandomization comes first.
 
-`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Stamp` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
+`Plan::prove`, `ProofStamp::merge` and `ProofStamp::unmerge` each rerandomize their `Transaction` PCD. `ProofStamp::lift` does the same for nonempty spans; with no spans it returns the original stamp unchanged. `ProofStamp::compress` is a separate call.
 The implementation rerandomizes no other PCD.
 
 ## Simple transaction
@@ -549,11 +547,11 @@ flowchart TB
     w_output[/theta, anchor, action_set, tachygram_set/]
     s_output[OutputAction]
     s_merge[ActionMerge]
-    w_fee[/max_fee_note, fee, output_action_set, output_tachygram_set/]
+    w_fee[/max_fee_note, fee, output_action_set/]
     s_fee[FeeFuse]
   end
 
-  stamp_out((Stamp))
+  stamp_out((Transaction))
 
   w_seed --> s_seed
   s_seed -->|NoteSecret| s_window
@@ -592,7 +590,7 @@ The single `SpendableLift` consumes one composed `NoteUnspent` (potentially cros
 
 ```mermaid
 flowchart LR
-  sh_in((Stamp))
+  sh_in((Transaction))
   w_span[/anchor_start, epoch, stamp/]
   s_span[AnchorSpanSeed]
   w_next[/anchor_start, epoch, stamp/]
@@ -600,8 +598,8 @@ flowchart LR
   w_spanfuse[/combined/]
   s_spanfuse[AnchorSpanFuse]
   w_lift[/action_set/]
-  s_lift[StampLift]
-  sh_out((Stamp))
+  s_lift[TransactionLift]
+  sh_out((Transaction))
 
   w_span --> s_span
   w_next --> s_next
@@ -664,11 +662,11 @@ flowchart LR
 | OutputHeader | (cm, pad, cv) | — |
 | SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) | — |
 | Actions | (anchor) | ActionSetPoly: action set; TachygramSetPoly: tachygram set |
-| Stamp | (tachygram_set_bridge, anchor) | ActionSetPoly: action set; TachygramSetPoly: tachygram set |
+| Transaction | (action_set_bridge, anchor) | padding; ActionSetPoly: action and fee digests |
 
 Slots lists each header's polynomial types in slot order, with the slot's name where a header holds two of one type and the contents consumers read; — marks a header whose slots are padding. A type listed without contents is one no consumer reads. `UnspentBind` keeps the complement as the `NfSeqPoly` of its `NoteUnspent`. In `AnchorSpanSeed`, `SpendableInit`, and the summary steps, the `TachygramSetPoly` in the second slot (`LAST_STAMP` in a summary) holds the stamp's set whose bridge hash the anchor absorbs: the span's seed stamp, the creation stamp, or the last stamp in the summary, respectively.
 
-`contents_hash`, `non_residue_hash` and `tachygram_set_bridge` are bridge hashes of the producing step's second slot, a `TachygramSetPoly`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's non-residue polynomial, not of the selection's own `QrQuotientPoly`.
+`contents_hash` and `non_residue_hash` bind a `TachygramSetPoly` in the producing step's second slot. `action_set_bridge` instead binds a stamp's `ActionSetPoly`. `QrSideSelection` copies `non_residue_hash` from the split, so that hash is of the split's non-residue polynomial, not of the selection's own `QrQuotientPoly`.
 
 ## Steps
 
@@ -708,11 +706,11 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | SpendAction | SpendHeader | — | theta, pak, action_set, tachygram_set | Actions |
 | ActionMerge | Actions | Actions | action_set, tachygram_set | Actions |
 | ActionLift | Actions | AnchorSpan | — | Actions |
-| FeeFuse | Actions | — | max fee note opening, fee, output action_set, output tachygram_set | Stamp |
-| FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
-| StampMerge | Stamp | Stamp | merged action_set, merged tachygram_set | Stamp |
-| StampLift | Stamp | AnchorSpan | action_set | Stamp |
-| StampUnmerge | Stamp | Stamp | quotient action_set, quotient tachygram_set | Stamp |
+| FeeFuse | Actions | — | max fee note opening, fee, output action_set | Transaction |
+| FeeSeed | — | — | max fee note opening, anchor, fee action_set | Transaction |
+| TransactionMerge | Transaction | Transaction | merged action_set | Transaction |
+| TransactionLift | Transaction | AnchorSpan | action_set | Transaction |
+| TransactionUnmerge | Transaction | Transaction | quotient action_set | Transaction |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.

@@ -95,17 +95,18 @@ note has the same opening as the max fee note.
 
 ## Fee Steps
 
-In the [proof tree](./proof-tree.md), `Actions` carries only an
-[anchor](./anchor.md) in its header. `Stamp` carries the tachygram
-accumulator's [bridge hash](./anchor.md#stamp-absorption) and the anchor in
-its header. Both hold the action set as an `ActionSetPoly` and the
-[tachygram set](./tachygrams.md#tachygram-sets) as a `TachygramSetPoly`. `FeeFuse` and
-`FeeSeed` are the only steps that emit a `Stamp` without taking one as
-input. Every stamp descends from one of them.
+In the [proof tree](./proof-tree.md), the `Actions` header has only an
+[anchor](./anchor.md) field. The `Transaction` header has the anchor and the bridge
+hash of the action accumulator. `Actions` keeps the tachygram polynomial alongside the action
+polynomial: the leaves check its pair factors, `ActionMerge` checks their product,
+and `ActionLift` checks that the polynomial is preserved. `Transaction` needs only the
+action polynomial in its last slot because each action digest binds its pair and
+the fee digest binds the change. `FeeFuse` and `FeeSeed` introduce fee leaves.
+Every working stamp descends from one of them.
 
 `FeeFuse` takes `Actions` as its left input, has no right input, and
-emits a `Stamp`. It witnesses the max fee note opening and the fee along
-with $(A', T')$ for the resulting set polynomials.
+emits a `Transaction`. Its prover supplies the max fee note opening and the fee along
+with the output action set polynomial.
 
 The step derives $r$ and $\cv_\feemax$ from the opening and rejects the
 identity commitment. It enforces $\feemax \leq \mathsf{MAX\_MONEY}$ and
@@ -118,34 +119,29 @@ d_\fee = \mathsf{Poseidon}_\texttt{Tachyon-FeeDg}\bigl(x(\cv_\feemax), y(\cv_\fe
 $$
 
 where $x$ and $y$ give the affine coordinates of the max fee commitment.
-The step opens the action and tachygram set polynomials $A$ and $T$ from
-the left input's slots and enforces:
+The step opens the input polynomial $A$ and the output polynomial $A'$ at
+$\zeta$ to check the relation:
 
 $$
-A' = A \cdot (X - d_\fee),
-\qquad
-T' = T \cdot (X - \cm_\chg).
+A'(X) = A(X) \cdot (X - d_\fee)
 $$
 
-The digest absorbs the same $\cm_\chg$ wire used to form the linear factor in
-the resulting tachygram set polynomial. The emitted `Stamp` carries the bridge
-hash of the commitment to $T'$ and the left input's anchor.
+The emitted `Transaction` carries the bridge hash of the commitment to $A'$ and
+the left input's anchor.
 
 `FeeSeed` proves a zero-action bundle's zero fee. It has no
-predecessors and witnesses the max fee note opening, the anchor, and the two
-singleton set polynomials $S_A$ and $S_T$ for the fee. It requires a
+predecessors. Its prover supplies the max fee note opening, the anchor, and the
+singleton action set polynomial $S_A$ for the fee. It requires a
 zero maximum fee and uses a zero fee, so the fee change note is the max fee
 note itself. It derives the max fee commitment, the nonzero fee change
-commitment, and the fee digest as `FeeFuse` does. The step checks the
-singleton relations:
+commitment, and the fee digest as `FeeFuse` does. The step opens $S_A$ at
+$\zeta$ to check the singleton relation:
 
 $$
-S_A = X - d_\fee,
-\qquad
-S_T = X - \cm_\chg.
+S_A(X) = X - d_\fee
 $$
 
-The emitted `Stamp` carries the bridge hash of the commitment to $S_T$ and
+The emitted `Transaction` carries the bridge hash of the commitment to $S_A$ and
 the witnessed anchor.
 
 The fee steps prove that the fee digest and fee change commitment come from

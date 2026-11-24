@@ -162,7 +162,8 @@ const STAMP_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 
 /// `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set
-/// commitment. A verifier rebuilds the stamp proof's header from the last two.
+/// commitment. The proof header is reconstructed separately from the anchor
+/// and the action accumulator of the covered bodies.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(

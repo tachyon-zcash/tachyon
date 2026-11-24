@@ -25,9 +25,9 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 use proof::{
     App, output,
-    stamp::{
-        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
-        StampLift, StampMerge, StampUnmerge,
+    transaction::{
+        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Transaction,
+        TransactionLift, TransactionMerge, TransactionUnmerge,
     },
 };
 use ragu::{
@@ -48,7 +48,9 @@ use crate::{
     fee,
     keys::{ProofAuthorizingKey, private},
     pasta::{EpAffine, EqAffine, Fp},
-    primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
+    primitives::{
+        ActionDigest, ActionSetBridge, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit,
+    },
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
@@ -144,7 +146,9 @@ pub trait Proof: sealed::Sealed {
     where
         Self: Sized;
 
-    /// Verify both output sets and the stamp's anchor.
+    /// Verify the action set and the stamp's anchor. The [`Transaction`] header
+    /// uses the canonical bridge hash of the supplied action accumulator.
+    /// The last online commitment must equal that accumulator.
     ///
     /// # Errors
     ///
@@ -154,7 +158,7 @@ pub trait Proof: sealed::Sealed {
         &self,
         rng: &mut RNG,
         app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+        header: (ActionSetCommit, Anchor),
     ) -> Result<bool, ragu::Error>;
 }
 
@@ -175,12 +179,15 @@ impl Proof for Uncompressed {
         &self,
         rng: &mut RNG,
         app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+        (action_set, anchor): (ActionSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let bridge = bridge_hash(header.1.into()).into();
-        let pcd = self.clone().carry::<Stamp>((bridge, header.2));
-        let [action_slot, tachygram_slot] = pcd.commitments();
-        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
+        if EqAffine::from(action_set).is_identity() {
+            return Ok(false);
+        }
+        let bridge = ActionSetBridge::from(bridge_hash(action_set.into()));
+        let pcd = self.clone().carry::<Transaction>((bridge, anchor));
+        let [_, action_slot] = pcd.commitments();
+        if action_slot != EqAffine::from(action_set) {
             return Ok(false);
         }
         let compressed = match app.compress(&pcd, rng) {
@@ -209,14 +216,14 @@ impl Proof for Compressed {
         &self,
         _rng: &mut RNG,
         app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
+        (action_set, anchor): (ActionSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let [action_slot, tachygram_slot] = self.online_commitments();
-        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
+        let [_, action_slot] = self.online_commitments();
+        if action_slot != EqAffine::from(action_set) || action_slot.is_identity() {
             return Ok(false);
         }
-        let bridge = bridge_hash(header.1.into()).into();
-        app.verify_compressed(&self.clone().carry::<Stamp>((bridge, header.2)))
+        let bridge = ActionSetBridge::from(bridge_hash(action_set.into()));
+        app.verify_compressed(&self.clone().carry::<Transaction>((bridge, anchor)))
     }
 }
 
@@ -594,13 +601,7 @@ impl Plan {
                     .fuse(
                         rng,
                         FeeFuse,
-                        witness::fee_fuse(
-                            (anchor, ()),
-                            self.max_fee_note,
-                            self.fee,
-                            &digests,
-                            &tachygrams,
-                        ),
+                        witness::fee_fuse((anchor, ()), self.max_fee_note, self.fee, &digests),
                         merged_proof.carry::<Actions>(anchor),
                         app.bootstrap_proof().clone().carry::<()>(()),
                     )
@@ -653,10 +654,9 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
-/// The PCD header `(tachygram_bridge, anchor)` is entirely not stored
-/// here. A verifier must reconstruct the header from public data and check the
-/// proof's output slots against the covered actions and
-/// [`Self::tachygram_set`].
+/// The verifier reconstructs the PCD header `(action_set_bridge, anchor)`
+/// from public data and checks the proof's last output slot against the
+/// supplied action and fee digests.
 ///
 /// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
 /// proof. [`Self::compress`] produces a stamp with a [`Compressed`] proof.
@@ -667,6 +667,8 @@ pub struct ProofStamp<P: Proof> {
     pub anchor: Anchor,
 
     /// The commitment to the covered bundles' tachygram union.
+    /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)
+    /// checks this trailer field against the covered bodies.
     pub tachygram_set: TachygramSetCommit,
 
     /// The txids of the other transactions whose bundles this stamp covers,
@@ -818,18 +820,18 @@ impl ProofStamp<Uncompressed> {
         ))
     }
 
-    /// Proves the merge of two stamps, returning the merged `(digests,
-    /// tachygrams, anchor, proof)`. The proof is not rerandomized.
+    /// Proves the merge of two stamps, returning the merged [`Transaction`] PCD
+    /// and the union of the inputs' tachygrams for the trailer. The proof is
+    /// not rerandomized.
     ///
-    /// Both stamps must share the same anchor (use [`StampLift`] to align
+    /// Both stamps must share the same anchor (use [`TransactionLift`] to align
     /// first).
     ///
-    /// Each side is `(digests, tachygrams, anchor, proof)`, where the digest
-    /// list reconstructs the `ActionCommit` multiset that `StampMerge`
-    /// verifies via Schwartz-Zippel. Digests are derived from public action
-    /// data by the caller and are never stored on the stamp; the merged
-    /// (concatenated) digest list is returned so a fold can carry it
-    /// forward without re-deriving.
+    /// Each side is `(digests, tachygrams, anchor, proof)`. Digests are derived
+    /// from public action data by the caller and are never stored on the
+    /// stamp. They reconstruct each input's bridge field and the merged
+    /// action set polynomial that [`TransactionMerge`] verifies via
+    /// Schwartz-Zippel.
     ///
     /// # Errors
     ///
@@ -855,51 +857,33 @@ impl ProofStamp<Uncompressed> {
         ),
     ) -> Result<
         (
-            BTreeSet<ActionDigest>,
+            ragu::Pcd<Pasta, WalletRank, Transaction>,
             BTreeSet<Tachygram>,
-            Anchor,
-            Box<Uncompressed>,
         ),
         ragu::Error,
     > {
-        let left_tg_poly = left_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
+        let left_action_set = left_digests.iter().copied().collect::<ActionSetPoly>();
+        let right_action_set = right_digests.iter().copied().collect::<ActionSetPoly>();
+        let left_bridge = ActionSetBridge::from(bridge_hash(left_action_set.commit().into()));
+        let right_bridge = ActionSetBridge::from(bridge_hash(right_action_set.commit().into()));
+        let left_pcd = left_proof.carry::<Transaction>((left_bridge, left_anchor));
+        let right_pcd = right_proof.carry::<Transaction>((right_bridge, right_anchor));
 
-        let right_tg_poly = right_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
-
-        let left_bridge = bridge_hash(left_tg_poly.commit().into()).into();
-        let right_bridge = bridge_hash(right_tg_poly.commit().into()).into();
-        let left_pcd = left_proof.carry::<Stamp>((left_bridge, left_anchor));
-        let right_pcd = right_proof.carry::<Stamp>((right_bridge, right_anchor));
-
-        let merged_digests: BTreeSet<ActionDigest> =
-            left_digests.union(&right_digests).copied().collect();
         let tachygrams: BTreeSet<Tachygram> =
             left_tachygrams.union(&right_tachygrams).copied().collect();
 
         let (pcd, ()) = app.fuse(
             rng,
-            StampMerge,
-            witness::stamp_merge(
+            TransactionMerge,
+            witness::transaction_merge(
                 (*left_pcd.data(), *right_pcd.data()),
-                ActionSetPoly::from_iter(merged_digests.clone()),
-                TachygramSetPoly::from_iter(tachygrams.clone()),
+                ActionSetPoly::from_iter(left_digests.union(&right_digests).copied()),
             ),
             left_pcd,
             right_pcd,
         )?;
 
-        Ok((
-            merged_digests,
-            tachygrams,
-            pcd.data().1,
-            Box::new(pcd.proof().clone()),
-        ))
+        Ok((pcd, tachygrams))
     }
 
     /// Advances the stamp's anchor along `spans`. The first span must contain
@@ -917,14 +901,17 @@ impl ProofStamp<Uncompressed> {
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let bridge = bridge_hash(self.tachygram_set.into()).into();
-        let mut stamp_pcd = self.proof.carry::<Stamp>((bridge, self.anchor));
+        let bridge = ActionSetBridge::from(bridge_hash(action_set.commit().into()));
+        let mut stamp_pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
         for span in spans {
             stamp_pcd = app
                 .fuse(
                     rng,
-                    StampLift,
-                    witness::stamp_lift((*stamp_pcd.data(), *span.data()), action_set.clone()),
+                    TransactionLift,
+                    witness::transaction_lift(
+                        (*stamp_pcd.data(), *span.data()),
+                        action_set.clone(),
+                    ),
                     stamp_pcd,
                     span,
                 )?
@@ -982,7 +969,8 @@ impl ProofStamp<Uncompressed> {
     /// verifies.
     ///
     /// Each side supplies borrowed action and fee maps, from which the action
-    /// digests and tachygrams for the merge proof are derived.
+    /// digests for the merge proof and the tachygrams for the trailer are
+    /// derived.
     ///
     /// The merged stamp lists both stamps' adjuncts and `right_txid`, the txid
     /// of the one transaction the right stamp covers without listing, which
@@ -1044,7 +1032,7 @@ impl ProofStamp<Uncompressed> {
             right_digests.insert(descriptor.digest(change));
         }
 
-        let (_, tachygrams, anchor, merged_proof) = Self::prove_merge(
+        let (pcd, tachygrams) = Self::prove_merge(
             rng,
             app,
             (left_digests, left_tachygrams, self.anchor, self.proof),
@@ -1061,13 +1049,8 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        let proof = app
-            .rerandomize(
-                merged_proof.carry::<Stamp>((bridge_hash(tachygram_set.into()).into(), anchor)),
-                rng,
-            )?
-            .proof()
-            .clone();
+        let anchor = pcd.data().1;
+        let proof = app.rerandomize(pcd, rng)?.proof().clone();
 
         let mut adjuncts = self.adjuncts;
         adjuncts.extend(right_stamp.adjuncts);
@@ -1084,8 +1067,10 @@ impl ProofStamp<Uncompressed> {
     /// Divides this stamp by a divisor stamp at the same anchor, removing the
     /// divisor's covered actions, fees and tachygrams.
     ///
-    /// Each side supplies borrowed action and fee maps. The quotient's action
-    /// digests and tachygrams are the dividend's less the divisor's. A divisor
+    /// Each side supplies borrowed action and fee maps. The quotient removes
+    /// the divisor's digest roots. Its trailer commits to the tachygrams of
+    /// the surviving action pairs and fee changes, including any tachygram
+    /// also contributed by a removed leaf. A divisor
     /// that does not divide this stamp can produce a proof that fails
     /// verification, even when construction succeeds.
     ///
@@ -1126,26 +1111,31 @@ impl ProofStamp<Uncompressed> {
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
     ) -> Result<Self, ragu::Error> {
+        let divisor_digests: BTreeSet<_> = divisor_desc
+            .iter()
+            .map(|(descriptor, &pair)| descriptor.digest(pair))
+            .chain(
+                divisor_fees
+                    .iter()
+                    .map(|(descriptor, &change)| descriptor.digest(change)),
+            )
+            .collect();
+
         let mut digests = BTreeSet::new();
-        let mut tachygrams_all = BTreeSet::new();
+        let mut quotient_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
-            tachygrams_all.extend(<[Tachygram; 2]>::from(pair));
-            digests.insert(descriptor.digest(pair));
+            let digest = descriptor.digest(pair);
+            digests.insert(digest);
+            if !divisor_digests.contains(&digest) {
+                quotient_tachygrams.extend(<[Tachygram; 2]>::from(pair));
+            }
         }
         for (descriptor, &change) in fees {
-            tachygrams_all.insert(change);
-            digests.insert(descriptor.digest(change));
-        }
-
-        let mut divisor_digests = BTreeSet::new();
-        let mut divisor_tachygrams = BTreeSet::new();
-        for (descriptor, &pair) in divisor_desc {
-            divisor_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            divisor_digests.insert(descriptor.digest(pair));
-        }
-        for (descriptor, &change) in divisor_fees {
-            divisor_tachygrams.insert(change);
-            divisor_digests.insert(descriptor.digest(change));
+            let digest = descriptor.digest(change);
+            digests.insert(digest);
+            if !divisor_digests.contains(&digest) {
+                quotient_tachygrams.insert(change);
+            }
         }
 
         let quotient_action_set = digests
@@ -1153,31 +1143,29 @@ impl ProofStamp<Uncompressed> {
             .copied()
             .collect::<ActionSetPoly>();
 
-        let dividend_tachygram_set = tachygrams_all.iter().copied().collect::<TachygramSetPoly>();
-        let quotient_tachygram_set = tachygrams_all
-            .difference(&divisor_tachygrams)
-            .copied()
-            .collect::<TachygramSetPoly>();
-        let tachygram_set = quotient_tachygram_set.commit();
-        let divisor_tachygram_set = divisor_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
+        let tachygram_set = quotient_tachygrams
+            .into_iter()
+            .collect::<TachygramSetPoly>()
+            .commit();
 
-        let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().into()).into();
-        let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().into()).into();
-        let dividend_pcd = self.proof.carry::<Stamp>((dividend_bridge, self.anchor));
+        let dividend_action_set = digests.into_iter().collect::<ActionSetPoly>();
+        let divisor_action_set = divisor_digests.into_iter().collect::<ActionSetPoly>();
+        let dividend_bridge =
+            ActionSetBridge::from(bridge_hash(dividend_action_set.commit().into()));
+        let divisor_bridge = ActionSetBridge::from(bridge_hash(divisor_action_set.commit().into()));
+        let dividend_pcd = self
+            .proof
+            .carry::<Transaction>((dividend_bridge, self.anchor));
         let divisor_pcd = divisor_stamp
             .proof
-            .carry::<Stamp>((divisor_bridge, divisor_stamp.anchor));
+            .carry::<Transaction>((divisor_bridge, divisor_stamp.anchor));
 
         let (pcd, ()) = app.fuse(
             rng,
-            StampUnmerge,
-            witness::stamp_unmerge(
+            TransactionUnmerge,
+            witness::transaction_unmerge(
                 (*dividend_pcd.data(), *divisor_pcd.data()),
                 quotient_action_set,
-                quotient_tachygram_set,
             ),
             dividend_pcd,
             divisor_pcd,
@@ -1203,14 +1191,24 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Errors
     ///
-    /// Returns [`ragu::Error`] if the proof system fails.
+    /// Returns [`ragu::Error`] if the proof system fails or the proof's last
+    /// commitment has no affine coordinates for the bridge hash.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
     ) -> Result<ProofStamp<Compressed>, ragu::Error> {
-        let bridge = bridge_hash(self.tachygram_set.into()).into();
-        let pcd = self.proof.carry::<Stamp>((bridge, self.anchor));
+        // The uncompressed proof exposes its commitments through a PCD.
+        let untyped = self.proof.carry::<()>(());
+        let [_, action_slot] = untyped.commitments();
+        if action_slot.is_identity() {
+            return Err(ragu::Error::InvalidWitness(
+                "identity action commitment".into(),
+            ));
+        }
+        let (proof, ()) = untyped.into_parts();
+        let bridge = ActionSetBridge::from(bridge_hash(action_slot));
+        let pcd = proof.carry::<Transaction>((bridge, self.anchor));
         let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
         Ok(ProofStamp {
             anchor: self.anchor,
@@ -1226,9 +1224,16 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Soundness
     ///
-    /// The parameter is a multiset: order does not matter, multiplicity does.
-    /// The header is built from [`Self::tachygram_set`]. The caller confirms
-    /// that commitment against the covered bundles' pairs and fee changes.
+    /// The PCD is verified as a [`Transaction`] whose `anchor` is
+    /// [`Self::anchor`] and whose bridge hash is the one [`bridge_hash`]
+    /// computes from the action accumulator recomputed from
+    /// `action_digests`, a multiset. The stamp proof's last online
+    /// commitment is compared with that accumulator.
+    /// The commitment computationally binds the prover to its polynomial. A
+    /// [set polynomial](crate::collections::multiset) determines its roots
+    /// with their multiplicities. An accepted stamp therefore has what
+    /// [`Transaction`] asserts at that anchor, with exactly `action_digests` as
+    /// the digests of its leaves.
     ///
     /// # Errors
     ///
@@ -1242,10 +1247,7 @@ impl<P: Proof> ProofStamp<P> {
     ) -> Result<bool, ragu::Error> {
         let action_set = ActionSetPoly::from_iter(action_digests);
 
-        self.proof.verify(
-            rng,
-            app,
-            (action_set.commit(), self.tachygram_set, self.anchor),
-        )
+        self.proof
+            .verify(rng, app, (action_set.commit(), self.anchor))
     }
 }
