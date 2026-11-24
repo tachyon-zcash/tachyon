@@ -78,17 +78,16 @@ pub trait StampState: stamp_sealed::Sealed {
     fn stamp_digest(&self) -> [u8; 32];
 
     /// The `tachyonBundleState` wire byte for this state.
-    fn state_byte() -> StateByte
-    where
-        Self: Sized;
+    fn state_byte(&self) -> StateByte;
 
-    /// Read the stamp trailer from the consensus wire format.
+    /// Read the stamp trailer for the supplied enclosing state byte. The
+    /// reader starts at the trailer, after the state byte and bundle body.
     ///
     /// # Errors
     ///
     /// Returns an error if reading fails or the trailer is not a canonical
     /// encoding of this state.
-    fn read<R: Read>(reader: &mut R) -> io::Result<Self>
+    fn read<R: Read>(state: StateByte, reader: &mut R) -> io::Result<Self>
     where
         Self: Sized;
 
@@ -107,12 +106,16 @@ impl StampState for StrippedStamp {
         *blake2b::STAMP_DIGEST_EMPTY
     }
 
-    fn state_byte() -> StateByte {
+    fn state_byte(&self) -> StateByte {
         StateByte::StrippedStamp
     }
 
-    fn read<R: Read>(_reader: &mut R) -> io::Result<Self> {
-        Ok(Self)
+    fn read<R: Read>(state: StateByte, _reader: &mut R) -> io::Result<Self> {
+        if state == StateByte::StrippedStamp {
+            Ok(Self)
+        } else {
+            Err(unexpected_state())
+        }
     }
 
     fn write<W: Write>(&self, _writer: &mut W) -> io::Result<()> {
@@ -269,34 +272,48 @@ pub(crate) fn checked_wallet_publication(
     Ok(app.verify_compressed(&publication)?.then_some(publication))
 }
 
+/// The decoder and length limits selected by a bundle's state byte.
+pub(crate) struct Frame<P> {
+    min: usize,
+    max: usize,
+    decode: fn(&[u8]) -> Result<P, serialization::Error<'_>>,
+}
+
+fn unexpected_state() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "unexpected tachyonBundleState")
+}
+
 pub(crate) trait Wire: sealed::Sealed + Sized {
-    fn bound() -> usize;
-    fn accepts(len: usize) -> bool;
-    fn accepts_encoding(&self, len: usize) -> bool {
-        Self::accepts(len)
-    }
+    fn state(&self) -> StateByte;
+    fn frame(state: StateByte) -> io::Result<Frame<Self>>;
     fn encode(&self) -> Result<Vec<u8>, serialization::Error<'static>>;
-    fn decode(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>;
 }
 
 impl<P: Proof> Wire for P {
-    fn bound() -> usize {
-        P::encoded_len()
+    fn state(&self) -> StateByte {
+        StateByte::ProofStamp
     }
 
-    fn accepts(len: usize) -> bool {
+    fn frame(state: StateByte) -> io::Result<Frame<Self>> {
+        if state != StateByte::ProofStamp {
+            return Err(unexpected_state());
+        }
         // `Proof` is closed over the two wallet codecs. Preserve the full-work
         // reader's bounded buffering; a wallet publication has one exact size.
         let bound = P::encoded_len();
-        len == bound || (bound == Uncompressed::encoded_len() && len < bound)
+        Ok(Frame {
+            min: if bound == Uncompressed::encoded_len() {
+                0
+            } else {
+                bound
+            },
+            max: bound,
+            decode: P::from_bytes,
+        })
     }
 
     fn encode(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
         self.to_bytes()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
-        P::from_bytes(bytes)
     }
 }
 
@@ -318,12 +335,12 @@ impl<P: Wire> StampState for ProofStamp<P> {
         )
     }
 
-    fn state_byte() -> StateByte {
-        StateByte::ProofStamp
+    fn state_byte(&self) -> StateByte {
+        self.proof.state()
     }
 
-    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        Self::read(reader)
+    fn read<R: Read>(state: StateByte, reader: &mut R) -> io::Result<Self> {
+        Self::read_frame(state, reader)
     }
 
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -331,11 +348,7 @@ impl<P: Wire> StampState for ProofStamp<P> {
     }
 }
 
-#[expect(
-    private_bounds,
-    reason = "only transaction-encodable proofs have trailer I/O"
-)]
-impl<P: Wire> ProofStamp<P> {
+impl<P: Proof> ProofStamp<P> {
     /// Read the stamp trailer from the consensus wire format.
     /// The adjunct list and the proof blob each have a
     /// compactSize prefix. The proof is bounded by the proof type's encoded
@@ -347,7 +360,18 @@ impl<P: Wire> ProofStamp<P> {
     /// not a canonical encoding, the adjunct txids are not strictly ascending,
     /// or the adjunct count exceeds the standalone bound. The bundle reader
     /// separately checks the combined action and adjunct bound.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
+        Self::read_frame(StateByte::ProofStamp, reader)
+    }
+}
+
+#[expect(
+    private_bounds,
+    reason = "only transaction-encodable proofs have trailer I/O"
+)]
+impl<P: Wire> ProofStamp<P> {
+    fn read_frame<R: Read>(state: StateByte, mut reader: R) -> io::Result<Self> {
+        let frame = P::frame(state)?;
         let anchor = Anchor::read(&mut reader)?;
 
         let tachygram_set = TachygramSetCommit::read(&mut reader)?;
@@ -380,13 +404,13 @@ impl<P: Wire> ProofStamp<P> {
         let proof = {
             let proof_len = usize::try_from(read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            if proof_len > P::bound() {
+            if proof_len > frame.max {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "proof size exceeds transport bound",
                 ));
             }
-            if !P::accepts(proof_len) {
+            if proof_len < frame.min {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected proof length",
@@ -394,7 +418,7 @@ impl<P: Wire> ProofStamp<P> {
             }
             let mut bytes = vec![0u8; proof_len];
             reader.read_exact(&mut bytes)?;
-            P::decode(&bytes)
+            (frame.decode)(&bytes)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
         };
 
@@ -428,7 +452,8 @@ impl<P: Wire> ProofStamp<P> {
             .proof
             .encode()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        if !self.proof.accepts_encoding(proof.len()) {
+        let frame = P::frame(self.proof.state())?;
+        if !(frame.min..=frame.max).contains(&proof.len()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unexpected proof length",

@@ -173,17 +173,20 @@ See [Aggregation](./aggregation.md) for transaction categories, block layout, an
 
 ## Wire Format
 
-The first byte `tachyonBundleState` selects one of three bundle states:
+The first byte `tachyonBundleState` selects the bundle state and, for a stamped publication, its proof profile:
 
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped (`ProofStamp`) | bundle with tachygrams, fee, fee change, anchor, tachygram set commitment, adjunct txids, proof |
+| `0b0000_0001` | stamped, wallet profile | bundle body and stamp trailer with a compressed wallet proof |
 | `0b0000_0010` | stripped (`StrippedStamp`) | bundle with tachygrams, fee and fee change |
+| `0b0000_0011` | stamped, aggregator profile | bundle body and stamp trailer with a compressed aggregator proof |
+
+All other values are invalid. Either proof profile can cover its host alone or include adjuncts.
 
 ### Bundle body {#bundle-body}
 
-When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundle body, which is the same in both remaining states:
+For every nonzero state above, the state byte is followed by the same bundle body:
 
 | Section | Name | Format | Description |
 | --- | --- | --- | --- |
@@ -203,7 +206,7 @@ A single `nActionsTachyon` frames all three action vectors; there are no additio
 
 `nActionsTachyon` is at most 4095, the most actions whose pairs fit one set polynomial beside the bundle's fee change. Parsing rejects a larger count.
 
-The prover writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
+The prover writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
@@ -211,7 +214,7 @@ The memo is effecting data, so the transaction sighash covers it and `auth_diges
 
 ### Stamp trailer {#stamp-trailer}
 
-When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp trailer:
+For `tachyonBundleState` values `0x01` and `0x03`, the bundle body is followed by a stamp trailer:
 
 | Name | Format | Description |
 | --- | --- | --- |
@@ -234,7 +237,7 @@ Every listed transaction's bundle holds at least its fee change in the tachygram
 
 Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hStampTachyon}$](./transaction-identifiers.md) directly, followed by the proof digest. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
-Under the V1 rules, both the block reader and the general stamped mempool reader require a compressed frame. For `0x01`, `sizeProofTachyon` selects exactly one verifier: 7,296 bytes for a wallet publication or 14,432 for a compressed aggregator transaction. Every other length is invalid before the proof is read. The outer byte remains `0x01` for both when computing the authorization digest. Chain context selects the active registry; a failed proof is never retried under historical rules. The typed full-wallet work codec is separate from admission.
+Both the block reader and the general stamped mempool reader require `sizeProofTachyon` to match the profile selected by the state byte: exactly 7,296 bytes for `0x01` or 14,432 bytes for `0x03`. They check the length before allocating or reading the frame. The typed full-wallet work codec is separate from admission.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the anchor and the action accumulator derived from the covered bodies. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 

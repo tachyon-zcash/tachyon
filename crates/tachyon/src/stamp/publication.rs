@@ -2,11 +2,12 @@
 
 use alloc::vec::Vec;
 
+use corez::io::{self, Read};
 use ragu::{
     Rank as _, WalletRank, circuits::polynomials, pcd::serialization, udon::curve::Affine as _,
 };
 
-use super::{Compressed, ProofStamp, Wire, proof::aggregator, sealed};
+use super::{Compressed, Frame, ProofStamp, StateByte, Wire, proof::aggregator, sealed};
 use crate::{ActionDigest, ActionSetPoly, pasta::EqAffine};
 
 /// A wallet's padded publication or a miner's compressed working transaction.
@@ -20,25 +21,34 @@ pub enum PublicationProof {
 
 impl sealed::Sealed for PublicationProof {}
 impl Wire for PublicationProof {
-    fn accepts(len: usize) -> bool {
-        len == Compressed::encoded_len::<WalletRank>() || len == Self::bound()
+    fn state(&self) -> StateByte {
+        match *self {
+            Self::Wallet(_) => StateByte::ProofStamp,
+            Self::Aggregator(_) => StateByte::AggregatorProofStamp,
+        }
     }
 
-    fn bound() -> usize {
-        ragu::CompressedProof::<aggregator::Cycle>::encoded_len::<polynomials::AggregatorRank>()
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
-        if bytes.len() == Compressed::encoded_len::<WalletRank>() {
-            Compressed::from_bytes(bytes).map(Self::Wallet)
-        } else if bytes.len() == Self::bound() {
-            ragu::CompressedProof::from_bytes(bytes).map(Self::Aggregator)
-        } else {
-            Err(serialization::Error::Invalid {
-                offset: 0,
-                bytes,
-                reason: "unexpected publication length",
-            })
+    fn frame(state: StateByte) -> io::Result<Frame<Self>> {
+        match state {
+            StateByte::ProofStamp => {
+                let len = Compressed::encoded_len::<WalletRank>();
+                Ok(Frame {
+                    min: len,
+                    max: len,
+                    decode: |bytes| Compressed::from_bytes(bytes).map(Self::Wallet),
+                })
+            },
+            StateByte::AggregatorProofStamp => {
+                let len = ragu::CompressedProof::<aggregator::Cycle>::encoded_len::<
+                    polynomials::AggregatorRank,
+                >();
+                Ok(Frame {
+                    min: len,
+                    max: len,
+                    decode: |bytes| ragu::CompressedProof::from_bytes(bytes).map(Self::Aggregator),
+                })
+            },
+            StateByte::NoBundle | StateByte::StrippedStamp => Err(super::unexpected_state()),
         }
     }
 
@@ -49,16 +59,18 @@ impl Wire for PublicationProof {
             Self::Aggregator(ref proof) => proof.to_bytes(),
         }
     }
-
-    fn accepts_encoding(&self, len: usize) -> bool {
-        match *self {
-            Self::Wallet(_) => len == Compressed::encoded_len::<WalletRank>(),
-            Self::Aggregator(_) => len == Self::bound(),
-        }
-    }
 }
 
 impl ProofStamp<PublicationProof> {
+    /// Read a compressed publication trailer for the supplied bundle state
+    /// byte.
+    ///
+    /// # Errors
+    /// Returns an error for a non-publication state or an invalid trailer.
+    pub fn read<R: Read>(state: StateByte, reader: R) -> io::Result<Self> {
+        Self::read_frame(state, reader)
+    }
+
     /// Verify the publication against all covered action and fee digests,
     /// retaining multiplicity.
     ///
@@ -147,46 +159,38 @@ mod tests {
     use crate::{Anchor, CompactSize, TachygramSetCommit, pasta::Fp};
 
     #[test]
-    fn only_two_public_lengths_can_request_frame_bytes() {
-        let wallet = Compressed::encoded_len::<WalletRank>();
-        let aggregator = PublicationProof::bound();
-        assert_eq!((wallet, aggregator), (7296, 14432));
+    fn only_the_tagged_length_can_request_frame_bytes() {
         let mut prefix = Vec::new();
         Anchor::from(Fp::from(1)).write(&mut prefix).unwrap();
         TachygramSetCommit::default().write(&mut prefix).unwrap();
         prefix.push(0); // no adjuncts
-        for len in [
-            0,
-            wallet - 1,
-            wallet + 1,
-            8000,
-            aggregator - 1,
-            aggregator + 1,
-            174_072_896,
+        for (state, len, other) in [
+            (StateByte::ProofStamp, 7296usize, 14432usize),
+            (StateByte::AggregatorProofStamp, 14432, 7296),
         ] {
-            let mut bytes = prefix.clone();
-            CompactSize::try_from(len)
-                .unwrap()
-                .write(&mut bytes)
-                .unwrap();
-            bytes.push(0x7b);
-            let mut reader = bytes.as_slice();
-            assert_eq!(
-                ProofStamp::<PublicationProof>::read(&mut reader)
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidData
-            );
-            assert_eq!(reader, [0x7b]);
-        }
-        for len in [wallet, aggregator] {
+            for invalid in [0, len - 1, len + 1, other, 8000, 174_072_896] {
+                let mut bytes = prefix.clone();
+                CompactSize::try_from(invalid)
+                    .unwrap()
+                    .write(&mut bytes)
+                    .unwrap();
+                bytes.push(0x7b);
+                let mut reader = bytes.as_slice();
+                assert_eq!(
+                    ProofStamp::<PublicationProof>::read(state, &mut reader)
+                        .unwrap_err()
+                        .kind(),
+                    ErrorKind::InvalidData
+                );
+                assert_eq!(reader, [0x7b]);
+            }
             let mut missing = prefix.clone();
             CompactSize::try_from(len)
                 .unwrap()
                 .write(&mut missing)
                 .unwrap();
             assert_eq!(
-                ProofStamp::<PublicationProof>::read(missing.as_slice())
+                ProofStamp::<PublicationProof>::read(state, missing.as_slice())
                     .unwrap_err()
                     .kind(),
                 ErrorKind::UnexpectedEof
@@ -197,7 +201,7 @@ mod tests {
             long.push(0x7b);
             let mut reader = long.as_slice();
             assert_eq!(
-                ProofStamp::<PublicationProof>::read(&mut reader)
+                ProofStamp::<PublicationProof>::read(state, &mut reader)
                     .unwrap_err()
                     .kind(),
                 ErrorKind::InvalidData

@@ -11,13 +11,15 @@
 //!
 //! # Consensus wire format
 //!
-//! The first byte `tachyonBundleState` selects one of three bundle states:
+//! The first byte `tachyonBundleState` selects the bundle state and proof
+//! profile:
 //!
 //! | value         | state         | bundle contents                       |
 //! | ------------- | ------------- | ------------------------------------- |
 //! | `0b0000_0000` | non-tachyon   | no bundle                             |
-//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
+//! | `0b0000_0001` | wallet stamp  | bundle with compressed wallet proof   |
 //! | `0b0000_0010` | stripped      | bundle with tachygrams and no proof   |
+//! | `0b0000_0011` | aggregator stamp | bundle with compressed aggregator proof |
 //! | `...`         | *reserved*    | *n/a*                                 |
 //!
 //! Any other byte is invalid. Stripped innocents and adjuncts share the same
@@ -37,7 +39,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonBundleState`  | u8                   | `0x01` or `0x02`                         |
+//! | `tachyonBundleState`  | u8                   | `0x01`, `0x02`, or `0x03`                |
 //! | `valueBalanceTachyon` | i64                  | net value of tachyon actions and max fee |
 //! | `nActionsTachyon`     | compactsize          | number of tachyon actions                |
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
@@ -69,7 +71,8 @@
 //!
 //! ### Proof stamp
 //!
-//! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
+//! When `tachyonBundleState` is `0x01` or `0x03`, the bundle carries a proof
+//! stamp.
 //!
 //! | Name                    | Format                   | Description                                |
 //! | ----------------------- | ------------------------ | ------------------------------------------ |
@@ -91,8 +94,8 @@
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
 //! A stamped block or mempool item carries a [`stamp::PublicationProof`].
-//! Under `0x01`, the exact frame length selects the compressed wallet (7,296
-//! bytes) or aggregator (14,432 bytes) proof. Typed wallet work I/O uses
+//! `0x01` requires a compressed wallet proof (7,296 bytes) and `0x03` a
+//! compressed aggregator proof (14,432 bytes). Typed wallet work I/O uses
 //! the same layout on a separate channel.
 //!
 //! ## Stripped stamp
@@ -142,10 +145,12 @@ use crate::{
 pub enum StateByte {
     /// No bundle.
     NoBundle = 0b0000_0000u8,
-    /// Bundle with a [`ProofStamp`].
+    /// Bundle with a wallet-profile [`ProofStamp`].
     ProofStamp = 0b0000_0001u8,
     /// Bundle with a [`StrippedStamp`].
     StrippedStamp = 0b0000_0010u8,
+    /// Bundle with a compressed aggregator-profile [`ProofStamp`].
+    AggregatorProofStamp = 0b0000_0011u8,
 }
 
 impl From<StateByte> for u8 {
@@ -163,6 +168,7 @@ impl StateByte {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::ProofStamp),
             0b0000_0010u8 => Ok(Self::StrippedStamp),
+            0b0000_0011u8 => Ok(Self::AggregatorProofStamp),
             _other => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid bundle state",
@@ -712,17 +718,14 @@ impl<P: stamp::Wire> Bundle<ProofStamp<P>> {
     /// Returns an error for invalid encodings, a wrong state byte, or too many
     /// actions and adjuncts for one tachygram set polynomial.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        if StateByte::read(&mut reader)? != StateByte::ProofStamp {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected tachyonBundleState",
-            ));
-        }
-        Self::read_proof_body(reader)
+        let state = StateByte::read(&mut reader)?;
+        // Reject a tag outside this reader's typestate before reading the body.
+        P::frame(state)?;
+        Self::read_proof_body(state, reader)
     }
 
-    fn read_proof_body<R: Read>(reader: R) -> io::Result<Self> {
-        let bundle = Self::read_body(reader)?;
+    fn read_proof_body<R: Read>(state: StateByte, reader: R) -> io::Result<Self> {
+        let bundle = Self::read_body(state, reader)?;
         if 2 * bundle.actions.len() + bundle.stamp.adjuncts.len() + 1 > WalletRank::num_coeffs() - 1
         {
             return Err(io::Error::new(
@@ -1002,7 +1005,7 @@ impl<S: StampState> Bundle<S> {
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, max fee commitment, memo, signatures, tachygram
     /// pairs, fee, change, and the stamp trailer.
-    fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
+    fn read_body<R: Read>(state: StateByte, mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
             reader.read_exact(&mut bytes)?;
@@ -1097,7 +1100,7 @@ impl<S: StampState> Bundle<S> {
             ));
         }
 
-        let stamp = S::read(&mut reader)?;
+        let stamp = S::read(state, &mut reader)?;
 
         Ok(Self {
             value_balance,
@@ -1122,7 +1125,7 @@ impl<S: StampState> Bundle<S> {
     /// Returns an error if writing fails or a count exceeds what a
     /// compactsize can hold.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        S::state_byte().write(&mut writer)?;
+        self.stamp.state_byte().write(&mut writer)?;
 
         writer.write_all(&i64::from(self.value_balance).to_le_bytes())?;
 
@@ -1185,7 +1188,7 @@ impl<S: StampState> Bundle<S> {
         let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
         blake2b::bundle_auth_digest(
-            S::state_byte().into(),
+            self.stamp.state_byte().into(),
             &action_auth,
             self.fee.v_fee.into(),
             &Fp::from(self.fee_auth).to_bytes(),
@@ -1208,7 +1211,7 @@ impl Bundle<StrippedStamp> {
                 "unexpected tachyonBundleState",
             ));
         }
-        Self::read_body(reader)
+        Self::read_body(StateByte::StrippedStamp, reader)
     }
 }
 
@@ -1298,21 +1301,23 @@ impl TachyonBundle {
     /// Read any Tachyon bundle from the consensus wire format, dispatching
     /// on the `tachyonBundleState` byte.
     ///
-    /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
-    /// proof-stamped bundle, and `0x02` as a stripped bundle;
-    /// rejects any other byte.
+    /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` and `0x03`
+    /// as wallet- and aggregator-stamped bundles, and `0x02` as a stripped
+    /// bundle; rejects any other byte.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails, the state byte is none of those
-    /// three, or any component is not a canonical encoding.
+    /// Returns an error if reading fails, the state byte is unknown,
+    /// or any component is not a canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let state = StateByte::read(&mut reader)?;
 
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
-            StateByte::ProofStamp => Self::Proven(Bundle::read_proof_body(&mut reader)?),
-            StateByte::StrippedStamp => Self::Adjunct(Bundle::read_body(&mut reader)?),
+            StateByte::ProofStamp | StateByte::AggregatorProofStamp => {
+                Self::Proven(Bundle::read_proof_body(state, &mut reader)?)
+            },
+            StateByte::StrippedStamp => Self::Adjunct(Bundle::read_body(state, &mut reader)?),
         })
     }
 

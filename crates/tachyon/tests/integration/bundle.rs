@@ -905,24 +905,79 @@ fn bundles_round_trip_at_action_count_limits() {
 fn bundle_state_mismatches_are_rejected() {
     let app = &application();
 
+    for unknown in 0x04..=u8::MAX {
+        let buf = [unknown, 0x7b];
+        let mut reader = buf.as_slice();
+        let err = TachyonBundle::read(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader, [0x7b]);
+        assert_eq!(err.to_string(), "invalid bundle state");
+    }
+    for invalid in [0x00, 0x02] {
+        let bytes = [invalid, 0x7b];
+        let mut reader = bytes.as_slice();
+        let err = Bundle::<ProofStamp<stamp::PublicationProof>>::read(&mut reader).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader, [0x7b]);
+    }
+
+    let mut absent_reader = &[0x00, 0x7b][..];
+    let absent = TachyonBundle::read(&mut absent_reader).unwrap();
+    assert!(absent.is_no_bundle());
+    assert_eq!(absent_reader, [0x7b]);
+    let mut absent_wire = Vec::new();
+    absent.write(&mut absent_wire).unwrap();
+    assert_eq!(absent_wire, [0]);
+    assert_eq!(
+        absent.auth_digest(),
+        [
+            0x17, 0x4a, 0x3b, 0x3c, 0x4b, 0x4d, 0x82, 0x96, 0x80, 0x28, 0x60, 0x4e, 0xad, 0x41,
+            0x60, 0xac, 0xfa, 0x52, 0x53, 0xc4, 0x40, 0xe8, 0xcf, 0x21, 0x73, 0x98, 0x0f, 0x43,
+            0x1b, 0xbd, 0x71, 0x1b
+        ]
+    );
+
     let buf: &[u8] = &[0x03];
     for err in [
         Bundle::<ProofStamp<stamp::Uncompressed>>::read(buf).unwrap_err(),
+        Bundle::<ProofStamp<stamp::Compressed>>::read(buf).unwrap_err(),
         Bundle::<StrippedStamp>::read(buf).unwrap_err(),
-        TachyonBundle::read(buf).unwrap_err(),
     ] {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(err.to_string(), "invalid bundle state");
+        assert_eq!(err.to_string(), "unexpected tachyonBundleState");
     }
-
-    assert!(TachyonBundle::read(&[0x00][..]).unwrap().is_no_bundle());
+    assert_eq!(
+        TachyonBundle::read(buf).unwrap_err().kind(),
+        io::ErrorKind::UnexpectedEof
+    );
 
     let (_, stamped) = spend(app);
     let adjunct = stamped.clone().strip();
     let mut stamped_buf = Vec::new();
     stamped.write(&mut stamped_buf).unwrap();
+    // Explicit wallet work is readable locally, but is not a publication.
+    for tag in [0x01, 0x03] {
+        stamped_buf[0] = tag;
+        for err in [
+            TachyonBundle::read(stamped_buf.as_slice()).unwrap_err(),
+            Bundle::<ProofStamp<stamp::PublicationProof>>::read(stamped_buf.as_slice())
+                .unwrap_err(),
+        ] {
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+    stamped_buf[0] = 0x01;
     let mut adjunct_buf = Vec::new();
     adjunct.write(&mut adjunct_buf).unwrap();
+    adjunct_buf.push(0x7b);
+    let mut adjunct_reader = adjunct_buf.as_slice();
+    let mut adjunct_wire = Vec::new();
+    TachyonBundle::read(&mut adjunct_reader)
+        .unwrap()
+        .write(&mut adjunct_wire)
+        .unwrap();
+    assert_eq!(adjunct_reader, [0x7b]);
+    assert_eq!(adjunct_wire, &adjunct_buf[..adjunct_buf.len() - 1]);
     assert_eq!(
         Bundle::<StrippedStamp>::read(&*stamped_buf)
             .unwrap_err()

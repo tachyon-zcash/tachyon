@@ -103,7 +103,13 @@ fn wallet_publications_merge_and_divide_before_block_compression() {
     let mixed = Bundle::<ProofStamp<PublicationProof>>::read(wire.as_slice()).unwrap();
     assert_eq!(mixed.auth_digest(), encoded_hash);
     assert_eq!(mixed.commitment(), sighash);
-    malformed_frames(&mixed, 7296, 14432);
+    check_publication_frame(&mixed, 1, 7296, 3, 14432);
+    check_trailer(
+        &mixed.stamp,
+        bundle::StateByte::ProofStamp,
+        bundle::StateByte::AggregatorProofStamp,
+        7296,
+    );
     mixed.verify(&app, &sighash, &[&stripped]).unwrap();
     check_wallet_admission(rng, &app, mixed.clone(), &stripped);
     let extracted = Bundle::<ProofStamp<Compressed>>::try_from(TachyonBundle::from(mixed)).unwrap();
@@ -292,7 +298,7 @@ fn check_block(
 ) {
     let mut bytes = Vec::new();
     body.write(&mut bytes).unwrap();
-    assert_eq!(bytes[0], 1);
+    assert_eq!(bytes[0], 3);
     bytes.push(0x7b);
     let mut reader = bytes.as_slice();
     let TachyonBundle::Proven(read) = TachyonBundle::read(&mut reader).unwrap() else {
@@ -301,7 +307,15 @@ fn check_block(
     assert_eq!(reader, [0x7b]);
     assert_eq!(read.auth_digest(), body.auth_digest());
     assert_eq!(read.commitment(), left.commitment());
-    malformed_frames(&read, 14432, 7296);
+    assert_eq!(read.binding_sig, left.binding_sig);
+    assert_eq!(read.action_auth, left.action_auth);
+    check_publication_frame(&read, 3, 14432, 1, 7296);
+    check_trailer(
+        &read.stamp,
+        bundle::StateByte::AggregatorProofStamp,
+        bundle::StateByte::ProofStamp,
+        14432,
+    );
     Bundle::<ProofStamp<Compressed>>::read(bytes.as_slice()).unwrap_err();
     let wallet_error: derive_more::TryIntoError<TachyonBundle> =
         Bundle::<ProofStamp<Compressed>>::try_from(TachyonBundle::from(read.clone())).unwrap_err();
@@ -321,13 +335,34 @@ fn check_block(
     assert!(!aggregator::verify(app, &compressed, (commit, start)).unwrap());
 }
 
-fn malformed_frames(host: &Bundle<ProofStamp<PublicationProof>>, size: usize, other: usize) {
+fn check_publication_frame(
+    host: &Bundle<ProofStamp<PublicationProof>>,
+    tag: u8,
+    size: usize,
+    other_tag: u8,
+    other: usize,
+) {
     use corez::io::ErrorKind;
     use ragu::udon::{curve::Affine as _, field::Field as _};
 
-    use crate::{CompactSize, digest::blake2b};
+    use crate::{CompactSize, digest::blake2b, stamp::StampState as _};
     let mut bytes = Vec::new();
     host.write(&mut bytes).unwrap();
+    assert_eq!(bytes[0], tag);
+    bytes.push(0x7b);
+    let mut reader = bytes.as_slice();
+    let mut round_trip = Vec::new();
+    TachyonBundle::read(&mut reader)
+        .unwrap()
+        .write(&mut round_trip)
+        .unwrap();
+    assert_eq!(reader, [0x7b]);
+    reader = bytes.as_slice();
+    let submission = Bundle::<ProofStamp<PublicationProof>>::read(&mut reader).unwrap();
+    assert_eq!(reader, [0x7b]);
+    assert_eq!(submission, *host);
+    bytes.pop();
+    assert_eq!(round_trip, bytes);
     let offset = bytes.len() - size;
     let frame_hash = blake2b::stamp_proof_digest(
         Fp::from(host.stamp.anchor).to_bytes(),
@@ -339,17 +374,24 @@ fn malformed_frames(host: &Bundle<ProofStamp<PublicationProof>>, size: usize, ot
         &frame_hash,
     );
     assert_eq!(host.actions.len(), 0);
-    assert_eq!(
-        host.auth_digest(),
+    let auth = |state| {
         blake2b::bundle_auth_digest(
-            1,
+            state,
             &[],
             host.fee.v_fee.into(),
             &Fp::from(host.fee_auth).to_bytes(),
             &host.binding_sig.0.into(),
-            &stamp_hash
+            &stamp_hash,
         )
-    );
+    };
+    assert_eq!(host.stamp.stamp_digest(), stamp_hash);
+    assert_eq!(host.auth_digest(), auth(tag));
+    if tag == 3 {
+        // Hold the frame, stamp digest and signed body fixed. Only the auth
+        // half of this fixture's (txid, auth_digest) identifier changes.
+        let txid = host.commitment();
+        assert_ne!((txid, auth(1)), (txid, host.auth_digest()));
+    }
     let mut truncated = bytes.clone();
     truncated.pop();
     assert_eq!(
@@ -359,8 +401,21 @@ fn malformed_frames(host: &Bundle<ProofStamp<PublicationProof>>, size: usize, ot
         ErrorKind::UnexpectedEof
     );
     let mut bad = bytes.clone();
-    bad[0] = 3;
-    TachyonBundle::read(bad.as_slice()).unwrap_err();
+    bad[0] = other_tag;
+    let mut block_reader = bad.as_slice();
+    assert_eq!(
+        TachyonBundle::read(&mut block_reader).unwrap_err().kind(),
+        ErrorKind::InvalidData
+    );
+    assert_eq!(block_reader, &bad[offset..]);
+    let mut mixed_reader = bad.as_slice();
+    assert_eq!(
+        Bundle::<ProofStamp<PublicationProof>>::read(&mut mixed_reader)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidData
+    );
+    assert_eq!(mixed_reader, &bad[offset..]);
     for index in [8, 10, 12] {
         // Ragu envelope version, kind, schema
         let mut changed = bytes.clone();
@@ -375,6 +430,62 @@ fn malformed_frames(host: &Bundle<ProofStamp<PublicationProof>>, size: usize, ot
     swapped.extend_from_slice(&bytes[offset..]);
     swapped.resize(offset + other, 0);
     TachyonBundle::read(swapped.as_slice()).unwrap_err();
+}
+
+fn check_trailer(
+    stamp: &ProofStamp<PublicationProof>,
+    tag: bundle::StateByte,
+    other: bundle::StateByte,
+    frame_len: usize,
+) {
+    use corez::io::{self, ErrorKind};
+
+    use crate::stamp::StampState;
+
+    fn read_tagged<S: StampState>(tag: bundle::StateByte, reader: &mut &[u8]) -> io::Result<S> {
+        S::read(tag, reader)
+    }
+
+    let saved = StampState::state_byte(stamp);
+    assert_eq!(saved, tag);
+    let mut bytes = Vec::new();
+    stamp.write(&mut bytes).unwrap();
+    bytes.push(0x7b);
+    for trait_read in [false, true] {
+        let read = |state, reader: &mut &[u8]| {
+            if trait_read {
+                read_tagged(state, reader)
+            } else {
+                ProofStamp::<PublicationProof>::read(state, reader)
+            }
+        };
+        let mut reader = bytes.as_slice();
+        let decoded = read(saved, &mut reader).unwrap();
+        assert_eq!(reader, [0x7b]);
+        assert_eq!(decoded.state_byte(), tag);
+        let mut encoded = Vec::new();
+        decoded.write(&mut encoded).unwrap();
+        assert_eq!(encoded, &bytes[..bytes.len() - 1]);
+        for invalid in [
+            other,
+            bundle::StateByte::NoBundle,
+            bundle::StateByte::StrippedStamp,
+        ] {
+            reader = bytes.as_slice();
+            assert_eq!(
+                read(invalid, &mut reader).unwrap_err().kind(),
+                ErrorKind::InvalidData
+            );
+            assert_eq!(
+                reader.len(),
+                if invalid == other {
+                    frame_len + 1
+                } else {
+                    bytes.len()
+                }
+            );
+        }
+    }
 }
 
 fn receive_work(

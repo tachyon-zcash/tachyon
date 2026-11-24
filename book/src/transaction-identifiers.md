@@ -27,6 +27,8 @@ $$
 
 Record $i$ combines `vActionSigsTachyon[i]` with `vActionTachygramsTachyon[i]`, hashing the pair as written. Each record is 128 bytes. The preimage is $137 + 128n$ bytes, with the record sequence its only variable-length input; no count is hashed. This is a digest projection, not the phase-ordered [wire layout](./bundle.md#bundle-body).
 
+The authorization digest uses the same state byte as the wire encoding: `0x01` for a wallet publication or `0x03` for an aggregator publication. This byte is outside the stamp digest and the effecting commitment. Changing only the byte changes `auth_digest` and `wtxid`, while the stamp digest, `txid`, sighash and signatures stay the same.
+
 For a proof stamp, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
 
 $$
