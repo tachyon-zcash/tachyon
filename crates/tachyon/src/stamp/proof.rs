@@ -118,10 +118,10 @@
 //! [`StampUnmerge`](stamp::StampUnmerge) read a [`Stamp`](stamp::Stamp) among
 //! registered steps, while rerandomization reads any header. Holding a full
 //! stamp proof lets a receiver run these operations and compress the result.
-//! Each step's soundness argument makes the output a verified `Stamp`
-//! regardless of who runs it, combining leaf multisets of held stamps by sum
-//! and difference alongside leaves the receiver proves itself. No argument here
-//! assumes that a stamp's producer proved its leaves.
+//! If the output stamp proof verifies, its leaves satisfy the `Stamp`
+//! assertion regardless of who ran the step. A receiver can combine leaf
+//! multisets of held stamps by sum and difference alongside leaves it proves
+//! itself; it need not have proved the input leaves.
 //!
 //! Bundle signatures cover each action's `cv` and $\mathsf{rk}$ plus
 //! $\mathsf{cv}_\mathsf{feemax}$, leaving the stamp, the fee and each action's
@@ -138,11 +138,10 @@
 //!   its own actions at the stamp's anchor for the old and new fees, merging
 //!   the new stamp in and unmerging the old one.
 //! - Proving a new action leaf for a published $\mathsf{rk}$ requires $\theta$
-//!   and `cm` ([`Actions`](stamp::Actions#injectivity)). A party with every
+//!   and `cm` ([`Actions`](stamp::Actions#injectivity)). A delegate given every
 //!   wire of a spend and a valid spendable for a later epoch can re-prove it
-//!   with the same `cv` and $\mathsf{rk}$ and a new nullifier pair. A proving
-//!   delegate holds those wires; the signing key enters no step. Spending still
-//!   requires the action signature.
+//!   with the same `cv` and $\mathsf{rk}$ and a new nullifier pair. The signing
+//!   key enters no step. Spending still requires the action signature.
 //!
 //! The full proof carries its header and both online polynomials. For a
 //! verified stamp covering published bundles, the leaf digests bind the fee and

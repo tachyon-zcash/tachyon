@@ -1172,7 +1172,8 @@ impl Header<Fp> for QrBucket {
 /// # Caller contract
 ///
 /// Callers must pass an intake with `epoch < EPOCH_MAX`. At `EPOCH_MAX` the
-/// circuit has no assignment and proving fails.
+/// circuit has no assignment, so a bucket constructed for that epoch cannot
+/// verify.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 

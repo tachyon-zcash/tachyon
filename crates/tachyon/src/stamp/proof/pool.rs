@@ -143,9 +143,9 @@ impl Header<Fp> for ArbitraryUnspent {
 /// Because `cm` determines its master key
 /// ([`NoteSecret`](super::delegation::NoteSecret)) and the master key and $e$
 /// determine the [nullifier](poseidon::nullifier_group), the five header fields
-/// fix every tested value. Nothing is asserted about the [`NfSeqPoly`] slot,
-/// where [`UnspentBind`] commits the unread quotient of the derived sequence by
-/// the tested values for its challenge identity.
+/// fix every tested value. The [`NfSeqPoly`] slot holds the quotient of the
+/// derived sequence by the tested sequence, as [`UnspentBind`]'s challenge
+/// identity requires. No later step reads it.
 #[derive(Clone, Debug)]
 pub struct NoteUnspent;
 

@@ -165,7 +165,7 @@ Under **recursion**, joint provers of a verified PCD know its step tree and sati
 5. **Block coverage.** Every bundle in a stamp's adjunct list is a stripped bundle in the same block, and exactly one stamp in that block names each stripped bundle[^aggregation]. Each transaction appears in at most one block on the accepted chain.
 6. **Signatures and balance.** Every bundle in a block, stripped or not, carries an action signature under each action's randomized key and a binding signature over its value commitments and value balance. Consensus applies each bundle's value balance and fee once.
 
-`Bundle::verify` checks rule 2 on one stamp and its supplied bundles alongside that bundle's own signatures under rule 6, without consulting chain history.
+For rule 2, the caller resolves the adjunct list by `txid`. `Bundle::verify` checks coverage against the supplied bodies, verifies the stamp proof against the resulting claims, and checks the carrying bundle's own signatures under rule 6. It reads neither the adjunct list nor chain history.
 Nodes enforce rules 1, 3, 4 and 5 against chain history.
 
 ### A canonical anchor fixes its history
@@ -204,7 +204,7 @@ A `NoteSpendable` carrying `(cm, epoch_current, anchor)` asserts one of two form
 - **Creation.** `anchor` is a stamp absorption in `epoch_current` of a polynomial having `cm` as a root.
 - **Lineage.** Anchors run from some $e_0 < \text{epoch\_current}$ to `anchor` at `epoch_current`. Across each $e \in e_0..\text{epoch\_current}$, a bucket of $e$ between $e$'s anchor and the next epoch's anchor places `cm`'s nullifier at $e$ in its class with contents non-vanishing there, while a bucket of $e_0$ between those same first two anchors holds `cm` as a root. Matching endpoints in one epoch force identical stamp absorption chains regardless of class.
 
-In both forms `cm` is the commitment of a note whose master key the prover holds. The note's nullifier at an epoch is the one that master key gives.
+In both forms `NoteSeed` binds the note's master key to `cm` in the spendable's lineage. That key determines the note's nullifier at each epoch; `SpendableLift` needs only its two input PCDs.
 Because `cm` determines its master key whereas a master key does not determine `cm`, steps joining facts about one note always equate `cm`.
 
 When `anchor` is canonical, the creation form places `cm` among the tachygrams of the stamp absorbed at `anchor` in `epoch_current`.
@@ -259,8 +259,7 @@ Lifting preserves coverage and can advance a canonical anchor within its epoch. 
 
 Bundle signatures omit the stamp, the fee and each action's tachygram pair, leaving the stamp's leaves to fix them.
 Fees apply after signing ([Dynamic Fee](./fee.md)). Signatures fix the maximum via the max fee commitment; the fee leaf fixes the fee and fee change. Producing a new fee leaf requires the max fee note's opening and a fee at or below the maximum for which the circuit has an assignment. Reusing an existing fee leaf does not require its opening.
-Building a new action leaf for a published action requires the action's entropy and note commitment. A party with all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair.
-Proving delegates hold those witnesses. Spending still requires the action signature.
+Building a new action leaf for a published action requires the action's entropy and note commitment. A delegate given all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair. Spending still requires the action signature.
 
 An uncompressed stamp carries both set polynomials. Rule 2 binds them to the published bundles, whose digests determine the fee and output notes and each spend's master key and value.
 

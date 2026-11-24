@@ -143,10 +143,12 @@ impl Header<Fp> for Actions {
 ///   the native verifier recomputes
 ///   [`bridge_hash`](crate::bridge_hash::bridge_hash) and no step reads the
 ///   field.
-/// - Verification rebuilds the accumulators from published bundle actions,
-///   pairs, fees and fee changes
-///   ([`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)). Those
-///   accumulators determine $A$ and $T$.
+/// - Stamp proof verification binds $A$ and $T$ to the supplied action digests
+///   and tachygram accumulator.
+///   [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered) derives
+///   those digests and checks that accumulator against the supplied bundles'
+///   actions, pairs, fees and fee changes. The caller resolves the adjunct list
+///   by transaction ID.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -858,7 +860,7 @@ impl Step<Pasta> for ActionLift {
 /// # Caller contract
 ///
 /// Callers must pass a max fee note within `MAX_MONEY` and a fee at most that
-/// value. Otherwise the circuit has no assignment and proving fails.
+/// value. Otherwise the circuit has no satisfying assignment for those amounts.
 #[derive(Debug)]
 pub struct FeeFuse;
 
