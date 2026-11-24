@@ -16,12 +16,8 @@ use ragu::{
 use super::uint::Uint;
 use crate::{constants::MAX_MONEY, pasta::Fp, value};
 
-/// An in-circuit [`value::Positive`] amount in `0..=MAX_MONEY`.
-///
-/// # Injectivity
-///
-/// Every constructor restricts the private element to `0..=MAX_MONEY`, an
-/// integer below $2^{51}$ and the modulus.
+/// An in-circuit [`value::Positive`]. Every constructor bounds the element to
+/// `0..=MAX_MONEY`, below both $2^{51}$ and the modulus.
 #[derive(Gadget, Write, GadgetEquals)]
 #[expect(
     missing_debug_implementations,
@@ -40,10 +36,7 @@ impl<'dr, D: Driver<'dr>> Deref for Positive<'dr, D> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
-    /// Allocates `value` and bounds it to `0..=MAX_MONEY`.
-    ///
-    /// The check decomposes the element into 51 bits and compares their
-    /// integer with `MAX_MONEY`.
+    /// Allocates `value` and bounds its 51-bit decomposition by `MAX_MONEY`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
@@ -59,11 +52,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         Ok(Self { element })
     }
 
-    /// The amount `bits` encodes, bounded by `MAX_MONEY`.
-    ///
-    /// Bounding the bit integer and packing `bits` into the element makes
-    /// `bits` the amount's unique 51-bit decomposition. Multiplying a fixed
-    /// base by `bits` multiplies it by the amount.
+    /// Bounds `bits` by `MAX_MONEY` and packs them into the amount. These same
+    /// 51 bits uniquely encode the amount for fixed-base multiplication.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_bits(
         dr: &mut D,
@@ -75,10 +65,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Positive<'dr, D> {
         })
     }
 
-    /// The amount `MAX_MONEY - slack`, with `slack` bounded by `MAX_MONEY`.
-    ///
-    /// Bounding `slack` to `MAX_MONEY` prevents wrapping, so the amount and
-    /// `slack` determine each other.
+    /// Bounding `slack` by `MAX_MONEY` makes `MAX_MONEY - slack` an unwrapped
+    /// amount that uniquely determines `slack`.
     #[expect(clippy::as_conversions, reason = "constant value")]
     pub(crate) fn from_slack(
         dr: &mut D,

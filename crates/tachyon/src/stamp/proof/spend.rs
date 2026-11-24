@@ -37,17 +37,14 @@ use crate::{
 /// `EPOCH_MAX`, alongside a verified [`NoteSecret`] with `cm`, `pk`, value $v$
 /// and master key $\mathsf{mk}$.
 ///
-/// - `cm` stands for the spent note, determining its four fields and
-///   $\mathsf{mk}$ ([`NoteSecret`]).
-/// - `nf_current` and `nf_next` stand for the note's spend at $e$ as the
-///   [nullifiers](crate::digest::poseidon::nullifier_group) of $\mathsf{mk}$ at
-///   $e$ and $e + 1$. `cm` and $e$ determine the pair, and because each
-///   nullifier determines its master key and epoch, the pair determines $e$
-///   even though $e$ is omitted from the header. Notes sharing $\psi$ and
-///   $\mathsf{nk}$ share $\mathsf{mk}$, so the pair does not determine `cm`.
-///   Both nullifiers are nonzero, preventing a zero root from marking a
-///   zero-commitment note as published ([zero
-///   tachygrams](super#zero-tachygrams)).
+/// - `cm` determines the spent note's four fields and $\mathsf{mk}$
+///   ([`NoteSecret`]).
+/// - `cm` and $e$ fix `nf_current` and `nf_next`, the key's
+///   [nullifiers](crate::digest::poseidon::nullifier_group) at $e$ and $e+1$.
+///   Each fixes its key and epoch, so the pair fixes the omitted $e$, but not
+///   `cm`: notes sharing $\psi$ and $\mathsf{nk}$ share the key. Neither
+///   nullifier can mark a zero commitment as published because both are
+///   [nonzero](super#zero-tachygrams).
 /// - `anchor` is the position where [`NoteSpendable`] establishes spendability,
 ///   referring to the published pool history when canonical.
 /// - `pk` stands for the note's owner, determined by `cm` and determining

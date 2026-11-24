@@ -30,14 +30,10 @@ use crate::{
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct NfSeqCommit(EqAffine);
 
-/// Witness polynomial for a nullifier sequence, multiplying one encoding per
-/// member.
-///
-/// Each member pairs a nullifier with its epoch index, and a product of member
-/// encodings determines its member multiset
-/// ([indexed multiset](crate::collections::indexed_multiset#injectivity)). The
-/// type holds any polynomial, and each carrying header specifies which product
-/// occupies its slot.
+/// A nullifier sequence multiplies one [indexed
+/// factor](crate::collections::indexed_multiset#injectivity) per `(epoch,
+/// nullifier)` and determines that multiset. This type accepts any polynomial;
+/// the header specifies what occupies its slot.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct NfSeqPoly(Polynomial<Fp, WalletRank>);
 

@@ -311,8 +311,7 @@ The child divides the parent contents. Each parent root in the child's class bel
 No step reads a capacity, and the crate defines the steps without a builder.
 Builders operate in layers, splitting intakes above capacity and merging same-profile neighbours while their product fits one polynomial. Sibling buckets can stop at different depths.
 
-`QrBucketSeal` converts a routed intake over `(anchor_prev, anchor_end]` into a boundary-to-boundary `QrBucket` over `[anchor_start, anchor_next)`.
-Witnessing `anchor_final_prev` as its sole prover input, it equates `intake.anchor_prev` (which absorbs no tachygrams and becomes `anchor_start`) with the boundary digest into `epoch` and computes `anchor_next` from `intake.anchor_end` into `epoch + 1`
+`QrBucketSeal` converts an intake over `(anchor_prev, anchor_end]` into a `QrBucket` over `[anchor_start, anchor_next)`. Its only witness is `anchor_final_prev`. It requires `intake.anchor_prev` to equal the first boundary below (which absorbs no tachygrams) and computes the second from `intake.anchor_end`:
 
 $$\mathsf{anchor\_start} = H_\mathsf{ep}(\mathsf{anchor\_final\_prev}, \mathsf{epoch}) \qquad \mathsf{anchor\_next} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1)$$
 
@@ -331,8 +330,7 @@ Selecting the bucket's depth-$d$ prefix via $e_j$ and accumulating $a_j$ from ze
 $$\sum_j e_j = d \qquad 2 \sum_j j \cdot e_j = d \cdot (d - 1) \qquad a_{j+1} = a_j + e_j \cdot (a_j + b_j) \qquad a_{32} = \mathsf{bits}$$
 
 while leaving positions past $d$ uncompared.
-Opening only the bucket contents and output sequence `elapsed`, the step requires a nonzero evaluation of the contents at $x$ and equates `elapsed` at $\zeta$ with the indexed factor of $(\mathsf{epoch}, x)$ evaluated there.
-The class checks fix each bit, and only the first $d$ positions attain the required minimum index sum $d(d-1)/2$, fixing the mask. The `ArbitraryUnspent` covers `[anchor_start, anchor_next)` and `[epoch, epoch + 1)`. Consecutive segments meet at `anchor_next` for `UnspentFuse`; `UnspentBind` ties the arbitrary value to a note.
+Only the first $d$ positions attain the minimum index sum $d(d-1)/2$, so the mask is fixed. The step opens only the bucket contents (nonzero at $x$) and `elapsed` (equal at $\zeta$ to the indexed factor for $(\mathsf{epoch},x)$). The resulting `ArbitraryUnspent` covers `[anchor_start, anchor_next)` and `[epoch, epoch + 1)`. `UnspentFuse` joins segments at `anchor_next`; `UnspentBind` ties the value to a note.
 
 `QrSpendableInit` bootstraps a lineage-form spendable from the creation bucket and that epoch's `NoteUnspent` segment after `UnspentBind`.
 Equating the bucket's `(epoch, anchor_start, anchor_next)` with the segment's `(epoch_start, anchor_start, anchor_next)` and checking `segment.epoch_next == bucket.epoch + 1`, it opens the bucket contents to zero at `segment.cm` without reading the profile and emits the spendable with that `cm` on `(epoch_next, anchor_next)`.
@@ -352,20 +350,12 @@ The tests cover finitely many cases. The `QrIntake` and `QrBucket` assertions co
 
 ### Oversized buckets: observed behavior
 
-Builders split intakes exceeding capacity (a builder policy unread by any step), while `QrSideDescend` requires depth below 32.
-Two tachygrams sharing sides across all 32 levels cannot be separated, leaving any bucket holding both above capacities below two as an *oversized bucket*.
+`QrSideDescend` stops at depth 32. Two tachygrams sharing all 32 sides cannot be separated, so their bucket is *oversized* for any builder capacity below two.
 
 For $x=n-R_0$, the shifted value at level $j$ is $x+R_0+j=n+j$. Two matching runs of 32 quadratic characters (filing zero on the residue side) thus give colliding profiles under any discriminant offset. Exhaustive search found the two smallest positive integers matching the run of $-31$, which exercises the zero rule at level 31.
 Modelling characters as independent and uniform for discriminant-independent tachygrams gives collision probability $2^{-32}$ across 32 levels.
 
-Characterization tests in `crates/tachyon/tests/integration/qr.rs` record four outcomes for a two-member colliding bucket at depth 32.
-
-- `QrSideDescend` rejects further descent.
-- `QrBucketSeal` seals the bucket.
-- `QrUnspentInit` accepts the tested nonzero absent value with the same profile and rejects both members.
-- Evidence trees admit the bucket and `EvidenceTreeOpen` replays it.
-
-Exact exclusion against the bucket is intended. The test also records the current depth limit; bucket capacity is a builder policy.
+In `crates/tachyon/tests/integration/qr.rs`, `QrSideDescend` rejects further descent for this pair, but `QrBucketSeal` seals the bucket and an evidence tree admits and replays it via `EvidenceTreeOpen`. `QrUnspentInit` rejects both members and accepts the tested nonzero absent value with the same profile. Exact exclusion is intended; the test records the current depth limit, not a circuit capacity rule.
 
 ## Evidence trees
 

@@ -1,12 +1,9 @@
 //! Spendable bootstrap and lift.
 //!
-//! The spendable carries `(cm, epoch_current, anchor)`: the note's current
-//! epoch, its pool position, and the minted-note commitment binding the
-//! lineage (and its value) across lifts. [`SpendableInit`] bootstraps it from a
-//! minted note for a spend in the creation epoch, and [`QrSpendableInit`] from
-//! a [`QrBucket`] holding the creation over the note's own [`NoteUnspent`] for
-//! that epoch; [`SpendableLift`] advances the latter over [`NoteUnspent`]
-//! segments.
+//! [`SpendableInit`] permits a spend in the note's creation epoch. To advance
+//! beyond it, [`QrSpendableInit`] pairs the creation [`QrBucket`] with the
+//! note's [`NoteUnspent`] for that epoch. [`SpendableLift`] advances over
+//! subsequent segments, keeping the same note commitment and value.
 
 use ragu::{
     drivers::{Driver, DriverValue},
@@ -221,15 +218,10 @@ impl Step<Pasta> for SpendableInit {
 ///
 /// # Soundness
 ///
-/// Equating `(epoch, anchor_start, anchor_next)` on the bucket with
-/// `(epoch_start, anchor_start, anchor_next)` on the segment and matching the
-/// range-checked successor of `bucket.epoch` to `segment.epoch_next` restricts
-/// the segment over the integers to the bucket's single epoch and anchor
-/// bounds.
-///
-/// Opening the bucket's contents to zero at `segment.cm` proves `cm` is a root
-/// without consulting the bucket's profile, establishing the lineage form at
-/// $e_0 = \text{bucket.epoch}$. No output slot is opened.
+/// Both anchor bounds must match. The segment starts at `bucket.epoch` and
+/// ends at its range-checked successor, so it covers exactly that epoch.
+/// A zero contents opening at `segment.cm` establishes creation there for the
+/// lineage form, without reading the bucket profile or opening an output slot.
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
@@ -305,17 +297,12 @@ impl Step<Pasta> for QrSpendableInit {
 ///
 /// # Soundness
 ///
-/// Equating both inputs' `cm` wires, `spendable.epoch_current` with
-/// `unspent.epoch_start`, and `spendable.anchor` with `unspent.anchor_start`
-/// restricts the left input to the lineage form, because `unspent.anchor_start`
-/// is a bucket's boundary digest while a creation anchor is a stamp absorption
-/// under a distinct tag.
-///
-/// Matching `cm` ties the segment's tested values to the spendable note's
-/// nullifiers while continuing its epochs and anchors, extending exclusions
-/// from $e_0$ through `unspent.epoch_next - 1` while preserving the creation
-/// bucket's membership for `cm`. Neither a challenge nor an output slot is
-/// read.
+/// The segment's start epoch and anchor must match the spendable's current
+/// epoch and anchor. Only the lineage form matches: a boundary digest and a
+/// creation stamp absorption have distinct tags. Equal `cm` wires then extend
+/// the same note's nullifier exclusions from $e_0$ through `unspent.epoch_next
+/// - 1`, preserving membership in the creation bucket. No challenge or output
+/// slot is read.
 #[derive(Debug)]
 pub struct SpendableLift;
 

@@ -9,10 +9,8 @@
 //! # Injectivity
 //!
 //! Under the [Poseidon assumption](crate::stamp::proof#assumptions), a digest
-//! determines its function and every element that function absorbed, in order.
-//! One element matching two functions' digests is a collision. Absorbing a
-//! point as its two affine coordinates determines the point, and each function
-//! states what its composite inputs determine in turn.
+//! determines its function and ordered inputs: a different function or input
+//! yielding it is a collision. Two absorbed affine coordinates fix the point.
 //!
 //! The sponge adds each four-element block into the rate, zero-pads the last
 //! partial block and permutes at width five after each block. Squeezes read
@@ -240,15 +238,11 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// Derives the group of consecutive epoch nullifiers starting at the
 /// group-aligned epoch `epoch_start` from the note's master key.
 ///
-/// A nullifier determines $\mathsf{mk}$ and its epoch $e$. For $g$ =
-/// `epoch_start`, the group is the first `PoseidonFp::RATE` squeezes of
-/// $\mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ g)$, and epoch
-/// $e$ takes squeeze $e \bmod 4$ at $g = e - (e \bmod 4)$. The pair
-/// $(g,\ e \bmod 4)$ determines $e$, and the Poseidon assumption covers every
-/// squeeze position.
-///
-/// This function absorbs any element for $g$, and circuit callers constrain $g$
-/// to a multiple of four.
+/// Epoch $e$ uses position $j=e\bmod4$ among the `PoseidonFp::RATE` squeezes
+/// of `Tachyon-NfDerive` on $(\mathsf{mk},g)$, where $g=e-j$. The Poseidon
+/// assumption binds both inputs and the squeeze position, hence the master key
+/// and $e=g+j$. This function accepts any $g$; circuit callers enforce
+/// alignment.
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
     emulated(NULLIFIER_DOMAIN, [mk, epoch_start])

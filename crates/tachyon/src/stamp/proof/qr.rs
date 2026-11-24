@@ -575,17 +575,12 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 ///
 /// # Soundness
 ///
-/// Equating `epoch`, `discriminant` and both `profile` wires across the inputs
-/// and matching `left.anchor_end` to `right.anchor_prev` concatenates their
-/// chains of products $P_L$ and $P_R$ into one chain of product $P_L \cdot
-/// P_R$.
-///
-/// With input contents $C_L, C_R$ and output contents fixed before $\zeta$,
-/// equating the output's opening at $\zeta$ with $C_L(\zeta) \cdot C_R(\zeta)$
-/// sets the output contents to $C_L \cdot C_R$, which divides $P_L \cdot P_R$.
-/// Each root of $P_L \cdot P_R$ in the shared class is a root of $P_L$ or
-/// $P_R$ and therefore of $C_L$ or $C_R$ by the corresponding intake assertion,
-/// without requiring disjoint roots.
+/// Matching `left.anchor_end` to `right.anchor_prev` joins the chains;
+/// matching `epoch`, `discriminant` and both `profile` wires preserves their
+/// epoch and class. All three contents precede $\zeta$, so the product check
+/// there fixes the output to $C_L C_R$, a divisor of the chain product $P_L
+/// P_R$. Any in-class root of either $P_i$ occurs in its $C_i$, hence in the
+/// output, whether or not the inputs share roots.
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
@@ -1152,22 +1147,16 @@ impl Header<Fp> for QrBucket {
 ///
 /// # Soundness
 ///
-/// - Calling `next` on `epoch` range-checks `epoch + 1` and leaves `EPOCH_MAX`
-///   unassigned, bounding `epoch` to $e < \text{EPOCH\_MAX}$ with successor $e
-///   + 1$.
-/// - Equating `intake.anchor_prev` with the [boundary
-///   digest](poseidon::anchor_next_epoch) of witnessed `anchor_final_prev` into
-///   $e$ makes `anchor_start` a boundary digest into $e$.
-/// - Computing `anchor_next` as the boundary digest of `intake.anchor_end` into
-///   $e + 1$ sets $a = \text{intake.anchor\_end}$ in [`QrBucket`].
-/// - Equating the input slot's contents with the pre-committed output slot at
-///   $\zeta$ preserves the contents polynomial, whose bridge hash becomes
-///   `contents_hash`.
+/// `epoch.next` range-checks the successor $e+1$. The step matches
+/// `intake.anchor_prev` to the [boundary digest](poseidon::anchor_next_epoch)
+/// of witnessed `anchor_final_prev` into $e$, and sets `anchor_next` to the
+/// boundary digest of `intake.anchor_end` into $e+1$. These digests determine
+/// their predecessors without establishing that either is an epoch's final
+/// anchor.
 ///
-/// Copying `discriminant` and `profile` completes the header. Although nothing
-/// here proves `anchor_final_prev` or `anchor_end` is an epoch's final anchor,
-/// `anchor_start` and `anchor_next` determine them through the boundary
-/// digests.
+/// Matching the pre-committed output contents to the input at $\zeta$
+/// preserves the polynomial. Its bridge hash becomes `contents_hash`;
+/// `discriminant` and `profile` are copied.
 ///
 /// # Caller contract
 ///

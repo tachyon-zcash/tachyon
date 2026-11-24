@@ -2,16 +2,12 @@
 //!
 //! # Injectivity
 //!
-//! Because no slot exceeds $2^{13}$ coefficients, an accumulator determines its
-//! polynomial under the
-//! [Commitments assumption](crate::stamp::proof#assumptions). A set
-//! polynomial's accumulator therefore determines its fewer than $2^{13}$
-//! members via the [multiset] encoding. These types accept any polynomial or
-//! point, and each header specifies which polynomial occupies its slot.
-//!
-//! Although an accumulator carries no member-kind tag, a header's
-//! `OnlinePolyCommit` fixes each slot's kind and steps name the kind they open,
-//! so every step reads a slot as its declared kind.
+//! At the slot limit of $2^{13}$ coefficients, the [commitment
+//! assumption](crate::stamp::proof#assumptions) binds each accumulator to its
+//! polynomial and hence, for a [multiset], its fewer than $2^{13}$ members.
+//! The wrappers accept arbitrary polynomials and points. Accumulators carry no
+//! member-kind tag; steps open slots by the kind declared in
+//! `OnlinePolyCommit`.
 
 use core::iter;
 
@@ -105,15 +101,11 @@ pub struct AnchorSetCommit(EqAffine);
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial<Fp, WalletRank>);
 
-/// Set polynomial of a stamp's action-digest set (members encoded as roots).
-///
-/// A member is an [`ActionDigest`] or a fee digest.
+/// Set polynomial with one root per [`ActionDigest`] or fee digest.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial<Fp, WalletRank>);
 
-/// Set polynomial of an anchor span's member set (members encoded as roots).
-///
-/// A member is an [`Anchor`].
+/// Set polynomial with one root per member [`Anchor`] of a span.
 #[derive(AsRef, Clone, Debug, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, WalletRank>);
 

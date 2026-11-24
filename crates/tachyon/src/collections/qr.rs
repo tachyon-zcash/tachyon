@@ -7,16 +7,10 @@
 //!
 //! ## Sides
 //!
-//! Every pair $(x, R)$ has one side because each field element is either zero,
-//! a nonzero square, or a non-residue, and never two of these.
-//!
-//! - With $m = 1$, a class root puts $x$ on the residue side.
-//! - With $m = c$, a class root shows that $x + R$ is zero or a non-residue, by
-//!   the product rule on [`QUADRATIC_NON_RESIDUE`]. Together with $x + R \neq
-//!   0$, it puts $x$ on the non-residue side.
-//!
-//! Every value other than $-R$ has a root for its own side and none for the
-//! other.
+//! For $x+R\ne0$, multiplying by [`QUADRATIC_NON_RESIDUE`] exchanges squares
+//! and non-residues. Exactly one multiplier therefore admits a class root:
+//! $1$ for a square, $c$ for a non-residue. At $x=-R$ both admit root zero;
+//! excluding zero on the non-residue side assigns every value exactly one side.
 //!
 //! ## Class decomposition
 //!
@@ -28,17 +22,10 @@
 //!   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 //! $$
 //!
-//! Conversely, if polynomials $q$, $u$ and $h$ satisfy the identity, then
-//! $u(x)^2 = m \cdot (x + R)$ holds at every root $x$ of $q$. With $m = 1$
-//! every root of $q$ takes the residue side, and with $m = c$ every root of $q$
-//! other than $-R$ takes the non-residue side.
-//!
-//! The exceptional value $-R$ satisfies the identity with root $0$ under
-//! either multiplier. The condition $q_0(-R) \neq 0$ keeps it on the residue
-//! side.
-//!
-//! The arguments apply the identity only at roots of $q$ in the field and say
-//! nothing about non-roots.
+//! At each field root $x$ of $q$, the identity gives $u(x)^2=m(x+R)$.
+//! Thus every root has the indicated side, provided $q_0(-R)\ne0$ excludes
+//! the ambiguous root from the non-residue side. This gives no class
+//! information about non-roots.
 
 extern crate alloc;
 

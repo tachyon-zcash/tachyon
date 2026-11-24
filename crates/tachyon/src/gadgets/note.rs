@@ -81,11 +81,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     ///
     /// # Injectivity
     ///
-    /// The commitment is a function of the note's four fields and determines
-    /// them. As a [value commitment](fixed_base#value-commitments) it
-    /// determines $v$ and $r$. Blinds below $2^{254}$ that match as scalars
-    /// match as field elements, and the blind digest determines `pk`, `psi` and
-    /// `rcm`.
+    /// As a [value commitment](fixed_base#value-commitments) it fixes $v$
+    /// and $r$. Below $2^{254}$ the scalar $r$ uniquely encodes the blind
+    /// digest, which fixes the remaining note fields `pk`, `psi` and `rcm`.
     ///
     /// The circuit constrains `slack + value` to `MAX_MONEY`. Because both
     /// lie below $2^{51}$, the sum holds over the integers and `slack` is the
@@ -109,14 +107,9 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
         fixed_base::FEE_V_BASE.mul_and_add(dr, slack.bits(), &blind_point)
     }
 
-    /// Enforces zero `value` and returns the blind term alone.
-    ///
-    /// # Injectivity
-    ///
-    /// This is [`cv_feemax`](Self::cv_feemax) at $v=0$ and determines the same
-    /// note. Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by the
-    /// 254-bit blind decomposition has an assignment exactly when $0 < r <
-    /// 2^{254}$.
+    /// Enforces $v=0$, so [`cv_feemax`](Self::cv_feemax) is the blind term
+    /// alone and still determines the note. The 254-bit multiplication on
+    /// [`R_BASE`](struct@fixed_base::R_BASE) admits exactly $0<r<2^{254}$.
     pub(crate) fn cv_feemax_zero(&self, dr: &mut D) -> Result<Point<'dr, D, EpAffine>> {
         self.value.enforce_zero(dr)?;
         let blind = self.derive_feemax_blind(dr)?;

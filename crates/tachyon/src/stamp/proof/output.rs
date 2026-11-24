@@ -33,14 +33,11 @@ use crate::{
 /// that its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ with
 /// integer $v$ in `0..=MAX_MONEY` and an integer $r$ with $0 < r < 2^{254}$.
 ///
-/// - `cm` is the [note commitment](crate::digest::poseidon::note_commitment),
-///   standing for the note and determining its four fields.
-/// - `pad` is the [padding tachygram](crate::digest::poseidon::pad_tachygram),
-///   determining the same four fields under its own tag so that `cm` and `pad`
-///   determine each other.
-/// - `cv` equals $\[-v\]\mathcal{V} + \[r\]\mathcal{R}$, standing for $-v$ and
-///   determining its opening as a [value
-///   commitment](fixed_base#value-commitments).
+/// The [note commitment](crate::digest::poseidon::note_commitment) `cm` and
+/// [padding tachygram](crate::digest::poseidon::pad_tachygram) `pad` each
+/// determine all four fields under distinct tags, and thus determine each
+/// other. The [value commitment](fixed_base#value-commitments)
+/// $\mathsf{cv}=\[-v\]\mathcal{V}+\[r\]\mathcal{R}$ binds the opening $(-v,r)$.
 ///
 /// Both `cm` and `pad` are nonzero, ruling out roots at zero
 /// ([zero tachygrams](super#zero-tachygrams)), and $\mathsf{rcm}$ is nonzero.
@@ -94,10 +91,9 @@ impl Header<Fp> for OutputHeader {
 ///
 /// # Soundness
 ///
-/// Reading no input or challenge, the circuit builds `OutputHeader` directly
-/// from its wires. Shared `rcm`, `pk`, `psi` and value wires feed both digest
-/// circuits. `Note::commitment` holds `rcm` nonzero, this step holds `cm` and
-/// `pad` nonzero, and `pk` and `psi` carry no separate constraint.
+/// Both digests use the same four note wires, without inputs or a challenge.
+/// `Note::commitment` excludes zero `rcm`; this step excludes zero `cm` and
+/// `pad`. Neither `pk` nor `psi` has a separate constraint.
 /// Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by 254 freely chosen
 /// Boolean blind wires computes the blind point, with no assignment at zero.
 /// `NEG_V_BASE.mul_and_add` adds the negated value term from

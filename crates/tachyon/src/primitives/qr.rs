@@ -80,11 +80,10 @@ impl QrClass {
 ///
 /// # Injectivity
 ///
-/// Together with a depth-$d$ [`QrProfile`], $R_0$ determines one value class,
-/// and every value belongs to one class at each depth. Adding $j$ in the field
-/// gives each element a [side](crate::collections::qr#sides) at $R_0 + j$, and
-/// a profile's class holds the values matching its first $d$ sides. Any field
-/// element serves as $R_0$.
+/// For any field element $R_0$, each value has one
+/// [side](crate::collections::qr#sides) at each $R_0+j$ in the field. Its first
+/// $d$ sides therefore place it in exactly one depth-$d$ [`QrProfile`] class
+/// for that $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
 
@@ -249,9 +248,9 @@ impl QrSplit {
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
 ///
-/// Descent checks the class identity, not how the prover built this hint. What
-/// the [class decomposition](crate::collections::qr#class-decomposition) proves
-/// does not depend on that construction.
+/// Descent checks the [class
+/// identity](crate::collections::qr#class-decomposition), not how the prover
+/// constructs the hint.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -305,12 +304,9 @@ pub struct QrQuotientCommit(EqAffine);
 ///
 /// # Injectivity
 ///
-/// Within bounds, `(depth, bits)` determines a path $b_0, \dots, b_{d-1}$ of
-/// sides at depths $0$ to $d - 1$, where $b_j = 1$ marks the residue side.
-/// `depth` holds $d \leq$ [`MAX_DEPTH`](Self::MAX_DEPTH), and `bits` packs
-/// $\sum_{j < d} b_j \cdot 2^{d - 1 - j} < 2^d$. Same-length paths differ in
-/// `bits` and different-length paths differ in `depth`. Leading non-residue
-/// sides pack as zeros, so `bits` alone does not fix the path.
+/// At `depth` $d\le$ [`MAX_DEPTH`](Self::MAX_DEPTH), `bits` uniquely packs
+/// the path as $\sum_{j<d}b_j2^{d-1-j}<2^d$, with $b_j=1$ for residue.
+/// `depth` distinguishes paths that differ only by leading non-residue zeros.
 ///
 /// The native fields accept any `u32` pair, and out-of-bounds pairs represent
 /// no path. In circuits, `descend` extends a path into a path, and

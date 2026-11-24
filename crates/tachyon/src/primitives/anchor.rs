@@ -29,41 +29,30 @@ pub enum AnchorError {
 
 /// Running anchor over the consensus state.
 ///
-/// An anchor heads a hash chain over a pool history starting at the genesis
-/// value [`Anchor::default`], $\mathsf{ep}(0, 0)$. Each entry advances $a$ by
-/// one digest.
+/// A pool history starts at [`Anchor::default`], $\mathsf{ep}(0,0)$. Each
+/// entry advances its anchor $a$ by one digest:
 ///
-/// - Publishing a stamp in epoch $e$ yields the stamp absorption
-///   $\mathsf{st}(a, e, B)$, the
-///   [`anchor_next_stamp`](poseidon::anchor_next_stamp) digest of $a$, $e$ and
-///   the two coordinates of $B$, the canonical [bridge
-///   hash](super::TachygramSetBridge) of the stamp's tachygram accumulator.
-/// - Crossing into epoch $e \geq 1$ yields the boundary digest $\mathsf{ep}(a,
-///   e)$, the [`anchor_next_epoch`](poseidon::anchor_next_epoch) digest of $a$
-///   into $e$. In a history, $a$ is the previous epoch's final anchor and the
-///   digest is the entry anchor of $e$.
+/// - Publishing a stamp in epoch $e$ [absorbs](poseidon::anchor_next_stamp)
+///   $a$, $e$ and both coordinates of the stamp accumulator's canonical [bridge
+///   hash](super::TachygramSetBridge) $B$, giving $\mathsf{st}(a,e,B)$.
+/// - At the boundary into $e\ge1$, the previous epoch's final anchor $a$ gives
+///   the new entry anchor $\mathsf{ep}(a,e)$ via
+///   [`anchor_next_epoch`](poseidon::anchor_next_epoch).
 ///
 /// # Injectivity
 ///
-/// An anchor determines the ordered entries of its pool history. Because a
-/// digest determines its function and absorbed elements
-/// ([Poseidon](poseidon#injectivity)), an anchor determines its last entry and
-/// predecessor anchor. A stamp absorption determines its epoch and bridge hash,
-/// and the bridge hash determines the accumulator and its polynomial
-/// ([`TachygramSetBridge`](super::TachygramSetBridge)). Epochs enter as
-/// integers at most `EPOCH_MAX`.
-///
-/// Walking two histories back from a shared anchor matches one entry per step
-/// down to genesis, so matching anchors imply identical histories and no
-/// history repeats an anchor. No later history anchor equals genesis because
-/// stamp absorptions use a distinct tag and [`next_epoch`](Self::next_epoch)
-/// rejects epoch zero.
+/// [Poseidon](poseidon#injectivity) binds the entry kind, predecessor and
+/// integer epoch (at most `EPOCH_MAX`). For a stamp it also binds the bridge
+/// hash, which determines the accumulator and polynomial. Walking back from
+/// a shared anchor thus matches ordered entries to genesis. No later entry
+/// equals genesis: stamp absorptions use another tag and
+/// [`next_epoch`](Self::next_epoch) rejects epoch zero. Hence matching anchors
+/// have identical histories and no history repeats an anchor.
 ///
 /// # Chains in a step
 ///
-/// Steps compute the same digests on wires, sometimes taking the predecessor
-/// anchor or epoch from the prover. Satisfying such a step proves that a digest
-/// chain exists without tying it to a pool history.
+/// Steps can take the predecessor or epoch from the prover. Their digests
+/// establish a chain without tying it to a pool history.
 ///
 /// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
 /// $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a

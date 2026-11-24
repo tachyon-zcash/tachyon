@@ -49,21 +49,15 @@ use crate::{
 /// - `note.value` is an integer in `0..=MAX_MONEY`,
 /// - `note.rcm` is nonzero.
 ///
-/// `cm` stands for the note and determines all four fields of `note`. Because
-/// `note.pk` determines $\mathsf{ak}$ and $\mathsf{nk}$, and $\psi$ and
-/// $\mathsf{nk}$ determine `mk`, every verified `NoteSecret` for one `cm`
-/// carries the same `mk`, which stands for the note's nullifiers across all
-/// epochs.
-///
-/// Conversely, `mk` does not determine `cm`. Notes sharing $\psi$ and
-/// $\mathsf{nk}$ share `mk` and every nullifier regardless of $\mathsf{ak}$,
-/// value and `rcm`, so steps joining two headers for one note equate `cm`.
+/// `cm` determines all four note fields; `pk` fixes both keys, so $\psi$ and
+/// $\mathsf{nk}$ fix `mk` and every epoch's nullifier. The converse fails:
+/// changing $\mathsf{ak}$, value or `rcm` alone leaves `mk` and all nullifiers
+/// unchanged. Steps joining headers for one note therefore match `cm`.
 ///
 /// # Zero commitment trapdoor
 ///
-/// Sole producer [`NoteSeed`] holds `rcm` nonzero. Since `cm` determines `rcm`,
-/// a zero-`rcm` note has no `NoteSecret` for
-/// [`SpendBind`](super::spend::SpendBind).
+/// Since `cm` fixes `rcm` and [`NoteSeed`] excludes zero, a zero-`rcm` note has
+/// no `NoteSecret` for [`SpendBind`](super::spend::SpendBind).
 /// [`OutputBind`](super::output::OutputBind),
 /// [`FeeFuse`](super::stamp::FeeFuse) and [`FeeSeed`](super::stamp::FeeSeed)
 /// enforce the same check for outputs and fee change. Recipients check
@@ -317,11 +311,10 @@ impl Step<Pasta> for NoteSeed {
 ///
 /// # Soundness
 ///
-/// Because the input header fixes `mk` and `cm` and the step stages
-/// `epoch_start`, all three precede $\zeta$. Packing `epoch_start` at the epoch
-/// width with its two low bits held to zero makes it a multiple of four, and
-/// range-checking `epoch_end = epoch_start + 15` prevents wrapping while
-/// bounding all sixteen epochs to `EPOCH_MAX`.
+/// The input fixes `mk` and `cm`; staging fixes `epoch_start` before $\zeta$.
+/// Its epoch-width packing has two zero low bits, aligning it to four.
+/// Range-checking `epoch_end = epoch_start + 15` bounds all sixteen epochs by
+/// `EPOCH_MAX` without wrapping.
 ///
 /// Four `Tachyon-NfDerive` sponges absorb `mk` and `epoch_start + 4k` to
 /// squeeze `PoseidonFp::RATE` nullifiers across each four-epoch group. Pairing
@@ -454,14 +447,11 @@ impl Step<Pasta> for NullifierDerive {
 ///
 /// # Soundness
 ///
-/// Equating the inputs' `cm` ties both sequences to one master key, and holding
-/// `left.epoch_end + 1 == right.epoch_start` over the integers makes the right
-/// range start immediately after the left. Because all three sequences are
-/// committed before $\zeta$ and the circuit equates the output's opening at
-/// $\zeta$ with the product of the inputs' openings, the output sequence holds
-/// one factor per epoch across `left.epoch_start..=right.epoch_end`.
-///
-/// Opens both input sequences and their concatenation once each.
+/// Matching `cm` fixes one master key; `left.epoch_end + 1 ==
+/// right.epoch_start` over the integers joins adjacent ranges. All three
+/// sequences precede $\zeta$. Checking output = left × right with one opening
+/// each preserves one factor per epoch across
+/// `left.epoch_start..=right.epoch_end`.
 #[derive(Debug)]
 pub struct NullifierFuse;
 

@@ -1226,23 +1226,19 @@ impl<P: Proof> ProofStamp<P> {
     ///
     /// # Soundness
     ///
-    /// An accepted stamp satisfies [`Stamp`] at [`Self::anchor`], with leaf
-    /// digests equal to the multiset `action_digests` and tachygram set
-    /// polynomial committed by [`Self::tachygram_set`]. Verification checks the
-    /// PCD as a [`Stamp`] carrying [`Self::anchor`] and the [`bridge_hash`] of
-    /// [`Self::tachygram_set`], matching the stamp proof's two online
-    /// commitments against the action accumulator built from `action_digests`
-    /// and [`Self::tachygram_set`]. Each accumulator determines its polynomial,
-    /// and a [set polynomial](crate::collections::multiset) determines its
-    /// roots with multiplicity.
+    /// Verification checks the [`Stamp`] header at [`Self::anchor`] with the
+    /// [`bridge_hash`] of [`Self::tachygram_set`]. It matches the two online
+    /// commitments to the accumulator of `action_digests` and the supplied
+    /// tachygram accumulator. Each fixes its [set
+    /// polynomial](crate::collections::multiset) and thus its roots with
+    /// multiplicity.
     ///
-    /// This method checks neither covered-bundle consistency nor anchor
-    /// recency. The caller matches [`Self::tachygram_set`] against the covered
-    /// bundles' pairs and fee changes and derives `action_digests` from their
-    /// published descriptors, as in
-    /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered). The
-    /// caller also checks the consensus anchor rule, requiring a canonical
-    /// end-of-block anchor from the current or previous epoch.
+    /// The caller resolves the named bundles.
+    /// [`Bundle::verify_covered`](crate::bundle::Bundle::verify_covered)
+    /// derives their action and fee digests and checks their pairs and fee
+    /// changes against the tachygram accumulator. The caller also checks
+    /// for a canonical end-of-block anchor from the current or previous
+    /// epoch.
     ///
     /// # Errors
     ///
