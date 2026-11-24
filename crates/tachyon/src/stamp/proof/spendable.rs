@@ -36,14 +36,15 @@ use crate::{
 /// as an integer, a prover-known verified [`NoteNullifiers`] carrying `cm`, and
 /// one of two forms.
 ///
-/// - **Creation.** A one-absorption [stamp chain](Anchor#chains-in-a-step) in
-///   `epoch_current` ends at `anchor`, and the header's [`TachygramSetPoly`] is
-///   that absorption's polynomial with `cm` among its roots.
-/// - **Lineage.** For some $e_0 < \text{epoch\_current}$ and anchors $b_e$
-///   across $e \in e_0..=\text{epoch\_current}$ ending at
-///   $b_\text{epoch\_current} = \text{anchor}$, a verified [`QrBucket`] at
-///   `(e_0, b_{e_0}, b_{e_0+1})` has `cm` as a root of its contents, the
-///   nullifier of `cm` at each $e \in e_0..\text{epoch\_current}$ is
+/// - **Creation.** The prover knows a one-absorption [stamp
+///   chain](Anchor#chains-in-a-step) in `epoch_current` ending at `anchor`. The
+///   header's [`TachygramSetPoly`] is that absorption's polynomial with `cm`
+///   among its roots.
+/// - **Lineage.** The prover knows an epoch $e_0 < \text{epoch\_current}$ and
+///   anchors $b_e$ across $e \in e_0..=\text{epoch\_current}$ ending at
+///   `anchor`. It knows a verified [`QrBucket`] at $(e_0, b_{e_0}, b_{e_0+1})$
+///   with `cm` as a root of its contents. The nullifier of `cm` at each $e \in
+///   e_0..\text{epoch\_current}$ is
 ///   [excluded](super::pool::ArbitraryUnspent#injectivity) between $b_e$ and
 ///   $b_{e+1}$, and the header's [`TachygramSetPoly`] is the constant one.
 ///

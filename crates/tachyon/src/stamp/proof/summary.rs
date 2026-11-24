@@ -131,7 +131,8 @@ impl Header<Fp> for Summary {
 /// The step [adds an absorption](Anchor#chains-in-a-step) of prover-chosen
 /// `anchor_prev` and `epoch` with the pre-committed polynomial in
 /// [`Summary::LAST_STAMP`]. Equating both pre-committed output slots at $\zeta$
-/// and holding the opening away from one makes them one non-unit polynomial.
+/// shows they hold the same polynomial. Requiring its opening to differ from
+/// one rules out the constant one, not other nonzero constants.
 ///
 /// Opens [`Summary::ACCUMULATED`] and [`Summary::LAST_STAMP`] once each at
 /// $\zeta$.

@@ -45,14 +45,14 @@ use crate::{
 /// - `nf_current` and `nf_next` stand for the note's spend at $e$ as the
 ///   [nullifiers](crate::digest::poseidon::nullifier_group) of $\mathsf{mk}$ at
 ///   $e$ and $e + 1$. `cm` and $e$ determine the pair, and because each
-///   nullifier determines its master key and epoch, the pair recovers $e$ even
-///   though $e$ is omitted from the header. Notes sharing $\psi$ and
+///   nullifier determines its master key and epoch, the pair determines $e$
+///   even though $e$ is omitted from the header. Notes sharing $\psi$ and
 ///   $\mathsf{nk}$ share $\mathsf{mk}$, so the pair does not determine `cm`.
 ///   Both nullifiers are nonzero, preventing a zero root from marking a
 ///   zero-commitment note as published ([zero
 ///   tachygrams](super#zero-tachygrams)).
-/// - `anchor` stands for the pool history where [`NoteSpendable`] establishes
-///   spendability.
+/// - `anchor` is the position where [`NoteSpendable`] establishes spendability.
+///   It refers to the published pool history if that anchor is canonical.
 /// - `pk` stands for the note's owner, determined by `cm` and determining
 ///   $\mathsf{ak}$ and $\mathsf{nk}$.
 /// - `cv` stands for $v$ as $\[v\]\mathcal{V} + \[r\]\mathcal{R}$ for a
@@ -148,9 +148,9 @@ impl Header<Fp> for SpendHeader {
 /// Multiplying [`V_BASE`](struct@fixed_base::V_BASE) by the 51-bit
 /// decomposition of the secret's value wire (which [`NoteSecret`] bounds to
 /// `0..=MAX_MONEY`) and adding [`R_BASE`](struct@fixed_base::R_BASE) times 254
-/// unconstrained blind bits (unassigned at zero) yields `cv`. Reading no
-/// challenge, the step copies `cm` and `anchor` from the lineage and `pk` from
-/// the secret.
+/// freely chosen Boolean blind wires (the multiplication has no assignment at
+/// zero) yields `cv`. Reading no challenge, the step copies `cm` and `anchor`
+/// from the lineage and `pk` from the secret.
 #[derive(Debug)]
 pub struct SpendBind;
 
