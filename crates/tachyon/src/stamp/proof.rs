@@ -42,6 +42,7 @@ pub mod spendable;
 pub mod summary;
 pub mod transaction;
 
+pub(crate) mod aggregator;
 mod registry;
 #[cfg(test)]
 #[cfg(feature = "test-epoch-size")]
@@ -60,6 +61,18 @@ pub const HEADER_SIZE: usize = 9;
 /// The Tachyon Ragu application, with accelerated proving and reference
 /// verification kernels.
 pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>;
+
+/// Build the aggregator and its wallet verifier on one parameter set. Keep it
+/// per worker.
+///
+/// # Errors
+/// Returns a Ragu error if registration, bootstrap or decompression setup
+/// fails.
+pub fn new_aggregator_application<RNG: rand_core::CryptoRng>(
+    rng: &mut RNG,
+) -> ragu::Result<Box<aggregator::App<'static>>> {
+    aggregator::new_application(rng)
+}
 
 /// Builds the Tachyon application with the baked setup.
 ///

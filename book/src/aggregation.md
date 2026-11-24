@@ -70,12 +70,14 @@ differences. The wallet-origin check belongs to the issuer at step 39; step
 40 neither reads the imported scratch slots nor repeats the padding check.
 The output reports the local oracle. Wallet dehydration followed by wallet
 rehydration cannot verify, even though both steps are registered there.
-The paired integration test uses Ragu's aggregator profile and baked tables
-to verify the restored transaction against its local bridge and anchor.
+The aggregator runs a paired application. It builds the wallet verifier and
+aggregator prover over the same rank-15 parameters, then reuses that setup
+for imports and verification. A wallet can issue and verify its publication
+with the ordinary wallet setup alone.
 
 ### Merge to produce Aggregate
 
-The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. This crate registers wallet-rank proofs; it does not yet implement an aggregator application that can import a compressed stamp.
+Wallets publish compressed stamps. An aggregator checks the signed host and covered bodies, imports the wallet publication, and restores a full working transaction. It can merge that transaction with work at the same anchor or divide it by a retained divisor. The native builders support up to 8,191 roots per output polynomial. A miner rerandomizes and compresses the resulting *working transaction* at aggregator rank. A wallet publication is already mineable without this round trip.
 
 `Plan::prove` returns the full working `Transaction` used for lifting, merging and unmerging. At publication the wallet calls `ProofStamp::finalize` once: it dehydrates, rerandomizes, and compresses. The resulting `PublicTransaction` uses the existing compressed stamp type and wire format. Compressing a working `Transaction` directly with Ragu still leaves the action commitment in its last slot; that proof is not accepted as a wallet publication.
 
@@ -93,9 +95,11 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
-**Merge proof.** [`TransactionMerge`](./proof-tree.md#stamp-construction) checks that the merged action polynomial is the product of its inputs. A digest present on both sides is a repeated root; distinct digests can share a tachygram without violating the product relation. For $N$ actions and $B$ fees, the output slot requires $N+B \le 8191$ but does not establish $2N+B \le 8191$. Proof verification compares the last slot commitment to the accumulator derived from the covered digests, with their multiplicities.
+**Merge proof.** [`TransactionMerge`](./proof-tree.md#stamp-construction) checks that the merged action polynomial is the product of its inputs. A digest present on both sides is a repeated root; distinct digests can share a tachygram without violating the product relation. The proof does not establish the public coverage bound. The verifier of a compressed working transaction compares the last slot commitment to the accumulator derived from the covered digests, with their multiplicities, and verifies its aggregator-rank bridge and reference.
 
 **Trailer construction.** The aggregator commits to the tachygrams from the merged records. After division it computes the quotient's trailer from the surviving action pairs and fee changes.
+
+**Private transfer.** To continue work on a different worker, retain the signed bodies and transfer the full proof in a separately bounded, versioned service record with the reference, tachygram commitment and ordered adjunct txids. The full aggregator proof alone is 174,072,896 bytes. The receiver resolves coverage and signatures, checks the last slot against the reconstructed action commitment, attaches the expected local bridge and anchor, then compresses with fresh receiver randomness and verifies before using it as a child. A published compressed aggregator proof can be relayed and mined; it cannot resume work.
 
 **Bundle coverage.** [Bundle validation](./bundle.md#stamp-trailer) counts two tachygrams per covered action and one fee change per covered bundle, and requires $2N+B \le 8191$. It rejects repeated action descriptors, fee descriptors, and tachygrams, including a tachygram shared by actions with different digests. It checks the commitment computed from the covered bodies against `cTachygrams` before anchor advancement.
 

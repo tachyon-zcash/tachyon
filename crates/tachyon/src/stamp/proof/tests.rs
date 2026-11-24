@@ -1,10 +1,6 @@
-use ragu::{
-    Rank as _,
-    circuits::{polynomials, registry},
-    pasta::Fp,
-    pcd::profile,
-    udon::field::Field as _,
-};
+use ragu::{circuits::polynomials, pcd::profile, udon::field::Field as _};
+
+mod registered_cost;
 
 use super::{
     registry::{dehydration_registry, shared_builder},
@@ -12,18 +8,75 @@ use super::{
 };
 
 #[test]
+fn mixed_verifier_checks_the_registry_even_with_the_right_wallet_statement() {
+    use alloc::collections::BTreeSet;
+
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        Anchor, Note, ProofStamp, Tachygram, TachygramSetPoly, fee,
+        pasta::Fp,
+        stamp::{PublicationProof, Uncompressed},
+        value, witness,
+    };
+
+    let rng = &mut StdRng::seed_from_u64(91);
+    let other = dehydration_registry::<Pasta, WalletRank>()
+        .unwrap()
+        .finalize(pasta::baked())
+        .unwrap();
+    let current = new_aggregator_application(rng).unwrap();
+    let anchor = Anchor::from(Fp::from(3));
+    let note = Note {
+        pk: Fp::from(5).into(),
+        value: value::Positive::ZERO,
+        psi: Fp::from(7).into(),
+        rcm: Fp::from(9).into(),
+    };
+    let change = Tachygram::from(note.commitment());
+    let digest = fee::Descriptor {
+        cv_feemax: note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
+    }
+    .digest(change);
+    let pcd = other
+        .seed(
+            rng,
+            transaction::FeeSeed,
+            witness::fee_seed(((), ()), note, anchor),
+        )
+        .unwrap()
+        .0;
+    let working = ProofStamp::<Uncompressed> {
+        anchor,
+        tachygram_set: TachygramSetPoly::from_iter([change]).commit(),
+        adjuncts: BTreeSet::new(),
+        proof: Box::new(pcd.into_parts().0),
+    };
+    let published = working.finalize(rng, &other).unwrap();
+    assert!(published.verify_proof(rng, &other, [digest]).unwrap());
+    let mixed = ProofStamp {
+        anchor,
+        tachygram_set: published.tachygram_set,
+        adjuncts: published.adjuncts,
+        proof: Box::new(PublicationProof::Wallet(*published.proof)),
+    };
+    assert!(!mixed.verify_proof(&current, &[digest]).unwrap());
+}
+
+#[test]
 fn shared_registry_preserves_the_dehydration_prefix_and_fits_the_wallet() {
     let prefix = dehydration_registry::<Pasta, WalletRank>()
         .unwrap()
         .finalize(pasta::baked())
         .unwrap();
-    // Pin the width-nine test-epoch registry through TransactionDehydrate
-    // (ea6524aa). Appending step 40 changes the complete registry.
+    // Pin the width-nine test-epoch registry through TransactionDehydrate,
+    // including the wallet-locked spend writer.
     assert_eq!(
         prefix.native_registry().tag().to_bytes(),
         [
-            243, 103, 84, 114, 64, 129, 124, 174, 185, 44, 187, 199, 96, 0, 86, 141, 52, 93, 236,
-            181, 100, 168, 32, 71, 239, 186, 209, 199, 203, 12, 190, 11
+            36, 182, 81, 241, 91, 60, 133, 79, 107, 166, 50, 172, 62, 199, 130, 107, 187, 74, 8,
+            205, 15, 78, 152, 122, 105, 216, 140, 6, 185, 144, 148, 24
         ]
     );
     assert_eq!(
@@ -41,42 +94,15 @@ fn shared_registry_preserves_the_dehydration_prefix_and_fits_the_wallet() {
         .unwrap();
     let registry = wallet.native_registry();
     let before = prefix.native_registry().num_circuits();
+    assert_eq!(
+        registered_cost::cost(registry, before - 40 + 8),
+        (1644, 3311)
+    );
     assert_eq!(registry.num_circuits(), before + 1);
     // The adapter wires its final gate to an oracle evaluation. Inspect the
     // highest occupied gate in each actual step's wiring, including SYSTEM,
     // the application's reserved stage and the adapter's default openings.
-    let costs = [before - 1, before].map(|index| {
-        let circuit = registry::CircuitIndex::new(index);
-        let wiring = registry.circuit_y(circuit, Fp::from(7));
-        let width = WalletRank::n();
-        let gates = wiring
-            .iter_stored_coeffs()
-            .filter(|&(_, coefficient)| *coefficient != Fp::ZERO)
-            .map(|(degree, _)| {
-                let offset = degree & (width - 1);
-                if degree & width == 0 {
-                    offset + 1
-                } else {
-                    width - offset
-                }
-            })
-            .max()
-            .unwrap();
-        // Both circuits have one contiguous root segment. Its first constraint
-        // (the K_W x equality or alloc_square's a=b for O.x) occupies the highest
-        // Y degree and has nonzero wiring at X=7. Count zero padding rows too;
-        // omit only the registry-wide tag at degree 4n−1.
-        let rows = registry.wx(circuit.omega_j(), Fp::from(7));
-        let constraints = rows
-            .iter_stored_coeffs()
-            .filter(|&(degree, coefficient)| {
-                degree < WalletRank::num_coeffs() - 1 && *coefficient != Fp::ZERO
-            })
-            .map(|(degree, _)| degree + 1)
-            .max()
-            .unwrap();
-        (gates, constraints)
-    });
+    let costs = [before - 1, before].map(|index| registered_cost::cost(registry, index));
     assert_eq!(costs, [(16, 47), (1405, 2828)]);
 
     // The integration suite exercises the finalized aggregator application.

@@ -234,9 +234,7 @@ Every listed transaction's bundle holds at least its fee change in the tachygram
 
 Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hStampTachyon}$](./transaction-identifiers.md) directly, followed by the proof digest. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
-The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
-
-In the crate today, a stamped block item carries a compressed proof in `proofTachyon`. The crate uses the same trailer for an uncompressed proof when [lifting](./proof-tree.md#stamp-anchor), [merging or unmerging](./aggregation.md#merge-to-produce-aggregate) a stamp.
+Under the V1 rules, both the block reader and the general stamped mempool reader require a compressed frame. For `0x01`, `sizeProofTachyon` selects exactly one verifier: 7,296 bytes for a wallet publication or 14,432 for a compressed aggregator transaction. Every other length is invalid before the proof is read. The outer byte remains `0x01` for both when computing the authorization digest. Chain context selects the active registry; a failed proof is never retried under historical rules. The typed full-wallet work codec is separate from admission.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the anchor and the action accumulator derived from the covered bodies. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 

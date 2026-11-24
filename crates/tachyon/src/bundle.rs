@@ -90,9 +90,10 @@
 //! whole trailer is read. The standalone stamp reader checks
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
-//! In this crate, a stamped block item, [`TachyonBundle`], carries a
-//! [`Compressed`](stamp::Compressed) proof in `proofTachyon`.
-//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout.
+//! A stamped block or mempool item carries a [`stamp::PublicationProof`].
+//! Under `0x01`, the exact frame length selects the compressed wallet (7,296
+//! bytes) or aggregator (14,432 bytes) proof. Typed wallet work I/O uses
+//! the same layout on a separate channel.
 //!
 //! ## Stripped stamp
 //!
@@ -104,6 +105,7 @@
 //! [`blake2b::stamp_digest`].
 
 use alloc::{
+    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
@@ -680,7 +682,29 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     }
 }
 
-impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
+#[expect(
+    private_bounds,
+    reason = "only transaction-encodable proofs have stamped bundles"
+)]
+impl<P: stamp::Wire> Bundle<ProofStamp<P>> {
+    fn map_proof<Q: stamp::Wire>(self, map: impl FnOnce(P) -> Q) -> Bundle<ProofStamp<Q>> {
+        Bundle {
+            actions: self.actions,
+            action_auth: self.action_auth,
+            value_balance: self.value_balance,
+            fee: self.fee,
+            fee_auth: self.fee_auth,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp: ProofStamp {
+                anchor: self.stamp.anchor,
+                adjuncts: self.stamp.adjuncts,
+                tachygram_set: self.stamp.tachygram_set,
+                proof: Box::new(map(*self.stamp.proof)),
+            },
+        }
+    }
+
     /// Read a proof-stamped bundle, including the combined coverage bound.
     ///
     /// # Errors
@@ -816,7 +840,9 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
 
         Ok((digests, tachygram_set))
     }
+}
 
+impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// Verify the stamp's proof against the given action digests, which
     /// include the digests of covered fee descriptors.
     ///
@@ -883,6 +909,83 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         } else {
             Err(VerificationError::Disproved)
         }
+    }
+}
+
+impl Bundle<ProofStamp<stamp::PublicationProof>> {
+    /// Verify the carrying bundle's signatures, coverage and compressed
+    /// publication.
+    /// Supply the stripped bodies resolved from the stamp's listed txids. The
+    /// integrating node checks each adjunct's own signatures, assigns every
+    /// stripped transaction exactly once in its block, and checks anchor
+    /// eligibility.
+    ///
+    /// # Errors
+    /// Returns the failed signature, coverage or proof check.
+    pub fn verify(
+        &self,
+        app: &stamp::proof::aggregator::App<'_>,
+        sighash: &[u8; 32],
+        adjuncts: &[&Bundle<StrippedStamp>],
+    ) -> Result<TachygramSetCommit, VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+        let (digests, tachygrams) = self
+            .verify_covered(adjuncts)
+            .map_err(VerificationError::Coverage)?;
+        if self
+            .stamp
+            .verify_proof(app, &digests)
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(tachygrams)
+        } else {
+            Err(VerificationError::Disproved)
+        }
+    }
+}
+
+impl Bundle<ProofStamp<stamp::Compressed>> {
+    /// Verify the host and its covered bodies and restore the wallet
+    /// publication at aggregator rank.
+    /// Supply the stripped bodies resolved from the stamp's listed txids. This
+    /// checks the host's signatures, the covered bodies' tachygrams and the
+    /// wallet proof. The node checks adjunct signatures, block assignment
+    /// and anchor eligibility.
+    ///
+    /// # Errors
+    /// Returns a failed signature, coverage or proof check, or a Ragu import
+    /// error.
+    pub fn rehydrate<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        app: &stamp::proof::aggregator::App<'_>,
+        sighash: &[u8; 32],
+        adjuncts: &[&Bundle<StrippedStamp>],
+    ) -> Result<ProofStamp<stamp::proof::aggregator::Transaction>, VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+        let (digests, tachygram_set) = self
+            .verify_covered(adjuncts)
+            .map_err(VerificationError::Coverage)?;
+        let poly = crate::ActionSetPoly::from_iter(digests);
+        let commitment = poly.commit();
+        let publication = stamp::checked_wallet_publication(
+            app.context().wallet(),
+            &self.stamp.proof,
+            (commitment, self.stamp.anchor),
+        )
+        .map_err(VerificationError::Proof)?
+        .ok_or(VerificationError::Disproved)?;
+        let pcd =
+            stamp::proof::aggregator::import_transaction(rng, app, &publication, poly, commitment)
+                .map_err(VerificationError::Proof)?;
+        Ok(ProofStamp {
+            anchor: pcd.data().1,
+            tachygram_set,
+            adjuncts: self.stamp.adjuncts.clone(),
+            proof: Box::new(pcd),
+        })
     }
 }
 
@@ -1116,9 +1219,39 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own proof (autonome or aggregate).
-    Proven(Bundle<ProofStamp<stamp::Compressed>>),
+    Proven(Bundle<ProofStamp<stamp::PublicationProof>>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<StrippedStamp>),
+}
+
+impl From<Bundle<ProofStamp<stamp::Compressed>>> for TachyonBundle {
+    fn from(value: Bundle<ProofStamp<stamp::Compressed>>) -> Self {
+        Self::Proven(value.map_proof(stamp::PublicationProof::Wallet))
+    }
+}
+
+impl TryFrom<TachyonBundle> for Bundle<ProofStamp<stamp::Compressed>> {
+    type Error = derive_more::TryIntoError<TachyonBundle>;
+
+    fn try_from(value: TachyonBundle) -> Result<Self, Self::Error> {
+        match value {
+            TachyonBundle::Proven(bundle)
+                if matches!(*bundle.stamp.proof, stamp::PublicationProof::Wallet(_)) =>
+            {
+                Ok(bundle.map_proof(|proof| match proof {
+                    stamp::PublicationProof::Wallet(wallet) => wallet,
+                    stamp::PublicationProof::Aggregator(_) => unreachable!(),
+                }))
+            },
+            other @ (TachyonBundle::NoBundle
+            | TachyonBundle::Proven(_)
+            | TachyonBundle::Adjunct(_)) => Err(derive_more::TryIntoError::new(
+                other,
+                "Proven",
+                "Bundle<ProofStamp<Compressed>>",
+            )),
+        }
+    }
 }
 
 impl PartialEq for TachyonBundle {

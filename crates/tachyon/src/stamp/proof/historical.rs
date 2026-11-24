@@ -765,7 +765,7 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(spendable::SpendableLift)?
         .register(output::OutputBind)?
         .register(transaction::OutputAction)?
-        .register(spend::SpendBind)?
+        .register(spend::HistoricalSpendBind)?
         .register(transaction::SpendAction)?
         .register(StampMerge)?
         .register(StampLift)?

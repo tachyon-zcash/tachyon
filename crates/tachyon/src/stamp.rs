@@ -65,7 +65,7 @@ pub struct StrippedStamp;
 
 mod stamp_sealed {
     pub trait Sealed {}
-    impl<P: super::Proof> Sealed for super::ProofStamp<P> {}
+    impl<P: super::Wire> Sealed for super::ProofStamp<P> {}
     impl Sealed for super::StrippedStamp {}
 }
 
@@ -74,6 +74,7 @@ pub trait StampState: stamp_sealed::Sealed {
     /// A stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
     ///
     /// A [`StrippedStamp`] hashes an empty input.
+    /// A proof stamp requires a proof with a Ragu byte representation.
     fn stamp_digest(&self) -> [u8; 32];
 
     /// The `tachyonBundleState` wire byte for this state.
@@ -125,7 +126,24 @@ mod sealed {
     impl Sealed for super::Compressed {}
 }
 
+mod publication;
+pub use publication::PublicationProof;
+mod working;
+
 /// The Ragu proof a [`ProofStamp`] carries: [`Uncompressed`] or [`Compressed`].
+/// Existing wallet code can read and write either representation generically.
+///
+/// ```
+/// use zcash_tachyon::{Bundle, ProofStamp, stamp::Proof};
+///
+/// fn round_trip<P: Proof>(
+///     bundle: &Bundle<ProofStamp<P>>,
+/// ) -> corez::io::Result<Bundle<ProofStamp<P>>> {
+///     let mut bytes = Vec::new();
+///     bundle.write(&mut bytes)?;
+///     Bundle::<ProofStamp<P>>::read(bytes.as_slice())
+/// }
+/// ```
 pub trait Proof: sealed::Sealed {
     /// The proof-encoding transport bound for this application.
     fn encoded_len() -> usize;
@@ -210,6 +228,12 @@ impl Proof for Compressed {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
+        if bytes.len() != Self::encoded_len::<WalletRank>() {
+            return Err(serialization::Error::Length {
+                expected: Self::encoded_len::<WalletRank>(),
+                actual: bytes.len(),
+            });
+        }
         Self::from_bytes(bytes)
     }
 
@@ -219,22 +243,70 @@ impl Proof for Compressed {
         app: &App<'_>,
         (action_set, anchor): (ActionSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let padding = app.commit(&[Fp::ONE])?;
-        if self.online_commitments() != [padding; 2] {
-            return Ok(false);
-        }
-        let bridge = ActionSetBridge::from(app.bridge_hash(action_set.into())?);
-        app.verify_compressed(&self.clone().carry::<PublicTransaction>((bridge, anchor)))
+        verify_wallet(app, self, (action_set, anchor))
     }
 }
 
-impl<P: Proof> StampState for ProofStamp<P> {
+pub(crate) fn verify_wallet(
+    app: &App<'_>,
+    proof: &Compressed,
+    (action_set, anchor): (ActionSetCommit, Anchor),
+) -> ragu::Result<bool> {
+    Ok(checked_wallet_publication(app, proof, (action_set, anchor))?.is_some())
+}
+
+pub(crate) fn checked_wallet_publication(
+    app: &App<'_>,
+    proof: &Compressed,
+    (action_set, anchor): (ActionSetCommit, Anchor),
+) -> ragu::Result<Option<ragu::CompressedPcd<Pasta, PublicTransaction>>> {
+    let padding = app.commit(&[Fp::ONE])?;
+    if proof.online_commitments() != [padding; 2] {
+        return Ok(None);
+    }
+    let bridge = ActionSetBridge::from(app.bridge_hash(action_set.into())?);
+    let publication = proof.clone().carry::<PublicTransaction>((bridge, anchor));
+    Ok(app.verify_compressed(&publication)?.then_some(publication))
+}
+
+pub(crate) trait Wire: sealed::Sealed + Sized {
+    fn bound() -> usize;
+    fn accepts(len: usize) -> bool;
+    fn accepts_encoding(&self, len: usize) -> bool {
+        Self::accepts(len)
+    }
+    fn encode(&self) -> Result<Vec<u8>, serialization::Error<'static>>;
+    fn decode(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>;
+}
+
+impl<P: Proof> Wire for P {
+    fn bound() -> usize {
+        P::encoded_len()
+    }
+
+    fn accepts(len: usize) -> bool {
+        // `Proof` is closed over the two wallet codecs. Preserve the full-work
+        // reader's bounded buffering; a wallet publication has one exact size.
+        let bound = P::encoded_len();
+        len == bound || (bound == Uncompressed::encoded_len() && len < bound)
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
+        P::from_bytes(bytes)
+    }
+}
+
+impl<P: Wire> StampState for ProofStamp<P> {
     fn stamp_digest(&self) -> [u8; 32] {
         #[expect(
             clippy::expect_used,
-            reason = "a proved or decoded stamp proof is encodable"
+            reason = "stamp_digest requires an encodable Ragu proof"
         )]
-        let proof = self.proof.to_bytes().expect("stamp proof is encodable");
+        let proof = self.proof.encode().expect("stamp proof is encodable");
 
         blake2b::stamp_digest(
             &self.adjuncts.iter().copied().collect::<Vec<_>>(),
@@ -259,7 +331,11 @@ impl<P: Proof> StampState for ProofStamp<P> {
     }
 }
 
-impl<P: Proof> ProofStamp<P> {
+#[expect(
+    private_bounds,
+    reason = "only transaction-encodable proofs have trailer I/O"
+)]
+impl<P: Wire> ProofStamp<P> {
     /// Read the stamp trailer from the consensus wire format.
     /// The adjunct list and the proof blob each have a
     /// compactSize prefix. The proof is bounded by the proof type's encoded
@@ -304,15 +380,21 @@ impl<P: Proof> ProofStamp<P> {
         let proof = {
             let proof_len = usize::try_from(read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            if proof_len > P::encoded_len() {
+            if proof_len > P::bound() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "proof size exceeds transport bound",
                 ));
             }
+            if !P::accepts(proof_len) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected proof length",
+                ));
+            }
             let mut bytes = vec![0u8; proof_len];
             reader.read_exact(&mut bytes)?;
-            P::from_bytes(&bytes)
+            P::decode(&bytes)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
         };
 
@@ -344,8 +426,14 @@ impl<P: Proof> ProofStamp<P> {
         }
         let proof = self
             .proof
-            .to_bytes()
+            .encode()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        if !self.proof.accepts_encoding(proof.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected proof length",
+            ));
+        }
         write_compactsize(
             &mut writer,
             u64::try_from(proof.len()).map_err(|_err| {
@@ -660,11 +748,12 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// work carries the action accumulator in its last slot. Wallet publications
 /// retain its bridge in the public header and carry two padding commitments.
 ///
-/// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
-/// proof. [`Self::finalize`] produces a stamp with a [`Compressed`] proof.
-/// A stamp with either proof type can be read, written and verified.
+/// A wallet works with [`Uncompressed`] and finalizes to [`Compressed`]. An
+/// aggregator works with a full typed `Transaction` PCD. Its `finalize` emits
+/// the aggregator arm of [`PublicationProof`]. Only the two compressed forms
+/// are admitted by the public transaction reader.
 #[derive(Clone, Debug)]
-pub struct ProofStamp<P: Proof> {
+pub struct ProofStamp<P: sealed::Sealed> {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
@@ -821,7 +910,9 @@ impl ProofStamp<Uncompressed> {
             pair,
         ))
     }
+}
 
+impl ProofStamp<Uncompressed> {
     /// Proves the merge of two stamps, returning the merged [`Transaction`] PCD
     /// and the union of the inputs' tachygrams for the trailer. The proof is
     /// not rerandomized.
@@ -866,8 +957,9 @@ impl ProofStamp<Uncompressed> {
     > {
         let left_action_set = left_digests.iter().copied().collect::<ActionSetPoly>();
         let right_action_set = right_digests.iter().copied().collect::<ActionSetPoly>();
-        let left_bridge = ActionSetBridge::from(bridge_hash(left_action_set.commit().into()));
-        let right_bridge = ActionSetBridge::from(bridge_hash(right_action_set.commit().into()));
+        let left_bridge = ActionSetBridge::from(app.bridge_hash(left_action_set.commit().into())?);
+        let right_bridge =
+            ActionSetBridge::from(app.bridge_hash(right_action_set.commit().into())?);
         let left_pcd = left_proof.carry::<Transaction>((left_bridge, left_anchor));
         let right_pcd = right_proof.carry::<Transaction>((right_bridge, right_anchor));
 
@@ -903,7 +995,7 @@ impl ProofStamp<Uncompressed> {
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let bridge = ActionSetBridge::from(bridge_hash(action_set.commit().into()));
+        let bridge = ActionSetBridge::from(app.bridge_hash(action_set.commit().into())?);
         let mut stamp_pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
         for span in spans {
             stamp_pcd = app
@@ -962,7 +1054,6 @@ impl ProofStamp<Uncompressed> {
         for (descriptor, &change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
         }
-
         self.prove_lift(rng, app, action_digests, spans)
     }
 
@@ -1065,7 +1156,9 @@ impl ProofStamp<Uncompressed> {
             proof: Box::new(proof),
         })
     }
+}
 
+impl ProofStamp<Uncompressed> {
     /// Divides this stamp by a divisor stamp at the same anchor, removing the
     /// divisor's covered actions, fees and tachygrams.
     ///
@@ -1153,8 +1246,9 @@ impl ProofStamp<Uncompressed> {
         let dividend_action_set = digests.into_iter().collect::<ActionSetPoly>();
         let divisor_action_set = divisor_digests.into_iter().collect::<ActionSetPoly>();
         let dividend_bridge =
-            ActionSetBridge::from(bridge_hash(dividend_action_set.commit().into()));
-        let divisor_bridge = ActionSetBridge::from(bridge_hash(divisor_action_set.commit().into()));
+            ActionSetBridge::from(app.bridge_hash(dividend_action_set.commit().into())?);
+        let divisor_bridge =
+            ActionSetBridge::from(app.bridge_hash(divisor_action_set.commit().into())?);
         let dividend_pcd = self
             .proof
             .carry::<Transaction>((dividend_bridge, self.anchor));
@@ -1188,7 +1282,9 @@ impl ProofStamp<Uncompressed> {
             proof: Box::new(proof),
         })
     }
+}
 
+impl ProofStamp<Uncompressed> {
     /// Dehydrate the working statement, rerandomize the padded proof, and
     /// compress it for wallet publication. The trailer metadata moves
     /// unchanged.

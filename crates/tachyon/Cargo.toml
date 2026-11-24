@@ -72,6 +72,12 @@ pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = 
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "dfe484340211ed5bb97842af3f38f1e248a23d0a", default-features = false, features = [
     "baked",
 ] }
+# The aggregator profile and its larger baked tables. Both features are
+# unstable in Ragu at this revision; the `ragu` facade does not forward them.
+ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "dfe484340211ed5bb97842af3f38f1e248a23d0a", default-features = false, features = [
+    "baked-aggregator",
+    "unstable-aggregator",
+] }
 rand_core = { version = "0.10", default-features = false }
 reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
 
@@ -81,13 +87,6 @@ rand = { version = "0.10", default-features = false, features = [
 ] }
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "dfe484340211ed5bb97842af3f38f1e248a23d0a", default-features = false, features = [
     "test-utils",
-] }
-# Tests only: the aggregator profile and its larger baked tables, for the
-# paired wallet-to-aggregator proofs. Both features are unstable in Ragu at
-# this revision; the `ragu` facade does not forward them.
-ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "dfe484340211ed5bb97842af3f38f1e248a23d0a", default-features = false, features = [
-    "baked-aggregator",
-    "unstable-aggregator",
 ] }
 zcash_tachyon = { path = ".", features = [
     "test-utils",

@@ -199,7 +199,7 @@ impl Header<Fp> for PublicTransaction {
 pub struct TransactionDehydrate;
 
 impl TransactionDehydrate {
-    fn enforce_wallet_padding<'dr, D: Driver<'dr, F = Fp>>(
+    pub(super) fn enforce_wallet_padding<'dr, D: Driver<'dr, F = Fp>>(
         dr: &mut D,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,

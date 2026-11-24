@@ -1,22 +1,20 @@
 use ragu::{
-    Cycle as _, FixedGenerators as _, WalletRank,
-    circuits::polynomials,
+    Cycle as _, FixedGenerators as _,
     pasta::{EpAffine, Fp, Pasta},
-    pcd::{
-        ipa::IpaCycle as _,
-        profile::{Aggregator, Decompression, Profiled},
-    },
+    pcd::{ipa::IpaCycle as _, profile::ProfiledCycle},
     udon::{curve::Affine as _, field::Field as _},
 };
 use ragu_pcd::pasta::{baked as baked_wallet, baked_aggregator};
 use rand::{SeedableRng as _, rngs::StdRng};
 use transaction::{PublicTransaction, Transaction, TransactionDehydrate, TransactionRehydrate};
 use zcash_tachyon::{
-    ActionSetBridge, ActionSetPoly, Anchor,
+    ActionSetBridge, ActionSetPoly, Anchor, EpochIndex, Note,
+    keys::ProofAuthorizingKey,
     stamp::proof::{
-        HEADER_SIZE, delegation, evidence, new_application, output, pool, qr, spend, spendable,
-        summary, transaction,
+        HEADER_SIZE, delegation, new_aggregator_application, new_application, spend, spendable,
+        transaction,
     },
+    value, witness,
 };
 
 use super::{
@@ -24,9 +22,71 @@ use super::{
     fixtures::wallet::{WalletSim, shared_sk},
 };
 
-// Use the production list without publishing a new builder API.
-#[path = "../../src/stamp/proof/registry.rs"]
-mod registry;
+fn spend_header<C: ProfiledCycle<Base = Pasta, CircuitField = Fp>, R: ragu::Rank>(
+    app: &ragu::Application<'_, C, R, HEADER_SIZE, ragu::AcceleratedProver>,
+    rng: &mut StdRng,
+    note: Note,
+    pak: ProofAuthorizingKey,
+) -> ragu::Pcd<C, R, spend::SpendHeader> {
+    let unit = app.bootstrap_proof().clone().carry::<()>(());
+    let secret = app
+        .seed(
+            rng,
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), note, pak),
+        )
+        .unwrap()
+        .0;
+    let epoch = EpochIndex::new(0);
+    let window = app
+        .fuse(
+            rng,
+            delegation::NullifierDerive,
+            witness::nullifier_derive((*secret.data(), ()), epoch),
+            secret.clone(),
+            unit.clone(),
+        )
+        .unwrap()
+        .0;
+    let anchor = Anchor::from(Fp::from(11));
+    let init = witness::spendable_init(
+        (*window.data(), ()),
+        anchor,
+        &[note.commitment().into()],
+        epoch,
+    );
+    let lineage = app
+        .fuse(rng, spendable::SpendableInit, init, window, unit)
+        .unwrap()
+        .0;
+    let blind = value::Trapdoor::random(rng);
+    app.fuse(rng, spend::SpendBind, (blind,), lineage, secret)
+        .unwrap()
+        .0
+}
+
+#[test]
+fn paired_app_imports_wallet_spend_headers_but_cannot_issue_them() {
+    let rng = &mut StdRng::seed_from_u64(711);
+    let app = new_aggregator_application(rng).unwrap();
+    let wallet = new_application().unwrap();
+    let owner = WalletSim::new(shared_sk());
+    let note = owner.random_note(37);
+    let issued = spend_header(&wallet, rng, note, owner.pak);
+    let public = wallet.compress(&issued, &mut *rng).unwrap();
+    let imported = app.decompress(rng, &public).unwrap();
+    assert_eq!(imported.data().0, issued.data().0);
+    assert_eq!(imported.data().3, issued.data().3);
+    assert!(
+        app.verify_compressed(&app.compress(&imported, &mut *rng).unwrap())
+            .unwrap()
+    );
+    let foreign = spend_header(&app, rng, note, owner.pak);
+    assert!(
+        !app.verify_compressed(&app.compress(&foreign, &mut *rng).unwrap())
+            .unwrap()
+    );
+}
 
 #[test]
 fn aggregator_rehydrates_only_the_finalized_wallet_action_set() {
@@ -42,17 +102,7 @@ fn aggregator_rehydrates_only_the_finalized_wallet_action_set() {
         );
     }
     let step = TransactionRehydrate::new().unwrap();
-    let source = registry::shared_builder::<Pasta, WalletRank>(step.clone())
-        .unwrap()
-        .finalize(params)
-        .unwrap();
-    let app = registry::shared_builder::<
-        Profiled<Pasta, Aggregator<HEADER_SIZE>>,
-        polynomials::AggregatorRank,
-    >(step.clone())
-    .unwrap()
-    .finalize_with(params, Decompression::new(source, rng).unwrap())
-    .unwrap();
+    let app = new_aggregator_application(rng).unwrap();
     // Issue on the ordinary baked wallet, independently of the wallet verifier
     // constructed with the aggregator's larger parameter object above.
     let issuer = new_application().unwrap();

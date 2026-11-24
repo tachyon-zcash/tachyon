@@ -1,5 +1,4 @@
-//! The ordered step list shared by the wallet and the paired-application
-//! fixture.
+//! The ordered step list shared by the wallet and the aggregator application.
 
 use ragu::{
     AcceleratedProver, ApplicationBuilder, Rank,

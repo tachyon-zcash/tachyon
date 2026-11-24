@@ -8,12 +8,13 @@ use ragu::{
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
+    pasta::Pasta,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, io::Write},
     step::{Encoded, Index, Oracles, Step},
     udon::curve::EndomorphismAffine,
 };
 
-use super::{delegation::NoteSecret, spendable::NoteSpendable};
+use super::{delegation::NoteSecret, spendable::NoteSpendable, transaction::TransactionDehydrate};
 use crate::{
     gadgets::{fixed_base, uint::Uint},
     keys::PaymentKey,
@@ -116,6 +117,7 @@ impl Header<Fp> for SpendHeader {
 /// nullifier by the epoch's constrained low bits. The nullifier pair,
 /// payment key and value all come from these proved inputs. Only the value
 /// commitment's blinding scalar `rcv` is freely chosen.
+/// The output's own padding bridge fixes issuance to wallet rank.
 ///
 /// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
@@ -134,7 +136,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for SpendBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -150,52 +152,97 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for SpendBind {
     where
         Self: 'dr,
     {
-        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
-        let spendable = left_encoded.as_gadget();
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right.clone())?;
-        let secret = right_encoded.as_gadget();
-        spendable.cm.enforce_equal(dr, &secret.cm)?;
-        let epoch_next = spendable.epoch_current.next(dr)?;
-        let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
-        let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
-        // A zero nullifier would collide with the note's own cm tachygram.
-        nf_current.clone().enforce_nonzero(dr)?;
-        nf_next.clone().enforce_nonzero(dr)?;
-
-        // The blind's 254 bits are free: nothing else binds rcv, and their
-        // binary value below 2^254 is the scalar.
-        let blind_bits = Uint::<_, 254>::alloc(dr, witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
-        let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
-        let cv = secret
-            .note
-            .value
-            .to_bits(dr)
-            .and_then(|bits| fixed_base::V_BASE.mul_and_add(dr, bits.bits(), &blind_point))?;
-        let output = D::just(|| {
-            let (spendable_cm, _, anchor) = left.take();
-            let (_, note, _) = right.take();
-            (
-                spendable_cm,
-                Nullifier::from(*nf_current.value().take()),
-                Nullifier::from(*nf_next.value().take()),
-                anchor,
-                note.pk,
-                value::Commitment::from(cv.value().take()),
-            )
-        });
-        let fields = SpendHeaderOutput {
-            cm: spendable.cm.clone(),
-            nf_current,
-            nf_next,
-            anchor: spendable.anchor.clone(),
-            pk: secret.note.pk.clone(),
-            cv,
-        };
-        Ok((
-            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
-            output,
-            D::unit(),
-        ))
+        let bridge = oracles.bridge_hash();
+        TransactionDehydrate::enforce_wallet_padding(dr, bridge.x(), bridge.y())?;
+        bind(dr, &witness, left, right)
     }
+}
+
+/// The original step 8, retained for the historical wallet registry.
+#[derive(Debug)]
+pub(super) struct HistoricalSpendBind;
+
+impl Step<Pasta> for HistoricalSpendBind {
+    type Aux<'source> = ();
+    type Left = NoteSpendable;
+    type Output = SpendHeader;
+    type Right = NoteSecret;
+    type Witness<'source> = (value::Trapdoor,);
+
+    const INDEX: Index = Index::new(8);
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <NoteSpendable as Header<Fp>>::Data>,
+        right: DriverValue<D, <NoteSecret as Header<Fp>>::Data>,
+    ) -> ragu::Result<BindResult<'dr, D, N>> {
+        bind(dr, &witness, left, right)
+    }
+}
+
+type BindResult<'dr, D, const N: usize> = (
+    (
+        Encoded<'dr, D, NoteSpendable, N>,
+        Encoded<'dr, D, NoteSecret, N>,
+        Encoded<'dr, D, SpendHeader, N>,
+    ),
+    DriverValue<D, <SpendHeader as Header<Fp>>::Data>,
+    DriverValue<D, ()>,
+);
+
+fn bind<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+    dr: &mut D,
+    witness: &DriverValue<D, (value::Trapdoor,)>,
+    left: DriverValue<D, <NoteSpendable as Header<Fp>>::Data>,
+    right: DriverValue<D, <NoteSecret as Header<Fp>>::Data>,
+) -> ragu::Result<BindResult<'dr, D, N>> {
+    let left_encoded = Encoded::<D, NoteSpendable, N>::new(dr, &mut (), left.clone())?;
+    let spendable = left_encoded.as_gadget();
+    let right_encoded = Encoded::<D, NoteSecret, N>::new(dr, &mut (), right.clone())?;
+    let secret = right_encoded.as_gadget();
+    spendable.cm.enforce_equal(dr, &secret.cm)?;
+    let epoch_next = spendable.epoch_current.next(dr)?;
+    let nf_current = secret.mk.derive_nullifier(dr, &spendable.epoch_current)?;
+    let nf_next = secret.mk.derive_nullifier(dr, &epoch_next)?;
+    // A zero nullifier would collide with the note's own cm tachygram.
+    nf_current.clone().enforce_nonzero(dr)?;
+    nf_next.clone().enforce_nonzero(dr)?;
+
+    // The blind's 254 bits are free: nothing else binds rcv, and their
+    // binary value below 2^254 is the scalar.
+    let blind_bits = Uint::<_, 254>::alloc(dr, witness.as_ref().map(|&(rcv,)| Fq::from(rcv)))?;
+    let blind_point = fixed_base::R_BASE.mul(dr, blind_bits.bits())?;
+    let cv = secret
+        .note
+        .value
+        .to_bits(dr)
+        .and_then(|bits| fixed_base::V_BASE.mul_and_add(dr, bits.bits(), &blind_point))?;
+    let output = D::just(|| {
+        let (spendable_cm, _, anchor) = left.take();
+        let (_, note, _) = right.take();
+        (
+            spendable_cm,
+            Nullifier::from(*nf_current.value().take()),
+            Nullifier::from(*nf_next.value().take()),
+            anchor,
+            note.pk,
+            value::Commitment::from(cv.value().take()),
+        )
+    });
+    let fields = SpendHeaderOutput {
+        cm: spendable.cm.clone(),
+        nf_current,
+        nf_next,
+        anchor: spendable.anchor.clone(),
+        pk: secret.note.pk.clone(),
+        cv,
+    };
+    Ok((
+        (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+        output,
+        D::unit(),
+    ))
 }
