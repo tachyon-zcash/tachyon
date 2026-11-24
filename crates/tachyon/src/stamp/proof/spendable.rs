@@ -300,9 +300,9 @@ impl Step<Pasta> for QrSpendableInit {
 /// The segment's start epoch and anchor must match the spendable's current
 /// epoch and anchor. Only the lineage form matches: a boundary digest and a
 /// creation stamp absorption have distinct tags. Equal `cm` wires then extend
-/// the same note's nullifier exclusions from $e_0$ through `unspent.epoch_next
-/// - 1`, preserving membership in the creation bucket. No challenge or output
-/// slot is read.
+/// the same note's nullifier exclusions over the interval from $e_0$ through
+/// `unspent.epoch_next - 1`, preserving membership in the creation bucket.
+/// No challenge or output slot is read.
 #[derive(Debug)]
 pub struct SpendableLift;
 
