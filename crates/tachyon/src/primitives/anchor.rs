@@ -53,8 +53,8 @@ pub enum AnchorError {
 /// ([`TachygramSetBridge`](super::TachygramSetBridge)). Epochs enter as
 /// integers at most `EPOCH_MAX`.
 ///
-/// Comparing two histories backward from matching anchors identifies one
-/// matching entry per step until genesis. Thus the histories agree and no
+/// Walking two histories back from a shared anchor matches one entry per step
+/// down to genesis, so matching anchors imply identical histories and no
 /// history repeats an anchor. No later history anchor equals genesis because
 /// stamp absorptions use a distinct tag and [`next_epoch`](Self::next_epoch)
 /// rejects epoch zero.
@@ -68,8 +68,8 @@ pub enum AnchorError {
 /// A *stamp chain* of $k$ absorptions from $a_0$ to $a_k$ consists of an epoch
 /// $e_i \leq \text{EPOCH\_MAX}$, a polynomial $P_i \notin \{0, 1\}$ and a
 /// bridge hash $B_i$ of $P_i$'s accumulator at each $i \in 1..=k$, with
-/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ iff
-/// every $e_i$ equals $e$. When $k = 0$, $a_k = a_0$.
+/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$. The chain is *in epoch* $e$ when
+/// every $e_i$ equals $e$, and $k = 0$ sets $a_k = a_0$.
 ///
 /// To add an absorption, a step runs `anchor_next_stamp` on an anchor wire, an
 /// [`EpochIndex`](crate::gadgets::epoch::EpochIndex) gadget and its two bridge

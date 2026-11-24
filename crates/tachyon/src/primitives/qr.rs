@@ -86,7 +86,7 @@ impl QrClass {
 /// gives each element a [side](crate::collections::qr#sides) at $R_0 + j$, and
 /// a profile's class holds the values matching its first $d$ sides. Any field
 /// element serves as $R_0$. Intake seeds witness $R_0$ via `Step::Witness`,
-/// later routing steps copy it or equate two inputs' copies, and query steps
+/// later routing steps copy it or equate two inputs' copies, and steps
 /// that test a value's class use their bucket's $R_0$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(Fp);
@@ -252,9 +252,9 @@ impl QrSplit {
 /// Witness polynomial interpolating the class roots $u(x_i) = r_i$, where
 /// $r_i^2 = m \cdot (x_i + R)$ at multiplier $m$ and discriminant $R$.
 ///
-/// No step checks how the hint was built. What the
-/// [class decomposition](crate::collections::qr#class-decomposition) proves
-/// does not depend on how $u$ was built.
+/// Descent checks the class identity, not how the prover built this hint. What
+/// the [class decomposition](crate::collections::qr#class-decomposition) proves
+/// does not depend on that construction.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, WalletRank>);
 
@@ -280,8 +280,8 @@ pub struct QrInterpolantCommit(EqAffine);
 /// Witness polynomial for the class decomposition quotient $h$ in
 /// $u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X)$.
 ///
-/// As with [`QrInterpolantPoly`], descent checks the class identity, not how
-/// the hint was built.
+/// Like [`QrInterpolantPoly`], this is a hint whose construction is not
+/// checked.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, WalletRank>);
 
@@ -315,7 +315,7 @@ pub struct QrQuotientCommit(EqAffine);
 /// `bits` and different-length paths differ in `depth`. Leading non-residue
 /// sides pack as zeros, so `bits` alone does not fix the path.
 ///
-/// The native fields accept any pair of `u32`s; out-of-bounds pairs represent
+/// The native fields accept any `u32` pair, and out-of-bounds pairs represent
 /// no path. In circuits, `descend` extends a path into a path, and
 /// `enforce_sides_of` accepts only paths.
 #[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
@@ -369,9 +369,10 @@ impl QrProfile {
 /// A class root $r$ in the class equation $r^2 = m \cdot (x + R)$.
 /// It carries no class and is distinct from a root $x$ of a set polynomial.
 ///
-/// A class root [shows the side](crate::collections::qr#sides) except that
-/// when $x + R = 0$, root zero satisfies either multiplier. The separate
-/// nonzero check for the non-residue side leaves only the residue side there.
+/// Paired with a multiplier, $r$ [shows the side](crate::collections::qr#sides)
+/// of $x$, except at $x + R = 0$ where $r=0$ satisfies both multipliers.
+/// The non-residue side's nonzero check excludes $x+R=0$, leaving it on the
+/// residue side.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(Fp);
 

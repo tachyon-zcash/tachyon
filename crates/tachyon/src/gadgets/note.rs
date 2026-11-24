@@ -91,8 +91,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> Note<'dr, D> {
     /// lie below $2^{51}$, the sum holds over the integers and `slack` is the
     /// unique bit string for `MAX_MONEY - value`. Multiplying
     /// [`FEE_V_BASE`](struct@fixed_base::FEE_V_BASE) by `slack` yields
-    /// $\[-v\]\mathcal{V}$. A digest at least $2^{254}$ has no 254-bit
-    /// decomposition. Zero does, but multiplying `R_BASE` by zero has no
+    /// $\[-v\]\mathcal{V}$. Digests at or above $2^{254}$ have no 254-bit
+    /// decomposition, and multiplying `R_BASE` by zero has no
     /// assignment.
     pub(crate) fn cv_feemax(
         &self,
