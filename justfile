@@ -40,9 +40,10 @@ book COMMAND *ARGS: _book_setup
 _coverage_setup: _install_binstall
     cargo binstall cargo-llvm-cov@0.9.2
 
-# print combined unit and integration test coverage
+# print combined unit and integration test coverage and write lcov.info
 coverage *ARGS: _coverage_setup
     cargo llvm-cov --workspace --release --features test-epoch-size --lib --test integration --ignore-filename-regex '/[.]cargo/registry/' {{ARGS}}
+    cargo llvm-cov report --release --ignore-filename-regex '/[.]cargo/registry/' --lcov --output-path lcov.info
 
 # the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
 ci_local:
