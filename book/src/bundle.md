@@ -162,7 +162,11 @@ end
 
 ## Lifecycle
 
-Signing yields one signature per action and the binding signature; proving supplies the stamp, each action's tachygram pair, the chosen fee, and the change commitment. Assembly joins signatures and pairs by descriptor. Sorting actions by descriptor is a sender convention, not a wire requirement. Signing and proving may run in either order or concurrently.
+`bundle::Plan::new` panics if a descriptor repeats among the planned spends and outputs.
+
+Signing a `bundle::Plan` returns a descriptor-keyed action signature map and the binding signature. Independently, `stamp::Plan::prove` returns the proof stamp, a descriptor-keyed map of tachygram pairs, the change commitment, and the chosen fee.
+
+`bundle::Plan::assemble(signatures, proof)` combines their outputs with the plan. It requires the plan, pair map, and signature map to have identical descriptor keys and panics if they differ. It joins both maps in descriptor order into `actions` and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity. Signing and proving may run in either order or concurrently.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 

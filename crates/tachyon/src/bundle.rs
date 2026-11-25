@@ -983,8 +983,12 @@ impl<S: StampState> Bundle<S> {
         let binding_sig = Signature::read(&mut reader)?;
 
         let mut pairs = Vec::new();
+        let mut seen = BTreeSet::new();
         for _ in 0..n_actions {
-            pairs.push((Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?));
+            let pair = (Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?);
+            seen.insert(pair.0);
+            seen.insert(pair.1);
+            pairs.push(pair);
         }
         let fee = {
             let mut bytes = [0u8; size_of::<u64>()];
@@ -993,11 +997,7 @@ impl<S: StampState> Bundle<S> {
                 .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))?
         };
         let cm_change = Tachygram::read(&mut reader)?;
-        let seen: BTreeSet<_> = pairs
-            .iter()
-            .flat_map(|&pair| <[Tachygram; 2]>::from(pair))
-            .chain([cm_change])
-            .collect();
+        seen.insert(cm_change);
         if seen.len() != 2 * n_actions + 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
