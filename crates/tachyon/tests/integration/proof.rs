@@ -6,8 +6,8 @@ use core::{array, iter};
 use ragu::{WalletRank, pasta::Pasta, udon::field::Field as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note,
+    Tachygram, TachygramSetPoly, action,
     constants::EPOCH_MAX,
     digest::poseidon,
     entropy::ActionEntropy,
@@ -501,10 +501,14 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     assert_eq!(
         action_commit,
         EqAffine::from(
-            ActionSetPoly::from_iter([plan.digest((
-                Tachygram::from(mk.derive_nullifier(spend_epoch)),
-                Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
-            ))])
+            ActionSetPoly::from_iter([ActionDigest::new(
+                plan.cv(),
+                plan.rk,
+                (
+                    Tachygram::from(mk.derive_nullifier(spend_epoch)),
+                    Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
+                )
+            )])
             .commit()
         )
     );
@@ -1000,10 +1004,11 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
     assert_eq!(*pcd.data(), anchor);
     let pair = (Tachygram::from(note.commitment()), pad);
+    let digest = ActionDigest::new(plan.cv(), plan.rk, pair);
     assert_eq!(
         pcd.commitments()[..2],
         [
-            EqAffine::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()),
+            EqAffine::from(ActionSetPoly::from_iter([digest]).commit()),
             EqAffine::from(
                 TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
             ),
@@ -1016,7 +1021,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
             .derive_action_public(),
         ..plan
     };
-    assert_ne!(foreign.digest(pair), plan.digest(pair));
+    assert_ne!(ActionDigest::new(foreign.cv(), foreign.rk, pair), digest);
 }
 
 #[test]

@@ -76,7 +76,7 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     for tachygram in bundle
         .actions
         .iter()
-        .flat_map(|action| <[Tachygram; 2]>::from(action.pair))
+        .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([bundle.fee_auth])
     {
         key.extend_from_slice(&Fp::from(tachygram).to_bytes());
@@ -101,13 +101,13 @@ pub(crate) fn merged(
                 rng,
                 app,
                 (
-                    &left.descriptor_pairs().collect(),
+                    &left.tachygrams_by_descriptor().collect(),
                     &BTreeMap::from([(left.fee, left.fee_auth)]),
                 ),
                 (
                     right.stamp.clone(),
                     right_txid,
-                    &right.descriptor_pairs().collect(),
+                    &right.tachygrams_by_descriptor().collect(),
                     &BTreeMap::from([(right.fee, right.fee_auth)]),
                 ),
             )
@@ -137,7 +137,7 @@ pub(crate) fn lifted(
             .lift(
                 rng,
                 app,
-                &bundle.descriptor_pairs().collect(),
+                &bundle.tachygrams_by_descriptor().collect(),
                 &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 vec![span],
             )

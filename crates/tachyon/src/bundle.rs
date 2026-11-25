@@ -180,8 +180,9 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
-    /// Actions in wire order, each with its signature and tachygram pair.
-    pub actions: Vec<action::Authorized>,
+    /// Actions in wire order, each with its descriptor, signature, and
+    /// tachygram pair.
+    pub actions: Vec<action::Action>,
 
     /// The max fee note's value commitment and the fee paid by this bundle.
     pub fee: fee::Descriptor,
@@ -229,12 +230,12 @@ impl<S: StampState + ?Sized> Bundle<S> {
     }
 
     /// Each descriptor and the tachygram pair covered for it, in wire order.
-    pub fn descriptor_pairs(
+    pub fn tachygrams_by_descriptor(
         &self,
     ) -> impl Iterator<Item = (action::Descriptor, (Tachygram, Tachygram))> {
         self.actions
             .iter()
-            .map(|action| (action.descriptor, action.pair))
+            .map(|action| (action.descriptor, action.tachygrams))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -620,11 +621,13 @@ impl Plan {
         let actions = action_sigs
             .into_iter()
             .zip(pairs)
-            .map(|((descriptor, signature), (_, pair))| action::Authorized {
-                descriptor,
-                signature,
-                pair,
-            })
+            .map(
+                |((descriptor, signature), (_, tachygrams))| action::Action {
+                    descriptor,
+                    signature,
+                    tachygrams,
+                },
+            )
             .collect();
         Bundle {
             actions,
@@ -672,7 +675,7 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         let mut descriptors = BTreeMap::new();
         let mut fee_descriptors = BTreeMap::new();
         for bundle in covered {
-            descriptors.extend(bundle.descriptor_pairs());
+            descriptors.extend(bundle.tachygrams_by_descriptor());
             fee_descriptors.insert(bundle.fee, bundle.fee_auth);
         }
         let stamp = self
@@ -790,12 +793,12 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
                 if !covered_descriptors.insert(action.descriptor) {
                     return Err(VerifyCoverageError::DuplicateActions);
                 }
-                for tachygram in <[Tachygram; 2]>::from(action.pair) {
+                for tachygram in <[Tachygram; 2]>::from(action.tachygrams) {
                     if !covered_tachygrams.insert(tachygram) {
                         return Err(VerifyCoverageError::DuplicateTachygrams);
                     }
                 }
-                digests.push(action.descriptor.digest(action.pair));
+                digests.push(action.digest());
             }
             if !fee_descriptors.insert(fee_descriptor) {
                 return Err(VerifyCoverageError::DuplicateFees);
@@ -975,13 +978,13 @@ impl<S: StampState> Bundle<S> {
         let mut actions = Vec::new();
         let mut seen = BTreeSet::new();
         for (descriptor, signature) in signed {
-            let pair = (Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?);
-            seen.insert(pair.0);
-            seen.insert(pair.1);
-            actions.push(action::Authorized {
+            let tachygrams = (Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?);
+            seen.insert(tachygrams.0);
+            seen.insert(tachygrams.1);
+            actions.push(action::Action {
                 descriptor,
                 signature,
-                pair,
+                tachygrams,
             });
         }
         let fee = {
@@ -1054,8 +1057,8 @@ impl<S: StampState> Bundle<S> {
         self.binding_sig.write(&mut writer)?;
 
         for action in &self.actions {
-            action.pair.0.write(&mut writer)?;
-            action.pair.1.write(&mut writer)?;
+            action.tachygrams.0.write(&mut writer)?;
+            action.tachygrams.1.write(&mut writer)?;
         }
         writer.write_all(&u64::from(self.fee.v_fee).to_le_bytes())?;
         self.fee_auth.write(&mut writer)?;
@@ -1076,7 +1079,7 @@ impl<S: StampState> Bundle<S> {
             .actions
             .iter()
             .map(|action| {
-                let (sig, pair) = (action.signature, action.pair);
+                let (sig, pair) = (action.signature, action.tachygrams);
                 let mut record = [0u8; 128];
                 record[..64].copy_from_slice(&<[u8; 64]>::from(sig.0));
                 record[64..96].copy_from_slice(&Fp::from(pair.0).to_bytes());

@@ -451,7 +451,7 @@ end
 critical stamp
     note over User: bundle::Plan::assemble(signatures, proof)
     note over User: panic if the plan, signature, and pair descriptor keys differ
-    note over User: join maps in descriptor order into actions[] (descriptor, signature, pair) records
+    note over User: join maps in descriptor order into actions[] (descriptor, signature, tachygrams)
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
 break

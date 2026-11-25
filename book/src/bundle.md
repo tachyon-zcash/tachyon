@@ -72,7 +72,7 @@ where
 
 A Tachyon bundle collects actions with authorization data:
 
-- `actions` - ordered records, each holding an effecting descriptor `(cv, rk)`, its signature, and its tachygram pair
+- `actions` - an ordered vector of `action::Action` values; each has a `descriptor` (`cv` and `rk`), a `signature`, and a `tachygrams` pair
 - `value_balance` - integer net pool effect, with the max fee note counted as an output
 - `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `fee` - the fee chosen at or below the signed maximum

@@ -53,8 +53,8 @@ A stamp's adjuncts are the other bundles it covers, listed by transaction id.
 In the crate today, `merge` and `unmerge` take uncompressed stamps.
 `compress` produces a stamp with a compressed proof.
 
-In the crate, each entry in `Bundle::actions` holds an `action::Descriptor`
-(`cv` and `rk`), its signature, and its tachygram pair. The book's
+In the crate, `Bundle::actions` holds `action::Action` values in wire order.
+Each has a descriptor (`cv` and `rk`), a signature, and a tachygram pair. The book's
 [Bundles](book/src/bundle.md) chapter explains every field.
 
 ## Development

@@ -42,12 +42,12 @@ use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
     bridge_hash::bridge_hash,
     bundle::StateByte,
-    digest::{blake2b, poseidon},
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, EqAffine, Fp},
+    pasta::EqAffine,
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
@@ -735,11 +735,7 @@ impl ProofStamp<Uncompressed> {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::from(poseidon::action_digest(
-            EpAffine::from(cv),
-            EpAffine::from(rk),
-            (Fp::from(pair.0), Fp::from(pair.1)),
-        ));
+        let digest = ActionDigest::new(cv, rk, pair);
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = app.fuse(
@@ -802,11 +798,7 @@ impl ProofStamp<Uncompressed> {
         let rk = pak.ak.derive_action_public(&alpha);
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::from(poseidon::action_digest(
-            EpAffine::from(cv),
-            EpAffine::from(rk),
-            (Fp::from(pair.0), Fp::from(pair.1)),
-        ));
+        let digest = ActionDigest::new(cv, rk, pair);
 
         let tachygrams = BTreeSet::from_iter([tg_current, tg_next]);
 
@@ -978,7 +970,7 @@ impl ProofStamp<Uncompressed> {
         }
         let mut action_digests = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
-            action_digests.insert(descriptor.digest(pair));
+            action_digests.insert(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
         }
         for (descriptor, &change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
@@ -1036,7 +1028,7 @@ impl ProofStamp<Uncompressed> {
         let mut left_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in left_desc {
             left_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            left_digests.insert(descriptor.digest(pair));
+            left_digests.insert(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
         }
         for (descriptor, &change) in left_fees {
             left_tachygrams.insert(change);
@@ -1047,7 +1039,7 @@ impl ProofStamp<Uncompressed> {
         let mut right_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in right_desc {
             right_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            right_digests.insert(descriptor.digest(pair));
+            right_digests.insert(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
         }
         for (descriptor, &change) in right_fees {
             right_tachygrams.insert(change);
@@ -1141,7 +1133,7 @@ impl ProofStamp<Uncompressed> {
         let mut tachygrams_all = BTreeSet::new();
         for (descriptor, &pair) in descriptors {
             tachygrams_all.extend(<[Tachygram; 2]>::from(pair));
-            digests.insert(descriptor.digest(pair));
+            digests.insert(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
         }
         for (descriptor, &change) in fees {
             tachygrams_all.insert(change);
@@ -1152,7 +1144,7 @@ impl ProofStamp<Uncompressed> {
         let mut divisor_tachygrams = BTreeSet::new();
         for (descriptor, &pair) in divisor_desc {
             divisor_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-            divisor_digests.insert(descriptor.digest(pair));
+            divisor_digests.insert(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
         }
         for (descriptor, &change) in divisor_fees {
             divisor_tachygrams.insert(change);

@@ -144,7 +144,7 @@ fn assemble_joins_by_descriptor() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let pairs: BTreeMap<_, _> = original.descriptor_pairs().collect();
+    let pairs: BTreeMap<_, _> = original.tachygrams_by_descriptor().collect();
     let joined = plan.assemble(
         signatures,
         (
@@ -154,7 +154,7 @@ fn assemble_joins_by_descriptor() {
             original.fee.v_fee,
         ),
     );
-    assert!(joined.descriptor_pairs().eq(pairs));
+    assert!(joined.tachygrams_by_descriptor().eq(pairs));
     joined
         .verify(rng, app, &mock_sighash(joined.commitment()), &[])
         .unwrap();
@@ -307,10 +307,10 @@ fn duplicated_spend_cannot_inflate() {
         .sign(rng, &sighash);
     let bundle = Bundle {
         actions: vec![
-            action::Authorized {
+            action::Action {
                 descriptor,
                 signature: sig,
-                pair
+                tachygrams: pair
             };
             2
         ],
@@ -334,7 +334,7 @@ fn duplicated_spend_cannot_inflate() {
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap();
-    let action_digest = descriptor.digest(pair);
+    let action_digest = bundle.actions[0].digest();
     let fee_digest = bundle.fee.digest(bundle.fee_auth);
     assert!(
         !bundle
@@ -358,11 +358,11 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_desc = becomes_based.descriptor_pairs().collect();
+    let based_desc = becomes_based.tachygrams_by_descriptor().collect();
     let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
     let innocent_desc = [&autonome_a, &autonome_b]
         .into_iter()
-        .flat_map(Bundle::descriptor_pairs)
+        .flat_map(Bundle::tachygrams_by_descriptor)
         .collect();
     let innocent_fees = [&autonome_a, &autonome_b]
         .into_iter()
@@ -399,8 +399,8 @@ fn based_aggregate_with_two_adjuncts() {
         let mut edited = becomes_based.clone();
         let mut adjunct = adjunct_a.clone();
         mem::swap(
-            &mut edited.actions[0].pair.1,
-            &mut adjunct.actions[0].pair.1,
+            &mut edited.actions[0].tachygrams.1,
+            &mut adjunct.actions[0].tachygrams.1,
         );
         assert_matches!(
             edited.verify(rng, app, &sighash, &[&adjunct, &adjunct_b]),
@@ -486,7 +486,7 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
     let (first, rest) = bundle.actions.split_at_mut(1);
-    mem::swap(&mut first[0].pair.1, &mut rest[0].pair.1);
+    mem::swap(&mut first[0].tachygrams.1, &mut rest[0].tachygrams.1);
     assert_matches!(
         bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
         Err(VerificationError::Disproved)
@@ -580,10 +580,10 @@ fn read_preserves_action_order() {
     ));
     let actions = items
         .iter()
-        .map(|item| action::Authorized {
+        .map(|item| action::Action {
             descriptor: item.0,
             signature: private::ActionSigningKey::new(&item.1).sign(rng, &sighash),
-            pair: (Tachygram::random(rng), Tachygram::random(rng)),
+            tachygrams: (Tachygram::random(rng), Tachygram::random(rng)),
         })
         .collect();
     let binding_sig = Plan::new(vec![], vec![plan_a, plan_b], max_fee_note)
@@ -687,7 +687,7 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     assert_eq!(&bytes[offset..offset + 64], expected);
     offset += 64;
     for action in &bundle.actions {
-        for tachygram in <[Tachygram; 2]>::from(action.pair) {
+        for tachygram in <[Tachygram; 2]>::from(action.tachygrams) {
             assert_eq!(&bytes[offset..offset + 32], &Fp::from(tachygram).to_bytes());
             offset += 32;
         }
@@ -841,10 +841,10 @@ fn bundles_round_trip_at_action_count_limits() {
             actions: (0..n)
                 .map(|i| {
                     let first = u64::try_from(2 * i + 1).unwrap();
-                    action::Authorized {
+                    action::Action {
                         descriptor,
                         signature,
-                        pair: (
+                        tachygrams: (
                             Tachygram::from(Fp::from(first)),
                             Tachygram::from(Fp::from(first + 1)),
                         ),
@@ -951,7 +951,7 @@ fn auth_digest_invariants() {
     refeed.fee.v_fee = value::Positive::try_from(u64::from(stripped.fee.v_fee) + 1).unwrap();
     assert_ne!(refeed.auth_digest(), stripped.auth_digest());
     let mut stripped_pair = stripped.clone();
-    stripped_pair.actions[0].pair = (Tachygram::random(rng), Tachygram::random(rng));
+    stripped_pair.actions[0].tachygrams = (Tachygram::random(rng), Tachygram::random(rng));
     let mut stripped_change = stripped.clone();
     stripped_change.fee_auth = Tachygram::random(rng);
     for edited in [stripped_pair, stripped_change] {
@@ -963,9 +963,9 @@ fn auth_digest_invariants() {
     let mut fee = stamped.clone();
     fee.fee.v_fee = value::Positive::try_from(u64::from(stamped.fee.v_fee) + 1).unwrap();
     let mut pair = stamped.clone();
-    pair.actions[0].pair = (Tachygram::random(rng), Tachygram::random(rng));
+    pair.actions[0].tachygrams = (Tachygram::random(rng), Tachygram::random(rng));
     let mut flipped = stamped.clone();
-    let flipped_pair = &mut flipped.actions[0].pair;
+    let flipped_pair = &mut flipped.actions[0].tachygrams;
     mem::swap(&mut flipped_pair.0, &mut flipped_pair.1);
     let mut anchor = stamped.clone();
     anchor.stamp.anchor = Anchor::random(rng);
@@ -997,22 +997,19 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
-    let (first, second) = bundle.actions[0].pair;
-    let action_digest = bundle.actions[0].descriptor.digest((first, second));
+    let (first, second) = bundle.actions[0].tachygrams;
+    let action_digest = bundle.actions[0].digest();
     let mut bytes = Vec::new();
 
-    bundle.actions[0].pair = (second, first);
-    assert_eq!(
-        bundle.actions[0].descriptor.digest((second, first)),
-        action_digest
-    );
+    bundle.actions[0].tachygrams = (second, first);
+    assert_eq!(bundle.actions[0].digest(), action_digest);
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.actions, bundle.actions);
     let verified = decoded.verify(rng, app, &mock_sighash(decoded.commitment()), &[]);
     assert_eq!(verified.unwrap(), decoded.stamp.tachygram_set);
 
-    bundle.actions[0].pair = (first, first);
+    bundle.actions[0].tachygrams = (first, first);
     bytes.clear();
     bundle.write(&mut bytes).unwrap();
     let err = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap_err();
@@ -1308,7 +1305,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let mut pairs: BTreeMap<_, _> = stamped.descriptor_pairs().collect();
+    let mut pairs: BTreeMap<_, _> = stamped.tachygrams_by_descriptor().collect();
     pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
     let bundle = plan.assemble(
         signatures,
@@ -1373,7 +1370,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let signatures = bundle_plan
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .unwrap();
-    let pairs = original.descriptor_pairs().collect();
+    let pairs = original.tachygrams_by_descriptor().collect();
     let bundle = bundle_plan.assemble(
         signatures,
         (original.stamp, pairs, original.fee_auth, original.fee.v_fee),
@@ -1435,11 +1432,11 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
-    let zero_desc = zero.descriptor_pairs().collect();
+    let zero_desc = zero.tachygrams_by_descriptor().collect();
     let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
     let adjunct_desc = [&autonome_a, &autonome_b]
         .into_iter()
-        .flat_map(Bundle::descriptor_pairs)
+        .flat_map(Bundle::tachygrams_by_descriptor)
         .collect();
     let adjunct_fees = [&autonome_a, &autonome_b]
         .into_iter()
