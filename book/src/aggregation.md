@@ -219,7 +219,7 @@ A wrong form fails before stamp proof verification, at the tachygram set check o
 A stripped adjunct keeps its entire bundle body, including `cvFeeMaxTachyon`, `vActionTachygramsTachyon`, `vFeeTachyon`, and `cmChangeTachyon`. Its trailer is empty. The covering verifier collects the pairs and fee descriptors from the published bodies.
 
 Coverage verification walks the covered bundles once, before attempting stamp proof verification.
-It bounds the covered tachygrams, rejects a repeated action descriptor, fee descriptor or tachygram, and checks `cTachygrams` against the union of all covered action pairs and fee changes.
+It bounds the covered tachygrams, rejects a repeated tachygram, and checks `cTachygrams` against the union of all covered action pairs and fee changes.
 It does not read the list.
 
 <!-- TODO

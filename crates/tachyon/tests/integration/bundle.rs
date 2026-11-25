@@ -353,7 +353,7 @@ fn duplicated_spend_cannot_inflate() {
     assert_matches!(
         bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::DuplicateActions
+            VerifyCoverageError::DuplicateTachygrams
         ))
     );
 }
@@ -445,7 +445,7 @@ fn based_aggregate_with_two_adjuncts() {
     assert_matches!(
         becomes_based.verify(rng, app, &sighash, &[&adjunct_a, &adjunct_b, &adjunct_a]),
         Err(VerificationError::Coverage(
-            VerifyCoverageError::DuplicateActions
+            VerifyCoverageError::DuplicateTachygrams
         ))
     );
 }
@@ -1186,7 +1186,7 @@ fn verify_covered_bounds_the_covered_tachygrams() {
     // Two bundles' fee changes leave room for this many actions' pairs.
     let most = (WalletRank::num_coeffs() - 3) / 2;
     for (n_actions, expected) in [
-        (most, VerifyCoverageError::DuplicateActions),
+        (most, VerifyCoverageError::DuplicateTachygrams),
         (most + 1, VerifyCoverageError::WrongTachygramSet),
     ] {
         let n_adjunct = n_actions - bundle.actions.len();

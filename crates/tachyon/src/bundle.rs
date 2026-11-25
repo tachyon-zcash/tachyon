@@ -280,12 +280,6 @@ pub enum SignatureError {
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum VerifyCoverageError {
-    /// The actions are not unique.
-    #[display("actions are not unique")]
-    DuplicateActions,
-    /// The fees are not unique.
-    #[display("fees are not unique")]
-    DuplicateFees,
     /// A tachygram repeats among the covered bundles.
     #[display("tachygrams are not unique")]
     DuplicateTachygrams,
@@ -746,11 +740,12 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     ///
     /// Walks the covered actions and fee descriptors once. The covered
     /// tachygrams are each action's pair and each bundle's fee change, so
-    /// $N$ actions and $B$ bundles hold $2N + B$ of them.
+    /// $N$ actions and $B$ bundles hold $2N + B$ of them. The block validator
+    /// also checks tachygrams against other stamps in the publication window.
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
+    /// Returns [`VerifyCoverageError`] if a tachygram repeats,
     /// or the covered tachygrams number more than one set polynomial has roots
     /// or do not reproduce the tachygram set commitment the stamp carries.
     ///
@@ -779,25 +774,17 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
                     .map(|adj| (&adj.actions, &adj.action_auth, adj.fee, adj.fee_auth)),
             );
 
-        let mut covered_descriptors = BTreeSet::new();
-        let mut fee_entries = BTreeSet::new();
         let mut covered_tachygrams = BTreeSet::new();
         let mut digests = Vec::new();
 
         for (actions, action_auth, fee_descriptor, cm_change) in covered {
             for (&descriptor, &(_, pair)) in actions.iter().zip(action_auth) {
-                if !covered_descriptors.insert(descriptor) {
-                    return Err(VerifyCoverageError::DuplicateActions);
-                }
                 for tachygram in <[Tachygram; 2]>::from(pair) {
                     if !covered_tachygrams.insert(tachygram) {
                         return Err(VerifyCoverageError::DuplicateTachygrams);
                     }
                 }
                 digests.push(descriptor.digest(pair));
-            }
-            if !fee_entries.insert(<[u8; 40]>::from(fee_descriptor)) {
-                return Err(VerifyCoverageError::DuplicateFees);
             }
             if !covered_tachygrams.insert(cm_change) {
                 return Err(VerifyCoverageError::DuplicateTachygrams);
