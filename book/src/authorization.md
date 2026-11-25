@@ -185,7 +185,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
-Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
+Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. Assembly joins each action signature to its tachygram pair by descriptor. The signing and proving paths can run in either order or concurrently.
 
 ```mermaid
 flowchart LR
@@ -449,10 +449,8 @@ and Proving
 end
 
 critical stamp
-    note over User: bundle::Plan::assemble(signatures, proof)
-    note over User: panic if the plan, signature, and pair descriptor keys differ
-    note over User: join maps in descriptor order into actions[] (descriptor, signature, tachygrams)
-    note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
+    note over User: join signatures and tachygrams by planned descriptor into actions[] (descriptor, signature, tachygrams)
+    note over User: attach the fee, change commitment, and proof stamp
 end
 break
     note over User: recompute action and tachygram set commitments from descriptors, pairs, fee and change; compare proof outputs

@@ -369,13 +369,13 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             rng,
             app,
             (
-                &aggregate.tachygrams_by_descriptor().collect(),
+                &aggregate.actions,
                 &BTreeMap::from([(aggregate.fee, aggregate.fee_auth)]),
             ),
             (
                 fee_bearing.stamp.clone(),
                 mock_txid(&fee_bearing),
-                &fee_bearing.tachygrams_by_descriptor().collect(),
+                &fee_bearing.actions,
                 &BTreeMap::from([(fee_bearing.fee, fee_bearing.fee_auth)]),
             ),
         )
@@ -435,13 +435,13 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             rng,
             app,
             (
-                &signed.tachygrams_by_descriptor().collect(),
+                &signed.actions,
                 &BTreeMap::from([(signed.fee, signed.fee_auth)]),
             ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
-                &adjunct.tachygrams_by_descriptor().collect(),
+                &adjunct.actions,
                 &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
@@ -483,13 +483,13 @@ fn fee_bearing_aggregates_merge_and_lift() {
                 rng,
                 app,
                 (
-                    &bundle.tachygrams_by_descriptor().collect(),
+                    &bundle.actions,
                     &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 ),
                 (
                     auto.stamp.clone(),
                     mock_txid(auto),
-                    &auto.tachygrams_by_descriptor().collect(),
+                    &auto.actions,
                     &BTreeMap::from([(auto.fee, auto.fee_auth)]),
                 ),
             )
@@ -502,10 +502,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             rng,
             app,
             (
-                &[&left, &left_auto]
-                    .into_iter()
-                    .flat_map(Bundle::tachygrams_by_descriptor)
-                    .collect(),
+                left.actions.iter().chain(&left_auto.actions),
                 &[&left, &left_auto]
                     .into_iter()
                     .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -514,10 +511,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             (
                 right.stamp.clone(),
                 mock_txid(&right),
-                &[&right, &right_auto]
-                    .into_iter()
-                    .flat_map(Bundle::tachygrams_by_descriptor)
-                    .collect(),
+                right.actions.iter().chain(&right_auto.actions),
                 &[&right, &right_auto]
                     .into_iter()
                     .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -580,13 +574,13 @@ fn innocent_seed_merges_and_strips() {
             rng,
             app,
             (
-                &innocent.tachygrams_by_descriptor().collect(),
+                &innocent.actions,
                 &BTreeMap::from([(innocent.fee, innocent.fee_auth)]),
             ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
-                &adjunct.tachygrams_by_descriptor().collect(),
+                &adjunct.actions,
                 &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
@@ -600,16 +594,13 @@ fn innocent_seed_merges_and_strips() {
             rng,
             app,
             (
-                &parent.tachygrams_by_descriptor().collect(),
+                &parent.actions,
                 &BTreeMap::from([(parent.fee, parent.fee_auth)]),
             ),
             (
                 innocent.stamp.clone(),
                 mock_txid(&innocent),
-                &[&innocent, &adjunct]
-                    .into_iter()
-                    .flat_map(Bundle::tachygrams_by_descriptor)
-                    .collect(),
+                innocent.actions.iter().chain(&adjunct.actions),
                 &[&innocent, &adjunct]
                     .into_iter()
                     .map(|bundle| (bundle.fee, bundle.fee_auth))

@@ -16,7 +16,8 @@ use crate::{
     reddsa, serialization, value,
 };
 
-/// An authorized Tachyon action.
+/// An authorized Tachyon action. Its signature binds the transaction sighash;
+/// its stamp binds the descriptor to the unordered tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
     /// The action's effecting data.

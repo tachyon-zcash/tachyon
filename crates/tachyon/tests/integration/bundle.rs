@@ -144,7 +144,11 @@ fn assemble_joins_by_descriptor() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let pairs: BTreeMap<_, _> = original.tachygrams_by_descriptor().collect();
+    let pairs: BTreeMap<_, _> = original
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
     let joined = plan.assemble(
         signatures,
         (
@@ -154,7 +158,13 @@ fn assemble_joins_by_descriptor() {
             original.fee.v_fee,
         ),
     );
-    assert!(joined.tachygrams_by_descriptor().eq(pairs));
+    assert!(
+        joined
+            .actions
+            .iter()
+            .map(|action| (action.descriptor, action.tachygrams))
+            .eq(pairs)
+    );
     joined
         .verify(rng, app, &mock_sighash(joined.commitment()), &[])
         .unwrap();
@@ -358,12 +368,8 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_desc = becomes_based.tachygrams_by_descriptor().collect();
     let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
-    let innocent_desc = [&autonome_a, &autonome_b]
-        .into_iter()
-        .flat_map(Bundle::tachygrams_by_descriptor)
-        .collect();
+    let innocent_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
     let innocent_fees = [&autonome_a, &autonome_b]
         .into_iter()
         .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -377,8 +383,8 @@ fn based_aggregate_with_two_adjuncts() {
         .merge(
             rng,
             app,
-            (&based_desc, &based_fees),
-            (innocent_stamp, txid_a, &innocent_desc, &innocent_fees),
+            (&becomes_based.actions, &based_fees),
+            (innocent_stamp, txid_a, innocent_actions, &innocent_fees),
         )
         .unwrap();
 
@@ -1288,7 +1294,7 @@ fn read_bounds_the_value_balance() {
 fn verify_covered_rejects_an_edited_tachygram() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let (plan, stamped) = alice(app);
+    let (_, mut stamped) = alice(app);
 
     let mut change = stamped.clone();
     change.fee_auth = Tachygram::random(rng);
@@ -1297,22 +1303,9 @@ fn verify_covered_rejects_an_edited_tachygram() {
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 
-    let wallet = WalletSim::new(shared_sk());
-    let signatures = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
-        .unwrap();
-    let mut pairs: BTreeMap<_, _> = stamped.tachygrams_by_descriptor().collect();
-    pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
-    let bundle = plan.assemble(
-        signatures,
-        (stamped.stamp, pairs, stamped.fee_auth, stamped.fee.v_fee),
-    );
+    stamped.actions[0].tachygrams.1 = Tachygram::random(rng);
     assert_matches!(
-        bundle.verify_covered(&[]),
+        stamped.verify_covered(&[]),
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 }
@@ -1370,7 +1363,11 @@ fn plan_memo_reaches_the_signed_bundle() {
     let signatures = bundle_plan
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .unwrap();
-    let pairs = original.tachygrams_by_descriptor().collect();
+    let pairs = original
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
     let bundle = bundle_plan.assemble(
         signatures,
         (original.stamp, pairs, original.fee_auth, original.fee.v_fee),
@@ -1401,7 +1398,7 @@ fn bundle_lift_preserves_coverage() {
     let unchanged_stamp = bundle
         .stamp
         .clone()
-        .lift(rng, app, &BTreeMap::new(), &BTreeMap::new(), vec![])
+        .lift(rng, app, [], &BTreeMap::new(), vec![])
         .unwrap();
     let mut unchanged_stamp_bytes = Vec::new();
     unchanged_stamp.write(&mut unchanged_stamp_bytes).unwrap();
@@ -1432,12 +1429,8 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
-    let zero_desc = zero.tachygrams_by_descriptor().collect();
     let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
-    let adjunct_desc = [&autonome_a, &autonome_b]
-        .into_iter()
-        .flat_map(Bundle::tachygrams_by_descriptor)
-        .collect();
+    let adjunct_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
     let adjunct_fees = [&autonome_a, &autonome_b]
         .into_iter()
         .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -1448,11 +1441,11 @@ fn bundle_lift_over_an_aggregate() {
             .merge(
                 rng,
                 app,
-                (&zero_desc, &zero_fees),
+                (&zero.actions, &zero_fees),
                 (
                     adjunct_stamp,
                     mock_txid(&autonome_a),
-                    &adjunct_desc,
+                    adjunct_actions,
                     &adjunct_fees,
                 ),
             )

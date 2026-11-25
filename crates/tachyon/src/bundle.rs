@@ -180,8 +180,8 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
-    /// Actions in wire order, each with its descriptor, signature, and
-    /// tachygram pair.
+    /// Wire order is shared by the descriptor, signature, and tachygram
+    /// sections.
     pub actions: Vec<action::Action>,
 
     /// The max fee note's value commitment and the fee paid by this bundle.
@@ -227,15 +227,6 @@ impl<S: StampState + ?Sized> Bundle<S> {
             &self.fee.cv_feemax.into(),
             &blake2b::memo_digest(&self.memo),
         )
-    }
-
-    /// Each descriptor and the tachygram pair covered for it, in wire order.
-    pub fn tachygrams_by_descriptor(
-        &self,
-    ) -> impl Iterator<Item = (action::Descriptor, (Tachygram, Tachygram))> {
-        self.actions
-            .iter()
-            .map(|action| (action.descriptor, action.tachygrams))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -592,8 +583,8 @@ impl Plan {
         self.value_balance().expect("planned balance is in range")
     }
 
-    /// Assemble the bundle from signatures and independently produced proof
-    /// data.
+    /// Join the action signatures and tachygram pairs by descriptor, then
+    /// attach the binding signature, stamp, fee change commitment, and fee.
     ///
     /// # Panics
     ///
@@ -620,14 +611,12 @@ impl Plan {
         );
         let actions = action_sigs
             .into_iter()
-            .zip(pairs)
-            .map(
-                |((descriptor, signature), (_, tachygrams))| action::Action {
-                    descriptor,
-                    signature,
-                    tachygrams,
-                },
-            )
+            .zip(pairs.into_values())
+            .map(|((descriptor, signature), tachygrams)| action::Action {
+                descriptor,
+                signature,
+                tachygrams,
+            })
             .collect();
         Bundle {
             actions,
@@ -671,16 +660,14 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         if spans.is_empty() {
             return Ok(self);
         }
-        let covered = iter::once(self.as_dyn()).chain(adjuncts.iter().copied());
-        let mut descriptors = BTreeMap::new();
-        let mut fee_descriptors = BTreeMap::new();
-        for bundle in covered {
-            descriptors.extend(bundle.tachygrams_by_descriptor());
-            fee_descriptors.insert(bundle.fee, bundle.fee_auth);
-        }
-        let stamp = self
-            .stamp
-            .lift(rng, app, &descriptors, &fee_descriptors, spans)?;
+        let actions = self
+            .actions
+            .iter()
+            .chain(adjuncts.iter().flat_map(|adj| &adj.actions));
+        let fees = iter::once((self.fee, self.fee_auth))
+            .chain(adjuncts.iter().map(|adj| (adj.fee, adj.fee_auth)))
+            .collect();
+        let stamp = self.stamp.lift(rng, app, actions, &fees, spans)?;
 
         Ok(Self { stamp, ..self })
     }
@@ -936,10 +923,9 @@ impl<S: StampState> Bundle<S> {
             ));
         }
 
-        let mut descriptors = Vec::new();
-        for _ in 0..n_actions {
-            descriptors.push(action::Descriptor::read(&mut reader)?);
-        }
+        let descriptors = iter::repeat_with(|| action::Descriptor::read(&mut reader))
+            .take(n_actions)
+            .collect::<io::Result<Vec<_>>>()?;
 
         let cv_feemax = {
             let point = serialization::read_ep_affine(&mut reader)?;
@@ -969,23 +955,18 @@ impl<S: StampState> Bundle<S> {
             memo.extend_from_slice(&chunk[..take]);
         }
 
-        let mut signed = Vec::new();
-        for descriptor in descriptors {
-            signed.push((descriptor, action::Signature::read(&mut reader)?));
-        }
+        let signatures = iter::repeat_with(|| action::Signature::read(&mut reader))
+            .take(n_actions)
+            .collect::<io::Result<Vec<_>>>()?;
         let binding_sig = Signature::read(&mut reader)?;
 
-        let mut actions = Vec::new();
+        let mut tachygram_pairs = Vec::new();
         let mut seen = BTreeSet::new();
-        for (descriptor, signature) in signed {
+        for _ in 0..n_actions {
             let tachygrams = (Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?);
             seen.insert(tachygrams.0);
             seen.insert(tachygrams.1);
-            actions.push(action::Action {
-                descriptor,
-                signature,
-                tachygrams,
-            });
+            tachygram_pairs.push(tachygrams);
         }
         let fee = {
             let mut bytes = [0u8; size_of::<u64>()];
@@ -1003,6 +984,16 @@ impl<S: StampState> Bundle<S> {
         }
 
         let stamp = S::read(&mut reader)?;
+        let actions = descriptors
+            .into_iter()
+            .zip(signatures)
+            .zip(tachygram_pairs)
+            .map(|((descriptor, signature), tachygrams)| action::Action {
+                descriptor,
+                signature,
+                tachygrams,
+            })
+            .collect();
 
         Ok(Self {
             value_balance,

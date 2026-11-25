@@ -34,37 +34,27 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let (_, alice) = alice(app);
     let (_, bob) = bob(app);
     let [(_, carol), _, _] = outputs_with_fees(app);
-    let [alice_pairs, bob_pairs, carol_pairs]: [BTreeMap<_, _>; 3] =
-        [&alice, &bob, &carol].map(|bundle| bundle.tachygrams_by_descriptor().collect());
     let [alice_fees, bob_fees, carol_fees] =
         [&alice, &bob, &carol].map(|bundle| BTreeMap::from([(bundle.fee, bundle.fee_auth)]));
-    let pair_union = alice_pairs
-        .iter()
-        .chain(&bob_pairs)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+    let combined_actions = alice.actions.iter().chain(&bob.actions);
     let fee_union = alice_fees
         .iter()
         .chain(&bob_fees)
         .map(|(&desc, &change)| (desc, change))
         .collect();
-    let all_pairs = alice_pairs
-        .iter()
-        .chain(&bob_pairs)
-        .chain(&carol_pairs)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+    let all_actions = combined_actions.clone().chain(&carol.actions);
     let all_fees = alice_fees
         .iter()
         .chain(&bob_fees)
         .chain(&carol_fees)
         .map(|(&desc, &change)| (desc, change))
         .collect();
-    let divisor_pairs = bob_pairs
+    let divisor_actions = bob
+        .actions
         .iter()
-        .chain(&carol_pairs)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+        .chain(&carol.actions)
+        .copied()
+        .collect::<Vec<_>>();
     let divisor_fees = bob_fees
         .iter()
         .chain(&carol_fees)
@@ -76,8 +66,8 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
         .merge(
             rng,
             app,
-            (&pair_union, &fee_union),
-            (carol.stamp.clone(), carol_txid, &carol_pairs, &carol_fees),
+            (combined_actions, &fee_union),
+            (carol.stamp.clone(), carol_txid, &carol.actions, &carol_fees),
         )
         .unwrap();
     assert_eq!(all_three.adjuncts, BTreeSet::from([bob_txid, carol_txid]));
@@ -91,7 +81,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     for (divisor, divisor_covered, adjuncts) in [
         (
             bob.stamp.clone(),
-            (&bob_pairs, &bob_fees),
+            (&bob.actions, &bob_fees),
             vec![carol.clone()],
         ),
         (
@@ -99,11 +89,11 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                 .merge(
                     rng,
                     app,
-                    (&bob_pairs, &bob_fees),
-                    (carol.stamp, carol_txid, &carol_pairs, &carol_fees),
+                    (&bob.actions, &bob_fees),
+                    (carol.stamp, carol_txid, &carol.actions, &carol_fees),
                 )
                 .unwrap(),
-            (&divisor_pairs, &divisor_fees),
+            (&divisor_actions, &divisor_fees),
             vec![],
         ),
     ] {
@@ -113,7 +103,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             .unmerge(
                 rng,
                 app,
-                (&all_pairs, &all_fees),
+                (all_actions.clone(), &all_fees),
                 (divisor, bob_txid, divisor_covered.0, divisor_covered.1),
             )
             .unwrap();
@@ -138,26 +128,15 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let [(_, alice), (_, bob), (_, mut carol)] = outputs_with_fees(app);
-    let [alice_pairs, bob_pairs, carol_pairs]: [BTreeMap<_, _>; 3] =
-        [&alice, &bob, &carol].map(|bundle| bundle.tachygrams_by_descriptor().collect());
     let [alice_fees, bob_fees, carol_fees] =
         [&alice, &bob, &carol].map(|bundle| BTreeMap::from([(bundle.fee, bundle.fee_auth)]));
-    let pair_union = alice_pairs
-        .iter()
-        .chain(&bob_pairs)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+    let combined_actions = alice.actions.iter().chain(&bob.actions);
     let fee_union = alice_fees
         .iter()
         .chain(&bob_fees)
         .map(|(&desc, &change)| (desc, change))
         .collect();
-    let all_pairs = alice_pairs
-        .iter()
-        .chain(&bob_pairs)
-        .chain(&carol_pairs)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+    let all_actions = combined_actions.clone().chain(&carol.actions);
     let all_fees = alice_fees
         .iter()
         .chain(&bob_fees)
@@ -172,8 +151,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .merge(
             rng,
             app,
-            (&alice_pairs, &alice_fees),
-            (bob.stamp.clone(), bob_txid, &bob_pairs, &bob_fees),
+            (&alice.actions, &alice_fees),
+            (bob.stamp.clone(), bob_txid, &bob.actions, &bob_fees),
         )
         .unwrap();
     assert_eq!(on_alice.adjuncts, BTreeSet::from([bob_txid]));
@@ -184,8 +163,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (&pair_union, &fee_union),
-            (bob.stamp.clone(), bob_txid, &bob_pairs, &bob_fees),
+            (combined_actions.clone(), &fee_union),
+            (bob.stamp.clone(), bob_txid, &bob.actions, &bob_fees),
         )
         .unwrap();
     assert!(kept.is_autonome());
@@ -198,8 +177,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (&pair_union, &fee_union),
-            (alice.stamp.clone(), alice_txid, &alice_pairs, &alice_fees),
+            (combined_actions.clone(), &fee_union),
+            (alice.stamp.clone(), alice_txid, &alice.actions, &alice_fees),
         )
         .unwrap();
     assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
@@ -217,8 +196,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .merge(
             rng,
             app,
-            (&carol_pairs, &carol_fees),
-            (on_alice, alice_txid, &pair_union, &fee_union),
+            (&carol.actions, &carol_fees),
+            (on_alice, alice_txid, combined_actions, &fee_union),
         )
         .unwrap();
     assert_eq!(rehosted.adjuncts, BTreeSet::from([alice_txid, bob_txid]));
@@ -226,8 +205,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (&all_pairs, &all_fees),
-            (alice.stamp, alice_txid, &alice_pairs, &alice_fees),
+            (all_actions, &all_fees),
+            (alice.stamp, alice_txid, &alice.actions, &alice_fees),
         )
         .unwrap();
     assert_eq!(carol.fee.v_fee, carol_fee);
@@ -254,14 +233,8 @@ fn unmerge_by_a_lifted_divisor() {
     let lifted_divisor = lifted_bundle.stamp.clone();
     let earlier_txid = mock_txid(&earlier);
     let dividend = merged(app, &later, &lifted_bundle).stamp;
-    let [early_desc, late_desc]: [BTreeMap<_, _>; 2] =
-        [&earlier, &later].map(|bundle| bundle.tachygrams_by_descriptor().collect());
     let early_fees = BTreeMap::from([(earlier.fee, earlier.fee_auth)]);
-    let all_desc = late_desc
-        .iter()
-        .chain(&early_desc)
-        .map(|(&desc, &pair)| (desc, pair))
-        .collect();
+    let all_actions = later.actions.iter().chain(&earlier.actions);
     let all_fees = BTreeMap::from([(later.fee, later.fee_auth), (earlier.fee, earlier.fee_auth)]);
 
     let unaligned = dividend
@@ -269,8 +242,8 @@ fn unmerge_by_a_lifted_divisor() {
         .unmerge(
             rng,
             app,
-            (&all_desc, &all_fees),
-            (earlier.stamp, earlier_txid, &early_desc, &early_fees),
+            (all_actions.clone(), &all_fees),
+            (earlier.stamp, earlier_txid, &earlier.actions, &early_fees),
         )
         .unwrap();
     assert!(
@@ -283,8 +256,8 @@ fn unmerge_by_a_lifted_divisor() {
         .unmerge(
             rng,
             app,
-            (&all_desc, &all_fees),
-            (lifted_divisor, earlier_txid, &early_desc, &early_fees),
+            (all_actions, &all_fees),
+            (lifted_divisor, earlier_txid, &earlier.actions, &early_fees),
         )
         .unwrap();
     later
@@ -297,7 +270,6 @@ fn unmerge_by_itself_leaves_no_leaves() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut alice) = alice(app);
-    let desc = alice.tachygrams_by_descriptor().collect();
     let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
 
     let quotient = alice
@@ -306,8 +278,13 @@ fn unmerge_by_itself_leaves_no_leaves() {
         .unmerge(
             rng,
             app,
-            (&desc, &fees),
-            (alice.stamp.clone(), mock_txid(&alice), &desc, &fees),
+            (&alice.actions, &fees),
+            (
+                alice.stamp.clone(),
+                mock_txid(&alice),
+                &alice.actions,
+                &fees,
+            ),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, []).unwrap());
@@ -351,16 +328,14 @@ fn unmerge_splitting_a_bundle() {
         )
         .unwrap();
     let mut whole = plan.assemble(signatures, proof);
-    let kept_index = whole
+    let kept_digest = whole
         .actions
         .iter()
-        .position(|action| action.descriptor == kept_descriptor)
-        .unwrap();
-    let kept_digest = whole.verify_covered(&[]).unwrap().0[kept_index];
+        .find(|action| action.descriptor == kept_descriptor)
+        .unwrap()
+        .digest();
 
-    let part_desc = alice.tachygrams_by_descriptor().collect();
     let part_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
-    let whole_desc = whole.tachygrams_by_descriptor().collect();
     let whole_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
     let part_txid = mock_txid(&alice);
     let part = alice.stamp;
@@ -371,8 +346,8 @@ fn unmerge_splitting_a_bundle() {
         .unmerge(
             rng,
             app,
-            (&whole_desc, &whole_fees),
-            (part, part_txid, &part_desc, &part_fees),
+            (&whole.actions, &whole_fees),
+            (part, part_txid, &alice.actions, &part_fees),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, [kept_digest]).unwrap());
@@ -427,19 +402,18 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             rng,
             app,
             (
-                &original.tachygrams_by_descriptor().collect(),
+                &original.actions,
                 &BTreeMap::from([(original.fee, original.fee_auth)]),
             ),
             (
                 other.stamp.clone(),
                 mock_txid(&other),
-                &other.tachygrams_by_descriptor().collect(),
+                &other.actions,
                 &BTreeMap::from([(other.fee, other.fee_auth)]),
             ),
         )
         .unwrap();
     let divisor_txid = mock_txid(&reproven);
-    let divisor_desc = reproven.tachygrams_by_descriptor().collect();
     let divisor_fees = BTreeMap::from([(reproven.fee, reproven.fee_auth)]);
     let (original_digests, _) = original.verify_covered(&[]).unwrap();
     let (_, original_action_digests) = original_digests.split_last().unwrap();
@@ -449,16 +423,18 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             rng,
             app,
             (
-                &[&original, &other]
-                    .into_iter()
-                    .flat_map(zcash_tachyon::Bundle::tachygrams_by_descriptor)
-                    .collect(),
+                original.actions.iter().chain(&other.actions),
                 &BTreeMap::from([
                     (original.fee, original.fee_auth),
                     (other.fee, other.fee_auth),
                 ]),
             ),
-            (reproven.stamp, divisor_txid, &divisor_desc, &divisor_fees),
+            (
+                reproven.stamp,
+                divisor_txid,
+                &reproven.actions,
+                &divisor_fees,
+            ),
         )
         .unwrap();
     assert!(

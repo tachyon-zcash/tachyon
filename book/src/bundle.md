@@ -72,7 +72,7 @@ where
 
 A Tachyon bundle collects actions with authorization data:
 
-- `actions` - an ordered vector of `action::Action` values; each has a `descriptor` (`cv` and `rk`), a `signature`, and a `tachygrams` pair
+- `actions` - the bundle's actions in wire order; each carries its descriptor `(cv, rk)`, signature, and tachygram pair
 - `value_balance` - integer net pool effect, with the max fee note counted as an output
 - `cv_feemax` - the [max fee note](./fee.md)'s value commitment
 - `fee` - the fee chosen at or below the signed maximum
@@ -162,9 +162,7 @@ end
 
 ## Lifecycle
 
-Signing a `bundle::Plan` returns a descriptor-keyed action signature map and the binding signature. Independently, `stamp::Plan::prove` returns the proof stamp, a descriptor-keyed map of tachygram pairs, the change commitment, and the chosen fee.
-
-`bundle::Plan::assemble(signatures, proof)` combines their outputs with the plan. It requires the plan, pair map, and signature map to have identical descriptor keys and panics if they differ. It joins both maps in descriptor order into `actions` and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity. Signing and proving may run in either order or concurrently.
+Signing and proving are independent. Signing produces a signature for each planned action descriptor and a binding signature for the bundle. Proving produces a tachygram pair for each descriptor, a proof stamp, the chosen fee, and the fee change commitment. The bundle joins the signatures and tachygram pairs by descriptor, so each planned action carries its own authorization.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
