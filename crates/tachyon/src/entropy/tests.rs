@@ -30,3 +30,13 @@ fn debug_entropy_redacts_bytes() {
     let theta = ActionEntropy::from_bytes(bytes).unwrap();
     assert_eq!(alloc::format!("{theta:?}"), "ActionEntropy(..)");
 }
+
+#[test]
+fn base_field_capacity_rejects_two_to_the_254() {
+    let mut bytes = [0; 32];
+    bytes[31] = 0x40;
+    let high = ActionRandomizer::<effect::Output>(Fq::from_bytes(bytes).unwrap(), PhantomData);
+    let low = ActionRandomizer::<effect::Output>(Fq::ONE, PhantomData);
+    assert!(low.fits_base_field_capacity());
+    assert!(!high.fits_base_field_capacity());
+}
