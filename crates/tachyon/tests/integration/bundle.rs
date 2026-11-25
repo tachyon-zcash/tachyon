@@ -378,8 +378,21 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
+    let based_desc = becomes_based
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
     let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
-    let innocent_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
+    let innocent_desc = [&autonome_a, &autonome_b]
+        .into_iter()
+        .flat_map(|bundle| {
+            bundle
+                .actions
+                .iter()
+                .map(|action| (action.descriptor, action.tachygrams))
+        })
+        .collect();
     let innocent_fees = [&autonome_a, &autonome_b]
         .into_iter()
         .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -393,8 +406,8 @@ fn based_aggregate_with_two_adjuncts() {
         .merge(
             rng,
             app,
-            (&becomes_based.actions, &based_fees),
-            (innocent_stamp, txid_a, innocent_actions, &innocent_fees),
+            (&based_desc, &based_fees),
+            (innocent_stamp, txid_a, &innocent_desc, &innocent_fees),
         )
         .unwrap();
 
@@ -1409,7 +1422,7 @@ fn bundle_lift_preserves_coverage() {
     let unchanged_stamp = bundle
         .stamp
         .clone()
-        .lift(rng, app, [], &BTreeMap::new(), vec![])
+        .lift(rng, app, &BTreeMap::new(), &BTreeMap::new(), vec![])
         .unwrap();
     let mut unchanged_stamp_bytes = Vec::new();
     unchanged_stamp.write(&mut unchanged_stamp_bytes).unwrap();
@@ -1440,8 +1453,21 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
+    let zero_desc = zero
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
     let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
-    let adjunct_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
+    let adjunct_desc = [&autonome_a, &autonome_b]
+        .into_iter()
+        .flat_map(|bundle| {
+            bundle
+                .actions
+                .iter()
+                .map(|action| (action.descriptor, action.tachygrams))
+        })
+        .collect();
     let adjunct_fees = [&autonome_a, &autonome_b]
         .into_iter()
         .map(|bundle| (bundle.fee, bundle.fee_auth))
@@ -1452,11 +1478,11 @@ fn bundle_lift_over_an_aggregate() {
             .merge(
                 rng,
                 app,
-                (&zero.actions, &zero_fees),
+                (&zero_desc, &zero_fees),
                 (
                     adjunct_stamp,
                     mock_txid(&autonome_a),
-                    adjunct_actions,
+                    &adjunct_desc,
                     &adjunct_fees,
                 ),
             )

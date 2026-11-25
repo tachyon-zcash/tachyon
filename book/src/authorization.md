@@ -321,7 +321,7 @@ rect rgb(100, 149, 237, 0.1)
     note over User: cv_feemax = Pedersen(-feemax, r)
     note over User: value_balance = Sum v_spend - Sum v_output - feemax
     note over User: bundle_plan { spends[], outputs[], max_fee_note, memo }
-    note over User: hActionsTachyon = Blake2b(cv_i || rk_i) over the sorted descriptor set, which is the wire order
+    note over User: hActionsTachyon = Blake2b(cv_i || rk_i) over descriptors in the order this sender will transmit them
     note over User: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
     note over User: compute sighash
 end

@@ -162,7 +162,7 @@ end
 
 ## Lifecycle
 
-Signing yields one signature per action and the binding signature; proving supplies the stamp, each action's tachygram pair, the chosen fee, and the change commitment. Assembly joins signatures and pairs by descriptor. Signing and proving may run in either order or concurrently.
+Signing yields one signature per action and the binding signature; proving supplies the stamp, each action's tachygram pair, the chosen fee, and the change commitment. Assembly joins signatures and pairs by descriptor. Sorting actions by descriptor is a sender convention, not a wire requirement. Signing and proving may run in either order or concurrently.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 

@@ -951,12 +951,12 @@ impl ProofStamp<Uncompressed> {
     }
 
     /// Advances the stamp's anchor along `spans`, computing the action digests
-    /// from the covered actions and fees.
+    /// from the covered action and fee descriptors.
     /// Successful construction does not guarantee that the lifted stamp
     /// verifies.
     ///
     /// Rerandomizes after the last span. If `spans` is empty, returns the
-    /// original stamp without inspecting the actions or fees or rerandomizing.
+    /// original stamp without inspecting the descriptors or rerandomizing.
     ///
     /// # Errors
     ///
@@ -964,13 +964,12 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built action or fee with an identity
-    /// commitment, or an action with an identity `rk`.
-    pub fn lift<'covered, RNG: CryptoRng>(
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
+    pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        actions: impl IntoIterator<Item = &'covered action::Action>,
+        descriptors: &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
@@ -978,8 +977,8 @@ impl ProofStamp<Uncompressed> {
             return Ok(self);
         }
         let mut action_digests = BTreeSet::new();
-        for action in actions {
-            action_digests.insert(action.digest());
+        for (descriptor, &pair) in descriptors {
+            action_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
@@ -992,8 +991,8 @@ impl ProofStamp<Uncompressed> {
     /// Successful construction does not guarantee that the merged stamp
     /// verifies.
     ///
-    /// Each side supplies its covered actions and fee map, from which the
-    /// action digests and tachygrams for the merge proof are derived.
+    /// Each side supplies borrowed action and fee maps, from which the action
+    /// digests and tachygrams for the merge proof are derived.
     ///
     /// The merged stamp lists both stamps' adjuncts and `right_txid`, the txid
     /// of the one transaction the right stamp covers without listing, which
@@ -1013,28 +1012,31 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built action or fee with an identity
-    /// commitment, or an action with an identity `rk`.
-    pub fn merge<'covered, RNG: CryptoRng>(
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp, txid and covered bundles of the absorbed side"
+    )]
+    pub fn merge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        (left_actions, left_fees): (
-            impl IntoIterator<Item = &'covered action::Action>,
+        (left_desc, left_fees): (
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-        (right_stamp, right_txid, right_actions, right_fees): (
+        (right_stamp, right_txid, right_desc, right_fees): (
             Self,
             [u8; 32],
-            impl IntoIterator<Item = &'covered action::Action>,
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut left_digests = BTreeSet::new();
         let mut left_tachygrams = BTreeSet::new();
-        for action in left_actions {
-            left_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
-            left_digests.insert(action.digest());
+        for (descriptor, &pair) in left_desc {
+            left_tachygrams.extend(<[Tachygram; 2]>::from(pair));
+            left_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in left_fees {
             left_tachygrams.insert(change);
@@ -1043,9 +1045,9 @@ impl ProofStamp<Uncompressed> {
 
         let mut right_digests = BTreeSet::new();
         let mut right_tachygrams = BTreeSet::new();
-        for action in right_actions {
-            right_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
-            right_digests.insert(action.digest());
+        for (descriptor, &pair) in right_desc {
+            right_tachygrams.extend(<[Tachygram; 2]>::from(pair));
+            right_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in right_fees {
             right_tachygrams.insert(change);
@@ -1093,10 +1095,10 @@ impl ProofStamp<Uncompressed> {
     /// divisor's covered actions, fees and tachygrams. Rerandomizes the
     /// quotient.
     ///
-    /// Each side supplies its covered actions and fee map. The quotient's
-    /// action digests and tachygrams are the dividend's less the divisor's.
-    /// A divisor that does not divide this stamp can produce a proof that
-    /// fails verification, even when construction succeeds.
+    /// Each side supplies borrowed action and fee maps. The quotient's action
+    /// digests and tachygrams are the dividend's less the divisor's. A divisor
+    /// that does not divide this stamp can produce a proof that fails
+    /// verification, even when construction succeeds.
     ///
     /// The quotient lists this stamp's adjuncts less the divisor's adjuncts and
     /// `divisor_txid`, the txid of the one transaction the divisor covers
@@ -1115,28 +1117,31 @@ impl ProofStamp<Uncompressed> {
     ///
     /// # Panics
     ///
-    /// Panics when digesting a hand-built action or fee with an identity
-    /// commitment, or an action with an identity `rk`.
-    pub fn unmerge<'covered, RNG: CryptoRng>(
+    /// Panics when digesting a hand-built map holding an identity `cv` or `rk`.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp, txid and covered bundles of the divisor"
+    )]
+    pub fn unmerge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        (actions, fees): (
-            impl IntoIterator<Item = &'covered action::Action>,
+        (descriptors, fees): (
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
-        (divisor_stamp, divisor_txid, divisor_actions, divisor_fees): (
+        (divisor_stamp, divisor_txid, divisor_desc, divisor_fees): (
             Self,
             [u8; 32],
-            impl IntoIterator<Item = &'covered action::Action>,
+            &BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
             &BTreeMap<fee::Descriptor, Tachygram>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut digests = BTreeSet::new();
         let mut tachygrams_all = BTreeSet::new();
-        for action in actions {
-            tachygrams_all.extend(<[Tachygram; 2]>::from(action.tachygrams));
-            digests.insert(action.digest());
+        for (descriptor, &pair) in descriptors {
+            tachygrams_all.extend(<[Tachygram; 2]>::from(pair));
+            digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in fees {
             tachygrams_all.insert(change);
@@ -1145,9 +1150,9 @@ impl ProofStamp<Uncompressed> {
 
         let mut divisor_digests = BTreeSet::new();
         let mut divisor_tachygrams = BTreeSet::new();
-        for action in divisor_actions {
-            divisor_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
-            divisor_digests.insert(action.digest());
+        for (descriptor, &pair) in divisor_desc {
+            divisor_tachygrams.extend(<[Tachygram; 2]>::from(pair));
+            divisor_digests.insert(descriptor.digest(pair));
         }
         for (descriptor, &change) in divisor_fees {
             divisor_tachygrams.insert(change);
