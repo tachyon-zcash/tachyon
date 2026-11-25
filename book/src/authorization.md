@@ -185,7 +185,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
-Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. Assembly joins each action signature to its tachygram pair by descriptor. The signing and proving paths can run in either order or concurrently.
+Signing produces a signature per action and a binding signature for the bundle. Independently, proving supplies a tachygram pair per action, the change commitment, the chosen fee, and the stamp. Assembly matches each signature to its pair by descriptor.
 
 ```mermaid
 flowchart LR
@@ -283,9 +283,9 @@ A modified descriptor breaks both checks. Changing a pair's members breaks stamp
 
 ## Detailed Sequence
 
-The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through proving, `bundle::Plan::assemble` through assembly, and `Bundle::verify` through consensus.
+The sequence follows signing, proving, bundle assembly, and consensus verification.
 Custody is drawn as a separate participant for a device-split integration that does not exist yet.
-`Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
+Custody is responsible for recomputing and confirming the transaction sighash before signing.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
 Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
 
@@ -347,7 +347,7 @@ par Authorizing
         note over Custody: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
         note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
-        note over Custody: confirm sighash (custody requirement, not performed by Plan::sign)
+        note over Custody: confirm sighash before signing
 
         loop per spend action
             note over Custody: rsk = ask + alpha

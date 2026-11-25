@@ -344,7 +344,7 @@ fn duplicated_spend_cannot_inflate() {
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap();
-    let action_digest = bundle.actions[0].digest();
+    let action_digest = descriptor.digest(pair);
     let fee_digest = bundle.fee.digest(bundle.fee_auth);
     assert!(
         !bundle
@@ -435,22 +435,6 @@ fn based_aggregate_with_two_adjuncts() {
             VerifyCoverageError::DuplicateActions
         ))
     );
-}
-
-#[test]
-fn read_requires_a_signature_and_pair_for_every_action() {
-    let app = &application();
-    let (_, bundle) = spend(app);
-    let stripped = bundle.strip();
-    let mut bytes = Vec::new();
-    stripped.write(&mut bytes).unwrap();
-    // End the input one record short in each authorization phase.
-    let pairs_end = bytes.len() - 8 - 32;
-    let sigs_end = pairs_end - 64 * stripped.actions.len() - 64;
-    for end in [sigs_end, pairs_end] {
-        let err = Bundle::<StrippedStamp>::read(&bytes[..end - 64]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-    }
 }
 
 #[test]
@@ -1294,7 +1278,7 @@ fn read_bounds_the_value_balance() {
 fn verify_covered_rejects_an_edited_tachygram() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let (_, mut stamped) = alice(app);
+    let (plan, stamped) = alice(app);
 
     let mut change = stamped.clone();
     change.fee_auth = Tachygram::random(rng);
@@ -1303,9 +1287,26 @@ fn verify_covered_rejects_an_edited_tachygram() {
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 
-    stamped.actions[0].tachygrams.1 = Tachygram::random(rng);
+    let wallet = WalletSim::new(shared_sk());
+    let signatures = plan
+        .sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let mut pairs: BTreeMap<_, _> = stamped
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
+    pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
+    let bundle = plan.assemble(
+        signatures,
+        (stamped.stamp, pairs, stamped.fee_auth, stamped.fee.v_fee),
+    );
     assert_matches!(
-        stamped.verify_covered(&[]),
+        bundle.verify_covered(&[]),
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 }

@@ -328,12 +328,12 @@ fn unmerge_splitting_a_bundle() {
         )
         .unwrap();
     let mut whole = plan.assemble(signatures, proof);
-    let kept_digest = whole
+    let kept_index = whole
         .actions
         .iter()
-        .find(|action| action.descriptor == kept_descriptor)
-        .unwrap()
-        .digest();
+        .position(|action| action.descriptor == kept_descriptor)
+        .unwrap();
+    let kept_digest = whole.verify_covered(&[]).unwrap().0[kept_index];
 
     let part_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
     let whole_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);

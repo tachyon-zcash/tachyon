@@ -180,8 +180,7 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
-    /// Wire order is shared by the descriptor, signature, and tachygram
-    /// sections.
+    /// The bundle's actions, in wire order.
     pub actions: Vec<action::Action>,
 
     /// The max fee note's value commitment and the fee paid by this bundle.

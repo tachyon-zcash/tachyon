@@ -42,12 +42,12 @@ use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
     bridge_hash::bridge_hash,
     bundle::StateByte,
-    digest::blake2b,
+    digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::EqAffine,
+    pasta::{EpAffine, EqAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
@@ -735,7 +735,11 @@ impl ProofStamp<Uncompressed> {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = app.fuse(
@@ -798,7 +802,11 @@ impl ProofStamp<Uncompressed> {
         let rk = pak.ak.derive_action_public(&alpha);
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
 
         let tachygrams = BTreeSet::from_iter([tg_current, tg_next]);
 

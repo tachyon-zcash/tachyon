@@ -16,8 +16,7 @@ use crate::{
     reddsa, serialization, value,
 };
 
-/// An authorized Tachyon action. Its signature binds the transaction sighash;
-/// its stamp binds the descriptor to the unordered tachygram pair.
+/// An authorized Tachyon action.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
     /// The action's effecting data.
@@ -65,7 +64,7 @@ impl Descriptor {
     /// both identities; hand-built descriptors must uphold this requirement.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        ActionDigest::new(*self, tachygrams)
+        ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -225,7 +224,7 @@ impl<E: Effect> Plan<E> {
     /// Callers constructing plans must ensure both points are non-identity.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        self.descriptor().digest(tachygrams)
+        ActionDigest::new(self.cv(), self.rk, tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.

@@ -54,8 +54,8 @@ In the crate today, `merge` and `unmerge` take uncompressed stamps.
 `compress` produces a stamp with a compressed proof.
 
 Each bundle action carries its descriptor (`cv` and `rk`), its signature,
-and its tachygram pair. The book's
-[Bundles](book/src/bundle.md) chapter explains every field.
+and its tachygram pair. The book's [Bundles](book/src/bundle.md) chapter
+explains every field.
 
 ## Development
 

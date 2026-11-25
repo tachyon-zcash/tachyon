@@ -162,7 +162,7 @@ end
 
 ## Lifecycle
 
-Signing and proving are independent. Signing produces a signature for each planned action descriptor and a binding signature for the bundle. Proving produces a tachygram pair for each descriptor, a proof stamp, the chosen fee, and the fee change commitment. The bundle joins the signatures and tachygram pairs by descriptor, so each planned action carries its own authorization.
+Spend and output actions are signed under their respective randomized keys; the binding signature covers the same transaction sighash. The prover supplies the stamp, each action's tachygram pair, the chosen fee, and the fee change commitment. Assembly joins signatures and pairs by descriptor in the plan's sorted order; readers preserve the transmitted order.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
