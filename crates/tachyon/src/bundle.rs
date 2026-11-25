@@ -219,7 +219,11 @@ impl<S: StampState + ?Sized> Bundle<S> {
     /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self.actions.iter().map(|action| action.descriptor).collect();
+        let descriptors: Vec<[u8; 64]> = self
+            .actions
+            .iter()
+            .map(|action| action.descriptor)
+            .collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
@@ -978,17 +982,9 @@ impl<S: StampState> Bundle<S> {
         }
         let binding_sig = Signature::read(&mut reader)?;
 
-        let mut actions = Vec::new();
-        let mut seen = BTreeSet::new();
-        for (descriptor, signature) in descriptors.into_iter().zip(signatures) {
-            let tachygrams = (Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?);
-            seen.insert(tachygrams.0);
-            seen.insert(tachygrams.1);
-            actions.push(action::Action {
-                descriptor,
-                signature,
-                tachygrams,
-            });
+        let mut pairs = Vec::new();
+        for _ in 0..n_actions {
+            pairs.push((Tachygram::read(&mut reader)?, Tachygram::read(&mut reader)?));
         }
         let fee = {
             let mut bytes = [0u8; size_of::<u64>()];
@@ -997,7 +993,11 @@ impl<S: StampState> Bundle<S> {
                 .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))?
         };
         let cm_change = Tachygram::read(&mut reader)?;
-        seen.insert(cm_change);
+        let seen: BTreeSet<_> = pairs
+            .iter()
+            .flat_map(|&pair| <[Tachygram; 2]>::from(pair))
+            .chain([cm_change])
+            .collect();
         if seen.len() != 2 * n_actions + 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1006,6 +1006,14 @@ impl<S: StampState> Bundle<S> {
         }
 
         let stamp = S::read(&mut reader)?;
+        let actions = iter::zip(descriptors, signatures)
+            .zip(pairs)
+            .map(|((descriptor, signature), tachygrams)| action::Action {
+                descriptor,
+                signature,
+                tachygrams,
+            })
+            .collect();
 
         Ok(Self {
             value_balance,
