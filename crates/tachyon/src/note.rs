@@ -39,6 +39,7 @@ use rand_core::CryptoRng;
 
 use crate::{
     digest::poseidon,
+    fee,
     keys::PaymentKey,
     nullifier,
     pasta::{Fp, Fq},
@@ -80,6 +81,41 @@ pub struct Note {
 }
 
 impl Note {
+    /// The padding tachygram paired with this output note's commitment.
+    #[must_use]
+    pub fn commitment_pad(&self) -> Tachygram {
+        poseidon::pad_tachygram(
+            self.rcm.0,
+            self.pk.into(),
+            self.value.into(),
+            self.psi.into(),
+        )
+        .into()
+    }
+
+    /// The fee descriptor and change commitment for a fee paid from this note.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `fee` exceeds the note value or the commitment trapdoor is
+    /// zero.
+    #[must_use]
+    pub fn fee_entry(&self, fee: value::Positive) -> (fee::Descriptor, Tachygram) {
+        #[expect(clippy::expect_used, reason = "fee cannot exceed the maximum")]
+        let change = Self {
+            value: value::Positive::try_from(i128::from(self.value) - i128::from(fee))
+                .expect("fee should not exceed max fee"),
+            ..*self
+        };
+        (
+            fee::Descriptor {
+                cv_feemax: self.cv_feemax(),
+                v_fee: fee,
+            },
+            change.commitment().into(),
+        )
+    }
+
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
     #[must_use]
