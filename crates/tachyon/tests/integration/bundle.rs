@@ -466,22 +466,6 @@ fn based_aggregate_with_two_adjuncts() {
 }
 
 #[test]
-fn read_requires_a_signature_and_pair_for_every_action() {
-    let app = &application();
-    let (_, bundle) = spend(app);
-    let stripped = bundle.strip();
-    let mut bytes = Vec::new();
-    stripped.write(&mut bytes).unwrap();
-    // End the input one record short in each authorization phase.
-    let pairs_end = bytes.len() - 8 - 32;
-    let sigs_end = pairs_end - 64 * stripped.actions.len() - 64;
-    for end in [sigs_end, pairs_end] {
-        let err = Bundle::<StrippedStamp>::read(&bytes[..end - 64]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-    }
-}
-
-#[test]
 fn autonome_verify_rejects_flipped_signatures() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);

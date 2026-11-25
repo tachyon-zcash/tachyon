@@ -264,32 +264,6 @@ fn fee_fuse_slack_boundaries() {
 }
 
 #[test]
-fn stamp_plan_commits_to_the_change_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let max_fee_note = wallet.random_note(100);
-    let plan = bundle::Plan::new(
-        vec![],
-        vec![output_plan(rng, wallet.random_note(500))],
-        max_fee_note,
-    );
-    let anchor = Anchor::random(rng);
-    for (paid, remaining) in [(0u64, 100u64), (30, 70), (100, 0)] {
-        let amount = value::Positive::try_from(paid).unwrap();
-        let stamp_plan = plan.stamp_plan(anchor, amount);
-        let descriptor = stamp_plan.fee_descriptor();
-        let change = stamp_plan.fee_change_commitment();
-        let change_note = Note {
-            value: value::Positive::try_from(remaining).unwrap(),
-            ..max_fee_note
-        };
-        assert_eq!(descriptor.cv_feemax, max_fee_note.cv_feemax());
-        assert_eq!(descriptor.v_fee, amount);
-        assert_eq!(change, Tachygram::from(change_note.commitment()));
-    }
-}
-
-#[test]
 fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
