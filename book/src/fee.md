@@ -179,14 +179,18 @@ descriptors and pairs, fee descriptors, and fee change commitments,
 recomputes the action accumulator, and checks the proof against it. Consensus
 rejects repeated action descriptors, fee descriptors, or tachygrams. Two
 fee descriptors with the same max fee commitment and fee count as repeated
-even if their change commitments differ. An accepted proof therefore covers
-each signed max fee commitment at its published fee and binds the published
-fee change commitment.
+even if their change commitments differ. An accepted stamp proof therefore
+covers each signed max fee commitment at its published fee and binds the
+published fee change commitment.
 
-`FeeFuse` accepts only `Actions`, so it applies at most once per
-lineage. Merging and lifting carry fee digests and fee change commitments
-like other set members. An innocent aggregate proves its own zero fee with
-`FeeSeed` and merges the adjuncts' stamps into that stamp, as
+`FeeFuse` accepts only `Actions`, so it applies at most once per lineage. A
+derivable `Stamp` may still carry zero or several fee leaves, because
+`StampUnmerge` can strip a fee leaf or isolate one. That each covered bundle
+carries exactly one fee rests on coverage, not on the proof tree: consensus
+rebuilds the action set with one unique fee descriptor per covered bundle.
+Merging and lifting carry fee digests and fee change commitments like other
+set members. An innocent aggregate proves its own zero fee with `FeeSeed` and
+merges the adjuncts' stamps into that stamp, as
 [Aggregation](./aggregation.md#merge-to-produce-aggregate) describes.
 
 Merging, unmerging, lifting, and stripping change only the stamp, leaving

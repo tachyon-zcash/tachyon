@@ -11,6 +11,8 @@ Each step takes prover-supplied witnesses and up to two input PCDs and emits a P
 
 $$g(\zeta) = \prod_{j < 16} F_{e_0 + j,\ \mathsf{nf}_{e_0 + j}}(\zeta)$$
 
+The circuit checks $e_0$ against its staged value and evaluates each factor as $F_{i,m}(\zeta) = (m + (i+1)\zeta)^3 - c$ using the indexed encoding's non-residue $c$. `QrUnspentInit` and `UnspentLift` use the same circuit member evaluator for their bucket epoch and check the tested value against its staged value; none of these steps accepts a freely witnessed expected evaluation.
+
 `NullifierFuse` requires matching `cm` and `right.epoch_start == left.epoch_end + 1`. Checking the product of the sequences at $\zeta$ gives one `NoteNullifiers` with exactly one genuine nullifier factor per epoch in the combined inclusive range.
 
 ### Bootstrapping a spendable
@@ -44,6 +46,7 @@ The wallet's `UnspentBind` divides the `ArbitraryUnspent` segment's `elapsed` ou
 $$g(X) = \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)$$
 
 Thus each tested factor is the note's nullifier at its own epoch, without comparing input epoch bounds. The complement holds the derived factors outside the span; `NoteUnspent` carries the span's anchors and epochs and the note's `cm`.
+There is no separate native nonempty-span recheck: `QrUnspentInit` establishes a segment ending at its range-checked epoch's successor, `UnspentLift` extends to another such successor, and `UnspentFuse` joins segments at equal epochs.
 
 `SpendableLift` matches the `NoteUnspent` segment's `(cm, epoch_start, anchor_start)` to the spendable's `(cm, epoch_current, anchor)`. This preserves the note and value and leaves no gap in exclusion. Without a witness, the wallet advances the same `cm` to `(epoch_next, anchor_next)` across the whole composed segment. Only a spendable from `QrSpendableInit` or a prior lift rests on the required boundary digest.
 
@@ -51,6 +54,7 @@ Thus each tested factor is the note's nullifier at its own epoch, without compar
 
 The wallet's `SpendBind` matches `cm` across `NoteSpendable` and `NoteSecret`.
 It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the lineage's epoch and the epoch after it, and commits the note's value as `cv` under the witnessed value-randomness.
+The circuit range-checks both epochs. For each it constrains the two low bits, clears them to obtain the group start, runs the master-key sponge, and selects the group's corresponding nullifier with those bits.
 Both nullifiers are held nonzero, and the step has no assignment at the final epoch, which lacks a successor.
 The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
 
@@ -90,6 +94,7 @@ The quotient stays with the dividend's bundle and keeps its fee and fee change. 
 `Actions` and `Stamp` are separate headers, distinguished by suffix, so the pre-fee and post-fee states are proof-enforced.
 `Actions` carries only its anchor. `Stamp` carries `(tachygram_set_bridge, anchor)`, where `tachygram_set_bridge` is the bridge hash of the tachygram set.
 Both hold the action set as an `ActionSetPoly` and the tachygram set as a `TachygramSetPoly`.
+[Stamp construction](#stamp-construction) gives the merge and unmerge checks on both polynomials.
 Verification always rebuilds `Pcd<Stamp>`.
 
 ## Roles
@@ -422,6 +427,12 @@ Step budgets split as follows.
 
 `OutputAction` and `FeeSeed` witness prover-chosen anchors, `SpendAction` copies the spendable's anchor via `SpendBind` and `SpendHeader`, and `FeeFuse` copies `Actions`'s anchor. `ActionMerge`, `StampMerge` and `StampUnmerge` equate their input anchors, while `ActionLift` and `StampLift` advance an anchor matching a span's start or member to that span's end.
 Every `Stamp`-emitting step writes its tachygram-set bridge hash to `tachygram_set_bridge`.
+
+The Lean results in `qa/fv` prove this multiset argument for a hand-written semantic model. No extraction or fingerprint check ties the Lean steps or digests to the Rust circuits, and production PCD soundness is not proved; a mismatch between a Lean constructor and its step is caught only by manual review.
+They take the digest-to-tachygram pairing above as exact, specify collision-resistance and binding laws scoped to the finite sets of hash calls the chain and derivations make (instantiated over a small prime field), prove the Pallas modulus prime (`Pallas.prime`), prove `5` a quadratic non-residue (`Pallas.quadraticNonResidue`) and the cubic indexed-member encoding's primality and injectivity up to the full epoch range (`Pallas.memberLaw`), rely on representation-built circuit checks (`EpochIndex` range checks, `QrSideDescend`'s depth bound, and no field wrap in `enforce_sides_of`'s mask sums and bit fold), and assume commitment/bridge binding, polynomial identities in place of random-point checks, stamp absorption as a random function for `AnchorSpanSeed`, and accepted derivations under the fixed Tachyon registry.
+Lift epoch preservation is proved through an entire derivation: when a published stamp's anchor is on the chain, every leaf's anchor is on the chain in the same epoch, under the scoped anchor hash law and that random-function reading of `AnchorSpanSeed`.
+The algebraic unmerge relation can remove a fee leaf too (`unmerge_strips_fee`): coverage of the published bundle's fee descriptor places the bundle's own fee change among the published tachygrams (`BundleVerified.fee_change_published`) directly from the reconstructed tachygram set.
+Two results rule out double spends under the consensus rules and the hash calls the chain and derivations make, deriving each spend's nullifier pair and, across stamps, the second spend's exclusion lineage from modelled spend, unspent and QR steps, tying each spend to bundle coverage and the published stamp; the scaled-split and oversized-bucket cases above do not affect them. Within one stamp, `no_double_spend_in_stamp` takes the consensus rules and those hash calls and rules out two spends at distinct covered action indices of one bundle, whose carried pairs share the anchor-epoch nullifier and fail tachygram uniqueness. Across two stamps, `no_double_spend_of_covered_spends` takes the consensus rules (anchor membership, [anchor recency](./anchor.md#intra-block-state-vs-end-of-block-anchor), the [two-epoch duplicate scan](./tachygrams.md#consensus-validation), and non-empty duplicate-free stamps) and those hash calls, distinct from bundle verification, and assumes the note commitment's field value does not appear among any stamp's published tachygrams after the first spend's publication up to the second spend's anchor epoch, saying nothing about why it would reappear. `qa/fv/README.md` records the trust partition, source correspondence and remaining boundaries.
 
 ## Rerandomization at trust boundaries
 

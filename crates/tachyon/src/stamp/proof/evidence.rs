@@ -312,6 +312,7 @@ impl Step<Pasta> for EvidenceTreeLeafPair {
 ///
 /// Matching and copying the network fields preserves the validity of both
 /// roots, copied as `first` and `second`.
+/// See [`EvidenceTreeOpen`] for how a replayed bucket binds to them.
 #[derive(Debug)]
 pub struct EvidenceTreePairFuse;
 

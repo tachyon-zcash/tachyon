@@ -838,13 +838,17 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             .verify_proof(rng, app, action_digests.iter().copied())
     }
 
-    /// Verify everything about this bundle, returning the tachygram set
-    /// commitment that anchor advancement absorbs. Does not verify any
-    /// details about the provided adjuncts.
+    /// Verify this bundle's signatures, coverage and stamp proof, returning
+    /// the tachygram set commitment that anchor advancement absorbs. Does not
+    /// verify any details about the provided adjuncts.
     ///
     /// - Signatures are valid
     /// - The stamp covers this bundle and the adjuncts
-    /// - Proof is correct
+    /// - The stamp proof is valid
+    ///
+    /// Before accepting the stamp, the caller must also enforce the consensus
+    /// rules that nodes check against chain history (rules 1, 3, 4 and 5 of the
+    /// book's Proof Tree chapter, under Soundness).
     ///
     /// The adjuncts are the stripped bundles the stamp's
     /// [`adjuncts`](ProofStamp::adjuncts) lists, looked up by txid. This method
