@@ -10,8 +10,12 @@ fn anchor_span_seed_proves_a_stamp() {
     let anchor = Anchor::random(rng);
     let epoch = EpochIndex::new(3);
     let stamp = witness::anchor_span_seed(((), ()), anchor, epoch, &[Tachygram::random(rng)]);
+    // The wallet converts its own bridge hash with u = v = 0, absorbing the
+    // value the pool history folds.
+    let anchor_end = anchor.next_stamp(epoch, &stamp.2.commit()).unwrap();
 
     let (span, ()) = app.seed(rng, AnchorSpanSeed, stamp).unwrap();
+    assert_eq!(*span.data(), (anchor, anchor_end));
     assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
 }
 

@@ -52,6 +52,13 @@
 //!   [accumulators](crate::TachygramSetCommit) and [bridge
 //!   hashes](crate::primitives::TachygramSetBridge), and the [value commitment
 //!   binding assumption](crate::value::ValueCommitment#binding).
+//! - **Bridge generators.** Nobody knows a nontrivial relation among the nested
+//!   generators that either rank's bridge stage can reach, the wallet and
+//!   aggregator stages sharing one table. Only
+//!   [`AnchorSpanSeed`](pool::AnchorSpanSeed) uses this, together with each
+//!   rank's registered stage mask holding the other rank's coordinate degrees
+//!   to zero, which [setup checks](crate::gadgets::bridge_hash) at the pinned
+//!   Ragu revision.
 //! - **Challenge.** Ragu squeezes each step's challenge from a transcript hash
 //!   modelled as a random oracle, making the challenge uniform and independent
 //!   of prior transcript inputs.
@@ -109,7 +116,9 @@
 //!
 //! `anchor_next_stamp` absorbs an anchor wire, an
 //! [`EpochIndex`](crate::gadgets::epoch::EpochIndex) and two bridge hash wires
-//! tied by [Recursion](self#assumptions) to the last output slot's accumulator.
+//! tied by [Recursion](self#assumptions) to the last output slot's accumulator,
+//! except in [`AnchorSpanSeed`](pool::AnchorSpanSeed), which absorbs a point
+//! derived from them that only a pool-history anchor makes a bridge hash.
 //! Its polynomial is nonzero: the zero polynomial commits to the identity,
 //! which lacks affine coordinates for a bridge hash. Each step also rules out
 //! the constant one, as

@@ -24,7 +24,7 @@ $$
 B = [x(C)]G_i + [y(C)]G_j
 $$
 
-where $x(C)$ and $y(C)$ are the affine coordinates of $C$ in $\mathbb{F}_q$ and $G_i$ and $G_j$ are Ragu's fixed bridge-stage generators for those two coordinates. The coordinates need no reduction because $\mathbb{F}_q$ is Pallas's scalar field. The [evidence tree](./proof-tree.md#evidence-trees) uses the same construction for leaf contents commitments.
+where $x(C)$ and $y(C)$ are the affine coordinates of $C$ in $\mathbb{F}_q$ and $G_i$ and $G_j$ are Ragu's fixed bridge-stage generators for those two coordinates at the wallet's proving rank. An aggregator's bridge hash uses other generators, so [`AnchorSpanSeed`](./proof-tree.md#anchor-segments) converts its own to this one before absorbing it. The coordinates need no reduction because $\mathbb{F}_q$ is Pallas's scalar field. The [evidence tree](./proof-tree.md#evidence-trees) uses the same construction for leaf contents commitments.
 
 [^tachygrams]: The [tachygrams](./tachygrams.md) chapter gives the set commitment whose bridge hash the anchor absorbs, and the rule that full validation recomputes that commitment from the published tachygrams.
 

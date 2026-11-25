@@ -66,7 +66,7 @@ After the merges, `FeeFuse` applies the bundle's fee to those actions, adding th
 A bundle with no actions uses `FeeSeed` instead.
 
 Before publication the wallet can advance the composed stamp along more spans.
-`AnchorSpanSeed` takes a predecessor anchor, an epoch and one stamp's tachygram set from its prover, absorbs the epoch and the set's bridge hash into the predecessor to produce `anchor_end` as the sole root of its members polynomial, and holds the set's opening at $\zeta$ away from one to reject the empty set.
+`AnchorSpanSeed` takes a predecessor anchor, an epoch and one stamp's tachygram set from its prover, absorbs the epoch and the set's wallet-rank bridge hash into the predecessor to produce `anchor_end` as the sole root of its members polynomial, and holds the set's opening at $\zeta$ away from one to reject the empty set.
 `AnchorSpanFuse` equates `left.anchor_end` with `right.anchor_start` and checks that the combined members polynomial multiplies the two inputs'.
 For members polynomial $M$ and input anchor $a$, `ActionLift` and `TransactionLift` check
 
@@ -76,7 +76,7 @@ so $a$ must be the start or a member. Since $M$ records no root order, both step
 `TransactionLift` takes its output action set from the prover and equates it at $\zeta$ with the input stamp's.
 Wallets use spans published by consensus and sync services during the epoch and build their own for subsequent stamps.
 
-A wallet-built span can serve many transactions. Its builder compresses it, and an aggregator imports it at aggregator rank, rebuilding both span polynomials from history: the member anchors, and for a seed the absorbed stamp's tachygrams. `AnchorSpanFuse` and `TransactionLift` then run at aggregator rank on the imported span.
+A wallet-built span can serve many transactions. Its builder compresses it, and an aggregator imports it at aggregator rank, rebuilding both span polynomials from history: the member anchors, and for a seed the absorbed stamp's tachygrams. `AnchorSpanFuse` and `TransactionLift` then run at aggregator rank on the imported span. An aggregator can also seed its own spans: `AnchorSpanSeed` absorbs the same wallet-rank bridge hash at either rank.
 
 On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
@@ -155,7 +155,7 @@ A header asserts facts about its fields and two polynomial slots, not the publis
 
 ### Assumptions
 
-Under **recursion**, joint provers of a verified PCD know its step tree and satisfying wires; an extender is credited only with its own steps. **Poseidon** has fixed arity per tag and no known collision between distinct triples of tag, absorbed elements and squeeze position. `AnchorSpanSeed` alone also models stamp absorption as a random function. **Commitments** assume no known discrete-log relation among their generators, including the value commitment bases. An accumulator thus *determines* its polynomial, a bridge hash its accumulator and a value commitment its opening: producing distinct alternatives would give a collision or discrete-log relation. Each **challenge** is modelled as a random oracle output over the preceding commitments.
+Under **recursion**, joint provers of a verified PCD know its step tree and satisfying wires; an extender is credited only with its own steps. **Poseidon** has fixed arity per tag and no known collision between distinct triples of tag, absorbed elements and squeeze position. `AnchorSpanSeed` alone also models stamp absorption as a random function. **Commitments** assume no known discrete-log relation among their generators, including the value commitment bases. An accumulator thus *determines* its polynomial, a bridge hash its accumulator and a value commitment its opening: producing distinct alternatives would give a collision or discrete-log relation. `AnchorSpanSeed` alone also assumes no known relation among the **bridge generators** either rank's bridge stage can reach, and that each rank's registered stage mask holds the other rank's coordinate degrees to zero, which setup checks at the pinned Ragu revision. Each **challenge** is modelled as a random oracle output over the preceding commitments.
 
 **Rerandomization (privacy only).** Wallet privacy relies on rerandomization hiding the input proof beyond the public header, online polynomials and shared bootstrap proof.
 
@@ -184,7 +184,7 @@ $$
 
 at a canonical $a'$, distinct tags rule out a boundary digest, so the accepted chain also produced $a'$ by a stamp absorption.
 Under the Poseidon assumption both absorptions match in every input, making $a$ canonical, $e$ the containing block's epoch, and $B$ the bridge hash consensus computed.
-Under the Commitments assumption, the prover's committed polynomial equals that published stamp's tachygram set polynomial.
+Under the Commitments assumption, the prover's committed polynomial equals that published stamp's tachygram set polynomial. `AnchorSpanSeed` absorbs its own bridge hash converted to the wallet rank's, so there the same conclusion also uses the bridge generator assumption: matching $B$ makes the step's own bridge hash canonical at either rank.
 The same matching applies to any boundary digest asserted by a header.
 
 Consequently, any chain of stamp absorptions ending at a canonical anchor walks back step-for-step along the accepted chain's own absorptions.
@@ -192,7 +192,7 @@ Because boundary digests separate epochs on the accepted chain and open each epo
 
 ### Anchor spans {#anchor-segments}
 
-An `AnchorSpan`'s member roots are the anchors after `anchor_start` on its stamp chain to `anchor_end`. `ActionLift` and `TransactionLift` move from the start or a member to the end, so a chain connects the old anchor to the new. By the [anchor-copy and merge rules](#stamp-construction), every spend in a canonically anchored stamp came from a canonical anchor of the same epoch, no later than the stamp's.
+An `AnchorSpan`'s member roots are the anchors after `anchor_start` on its chain of absorptions to `anchor_end`. Off the accepted chain an absorbed point need not be any bridge hash; a span ending at a canonical anchor is a stamp chain by the matching above, and every span consumer passes its end on to an anchor consensus checks. `ActionLift` and `TransactionLift` move from the start or a member to the end, so a chain connects the old anchor to the new. By the [anchor-copy and merge rules](#stamp-construction), every spend in a canonically anchored stamp came from a canonical anchor of the same epoch, no later than the stamp's.
 
 ### A sealed bucket covers its epoch
 

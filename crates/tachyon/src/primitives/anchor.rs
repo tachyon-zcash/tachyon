@@ -33,8 +33,9 @@ pub enum AnchorError {
 /// entry advances its anchor $a$ by one digest:
 ///
 /// - Publishing a stamp in epoch $e$ [absorbs](poseidon::anchor_next_stamp)
-///   $a$, $e$ and both coordinates of the stamp accumulator's canonical [bridge
-///   hash](super::TachygramSetBridge) $B$, giving $\mathsf{st}(a,e,B)$.
+///   $a$, $e$ and both coordinates of the stamp accumulator's canonical
+///   wallet-rank [bridge hash](super::TachygramSetBridge) $B$, giving
+///   $\mathsf{st}(a,e,B)$.
 /// - At the boundary into $e\ge1$, the previous epoch's final anchor $a$ gives
 ///   the new entry anchor $\mathsf{ep}(a,e)$ via
 ///   [`anchor_next_epoch`](poseidon::anchor_next_epoch).
@@ -42,8 +43,11 @@ pub enum AnchorError {
 /// # Injectivity
 ///
 /// [Poseidon](poseidon#injectivity) binds the entry kind, predecessor and
-/// integer epoch (at most `EPOCH_MAX`). For a stamp it also binds the bridge
-/// hash, which determines the accumulator and polynomial. Walking back from
+/// integer epoch (at most `EPOCH_MAX`). For a stamp it also binds the absorbed
+/// point, in a pool history the canonical wallet-rank bridge hash, which
+/// determines the accumulator and polynomial. A step can absorb a point that
+/// is no bridge hash into an anchor outside any pool history
+/// ([`AnchorSpan`](crate::stamp::proof::pool::AnchorSpan)). Walking back from
 /// a shared anchor thus matches ordered entries to genesis. No later entry
 /// equals genesis: stamp absorptions use another tag and
 /// [`next_epoch`](Self::next_epoch) rejects epoch zero. Hence matching anchors

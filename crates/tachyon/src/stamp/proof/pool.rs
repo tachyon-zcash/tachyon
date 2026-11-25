@@ -217,22 +217,29 @@ impl Header<Fp> for NoteUnspent {
 /// # Injectivity
 ///
 /// [`AnchorSpanSeed`] and [`AnchorSpanFuse`] output this header. Every verified
-/// `AnchorSpan` asserts a prover-known [stamp chain](super#chains-in-a-step)
-/// of $k \geq 1$ absorptions from `anchor_start` to `anchor_end` whose anchors
-/// after `anchor_start` form the [`AnchorSetPoly`]
-/// $M(X) = \prod_{i=1}^{k} (X - a_i)$.
+/// `AnchorSpan` asserts a prover-known chain of $k \geq 1$ stamp absorptions
+/// $a_i = \mathsf{st}(a_{i-1}, e_i, B_i)$ from `anchor_start` to `anchor_end`
+/// whose anchors after `anchor_start` form the [`AnchorSetPoly`]
+/// $M(X) = \prod_{i=1}^{k} (X - a_i)$. Each $B_i$ lies in $H_i + \langle D_1,
+/// D_2 \rangle$ for a bridge hash $H_i$ of a polynomial other than the constant
+/// one and the [bridge generator differences](gadgets::bridge_hash) $D_1, D_2$
+/// ([`AnchorSpanSeed`]). It need not itself be a bridge hash, so an off-history
+/// span need not be a [stamp chain](super#chains-in-a-step).
 ///
 /// Provers choose `anchor_start` and each absorption's epoch freely, without
-/// equating epochs or constraining history behind `anchor_start`. No
-/// absorption's polynomial equals the constant one, matching
-/// [`Anchor::next_stamp`] rejecting the empty set in a pool history.
+/// equating epochs or constraining history behind `anchor_start`.
 ///
 /// As a [set polynomial](crate::collections::multiset), $M$ determines $a_1,
-/// \dots, a_k$ with no extra roots. Each root connects to `anchor_end` by a
-/// stamp chain, `anchor_end` determines every preceding absorption
-/// ([`Anchor`]), and no $a_i$ is a boundary digest, so any span ending on a
-/// pool-history anchor covers a boundary-free run of stamp entries in that
-/// history.
+/// \dots, a_k$ with no extra roots. Each root connects to `anchor_end` by such
+/// a chain, and no $a_i$ is a boundary digest. If `anchor_end` is a
+/// pool-history anchor, it determines every preceding absorption ([`Anchor`]),
+/// so each $B_i$ is the canonical wallet-rank bridge hash of a history stamp,
+/// and [`AnchorSpanSeed`] makes each polynomial that stamp's. Such a span
+/// covers a boundary-free run of stamp entries in that history. Every consumer
+/// ([`AnchorSpanFuse`],
+/// [`TransactionLift`](super::transaction::TransactionLift)
+/// and [`ActionLift`](super::transaction::ActionLift)) passes `anchor_end` on
+/// to an anchor that consensus checks against history.
 ///
 /// No consumer reads the second slot, which holds the stamp polynomial for its
 /// bridge hash at [`AnchorSpanSeed`] and the constant one at
@@ -281,14 +288,31 @@ impl Header<Fp> for AnchorSpan {
 /// This step requires a stronger premise than collision resistance: it models
 /// the stamp absorption digest as a random function.
 ///
-/// Let $N$ be the proving rank's slot capacity in coefficients ($2^{13}$ at
-/// wallet rank). Except with probability at most $N \cdot T \cdot Q/p$ across
-/// $T$ challenges and $Q$ stamp absorption digests, the member polynomial $M$
-/// equals $X - a$ as [`AnchorSpan`] asserts for a single-absorption chain.
+/// Let $N$ be the proving rank's slot capacity in coefficients: $2^{13}$ at
+/// wallet rank and $2^{15}$ at aggregator rank. Except with probability at most
+/// $N \cdot T \cdot Q/p$ across $T$ challenges and $Q$ stamp absorption
+/// digests, the member polynomial $M$ equals $X - a$ as [`AnchorSpan`] asserts
+/// for a single-absorption chain.
 ///
-/// The step [adds an absorption](super#chains-in-a-step) $a$ of prover-chosen
-/// `anchor_start` and `epoch` with the stamp polynomial, holding that
-/// polynomial's opening at $\zeta$ away from one to rule out the constant one.
+/// The step absorbs $a = \mathsf{st}(\texttt{anchor\_start}, e, B)$ for
+/// prover-chosen `anchor_start` and `epoch` $e$, holding the stamp polynomial's
+/// opening at $\zeta$ away from one to rule out the constant one. $B$ is the
+/// [wallet-rank
+/// conversion](gadgets::bridge_hash::BridgeConversion::wallet_bridge)
+/// $H + u D_1 + v D_2$ of the step's own bridge hash $H$ of the stamp
+/// polynomial, so the wallet and aggregator both absorb the value
+/// [`Anchor::next_stamp`] folds. Nothing in the step authenticates $B$; for
+/// witnessed `u` and `v` it is any point of $H + \langle D_1, D_2 \rangle$.
+///
+/// Suppose $a$ is a pool-history anchor. By Poseidon collision resistance, $B$
+/// is the history stamp's canonical wallet-rank bridge hash $x W_1 + y W_2$.
+/// Under the [bridge generator assumption](super#assumptions), compare
+/// coefficients. $H$ carries $(u, v)$ at the aggregator coordinate degrees,
+/// $(x - u, y - v)$ at the wallet degrees and zero elsewhere. Each rank's stage
+/// mask holds the other rank's degrees to zero, which setup checks against
+/// Ragu's registered mask, so the wallet has $u = v = 0$ and the aggregator
+/// $(u, v) = (x, y)$. Either way $H$ is canonical and the stamp slot commits to
+/// the history stamp's accumulator.
 ///
 /// Although $M$ is committed before $\zeta$ and the circuit equates $M(\zeta)$
 /// with $\zeta - a$, none of $a$'s three inputs is fixed before $\zeta$. This
@@ -372,15 +396,16 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanSeed {
         let stamp_at_z = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         let one = Element::constant(dr, Fp::ONE);
         stamp_at_z.sub(dr, &one).enforce_nonzero(dr)?;
-        let anchor = poseidon::circuit::anchor_next_stamp(
+        let stamp_bridge = gadgets::bridge_hash::CONVERSION.wallet_bridge(
             dr,
-            &previous,
-            &epoch_element,
-            &[
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            [oracles.bridge_hash().x(), oracles.bridge_hash().y()],
+            witness.as_ref().map(|fields| {
+                let commitment = fields.2.commit().into();
+                (commitment, bridge_hash(commitment))
+            }),
         )?;
+        let anchor =
+            poseidon::circuit::anchor_next_stamp(dr, &previous, &epoch_element, &stamp_bridge)?;
         // The span's sole member is the stamp absorption above, whose inputs
         // are not fixed before the challenge (see the step's Soundness section).
         let members = oracles.output(AnchorSetPoly::SLOT).open(dr, &z)?;
