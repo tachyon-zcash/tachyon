@@ -21,12 +21,28 @@ use crate::{
     value,
 };
 
-/// Header binding an output's tachygram pair and value to one note
+/// An output's tachygram pair and value commitment, derived from one note
 /// (wallet-only).
 ///
-/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
-/// value commitment `cv`, all derived from the same note. `rk` is produced
-/// downstream at [`OutputAction`](super::stamp::OutputAction).
+/// [`OutputAction`](super::stamp::OutputAction) reads all three fields and
+/// derives `rk`.
+///
+/// # Injectivity
+///
+/// [`OutputBind`] outputs this header. Every verified `OutputHeader` asserts
+/// that its prover knows a note $(\mathsf{rcm}, \mathsf{pk}, v, \psi)$ with
+/// integer $v$ in `0..=MAX_MONEY` and an integer $r$ with $0 < r < 2^{254}$.
+///
+/// The [note commitment](crate::digest::poseidon::note_commitment) `cm` and
+/// [padding tachygram](crate::digest::poseidon::pad_tachygram) `pad` each
+/// determine all four fields under distinct tags, and thus determine each
+/// other. The [value commitment](crate::value::ValueCommitment#binding)
+/// $\mathsf{cv}=\[-v\]\mathcal{V}+\[r\]\mathcal{R}$ binds the opening $(-v,r)$.
+///
+/// Both `cm` and `pad` are nonzero, ruling out roots at zero
+/// ([`Stamp`](super::stamp::Stamp#injectivity)), and $\mathsf{rcm}$ is nonzero.
+/// Nothing here constrains $\mathsf{pk}$ to a derived payment key, which
+/// [`NoteSeed`](super::delegation::NoteSeed) proves when spending the note.
 #[derive(Debug)]
 pub struct OutputHeader;
 
@@ -72,6 +88,17 @@ impl Header<Fp> for OutputHeader {
 /// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
 /// Two permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
+///
+/// # Soundness
+///
+/// Both digests use the same four note wires, without inputs or a challenge.
+/// `Note::commitment` excludes zero `rcm`; this step excludes zero `cm` and
+/// `pad`. Neither `pk` nor `psi` has a separate constraint.
+/// Multiplying [`R_BASE`](struct@fixed_base::R_BASE) by 254 freely chosen
+/// Boolean blind wires computes the blind point subject to the table's range.
+/// `NEG_V_BASE.mul_and_add` adds the negated value term from
+/// the same 51 bits that encode the
+/// [amount](gadgets::value::Positive::from_bits) for both digests.
 #[derive(Debug)]
 pub struct OutputBind;
 
@@ -132,6 +159,8 @@ impl Step<Pasta> for OutputBind {
         };
         let cm = note.commitment(dr)?;
         let pad = note.pad_tachygram(dr)?;
+        // Zero produces the factor `X` regardless of tachygram kind, so hold
+        // both nonzero.
         cm.clone().enforce_nonzero(dr)?;
         pad.clone().enforce_nonzero(dr)?;
         // The blind's 254 bits are free: nothing else binds rcv, and their

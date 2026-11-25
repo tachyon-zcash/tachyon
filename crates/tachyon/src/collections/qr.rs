@@ -5,6 +5,13 @@
 //! attests its class by $r^2 = m \cdot (x + R)$, with multiplier $m = 1$ on
 //! the residue side and $m = c$ on the other, for a fixed non-residue $c$.
 //!
+//! ## Sides
+//!
+//! For $x+R\ne0$, multiplying by [`QUADRATIC_NON_RESIDUE`] exchanges squares
+//! and non-residues. Exactly one multiplier therefore admits a class root:
+//! $1$ for a square, $c$ for a non-residue. At $x=-R$ both admit root zero;
+//! excluding zero on the non-residue side assigns every value exactly one side.
+//!
 //! ## Class decomposition
 //!
 //! Let $q_0$ and $q_1$ be the non-residue and residue set polynomials.
@@ -15,9 +22,10 @@
 //!   u(X)^2 - m \cdot (X + R) = q(X) \cdot h(X).
 //! $$
 //!
-//! The exceptional value $-R$ satisfies the identity with root $0$ under
-//! either multiplier. The condition $q_0(-R) \neq 0$ keeps it on the residue
-//! side.
+//! At each field root $x$ of $q$, the identity gives $u(x)^2=m(x+R)$.
+//! Thus every root has the indicated side, provided $q_0(-R)\ne0$ excludes
+//! the ambiguous root from the non-residue side. This gives no class
+//! information about non-roots.
 
 extern crate alloc;
 
@@ -35,8 +43,11 @@ use ragu::{
 
 use crate::pasta::Fp;
 
-/// The least quadratic non-residue of the Pallas base field. Distinct from
-/// the cubic non-residue the sequence encoding uses.
+/// The least quadratic non-residue of the Pallas base field, $c = 5$. Distinct
+/// from the cubic non-residue the sequence encoding uses.
+///
+/// The Legendre symbol is multiplicative, so $c \cdot (x + R)$ is a square
+/// exactly when $x + R$ is zero or a non-residue.
 pub(crate) const QUADRATIC_NON_RESIDUE: Fp = Fp::new(ragu::udon::fp_hex!(
     "0x0000000000000000000000000000000000000000000000000000000000000005"
 ));

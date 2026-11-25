@@ -14,8 +14,8 @@
 //!
 //! where $c = 2$ is selected because it is the smallest cubic non-residue.
 //!
-//! Because $i + 1 \neq 0$ and $c$ is not a cube in $\mathbb{F}_p$, the cubic
-//! $F_{i,m}(X)$ has no root in $\mathbb{F}_p$ and is therefore irreducible.
+//! The rootless cubic $Y^3-c$ remains irreducible under the invertible
+//! substitution $Y=m+(i+1)X$, since $i+1\ne0$.
 //!
 //! ## Product composition
 //!
@@ -25,49 +25,29 @@
 //!   S(X) = \prod_{(i,m) \in S}{F_{i,m}(X)}
 //! $$
 //!
-//! Combined indexed multisets will maintain input multiplicity. The inputs
-//! may be contiguous, disjoint, or overlapping.
+//! Multiplication adds multiplicities even when the inputs overlap.
 //!
 //! ## Quotient decomposition
 //!
-//! Since a union is a product of irreducible factors, we may demonstrate
-//! correct division to confirm membership.
-//!
-//! $$
-//!   \begin{aligned}
-//!
-//!   Q \uplus R &= S
-//!       &\quad \iff &\quad
-//!   &R &= S \setminus Q
-//!
-//!   \\ \\
-//!
-//!   Q(X) \cdot R(X) &= S(X)
-//!       &\quad \iff &\quad
-//!   &R(X) &= \frac{S(X)}{Q(X)}
-//!
-//!   \end{aligned}
-//! $$
-//!
-//! Sequences $Q$ and $R$ combine to produce $S$, or, subsequence $R$ is
-//! extracted from $S$ by complement $Q$. Select a challenge and evaluate.
+//! To show that $R$ is a sub-multiset of $S$, commit its complement $Q$ and
+//! check $Q(X)R(X)=S(X)$ at the challenge.
 //!
 //! ## Injectivity
 //!
-//! Single-member encodings collide when the ratio of their linear terms is a
-//! cube root of unity.
+//! When $i_\mathsf{max} + 1 < \lfloor\sqrt{p/3}\rfloor$, $S$ determines its
+//! multiset of $(i, m)$ tuples, and any divisor of $S$ is a scalar multiple of
+//! a sub-multiset's encoding. The bound exceeds $2^{126}$. Every step indexes
+//! by an epoch, which is at most `EPOCH_MAX`.
 //!
-//! Precisely, if
+//! Unique factorization fixes each irreducible factor up to a scalar. Write
+//! $L_k=m_k+a_kX$, with $a_k=i_k+1$. If $L_1^3-c=\lambda(L_2^3-c)$, then
+//! differentiation gives $a_1L_1^2=\lambda a_2L_2^2$. Thus the linear terms
+//! have the same root. At that root $-c=-\lambda c$, so $\lambda=1$ and
+//! $L_1/L_2$ is a cube root of unity.
 //!
-//! $$
-//!   \frac{m_1 + (i_1+1)X}{m_2 + (i_2+1)X} \in \{1, \zeta, \zeta^2\}
-//! $$
-//!
-//! then $(i_1, m_1)$ cannot be distinguished from $(i_2, m_2)$ in an
-//! indexed multiset.
-//!
-//! Specifying $i_\mathsf{max} + 1$ below $\lfloor\sqrt{p/3}\rfloor$ is
-//! sufficient to prevent collisions.
+//! A nontrivial ratio $\omega=a_1/a_2$ satisfies $\omega^2+\omega+1=0$,
+//! so $a_1^2+a_1a_2+a_2^2\equiv0\pmod p$. But $1\le a_k<\sqrt{p/3}$ makes
+//! that sum positive and below $p$. Hence $L_1=L_2$ and both tuples agree.
 
 #![allow(clippy::min_ident_chars, reason = "just for fun")]
 

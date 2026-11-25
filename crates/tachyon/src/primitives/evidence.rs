@@ -6,5 +6,12 @@ use crate::pasta::Fp;
 ///
 /// A one-leaf tree's root is the leaf digest itself, so every subtree root
 /// along a path has this type.
+///
+/// # Injectivity
+///
+/// [Poseidon](crate::digest::poseidon#injectivity) binds each valid root to
+/// its leaf or node tag and inputs, hence to the tree shape and every bucket
+/// header. Opening a node as a leaf requires a collision. The wrapper accepts
+/// any field element.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct EvidenceTreeRoot(pub Fp);

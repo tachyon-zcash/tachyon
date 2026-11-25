@@ -28,6 +28,26 @@ pub enum AnchorError {
 }
 
 /// Running anchor over the consensus state.
+///
+/// A pool history starts at [`Anchor::default`], $\mathsf{ep}(0,0)$. Each
+/// entry advances its anchor $a$ by one digest:
+///
+/// - Publishing a stamp in epoch $e$ [absorbs](poseidon::anchor_next_stamp)
+///   $a$, $e$ and both coordinates of the stamp accumulator's canonical [bridge
+///   hash](super::TachygramSetBridge) $B$, giving $\mathsf{st}(a,e,B)$.
+/// - At the boundary into $e\ge1$, the previous epoch's final anchor $a$ gives
+///   the new entry anchor $\mathsf{ep}(a,e)$ via
+///   [`anchor_next_epoch`](poseidon::anchor_next_epoch).
+///
+/// # Injectivity
+///
+/// [Poseidon](poseidon#injectivity) binds the entry kind, predecessor and
+/// integer epoch (at most `EPOCH_MAX`). For a stamp it also binds the bridge
+/// hash, which determines the accumulator and polynomial. Walking back from
+/// a shared anchor thus matches ordered entries to genesis. No later entry
+/// equals genesis: stamp absorptions use another tag and
+/// [`next_epoch`](Self::next_epoch) rejects epoch zero. Hence matching anchors
+/// have identical histories and no history repeats an anchor.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
@@ -110,9 +130,10 @@ impl Anchor {
 }
 
 impl Default for Anchor {
-    /// The entry anchor of epoch zero is `H_epoch(0, 0)`. Its fold input is
-    /// zero, which is no chain vertex; [`Anchor::next_epoch`] rejects index
-    /// zero, so no crossing produces it.
+    /// The genesis value $\mathsf{ep}(0, 0)$, the entry anchor of epoch zero.
+    ///
+    /// No other anchor of a pool history equals it. See
+    /// [Injectivity](Anchor#injectivity).
     fn default() -> Self {
         Self(*ANCHOR_GENESIS)
     }
