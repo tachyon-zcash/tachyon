@@ -219,8 +219,7 @@ flowchart LR
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
             value_balance
-            action@{ shape: st-rect, label: "actions (cv, rk)" }
-            action_auth["action_auth (signature, pair) tuples"]
+            action@{ shape: st-rect, label: "actions (descriptor, signature, pair)" }
             cv_feemax
             binding_sig
             memo_2[memo]
@@ -272,7 +271,7 @@ flowchart LR
     pczt --> join
     pairs --> join
     proved_stamp & chosen_fee & proved_change --> join
-    join --> action & action_auth & binding_sig & stamp & fee & cm_change
+    join --> action & binding_sig & stamp & fee & cm_change
 
     other1 --> other2
     pczt ~~~ sighash
@@ -452,7 +451,7 @@ end
 critical stamp
     note over User: bundle::Plan::assemble(signatures, proof)
     note over User: panic if the plan, signature, and pair descriptor keys differ
-    note over User: join maps in descriptor order into actions[] and action_auth[] (signature, pair) tuples
+    note over User: join maps in descriptor order into actions[] (descriptor, signature, pair) records
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
 break
@@ -461,7 +460,7 @@ break
 end
 
 create participant Consensus
-note over User: transaction { actions[], action_auth[], value_balance, cv_feemax, binding_sig, memo, fee, cm_change, stamp { anchor, tachygram_set, adjuncts, proof } }
+note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, fee, cm_change, stamp { anchor, tachygram_set, adjuncts, proof } }
 deactivate User
 destroy User
 User ->> Consensus: transaction

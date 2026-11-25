@@ -144,12 +144,7 @@ fn assemble_joins_by_descriptor() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let pairs: BTreeMap<_, _> = original
-        .actions
-        .iter()
-        .copied()
-        .zip(original.action_auth.iter().map(|&(_, pair)| pair))
-        .collect();
+    let pairs: BTreeMap<_, _> = original.descriptor_pairs().collect();
     let joined = plan.assemble(
         signatures,
         (
@@ -159,15 +154,7 @@ fn assemble_joins_by_descriptor() {
             original.fee.v_fee,
         ),
     );
-    assert_eq!(joined.actions, pairs.keys().copied().collect::<Vec<_>>());
-    assert_eq!(
-        joined
-            .action_auth
-            .iter()
-            .map(|&(_, pair)| pair)
-            .collect::<Vec<_>>(),
-        pairs.values().copied().collect::<Vec<_>>()
-    );
+    assert!(joined.descriptor_pairs().eq(pairs));
     joined
         .verify(rng, app, &mock_sighash(joined.commitment()), &[])
         .unwrap();
@@ -237,7 +224,6 @@ fn zero_action_bundle_requires_a_zero_balance() {
     for value_balance in [0i64, 1] {
         let bundle = Bundle {
             actions: vec![],
-            action_auth: vec![],
             value_balance: value::Balance::try_from(value_balance).unwrap(),
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
@@ -320,8 +306,14 @@ fn duplicated_spend_cannot_inflate() {
         .derive_bsk_private()
         .sign(rng, &sighash);
     let bundle = Bundle {
-        actions: vec![descriptor, descriptor],
-        action_auth: vec![(sig, pair), (sig, pair)],
+        actions: vec![
+            action::Authorized {
+                descriptor,
+                signature: sig,
+                pair
+            };
+            2
+        ],
         value_balance,
         binding_sig,
         memo: Vec::new(),
@@ -366,22 +358,11 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_desc = becomes_based
-        .actions
-        .iter()
-        .copied()
-        .zip(becomes_based.action_auth.iter().map(|&(_, pair)| pair))
-        .collect();
+    let based_desc = becomes_based.descriptor_pairs().collect();
     let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
     let innocent_desc = [&autonome_a, &autonome_b]
         .into_iter()
-        .flat_map(|bundle| {
-            bundle
-                .actions
-                .iter()
-                .copied()
-                .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
-        })
+        .flat_map(Bundle::descriptor_pairs)
         .collect();
     let innocent_fees = [&autonome_a, &autonome_b]
         .into_iter()
@@ -418,8 +399,8 @@ fn based_aggregate_with_two_adjuncts() {
         let mut edited = becomes_based.clone();
         let mut adjunct = adjunct_a.clone();
         mem::swap(
-            &mut edited.action_auth[0].1.1,
-            &mut adjunct.action_auth[0].1.1,
+            &mut edited.actions[0].pair.1,
+            &mut adjunct.actions[0].pair.1,
         );
         assert_matches!(
             edited.verify(rng, app, &sighash, &[&adjunct, &adjunct_b]),
@@ -451,6 +432,22 @@ fn based_aggregate_with_two_adjuncts() {
 }
 
 #[test]
+fn read_requires_a_signature_and_pair_for_every_action() {
+    let app = &application();
+    let (_, bundle) = spend(app);
+    let stripped = bundle.strip();
+    let mut bytes = Vec::new();
+    stripped.write(&mut bytes).unwrap();
+    // End the input one record short in each authorization phase.
+    let pairs_end = bytes.len() - 8 - 32;
+    let sigs_end = pairs_end - 64 * stripped.actions.len() - 64;
+    for end in [sigs_end, pairs_end] {
+        let err = Bundle::<StrippedStamp>::read(&bytes[..end - 64]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+}
+
+#[test]
 fn autonome_verify_rejects_flipped_signatures() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
@@ -469,11 +466,14 @@ fn autonome_verify_rejects_flipped_signatures() {
     );
 
     let mut action_bytes = Vec::new();
-    bundle.action_auth[0].0.write(&mut action_bytes).unwrap();
+    bundle.actions[0]
+        .signature
+        .write(&mut action_bytes)
+        .unwrap();
     action_bytes[0] ^= 0xFF;
     let bad_sig = action::Signature::read(&mut action_bytes.as_slice()).unwrap();
     let mut bad_action = bundle;
-    bad_action.action_auth[0].0 = bad_sig;
+    bad_action.actions[0].signature = bad_sig;
     assert_matches!(
         bad_action.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Signatures(SignatureError::Action(sig))) if sig == bad_sig
@@ -485,8 +485,8 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
-    let (first, rest) = bundle.action_auth.split_at_mut(1);
-    mem::swap(&mut first[0].1.1, &mut rest[0].1.1);
+    let (first, rest) = bundle.actions.split_at_mut(1);
+    mem::swap(&mut first[0].pair.1, &mut rest[0].pair.1);
     assert_matches!(
         bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
         Err(VerificationError::Disproved)
@@ -507,7 +507,6 @@ fn stamped_bundle_round_trips() {
     );
     assert_eq!(decoded.actions, stamped.actions);
     assert_eq!(decoded.value_balance, stamped.value_balance);
-    assert_eq!(decoded.action_auth, stamped.action_auth);
     assert_eq!(decoded.fee.v_fee, stamped.fee.v_fee);
     assert_eq!(decoded.fee_auth, stamped.fee_auth);
     assert_eq!(decoded.stamp.anchor, stamped.stamp.anchor);
@@ -517,7 +516,6 @@ fn stamped_bundle_round_trips() {
     let compressed = Bundle {
         stamp: stamped.stamp.compress(rng, app).unwrap(),
         actions: stamped.actions,
-        action_auth: stamped.action_auth,
         fee: stamped.fee,
         fee_auth: stamped.fee_auth,
         value_balance: stamped.value_balance,
@@ -532,7 +530,6 @@ fn stamped_bundle_round_trips() {
     assert_eq!(erased_buf, bytes);
     let mut block = Bundle::<ProofStamp<stamp::Compressed>>::read(&*bytes).unwrap();
     assert_eq!(block.actions, decoded.actions);
-    assert_eq!(block.action_auth, decoded.action_auth);
     assert_eq!(block.fee.v_fee, decoded.fee.v_fee);
     assert_eq!(block.fee_auth, decoded.fee_auth);
     assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
@@ -581,14 +578,12 @@ fn read_preserves_action_order() {
         &cv_feemax.into(),
         &blake2b::memo_digest(&[]),
     ));
-    let actions = items.iter().map(|item| item.0).collect();
-    let action_auth = items
+    let actions = items
         .iter()
-        .map(|item| {
-            (
-                private::ActionSigningKey::new(&item.1).sign(rng, &sighash),
-                (Tachygram::random(rng), Tachygram::random(rng)),
-            )
+        .map(|item| action::Authorized {
+            descriptor: item.0,
+            signature: private::ActionSigningKey::new(&item.1).sign(rng, &sighash),
+            pair: (Tachygram::random(rng), Tachygram::random(rng)),
         })
         .collect();
     let binding_sig = Plan::new(vec![], vec![plan_a, plan_b], max_fee_note)
@@ -597,7 +592,6 @@ fn read_preserves_action_order() {
 
     let bundle = Bundle {
         actions,
-        action_auth,
         value_balance,
         binding_sig,
         memo: Vec::new(),
@@ -643,7 +637,6 @@ fn stripped_bundle_round_trips() {
         assert_eq!(decoded.commitment(), stripped.commitment());
         assert_eq!(decoded.auth_digest(), stripped.auth_digest());
         assert_eq!(decoded.actions, stripped.actions);
-        assert_eq!(decoded.action_auth, stripped.action_auth);
         assert_eq!(decoded.fee.v_fee, stripped.fee.v_fee);
         assert_eq!(decoded.fee_auth, stripped.fee_auth);
         decoded
@@ -670,7 +663,7 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     let mut offset = 9 + expected.len();
     for action in &bundle.actions {
         expected.clear();
-        action.write(&mut expected).unwrap();
+        action.descriptor.write(&mut expected).unwrap();
         assert_eq!(&bytes[offset..offset + 64], expected);
         offset += 64;
     }
@@ -683,9 +676,9 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     offset += 1;
     assert_eq!(&bytes[offset..offset + 3], bundle.memo);
     offset += 3;
-    for &(sig, _) in &bundle.action_auth {
+    for action in &bundle.actions {
         expected.clear();
-        sig.write(&mut expected).unwrap();
+        action.signature.write(&mut expected).unwrap();
         assert_eq!(&bytes[offset..offset + 64], expected);
         offset += 64;
     }
@@ -693,8 +686,8 @@ fn phase_order_wire_offsets_and_empty_stripped_trailer() {
     bundle.binding_sig.write(&mut expected).unwrap();
     assert_eq!(&bytes[offset..offset + 64], expected);
     offset += 64;
-    for &(_, pair) in &bundle.action_auth {
-        for tachygram in <[Tachygram; 2]>::from(pair) {
+    for action in &bundle.actions {
+        for tachygram in <[Tachygram; 2]>::from(action.pair) {
             assert_eq!(&bytes[offset..offset + 32], &Fp::from(tachygram).to_bytes());
             offset += 32;
         }
@@ -732,8 +725,8 @@ fn read_bounds_the_fee() {
     // This fixture has an empty memo, whose CompactSize occupies one byte.
     assert_eq!(bundle.memo, Vec::<u8>::new());
     let effecting_end = 9 + count.len() + 64 * bundle.actions.len() + 32 + 1;
-    let signing_end = effecting_end + 64 * bundle.action_auth.len() + 64;
-    let fee_at = signing_end + 64 * bundle.action_auth.len();
+    let signing_end = effecting_end + 64 * bundle.actions.len() + 64;
+    let fee_at = signing_end + 64 * bundle.actions.len();
     let mut stripped = Vec::new();
     bundle.strip().write(&mut stripped).unwrap();
 
@@ -845,17 +838,17 @@ fn bundles_round_trip_at_action_count_limits() {
         // descriptor multiplicity; those belong to later verification.
         let bundle = Bundle {
             value_balance: value::Balance::ZERO,
-            actions: vec![descriptor; n],
-            action_auth: (0..n)
+            actions: (0..n)
                 .map(|i| {
                     let first = u64::try_from(2 * i + 1).unwrap();
-                    (
+                    action::Authorized {
+                        descriptor,
                         signature,
-                        (
+                        pair: (
                             Tachygram::from(Fp::from(first)),
                             Tachygram::from(Fp::from(first + 1)),
                         ),
-                    )
+                    }
                 })
                 .collect(),
             fee: fee::Descriptor {
@@ -874,7 +867,6 @@ fn bundles_round_trip_at_action_count_limits() {
             Bundle::<StrippedStamp>::try_from(TachyonBundle::read(&*bytes).unwrap()).unwrap(),
         ] {
             assert_eq!(decoded.actions, bundle.actions);
-            assert_eq!(decoded.action_auth, bundle.action_auth);
             assert_eq!(decoded.fee_auth, bundle.fee_auth);
             let mut round_trip = Vec::new();
             decoded.write(&mut round_trip).unwrap();
@@ -883,7 +875,6 @@ fn bundles_round_trip_at_action_count_limits() {
         let proof_bundle = Bundle {
             value_balance: bundle.value_balance,
             actions: bundle.actions,
-            action_auth: bundle.action_auth,
             fee: bundle.fee,
             fee_auth: bundle.fee_auth,
             binding_sig: bundle.binding_sig,
@@ -894,7 +885,7 @@ fn bundles_round_trip_at_action_count_limits() {
         proof_bundle.write(&mut bytes).unwrap();
         let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
         assert_eq!(decoded.actions.len(), n);
-        assert_eq!(decoded.action_auth, proof_bundle.action_auth);
+        assert_eq!(decoded.actions, proof_bundle.actions);
         let mut round_trip = Vec::new();
         decoded.write(&mut round_trip).unwrap();
         assert_eq!(round_trip, bytes);
@@ -960,7 +951,7 @@ fn auth_digest_invariants() {
     refeed.fee.v_fee = value::Positive::try_from(u64::from(stripped.fee.v_fee) + 1).unwrap();
     assert_ne!(refeed.auth_digest(), stripped.auth_digest());
     let mut stripped_pair = stripped.clone();
-    stripped_pair.action_auth[0].1 = (Tachygram::random(rng), Tachygram::random(rng));
+    stripped_pair.actions[0].pair = (Tachygram::random(rng), Tachygram::random(rng));
     let mut stripped_change = stripped.clone();
     stripped_change.fee_auth = Tachygram::random(rng);
     for edited in [stripped_pair, stripped_change] {
@@ -972,9 +963,9 @@ fn auth_digest_invariants() {
     let mut fee = stamped.clone();
     fee.fee.v_fee = value::Positive::try_from(u64::from(stamped.fee.v_fee) + 1).unwrap();
     let mut pair = stamped.clone();
-    pair.action_auth[0].1 = (Tachygram::random(rng), Tachygram::random(rng));
+    pair.actions[0].pair = (Tachygram::random(rng), Tachygram::random(rng));
     let mut flipped = stamped.clone();
-    let flipped_pair = &mut flipped.action_auth[0].1;
+    let flipped_pair = &mut flipped.actions[0].pair;
     mem::swap(&mut flipped_pair.0, &mut flipped_pair.1);
     let mut anchor = stamped.clone();
     anchor.stamp.anchor = Anchor::random(rng);
@@ -1006,19 +997,22 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut bundle) = spend(app);
-    let (first, second) = bundle.action_auth[0].1;
-    let action_digest = bundle.actions[0].digest((first, second));
+    let (first, second) = bundle.actions[0].pair;
+    let action_digest = bundle.actions[0].descriptor.digest((first, second));
     let mut bytes = Vec::new();
 
-    bundle.action_auth[0].1 = (second, first);
-    assert_eq!(bundle.actions[0].digest((second, first)), action_digest);
+    bundle.actions[0].pair = (second, first);
+    assert_eq!(
+        bundle.actions[0].descriptor.digest((second, first)),
+        action_digest
+    );
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
-    assert_eq!(decoded.action_auth, bundle.action_auth);
+    assert_eq!(decoded.actions, bundle.actions);
     let verified = decoded.verify(rng, app, &mock_sighash(decoded.commitment()), &[]);
     assert_eq!(verified.unwrap(), decoded.stamp.tachygram_set);
 
-    bundle.action_auth[0].1 = (first, first);
+    bundle.actions[0].pair = (first, first);
     bytes.clear();
     bundle.write(&mut bytes).unwrap();
     let err = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap_err();
@@ -1127,7 +1121,6 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let compressed = Bundle {
         stamp: oversized.stamp.compress(rng, app).unwrap(),
         actions: oversized.actions,
-        action_auth: oversized.action_auth,
         value_balance: oversized.value_balance,
         fee: oversized.fee,
         fee_auth: oversized.fee_auth,
@@ -1192,7 +1185,6 @@ fn verify_covered_bounds_the_covered_tachygrams() {
         let n_adjunct = n_actions - bundle.actions.len();
         let mut oversized = adjunct.clone();
         oversized.actions = vec![adjunct.actions[0]; n_adjunct];
-        oversized.action_auth = vec![adjunct.action_auth[0]; n_adjunct];
         assert_eq!(
             bundle
                 .verify_covered(&[&oversized])
@@ -1316,12 +1308,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let mut pairs: BTreeMap<_, _> = stamped
-        .actions
-        .iter()
-        .copied()
-        .zip(stamped.action_auth.iter().map(|&(_, pair)| pair))
-        .collect();
+    let mut pairs: BTreeMap<_, _> = stamped.descriptor_pairs().collect();
     pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
     let bundle = plan.assemble(
         signatures,
@@ -1386,12 +1373,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let signatures = bundle_plan
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .unwrap();
-    let pairs = original
-        .actions
-        .iter()
-        .copied()
-        .zip(original.action_auth.iter().map(|&(_, pair)| pair))
-        .collect();
+    let pairs = original.descriptor_pairs().collect();
     let bundle = bundle_plan.assemble(
         signatures,
         (original.stamp, pairs, original.fee_auth, original.fee.v_fee),
@@ -1453,22 +1435,11 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
-    let zero_desc = zero
-        .actions
-        .iter()
-        .copied()
-        .zip(zero.action_auth.iter().map(|&(_, pair)| pair))
-        .collect();
+    let zero_desc = zero.descriptor_pairs().collect();
     let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
     let adjunct_desc = [&autonome_a, &autonome_b]
         .into_iter()
-        .flat_map(|bundle| {
-            bundle
-                .actions
-                .iter()
-                .copied()
-                .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
-        })
+        .flat_map(Bundle::descriptor_pairs)
         .collect();
     let adjunct_fees = [&autonome_a, &autonome_b]
         .into_iter()

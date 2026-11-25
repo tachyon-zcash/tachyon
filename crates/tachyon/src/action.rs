@@ -16,6 +16,17 @@ use crate::{
     reddsa, serialization, value,
 };
 
+/// An action as carried by a bundle.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct Authorized {
+    /// The action's effecting data.
+    pub descriptor: Descriptor,
+    /// Authorization over the transaction sighash.
+    pub signature: Signature,
+    /// The two tachygrams covered by the stamp for this action.
+    pub pair: (Tachygram, Tachygram),
+}
+
 /// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
