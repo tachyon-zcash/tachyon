@@ -200,3 +200,43 @@ fn a_depth_mask_past_the_maximum_depth_panics() {
     }
     .depth_mask();
 }
+
+#[test]
+fn profile_round_trips_as_depth_then_bits() {
+    for (profile, bytes) in [
+        (QrProfile::ROOT, [0; 8]),
+        (
+            QrProfile::ROOT
+                .descend(QrClass::Residue)
+                .descend(QrClass::NonResidue)
+                .descend(QrClass::Residue),
+            [3, 0, 0, 0, 0b101, 0, 0, 0],
+        ),
+        (
+            QrProfile {
+                depth: u32::BITS,
+                bits: u32::MAX,
+            },
+            [32, 0, 0, 0, 0xff, 0xff, 0xff, 0xff],
+        ),
+    ] {
+        let mut written = Vec::new();
+        profile.write(&mut written).unwrap();
+        assert_eq!(written, bytes);
+        assert_eq!(QrProfile::read(written.as_slice()).unwrap(), profile);
+    }
+}
+
+#[test]
+fn profile_read_rejects_encodings_no_descent_produces() {
+    // A depth past the last position.
+    QrProfile::read([33, 0, 0, 0, 0, 0, 0, 0].as_slice()).unwrap_err();
+
+    // A side recorded at or above the depth.
+    QrProfile::read([3, 0, 0, 0, 0b1000, 0, 0, 0].as_slice()).unwrap_err();
+    QrProfile::read([0, 0, 0, 0, 1, 0, 0, 0].as_slice()).unwrap_err();
+    QrProfile::read([31, 0, 0, 0, 0, 0, 0, 0x80].as_slice()).unwrap_err();
+
+    // A short input.
+    QrProfile::read([3, 0, 0, 0, 0b101, 0, 0].as_slice()).unwrap_err();
+}
