@@ -741,19 +741,24 @@ impl Step<Pasta> for TransactionLift {
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
         membership.enforce_zero(dr)?;
-        // The output tachygram set copies the left one. With the honest bridge
-        // hash on both, the output's bridge hash is the left stamp's.
+        let tachygram_set_bridge = [
+            oracles.bridge_hash().x().clone(),
+            oracles.bridge_hash().y().clone(),
+        ];
+        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
         let data = D::just(|| {
-            let (stamp_bridge, _) = left.take();
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
             let (_, span_anchor_end) = right.take();
-            (stamp_bridge, span_anchor_end)
+            (TachygramSetBridge::from(bridge_hash), span_anchor_end)
         });
         let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: anchor_end,
-            tachygram_set_bridge: [
-                oracles.bridge_hash().x().clone(),
-                oracles.bridge_hash().y().clone(),
-            ],
+            tachygram_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
     }
