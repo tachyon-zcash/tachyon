@@ -37,6 +37,70 @@ use crate::fixtures::{
 };
 
 #[test]
+fn sign_and_verify_every_plan_shape() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+    let output = output_plan(rng, wallet.random_note(100));
+    let max_fee_note = wallet.random_note(0);
+    let master = wallet.pak.nk.derive_note_private(spend.note.psi);
+    let epoch = BlockHeight(1).epoch();
+    let pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
+    for (spends, outputs) in [
+        (&[spend][..], &[output][..]),
+        (&[spend][..], &[][..]),
+        (&[][..], &[output][..]),
+        (&[][..], &[][..]),
+    ] {
+        let plan = Plan::new(spends.to_vec(), outputs.to_vec(), max_fee_note);
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let mut actions: Vec<_> = spends
+            .iter()
+            .map(|planned| planned.authorize(planned.sign(rng, &sighash, &ask), pair))
+            .collect();
+        actions.extend(
+            outputs
+                .iter()
+                .map(|planned| planned.signed_action(rng, &sighash)),
+        );
+        let bundle = plan
+            .assemble(
+                actions,
+                plan.binding_signature(rng, &sighash).unwrap(),
+                (
+                    fee::Descriptor {
+                        cv_feemax: max_fee_note.cv_feemax(),
+                        v_fee: value::Positive::ZERO,
+                    },
+                    max_fee_note.commitment().into(),
+                ),
+                StrippedStamp,
+            )
+            .unwrap();
+        assert_eq!(bundle.actions.len(), spends.len() + outputs.len());
+        assert_eq!(mock_sighash(bundle.commitment()), sighash);
+        bundle.verify_signatures(&sighash).unwrap();
+    }
+}
+
+#[test]
+fn verify_signatures_rejects_signatures_swapped_between_actions() {
+    let app = &application();
+    let (_, mut bundle) = spend(app);
+    let sighash = mock_sighash(bundle.commitment());
+    bundle.verify_signatures(&sighash).unwrap();
+    let (first, rest) = bundle.actions.split_at_mut(1);
+    let swapped_signature = rest[0].signature;
+    mem::swap(&mut first[0].signature, &mut rest[0].signature);
+    assert_eq!(mock_sighash(bundle.commitment()), sighash);
+    assert_matches!(bundle.verify_signatures(&sighash), Err(SignatureError::Action(sig)) if sig == swapped_signature);
+}
+
+#[test]
 fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
     let app = &application();
     let (plan, received) = spend(app);
@@ -74,9 +138,11 @@ fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
         joined
             .actions
             .iter()
-            .zip(&received.actions)
-            .all(|(left, right)| left.descriptor == right.descriptor
-                && left.tachygrams == right.tachygrams)
+            .map(|action| (action.descriptor, action.tachygrams))
+            .eq(received
+                .actions
+                .iter()
+                .map(|action| (action.descriptor, action.tachygrams)))
     );
     joined.verify(rng, app, &sighash, &[]).unwrap();
 }
