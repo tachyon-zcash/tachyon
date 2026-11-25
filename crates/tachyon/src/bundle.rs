@@ -457,6 +457,83 @@ impl Plan {
         stamp::Plan::new(spends, outputs, anchor, self.max_fee_note, fee)
     }
 
+    /// Select the plan's actions whose descriptors are in `descriptors`, in
+    /// plan order, to be proven at `anchor`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a descriptor names no action of the plan.
+    #[must_use]
+    pub fn actions_plan(
+        &self,
+        anchor: Anchor,
+        descriptors: &BTreeSet<action::Descriptor>,
+    ) -> stamp::ActionsPlan {
+        assert!(
+            descriptors.is_subset(&self.descriptors()),
+            "selected descriptors must name planned actions"
+        );
+        let spends = self
+            .spends
+            .iter()
+            .filter_map(|plan| {
+                let desc = plan.descriptor();
+                descriptors
+                    .contains(&desc)
+                    .then_some((desc, plan.theta, plan.rcv))
+            })
+            .collect();
+        let outputs = self
+            .outputs
+            .iter()
+            .filter_map(|plan| {
+                let desc = plan.descriptor();
+                descriptors
+                    .contains(&desc)
+                    .then_some((desc, plan.theta, plan.note, plan.rcv))
+            })
+            .collect();
+        stamp::ActionsPlan::new(spends, outputs, anchor)
+    }
+
+    /// Apply `fee` to proven actions with `FeeFuse` and rerandomize the stamp.
+    /// Returns the proving data for [`Self::assemble`].
+    /// Accept a received part with [`stamp::ActionsContribution::accept`]
+    /// against the intended anchor and [`Self::descriptors`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu::Error`] if a proof-system step fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `fee` exceeds the max fee note's value, if the max fee note's
+    /// `rcm` is zero, or if `cv` or `rk` is the identity in a hand-built
+    /// descriptor.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the stamp and its authorization data"
+    )]
+    pub fn apply_fee<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        app: &App<'_>,
+        actions: stamp::ProvenActions,
+        fee: value::Positive,
+    ) -> Result<
+        (
+            ProofStamp<stamp::Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+            value::Positive,
+        ),
+        ragu::Error,
+    > {
+        let contribution = actions.into_contribution();
+        let (digests, tachygrams) = contribution.sets();
+        contribution.prove_fee(rng, app, self.max_fee_note, fee, &digests, &tachygrams)
+    }
+
     /// Derive the binding signing key, which is the scalar sum of value
     /// commitment trapdoors, including the max fee note's blind $r$.
     ///

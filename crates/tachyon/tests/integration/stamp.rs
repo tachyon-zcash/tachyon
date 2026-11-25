@@ -14,15 +14,16 @@ use ragu::{WalletRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
-    action, bundle,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram,
+    TachygramSetPoly, action, bundle, effect,
     entropy::ActionEntropy,
     fee,
+    keys::private,
     stamp::{
         self, ProveError,
         proof::{
-            App,
-            stamp::{Stamp, StampMerge},
+            App, output,
+            stamp::{ActionMerge, Actions, OutputAction, Stamp, StampMerge},
         },
     },
     value, witness,
@@ -104,11 +105,6 @@ fn plan_prove_rejects_invalid_inputs() {
         user.pak.ak.derive_action_public(&alpha)
     });
     let max_fee_note = user.random_note(0);
-    let fee_digest = fee::Descriptor {
-        cv_feemax: max_fee_note.cv_feemax(),
-        v_fee: value::Positive::ZERO,
-    }
-    .digest(max_fee_note.commitment().into());
     let secret_a = user.note_secret(app, note_a);
     let secret_b = user.note_secret(app, note_b);
     let plan = stamp::Plan::new(
@@ -142,8 +138,8 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    let (swapped, swapped_pairs, ..) = plan
-        .prove(
+    assert_matches!(
+        plan.prove(
             rng,
             app,
             &user.pak,
@@ -151,45 +147,23 @@ fn plan_prove_rejects_invalid_inputs() {
                 (secret_b, sp_b, vec![]),
                 (secret_a.clone(), sp_a.clone(), vec![]),
             ],
-        )
-        .unwrap();
-    assert!(
-        !swapped
-            .verify_proof(
-                rng,
-                app,
-                [
-                    plan_a.digest(swapped_pairs[&plan_a.descriptor()]),
-                    plan_b.digest(swapped_pairs[&plan_b.descriptor()]),
-                    fee_digest
-                ]
-            )
-            .unwrap()
+        ),
+        Err(ProveError::ProofFailed(ragu::Error::InvalidWitness(_)))
     );
 
     let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
-    let (foreign, foreign_pairs, ..) = stamp::Plan::new(
-        vec![(foreign_a.descriptor(), theta_a, rcv_a)],
-        vec![],
-        anchor,
-        max_fee_note,
-        value::Positive::ZERO,
-    )
-    .prove(rng, app, &user.pak, vec![(secret_a, sp_a, vec![])])
-    .unwrap();
-    assert!(
-        !foreign
-            .verify_proof(
-                rng,
-                app,
-                [
-                    foreign_a.digest(foreign_pairs[&foreign_a.descriptor()]),
-                    fee_digest
-                ]
-            )
-            .unwrap()
+    assert_matches!(
+        stamp::Plan::new(
+            vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+            vec![],
+            anchor,
+            max_fee_note,
+            value::Positive::ZERO,
+        )
+        .prove(rng, app, &user.pak, vec![(secret_a, sp_a, vec![])]),
+        Err(ProveError::ProofFailed(ragu::Error::InvalidWitness(_)))
     );
 }
 
@@ -285,6 +259,354 @@ fn plan_prove_lifts_a_spend_along_spans() {
         .digest(cm_change)])
         .collect();
     assert!(!forged.verify_proof(rng, app, digests).unwrap());
+}
+
+#[test]
+fn bundle_verifies_with_two_spend_authorities() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let alice = WalletSim::random(rng);
+    let bob = WalletSim::random(rng);
+    let alice_note = alice.random_note(500);
+    let bob_note = bob.random_note(700);
+    let pool = PoolSim::genesis_with(vec![vec![
+        alice_note.commitment().into(),
+        bob_note.commitment().into(),
+    ]]);
+    let alice_spendable = alice.spendable_init(app, &pool, &alice_note, pool.height());
+    let bob_spendable = bob.spendable_init(app, &pool, &bob_note, pool.height());
+
+    let alice_spend = action::Plan::spend(
+        alice_note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| alice.pak.ak.derive_action_public(&alpha),
+    );
+    let bob_spend = action::Plan::spend(
+        bob_note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| bob.pak.ak.derive_action_public(&alpha),
+    );
+    let output = output_plan(rng, alice.random_note(1190));
+    let plan = bundle::Plan::new(
+        vec![alice_spend, bob_spend],
+        vec![output],
+        alice.random_note(10),
+    );
+
+    let alice_descriptors = BTreeSet::from([alice_spend.descriptor(), output.descriptor()]);
+    let left = plan
+        .actions_plan(pool.anchor(), &alice_descriptors)
+        .prove(
+            rng,
+            app,
+            vec![(
+                alice.pak,
+                alice.note_secret(app, alice_note),
+                alice_spendable,
+                vec![],
+            )],
+        )
+        .unwrap();
+    let mut bob_plan_bytes = Vec::new();
+    bob_spend.descriptor().write(&mut bob_plan_bytes).unwrap();
+    bob_spend.theta.write(&mut bob_plan_bytes).unwrap();
+    bob_spend.rcv.write(&mut bob_plan_bytes).unwrap();
+    pool.anchor().write(&mut bob_plan_bytes).unwrap();
+
+    let mut bob_plan_reader = bob_plan_bytes.as_slice();
+    let descriptor = action::Descriptor::read(&mut bob_plan_reader).unwrap();
+    let theta = ActionEntropy::read(&mut bob_plan_reader).unwrap();
+    let rcv = value::Trapdoor::read(&mut bob_plan_reader).unwrap();
+    let anchor = Anchor::read(&mut bob_plan_reader).unwrap();
+    let bob_actions = stamp::ActionsPlan::new(vec![(descriptor, theta, rcv)], vec![], anchor)
+        .prove(
+            rng,
+            app,
+            vec![(
+                bob.pak,
+                bob.note_secret(app, bob_note),
+                bob_spendable,
+                vec![],
+            )],
+        )
+        .unwrap();
+
+    let accepted_alice = left
+        .into_contribution()
+        .accept(rng, app, pool.anchor(), &alice_descriptors)
+        .unwrap();
+    let accepted_bob = bob_actions
+        .into_contribution()
+        .accept(
+            rng,
+            app,
+            pool.anchor(),
+            &BTreeSet::from([bob_spend.descriptor()]),
+        )
+        .unwrap();
+    let actions = accepted_alice.merge(rng, app, accepted_bob).unwrap();
+    let proof = plan
+        .apply_fee(rng, app, actions, value::Positive::try_from(5u64).unwrap())
+        .unwrap();
+
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let mut authorized = [(alice_spend, &alice), (bob_spend, &bob)]
+        .into_iter()
+        .map(|(spend, owner)| {
+            let alpha = spend
+                .theta
+                .randomizer::<effect::Spend>(spend.note.commitment());
+            (
+                spend.descriptor(),
+                owner
+                    .sk
+                    .derive_auth_private()
+                    .derive_action_private(&alpha)
+                    .sign(rng, &sighash),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let output_key =
+        private::ActionSigningKey::new(&output.theta.randomizer(output.note.commitment()));
+    authorized.insert(output.descriptor(), output_key.sign(rng, &sighash));
+    let signatures = plan.apply_signatures(rng, &sighash, authorized).unwrap();
+    let bundle = plan.assemble(signatures, proof);
+    bundle.verify(rng, app, &sighash, &[]).unwrap();
+}
+
+#[test]
+fn action_merge_rejects_different_anchors() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let output_a = output_plan(rng, wallet.random_note(100));
+    let output_b = output_plan(rng, wallet.random_note(200));
+    let plan = bundle::Plan::new(vec![], vec![output_a, output_b], wallet.random_note(0));
+    let desc_a = output_a.descriptor();
+    let desc_b = output_b.descriptor();
+    let left = plan
+        .actions_plan(Anchor::default(), &BTreeSet::from([desc_a]))
+        .prove(rng, app, vec![])
+        .unwrap();
+    let right = plan
+        .actions_plan(Anchor::random(rng), &BTreeSet::from([desc_b]))
+        .prove(rng, app, vec![])
+        .unwrap();
+
+    assert_matches!(
+        left.clone().merge(rng, app, right.clone()),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+    let raw = raw_action_merge(
+        rng,
+        app,
+        left.into_contribution(),
+        right.into_contribution(),
+    );
+    assert!(!app.verify_uncompressed(&raw, &mut *rng).unwrap());
+}
+
+fn raw_action_merge(
+    rng: &mut StdRng,
+    app: &App<'_>,
+    left: stamp::ActionsContribution,
+    right: stamp::ActionsContribution,
+) -> ragu::Pcd<Pasta, WalletRank, Actions> {
+    let parts = left.pairs.iter().chain(&right.pairs);
+    let witness = witness::action_merge(
+        (left.anchor, right.anchor),
+        parts
+            .clone()
+            .map(|(desc, &pair)| desc.digest(pair))
+            .collect(),
+        parts
+            .flat_map(|(_, &pair)| <[Tachygram; 2]>::from(pair))
+            .collect(),
+    );
+    app.fuse(
+        rng,
+        ActionMerge,
+        witness,
+        left.proof.carry::<Actions>(left.anchor),
+        right.proof.carry::<Actions>(right.anchor),
+    )
+    .unwrap()
+    .0
+}
+
+#[test]
+fn local_part_stops_at_the_first_invalid_leaf() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(7);
+    let wallet = WalletSim::random(rng);
+    let output = output_plan(rng, wallet.random_note(10));
+    let other = output_plan(rng, wallet.random_note(20));
+    let duplicate_note = output_plan(rng, output.note);
+    let leaf = |action: action::Plan<effect::Output>| {
+        (action.descriptor(), action.theta, action.note, action.rcv)
+    };
+    let mut mislabeled = leaf(output);
+    mislabeled.0 = other.descriptor();
+    for prefix in [vec![mislabeled], vec![leaf(output), leaf(duplicate_note)]] {
+        let mut longer = prefix.clone();
+        longer.push(leaf(other));
+        // A later leaf or a merge consumes prover randomness. Appending one
+        // more valid action must not change where a rejected plan stops.
+        let after_error = |leaves| {
+            let mut coins = StdRng::seed_from_u64(8);
+            assert_matches!(
+                stamp::ActionsPlan::new(vec![], leaves, Anchor::default()).prove(
+                    &mut coins,
+                    app,
+                    vec![]
+                ),
+                Err(ProveError::ProofFailed(ragu::Error::InvalidWitness(_)))
+            );
+            Anchor::random(&mut coins)
+        };
+        assert_eq!(after_error(prefix), after_error(longer));
+    }
+}
+
+#[test]
+fn contribution_matches_its_assignment_and_proof() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(1);
+    let wallet = WalletSim::random(rng);
+    let anchor = Anchor::default();
+    let first = output_plan(rng, wallet.random_note(10));
+    let second = output_plan(rng, wallet.random_note(20));
+    let part = |desc, action: action::Plan<effect::Output>| {
+        stamp::ActionsPlan::new(
+            vec![],
+            vec![(desc, action.theta, action.note, action.rcv)],
+            anchor,
+        )
+    };
+    assert_matches!(
+        part(second.descriptor(), first).prove(rng, app, vec![]),
+        Err(ProveError::ProofFailed(ragu::Error::InvalidWitness(_)))
+    );
+    let left = part(first.descriptor(), first)
+        .prove(rng, app, vec![])
+        .unwrap();
+    let right = part(second.descriptor(), second)
+        .prove(rng, app, vec![])
+        .unwrap();
+    let assigned = BTreeSet::from([first.descriptor()]);
+    assert_matches!(
+        right
+            .into_contribution()
+            .accept(rng, app, anchor, &assigned),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+    assert_matches!(
+        left.clone().merge(rng, app, left.clone()),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+
+    let mut relabeled = left.clone().into_contribution();
+    relabeled.pairs = BTreeMap::from([(second.descriptor(), relabeled.pairs[&first.descriptor()])]);
+    assert_matches!(
+        relabeled.accept(rng, app, anchor, &BTreeSet::from([second.descriptor()])),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+    // Both proofs are individually valid, with distinct descriptors, but the
+    // repeated output note commitment would occur twice in the merged set.
+    let repeated_note = output_plan(rng, first.note);
+    let overlapping = part(repeated_note.descriptor(), repeated_note)
+        .prove(rng, app, vec![])
+        .unwrap();
+    assert_matches!(
+        left.clone().merge(rng, app, overlapping),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+
+    // Both advertised sets still match the proof slots. Only verification of
+    // the proof under the *claimed* header detects this substitution.
+    let mut moved = left.into_contribution();
+    moved.anchor = Anchor::random(rng);
+    let claimed = moved.anchor;
+    assert_matches!(
+        moved.accept(rng, app, claimed, &assigned),
+        Err(ragu::Error::InvalidWitness(_))
+    );
+}
+
+#[test]
+fn part_handoffs_rerandomize_the_internal_proof() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(2);
+    let wallet = WalletSim::random(rng);
+    let first = output_plan(rng, wallet.random_note(10));
+    let second = output_plan(rng, wallet.random_note(20));
+    let anchor = Anchor::default();
+    let plan = bundle::Plan::new(vec![], vec![first, second], wallet.random_note(0));
+
+    // Replay each construction with identical coins through its last internal
+    // step. Two independent raw fuses would also produce different bytes.
+    let mut replay = StdRng::seed_from_u64(3);
+    let left = plan
+        .actions_plan(anchor, &BTreeSet::from([first.descriptor()]))
+        .prove(&mut StdRng::seed_from_u64(3), app, vec![])
+        .unwrap();
+    let (bind, ()) = app
+        .seed(
+            &mut replay,
+            output::OutputBind,
+            witness::output_bind(((), ()), first.note, first.rcv),
+        )
+        .unwrap();
+    let (leaf, ()) = app
+        .fuse(
+            &mut replay,
+            OutputAction,
+            witness::output_action((*bind.data(), ()), first.theta, anchor),
+            bind,
+            app.bootstrap_proof().clone().carry::<()>(()),
+        )
+        .unwrap();
+    let expected_leaf = app.rerandomize(leaf.clone(), &mut replay).unwrap();
+    let sent = left.clone().into_contribution();
+    assert!(sent.proof.to_bytes().unwrap() == expected_leaf.proof().to_bytes().unwrap());
+    // A sender can supply even the raw leaf. The receiver must not forward it
+    // unchanged.
+    let incoming = stamp::ActionsContribution {
+        proof: Box::new(leaf.proof().clone()),
+        ..sent
+    };
+    let accepted = incoming
+        .accept(rng, app, anchor, &BTreeSet::from([first.descriptor()]))
+        .unwrap()
+        .into_contribution();
+    assert!(accepted.proof.to_bytes().unwrap() != leaf.proof().to_bytes().unwrap());
+    assert!(
+        app.verify_uncompressed(&accepted.proof.carry::<Actions>(anchor), &mut *rng)
+            .unwrap()
+    );
+
+    let right = plan
+        .actions_plan(anchor, &BTreeSet::from([second.descriptor()]))
+        .prove(rng, app, vec![])
+        .unwrap();
+    let mut merge_replay = StdRng::seed_from_u64(4);
+    let raw = raw_action_merge(
+        &mut merge_replay,
+        app,
+        left.clone().into_contribution(),
+        right.clone().into_contribution(),
+    );
+    let expected_merge = app.rerandomize(raw, &mut merge_replay).unwrap();
+    let merged = left
+        .merge(&mut StdRng::seed_from_u64(4), app, right)
+        .unwrap()
+        .into_contribution();
+    assert!(merged.proof.to_bytes().unwrap() == expected_merge.proof().to_bytes().unwrap());
+    merged
+        .accept(rng, app, anchor, &plan.descriptors())
+        .unwrap();
 }
 
 #[test]

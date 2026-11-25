@@ -183,9 +183,11 @@ Each path consumes the same action plans but produces a different component of t
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
+- **Proving**: one or more provers each prove some of the plan's actions at the same anchor. Their `Actions` PCDs merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
 Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
+
+A prover exports its rerandomized part with `ProvenActions::into_contribution`. Before merging or applying the fee, the receiver calls `ActionsContribution::accept` with the assigned descriptors and anchor. Acceptance binds the reported pairs to both proof commitments, verifies the pre-fee `Actions` proof and rerandomizes it with the receiver's randomness. Only then does the receiver have a `ProvenActions` it can use or forward.
 
 ```mermaid
 flowchart LR
@@ -234,15 +236,17 @@ flowchart LR
 
 
     subgraph proving["proving flow"]
-        leaf@{ shape: st-rect, label: "leaf" }
-        subgraph prover["proving device"]
-            merge((ActionMerge))
-            actions[Actions]
-            fee_fuse((FeeFuse))
-            fee_seed((FeeSeed))
+        subgraph prover["each prover"]
+            leaf@{ shape: st-rect, label: "action leaf" }
+            merge_leaves((ActionMerge))
+            part@{ shape: st-rect, label: "Actions part" }
         end
+        merge_parts((ActionMerge))
+        actions[Actions]
+        fee_fuse((FeeFuse))
+        fee_seed((FeeSeed))
     end
-    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- proved_stamp["ProofStamp"]
+    action_plan -.- leaf -.- merge_leaves -.- part -.- merge_parts -.- actions -.- fee_fuse -.- proved_stamp["ProofStamp"]
     leaf -.- pairs["descriptor-keyed pair map"]
     zero_actions["0 actions"] -.- fee_seed -.- proved_stamp
     max_fee_note -.- fee_fuse & fee_seed -.- proved_change["change commitment"]

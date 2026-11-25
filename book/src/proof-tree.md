@@ -427,6 +427,8 @@ Every `Stamp`-emitting step writes its tachygram-set bridge hash to `tachygram_s
 
 Before a wallet broadcasts an autonome or an aggregator releases an aggregate, it rerandomizes the stamp proof for the same header, using fresh, unpredictable randomness and the release's shared bootstrap proof. Rerandomization precedes compression. A party verifies a received stamp before extending it.
 
+Before the fee, `ActionsPlan::prove` and `ProvenActions::merge` rerandomize the `Actions` PCD they return. A receiver uses `ActionsContribution::accept` to verify a contribution and rerandomize it with its own randomness. The anchor, action descriptors and tachygram pairs remain visible to the receiver.
+
 ## Simple transaction
 
 A transaction with one spend and one output, where the spendable was bootstrapped in a previous epoch and lifted over an `ArbitraryUnspent` crossing an epoch boundary before the spend.
