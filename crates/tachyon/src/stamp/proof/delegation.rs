@@ -125,9 +125,8 @@ impl Header<Fp> for NoteSecret {
 /// bound, $S$ consists of one distinct irreducible factor per epoch in the
 /// range, determining the set of $(e, \mathsf{nf}_e)$ tuples and restricting
 /// any divisor of $S$ to a scalar multiple of a subset of those factors.
-/// [`NullifierFuse`]'s contiguity check keeps the announced range truthful;
-/// [`UnspentBind`](super::pool::UnspentBind) does not read the range to prove
-/// per-epoch exclusion.
+/// [`UnspentBind`](super::pool::UnspentBind) proves per-epoch exclusion by
+/// divisibility alone, without reading the range.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 

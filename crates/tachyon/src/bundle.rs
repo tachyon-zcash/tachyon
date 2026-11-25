@@ -846,10 +846,9 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// - The stamp covers this bundle and the adjuncts
     /// - The stamp proof is valid
     ///
-    /// Before accepting the stamp, the caller must also check that its anchor
-    /// is an acknowledged end-of-block anchor within the current or immediately
-    /// preceding epoch, and that no covered tachygram appears in an earlier
-    /// stamp of that two-epoch window.
+    /// Before accepting the stamp, the caller must also enforce the consensus
+    /// rules that nodes check against chain history (rules 1, 3, 4 and 5 of the
+    /// book's Proof Tree chapter, under Soundness).
     ///
     /// The adjuncts are the stripped bundles the stamp's
     /// [`adjuncts`](ProofStamp::adjuncts) lists, looked up by txid. This method

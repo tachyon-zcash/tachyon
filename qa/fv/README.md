@@ -123,16 +123,17 @@ accepting a stamp, and the double-spend theorems take `BundleCovered` with a `St
 
 ### Source correspondence at pinned main
 
-The maintenance audit against main `68dc1731408d0aa5bbd299325416a0ef5e3f71b6`, with Ragu pinned at
+The maintenance audit against main `6ff166dd483aca38ce4900d2c27425d568ac51f9`, with Ragu pinned at
 `7914b3b86037e1fb0795a3ffd0cbf9198c2ade92`, is a one-time manual source comparison at those pinned
-commits, with no automated drift detection and not an extraction or equivalence proof. The relevant
-correspondence is:
+commits, with no automated drift detection and not an extraction or equivalence proof. The only
+circuit change since the previous audit at `68dc1731` moves the nonzero `rcm` check from `NoteSeed`
+into the note commitment gadget, which no model reads. The relevant correspondence is:
 
 | Rust source | Lean interpretation | Boundary |
 | --- | --- | --- |
 | `stamp/proof/stamp.rs`: `ActionMerge`, `StampMerge`, `StampUnmerge` | `Stamp.lean`: `Merge`, `Unmerge`; `ProofTree.lean`: derivability | Equal anchors and both slot-product equations agree, conditional on binding and replacing random-point checks with identities. |
 | `stamp/proof/output.rs`: `OutputBind`; `stamp/proof/stamp.rs`: `OutputAction`, `SpendAction`, `FeeSeed`, `FeeFuse` | `ActionsDerivable.action`, `ActionsTree.output`, `StampDerivable.feeSeed`, `.feeFuse` | Leaf constraints are assumed, not verified. `OutputBind` is unmodelled and output leaves (`ActionsDerivable.action`, `ActionsTree.output`) are free non-fee digests `d` deriving `R (epoch a) d`. The digest-to-tachygram pairing `R` and fee/action digest separation idealize collision resistance of the `Tachyon-ActionDg` and `Tachyon-FeeDg` digests, whose preimages hold the leaf's tachygrams. |
-| `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep`; `SpendTree.lean`: `ActionsTree.lift`, `StampTree.lift` | The span argument and its propagation through a whole derivation are proved under `HashLaw` on `q` and chain membership of the root anchor. |
+| `stamp/proof/pool.rs`: `AnchorSpanSeed`, `AnchorSpanFuse`; `stamp/proof/stamp.rs`: lifts | `Consensus/Chain.lean`: `SpanDerivable`, `StampLiftStep`; `SpendTree.lean`: `ActionsTree.lift`, `StampTree.lift` | The span argument and its propagation through a whole derivation are proved under `HashLaw` on `q` and chain membership of the root anchor. `SpanDerivable.seed` takes `AnchorSpanSeed`'s members to be exactly `X - a`, which rests on modelling stamp absorption as a random function. |
 | `stamp/proof/stamp.rs`: `SpendAction` | `SpendTree.lean`: `ActionsTree.spend` | The action set is the action digest of the header's pair (a call in `Q`), the tachygram set is the pair, and the anchor is the header's. The `pk` check and `rk` are not modelled; `DigestLaw` on `Q` idealizes the digest. |
 | `stamp/proof/delegation.rs`: `NoteSeed`; `stamp/proof/spend.rs`: `SpendBind` | `Spend.lean`: `NoteSecretDerivable`, `SpendDerivable` | `cm` commits to `pk = paymentKey(ak, nk)` and `psi`, and `mk = nfMaster(psi, nk)`; `NoteLaw` on `n` idealizes binding. `SpendBind`'s `cm` equality and pair derivation (`groupNullifier`) at `e`, `e + 1` agree. Nullifier non-zero checks, `cv` and `pk` are not modelled. |
 | `stamp/proof/spendable.rs`: `SpendableInit`, `QrSpendableInit`, `SpendableLift` | `Spend.lean`: `SpendableDerivable` | `SpendableInit`'s fold (in `q`) and creation-set opening agree, with `cm` left free. `QrSpendableInit`'s epoch, `anchor_next` and successor equalities and its `cm` opening agree; its `anchor_start` equality is dropped. `SpendableLift`'s three equalities agree. |
@@ -205,7 +206,8 @@ leaf step's header and digest call.
   actions carry the same nullifier pair (`CoveredSpend.carried_pair`), contradicting
   `BundleCovered.tachygrams_nodup` on `coveredTachygrams`.
 - When a lifted stamp's `anchor_end` is on the chain, every span member is on the chain in the same
-  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`). The argument needs only an
+  epoch (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`), with `AnchorSpanSeed` read
+  under the [random-function premise](#proof-system) for stamp absorption. The argument needs only an
   anchor set that holds the stamp-fold predecessors of its members (`StampClosed`). Chain nodes form
   one, and so do the anchors a published chain reaches up to the queried epoch bound
   (`OnChain.stampClosed`). Merge, unmerge and `FeeFuse` keep the anchor, so in a derivation anchored
@@ -345,6 +347,10 @@ choices that no theorem here discharges.
   The QR steps rely on the same binding: each in-step anchor fold absorbs the slot polynomial its
   bridge hash covers, a bucket's `contents_hash` and the leaf digest bind its contents, and the
   selection's `non_residue_hash` binds the split's non-residue polynomial.
+- **Stamp absorption as a random function.** `AnchorSpanSeed` checks its member polynomial at
+  `zeta` against a root `a` whose inputs are not fixed before `zeta`, so reading that check as an
+  identity needs a stronger premise than binding: the stamp absorption digest is modelled as a
+  random function. `SpanDerivable.seed` builds this in by taking the members to be `X - a`.
 - **Rust and circuit equivalence.** No check ties the Lean model to the Rust. Each step, digest and
   consensus predicate is transcribed by hand from the Rust source, and the transcriptions are
   trusted (see [Trust partition](#trust-partition)). Ragu's FV ties its gadget models to the Rust by
