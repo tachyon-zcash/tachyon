@@ -180,8 +180,7 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
-    /// Wire order is shared by the descriptor, signature, and tachygram
-    /// sections.
+    /// The bundle's actions, in wire order.
     pub actions: Vec<action::Action>,
 
     /// The max fee note's value commitment and the fee paid by this bundle.
@@ -665,9 +664,8 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
             .iter()
             .chain(adjuncts.iter().flat_map(|adj| &adj.actions));
         let fees = iter::once((self.fee, self.fee_auth))
-            .chain(adjuncts.iter().map(|adj| (adj.fee, adj.fee_auth)))
-            .collect();
-        let stamp = self.stamp.lift(rng, app, actions, &fees, spans)?;
+            .chain(adjuncts.iter().map(|adj| (adj.fee, adj.fee_auth)));
+        let stamp = self.stamp.lift(rng, app, actions, fees, spans)?;
 
         Ok(Self { stamp, ..self })
     }

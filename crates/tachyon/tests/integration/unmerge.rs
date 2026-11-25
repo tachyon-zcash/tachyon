@@ -1,9 +1,6 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec,
-};
+use alloc::{collections::BTreeSet, vec};
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -34,40 +31,27 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let (_, alice) = alice(app);
     let (_, bob) = bob(app);
     let [(_, carol), _, _] = outputs_with_fees(app);
-    let [alice_fees, bob_fees, carol_fees] =
-        [&alice, &bob, &carol].map(|bundle| BTreeMap::from([(bundle.fee, bundle.fee_auth)]));
+    let [alice_fee, bob_fee, carol_fee] =
+        [&alice, &bob, &carol].map(|bundle| (bundle.fee, bundle.fee_auth));
     let combined_actions = alice.actions.iter().chain(&bob.actions);
-    let fee_union = alice_fees
-        .iter()
-        .chain(&bob_fees)
-        .map(|(&desc, &change)| (desc, change))
-        .collect();
+    let fee_union = [alice_fee, bob_fee];
     let all_actions = combined_actions.clone().chain(&carol.actions);
-    let all_fees = alice_fees
-        .iter()
-        .chain(&bob_fees)
-        .chain(&carol_fees)
-        .map(|(&desc, &change)| (desc, change))
-        .collect();
+    let all_fees = [alice_fee, bob_fee, carol_fee];
     let divisor_actions = bob
         .actions
         .iter()
         .chain(&carol.actions)
         .copied()
         .collect::<Vec<_>>();
-    let divisor_fees = bob_fees
-        .iter()
-        .chain(&carol_fees)
-        .map(|(&desc, &change)| (desc, change))
-        .collect();
+    let divisor_fees = [bob_fee, carol_fee];
     let (bob_txid, carol_txid) = (mock_txid(&bob), mock_txid(&carol));
     let all_three = merged(app, &alice, &bob)
         .stamp
         .merge(
             rng,
             app,
-            (combined_actions, &fee_union),
-            (carol.stamp.clone(), carol_txid, &carol.actions, &carol_fees),
+            (combined_actions, fee_union),
+            (carol.stamp.clone(), carol_txid, &carol.actions, [carol_fee]),
         )
         .unwrap();
     assert_eq!(all_three.adjuncts, BTreeSet::from([bob_txid, carol_txid]));
@@ -81,7 +65,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     for (divisor, divisor_covered, adjuncts) in [
         (
             bob.stamp.clone(),
-            (&bob.actions, &bob_fees),
+            (&bob.actions, &[bob_fee][..]),
             vec![carol.clone()],
         ),
         (
@@ -89,11 +73,11 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
                 .merge(
                     rng,
                     app,
-                    (&bob.actions, &bob_fees),
-                    (carol.stamp, carol_txid, &carol.actions, &carol_fees),
+                    (&bob.actions, [bob_fee]),
+                    (carol.stamp, carol_txid, &carol.actions, [carol_fee]),
                 )
                 .unwrap(),
-            (&divisor_actions, &divisor_fees),
+            (&divisor_actions, &divisor_fees[..]),
             vec![],
         ),
     ] {
@@ -103,8 +87,13 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             .unmerge(
                 rng,
                 app,
-                (all_actions.clone(), &all_fees),
-                (divisor, bob_txid, divisor_covered.0, divisor_covered.1),
+                (all_actions.clone(), all_fees),
+                (
+                    divisor,
+                    bob_txid,
+                    divisor_covered.0,
+                    divisor_covered.1.iter().copied(),
+                ),
             )
             .unwrap();
         let stripped: Vec<_> = adjuncts.into_iter().map(bundle::Bundle::strip).collect();
@@ -128,21 +117,12 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let [(_, alice), (_, bob), (_, mut carol)] = outputs_with_fees(app);
-    let [alice_fees, bob_fees, carol_fees] =
-        [&alice, &bob, &carol].map(|bundle| BTreeMap::from([(bundle.fee, bundle.fee_auth)]));
+    let [alice_fee, bob_fee, carol_fee] =
+        [&alice, &bob, &carol].map(|bundle| (bundle.fee, bundle.fee_auth));
     let combined_actions = alice.actions.iter().chain(&bob.actions);
-    let fee_union = alice_fees
-        .iter()
-        .chain(&bob_fees)
-        .map(|(&desc, &change)| (desc, change))
-        .collect();
+    let fee_union = [alice_fee, bob_fee];
     let all_actions = combined_actions.clone().chain(&carol.actions);
-    let all_fees = alice_fees
-        .iter()
-        .chain(&bob_fees)
-        .chain(&carol_fees)
-        .map(|(&desc, &change)| (desc, change))
-        .collect();
+    let all_fees = [alice_fee, bob_fee, carol_fee];
     let (alice_txid, bob_txid) = (mock_txid(&alice), mock_txid(&bob));
 
     let on_alice = alice
@@ -151,8 +131,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .merge(
             rng,
             app,
-            (&alice.actions, &alice_fees),
-            (bob.stamp.clone(), bob_txid, &bob.actions, &bob_fees),
+            (&alice.actions, [alice_fee]),
+            (bob.stamp.clone(), bob_txid, &bob.actions, [bob_fee]),
         )
         .unwrap();
     assert_eq!(on_alice.adjuncts, BTreeSet::from([bob_txid]));
@@ -163,8 +143,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (combined_actions.clone(), &fee_union),
-            (bob.stamp.clone(), bob_txid, &bob.actions, &bob_fees),
+            (combined_actions.clone(), fee_union),
+            (bob.stamp.clone(), bob_txid, &bob.actions, [bob_fee]),
         )
         .unwrap();
     assert!(kept.is_autonome());
@@ -177,8 +157,8 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (combined_actions.clone(), &fee_union),
-            (alice.stamp.clone(), alice_txid, &alice.actions, &alice_fees),
+            (combined_actions.clone(), fee_union),
+            (alice.stamp.clone(), alice_txid, &alice.actions, [alice_fee]),
         )
         .unwrap();
     assert_eq!(hostless.stamp.adjuncts, BTreeSet::from([bob_txid]));
@@ -189,15 +169,15 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         ))
     );
 
-    let carol_fee = carol.fee.v_fee;
+    let carol_amount = carol.fee.v_fee;
     let rehosted = carol
         .stamp
         .clone()
         .merge(
             rng,
             app,
-            (&carol.actions, &carol_fees),
-            (on_alice, alice_txid, combined_actions, &fee_union),
+            (&carol.actions, [carol_fee]),
+            (on_alice, alice_txid, combined_actions, fee_union),
         )
         .unwrap();
     assert_eq!(rehosted.adjuncts, BTreeSet::from([alice_txid, bob_txid]));
@@ -205,11 +185,11 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(
             rng,
             app,
-            (all_actions, &all_fees),
-            (alice.stamp, alice_txid, &alice.actions, &alice_fees),
+            (all_actions, all_fees),
+            (alice.stamp, alice_txid, &alice.actions, [alice_fee]),
         )
         .unwrap();
-    assert_eq!(carol.fee.v_fee, carol_fee);
+    assert_eq!(carol.fee.v_fee, carol_amount);
     assert_eq!(carol.stamp.adjuncts, BTreeSet::from([bob_txid]));
     let stripped_bob = bob.strip();
     carol
@@ -233,17 +213,17 @@ fn unmerge_by_a_lifted_divisor() {
     let lifted_divisor = lifted_bundle.stamp.clone();
     let earlier_txid = mock_txid(&earlier);
     let dividend = merged(app, &later, &lifted_bundle).stamp;
-    let early_fees = BTreeMap::from([(earlier.fee, earlier.fee_auth)]);
+    let early_fees = [(earlier.fee, earlier.fee_auth)];
     let all_actions = later.actions.iter().chain(&earlier.actions);
-    let all_fees = BTreeMap::from([(later.fee, later.fee_auth), (earlier.fee, earlier.fee_auth)]);
+    let all_fees = [(later.fee, later.fee_auth), (earlier.fee, earlier.fee_auth)];
 
     let unaligned = dividend
         .clone()
         .unmerge(
             rng,
             app,
-            (all_actions.clone(), &all_fees),
-            (earlier.stamp, earlier_txid, &earlier.actions, &early_fees),
+            (all_actions.clone(), all_fees),
+            (earlier.stamp, earlier_txid, &earlier.actions, early_fees),
         )
         .unwrap();
     assert!(
@@ -256,8 +236,8 @@ fn unmerge_by_a_lifted_divisor() {
         .unmerge(
             rng,
             app,
-            (all_actions, &all_fees),
-            (lifted_divisor, earlier_txid, &earlier.actions, &early_fees),
+            (all_actions, all_fees),
+            (lifted_divisor, earlier_txid, &earlier.actions, early_fees),
         )
         .unwrap();
     later
@@ -270,7 +250,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, mut alice) = alice(app);
-    let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
+    let fees = [(alice.fee, alice.fee_auth)];
 
     let quotient = alice
         .stamp
@@ -278,13 +258,8 @@ fn unmerge_by_itself_leaves_no_leaves() {
         .unmerge(
             rng,
             app,
-            (&alice.actions, &fees),
-            (
-                alice.stamp.clone(),
-                mock_txid(&alice),
-                &alice.actions,
-                &fees,
-            ),
+            (&alice.actions, fees),
+            (alice.stamp.clone(), mock_txid(&alice), &alice.actions, fees),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, []).unwrap());
@@ -335,8 +310,8 @@ fn unmerge_splitting_a_bundle() {
         .unwrap()
         .digest();
 
-    let part_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
-    let whole_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
+    let part_fees = [(whole.fee, whole.fee_auth)];
+    let whole_fees = [(whole.fee, whole.fee_auth)];
     let part_txid = mock_txid(&alice);
     let part = alice.stamp;
 
@@ -346,8 +321,8 @@ fn unmerge_splitting_a_bundle() {
         .unmerge(
             rng,
             app,
-            (&whole.actions, &whole_fees),
-            (part, part_txid, &alice.actions, &part_fees),
+            (&whole.actions, whole_fees),
+            (part, part_txid, &alice.actions, part_fees),
         )
         .unwrap();
     assert!(quotient.verify_proof(rng, app, [kept_digest]).unwrap());
@@ -401,20 +376,17 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         .merge(
             rng,
             app,
-            (
-                &original.actions,
-                &BTreeMap::from([(original.fee, original.fee_auth)]),
-            ),
+            (&original.actions, [(original.fee, original.fee_auth)]),
             (
                 other.stamp.clone(),
                 mock_txid(&other),
                 &other.actions,
-                &BTreeMap::from([(other.fee, other.fee_auth)]),
+                [(other.fee, other.fee_auth)],
             ),
         )
         .unwrap();
     let divisor_txid = mock_txid(&reproven);
-    let divisor_fees = BTreeMap::from([(reproven.fee, reproven.fee_auth)]);
+    let divisor_fees = [(reproven.fee, reproven.fee_auth)];
     let (original_digests, _) = original.verify_covered(&[]).unwrap();
     let (_, original_action_digests) = original_digests.split_last().unwrap();
     let (other_digests, _) = other.verify_covered(&[]).unwrap();
@@ -424,16 +396,16 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
             app,
             (
                 original.actions.iter().chain(&other.actions),
-                &BTreeMap::from([
+                [
                     (original.fee, original.fee_auth),
                     (other.fee, other.fee_auth),
-                ]),
+                ],
             ),
             (
                 reproven.stamp,
                 divisor_txid,
                 &reproven.actions,
-                &divisor_fees,
+                divisor_fees,
             ),
         )
         .unwrap();

@@ -963,7 +963,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         actions: impl IntoIterator<Item = &'covered action::Action>,
-        fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
+        fee_descriptors: impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
@@ -973,7 +973,7 @@ impl ProofStamp<Uncompressed> {
         for action in actions {
             action_digests.insert(action.digest());
         }
-        for (descriptor, &change) in fee_descriptors {
+        for (descriptor, change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
         }
 
@@ -984,7 +984,7 @@ impl ProofStamp<Uncompressed> {
     /// Successful construction does not guarantee that the merged stamp
     /// verifies.
     ///
-    /// Each side supplies its covered actions and fee map, from which the
+    /// Each side supplies its covered actions and fee entries, from which the
     /// action digests and tachygrams for the merge proof are derived.
     ///
     /// The merged stamp lists both stamps' adjuncts and `right_txid`, the txid
@@ -1013,13 +1013,13 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         (left_actions, left_fees): (
             impl IntoIterator<Item = &'covered action::Action>,
-            &BTreeMap<fee::Descriptor, Tachygram>,
+            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
         ),
         (right_stamp, right_txid, right_actions, right_fees): (
             Self,
             [u8; 32],
             impl IntoIterator<Item = &'covered action::Action>,
-            &BTreeMap<fee::Descriptor, Tachygram>,
+            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut left_digests = BTreeSet::new();
@@ -1028,7 +1028,7 @@ impl ProofStamp<Uncompressed> {
             left_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             left_digests.insert(action.digest());
         }
-        for (descriptor, &change) in left_fees {
+        for (descriptor, change) in left_fees {
             left_tachygrams.insert(change);
             left_digests.insert(descriptor.digest(change));
         }
@@ -1039,7 +1039,7 @@ impl ProofStamp<Uncompressed> {
             right_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             right_digests.insert(action.digest());
         }
-        for (descriptor, &change) in right_fees {
+        for (descriptor, change) in right_fees {
             right_tachygrams.insert(change);
             right_digests.insert(descriptor.digest(change));
         }
@@ -1085,7 +1085,7 @@ impl ProofStamp<Uncompressed> {
     /// divisor's covered actions, fees and tachygrams. Rerandomizes the
     /// quotient.
     ///
-    /// Each side supplies its covered actions and fee map. The quotient's
+    /// Each side supplies its covered actions and fee entries. The quotient's
     /// action digests and tachygrams are the dividend's less the divisor's.
     /// A divisor that does not divide this stamp can produce a proof that
     /// fails verification, even when construction succeeds.
@@ -1115,13 +1115,13 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         (actions, fees): (
             impl IntoIterator<Item = &'covered action::Action>,
-            &BTreeMap<fee::Descriptor, Tachygram>,
+            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
         ),
         (divisor_stamp, divisor_txid, divisor_actions, divisor_fees): (
             Self,
             [u8; 32],
             impl IntoIterator<Item = &'covered action::Action>,
-            &BTreeMap<fee::Descriptor, Tachygram>,
+            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut digests = BTreeSet::new();
@@ -1130,7 +1130,7 @@ impl ProofStamp<Uncompressed> {
             tachygrams_all.extend(<[Tachygram; 2]>::from(action.tachygrams));
             digests.insert(action.digest());
         }
-        for (descriptor, &change) in fees {
+        for (descriptor, change) in fees {
             tachygrams_all.insert(change);
             digests.insert(descriptor.digest(change));
         }
@@ -1141,7 +1141,7 @@ impl ProofStamp<Uncompressed> {
             divisor_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             divisor_digests.insert(action.digest());
         }
-        for (descriptor, &change) in divisor_fees {
+        for (descriptor, change) in divisor_fees {
             divisor_tachygrams.insert(change);
             divisor_digests.insert(descriptor.digest(change));
         }

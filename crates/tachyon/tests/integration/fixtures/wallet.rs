@@ -100,12 +100,12 @@ pub(crate) fn merged(
             .merge(
                 rng,
                 app,
-                (&left.actions, &BTreeMap::from([(left.fee, left.fee_auth)])),
+                (&left.actions, [(left.fee, left.fee_auth)]),
                 (
                     right.stamp.clone(),
                     right_txid,
                     &right.actions,
-                    &BTreeMap::from([(right.fee, right.fee_auth)]),
+                    [(right.fee, right.fee_auth)],
                 ),
             )
             .unwrap()
@@ -135,7 +135,7 @@ pub(crate) fn lifted(
                 rng,
                 app,
                 &bundle.actions,
-                &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
+                [(bundle.fee, bundle.fee_auth)],
                 vec![span],
             )
             .unwrap()

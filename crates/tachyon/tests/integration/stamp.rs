@@ -1,12 +1,6 @@
 extern crate alloc;
 
-use alloc::{
-    boxed::Box,
-    collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
+use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
 use core::assert_matches;
 
 use corez::io;
@@ -296,7 +290,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let anchor = pool.mint_anchor();
     let (_, alice_bundle) = alice(app);
     let alice_note = alice_output_note();
-    let fees_a = BTreeMap::from([(alice_bundle.fee, alice_bundle.fee_auth)]);
+    let fees_a = [(alice_bundle.fee, alice_bundle.fee_auth)];
     let output_a = alice_bundle.stamp;
     let (_, output_b) = wallet.bundle(
         app,
@@ -306,7 +300,7 @@ fn overlapping_stamps_cannot_aggregate() {
         wallet.random_note(0),
         value::Positive::ZERO,
     );
-    let fees_b = BTreeMap::from([(output_b.fee, output_b.fee_auth)]);
+    let fees_b = [(output_b.fee, output_b.fee_auth)];
     let (_, spend_a) = spend(app);
     let note = PoolSim::shared_note(1000);
     let spendable = wallet.spendable_init(app, pool, &note, BlockHeight(1));
@@ -334,23 +328,23 @@ fn overlapping_stamps_cannot_aggregate() {
         )
         .unwrap();
     let spend_b = plan.assemble(signatures, proof);
-    let fixture_fees = BTreeMap::from([(spend_a.fee, spend_a.fee_auth)]);
-    let overlap_fees = BTreeMap::from([(spend_b.fee, spend_b.fee_auth)]);
+    let fixture_fees = [(spend_a.fee, spend_a.fee_auth)];
+    let overlap_fees = [(spend_b.fee, spend_b.fee_auth)];
 
     for ((left, left_covered), (right, right_covered), expected) in [
         (
-            (output_a.clone(), (&alice_bundle.actions, &fees_a)),
-            (output_b.stamp, (&output_b.actions, &fees_b)),
+            (output_a.clone(), (&alice_bundle.actions, fees_a)),
+            (output_b.stamp, (&output_b.actions, fees_b)),
             "two outputs of the same note",
         ),
         (
-            (spend_a.stamp, (&spend_a.actions, &fixture_fees)),
-            (spend_b.stamp, (&spend_b.actions, &overlap_fees)),
+            (spend_a.stamp, (&spend_a.actions, fixture_fees)),
+            (spend_b.stamp, (&spend_b.actions, overlap_fees)),
             "a spend reproven in both stamps",
         ),
         (
-            (output_a.clone(), (&alice_bundle.actions, &fees_a)),
-            (output_a, (&alice_bundle.actions, &fees_a)),
+            (output_a.clone(), (&alice_bundle.actions, fees_a)),
+            (output_a, (&alice_bundle.actions, fees_a)),
             "a stamp merged with itself",
         ),
     ] {
@@ -371,7 +365,7 @@ fn overlapping_stamps_cannot_aggregate() {
                 merged_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
                 digests.push(action.digest());
             }
-            for (descriptor, &change) in fees {
+            for (descriptor, change) in fees {
                 merged_tachygrams.push(change);
                 digests.push(descriptor.digest(change));
             }
@@ -520,7 +514,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let pool = PoolSim::shared();
     let (_, alice) = alice(app);
     let (digests, _) = alice.verify_covered(&[]).unwrap();
-    let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
+    let fees = [(alice.fee, alice.fee_auth)];
     let fee_digest = alice.fee.digest(alice.fee_auth);
     let stamp = alice.stamp.clone();
     let lifted_to = BlockHeight(2);
@@ -540,7 +534,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     stamp.write(&mut bytes).unwrap();
     let decoded = ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
     let lifted_decoded = decoded
-        .lift(rng, app, &alice.actions, &fees, vec![span.clone()])
+        .lift(rng, app, &alice.actions, fees, vec![span.clone()])
         .unwrap();
     assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
     assert_eq!(lifted_decoded.adjuncts, stamp.adjuncts);
@@ -552,7 +546,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         ..alice.actions[0]
     };
     let mismatched = stamp
-        .lift(rng, app, [&mismatched_action], &fees, vec![span])
+        .lift(rng, app, [&mismatched_action], fees, vec![span])
         .unwrap();
     assert!(
         !mismatched
@@ -569,13 +563,13 @@ fn empty_lift_does_not_digest_invalid_coverage() {
     let mut invalid = bundle.clone().strip();
     invalid.actions[0].descriptor.cv = value::Trapdoor::ZERO.commit(value::Positive::ZERO);
     invalid.fee.cv_feemax = invalid.actions[0].descriptor.cv;
-    let fees = BTreeMap::from([(invalid.fee, invalid.fee_auth)]);
+    let fees = [(invalid.fee, invalid.fee_auth)];
 
     // Even unusable coverage must not be inspected for an empty lift.
     bundle
         .stamp
         .clone()
-        .lift(rng, app, &invalid.actions, &fees, vec![])
+        .lift(rng, app, &invalid.actions, fees, vec![])
         .unwrap();
     bundle.lift(rng, app, &[invalid.as_dyn()], vec![]).unwrap();
 }
@@ -589,8 +583,8 @@ fn merge_after_lift() {
     let (_, bundle_b) = later_output(app);
     let stamp_a = &bundle_a.stamp;
     let stamp_b = &bundle_b.stamp;
-    let fees_a = BTreeMap::from([(bundle_a.fee, bundle_a.fee_auth)]);
-    let fees_b = BTreeMap::from([(bundle_b.fee, bundle_b.fee_auth)]);
+    let fees_a = [(bundle_a.fee, bundle_a.fee_auth)];
+    let fees_b = [(bundle_b.fee, bundle_b.fee_auth)];
 
     let digests: Vec<ActionDigest> = bundle_a
         .verify_covered(&[])
@@ -604,12 +598,12 @@ fn merge_after_lift() {
         .merge(
             rng,
             app,
-            (&bundle_a.actions, &fees_a),
+            (&bundle_a.actions, fees_a),
             (
                 stamp_b.clone(),
                 mock_txid(&bundle_b),
                 &bundle_b.actions,
-                &fees_b,
+                fees_b,
             ),
         )
         .unwrap();
@@ -634,12 +628,12 @@ fn mismatched_merge_descriptors_fail_verification() {
     let (_, bundle_a) = alice(app);
     let (_, bundle_b) = bob(app);
     let foreign = random_action(rng).0;
-    let fees_a = BTreeMap::from([(bundle_a.fee, bundle_a.fee_auth)]);
+    let fees_a = [(bundle_a.fee, bundle_a.fee_auth)];
     let foreign_action = action::Action {
         descriptor: foreign,
         ..bundle_b.actions[0]
     };
-    let fees_b = BTreeMap::from([(bundle_b.fee, bundle_b.fee_auth)]);
+    let fees_b = [(bundle_b.fee, bundle_b.fee_auth)];
 
     let digests: Vec<ActionDigest> = bundle_a
         .verify_covered(&[])
@@ -655,12 +649,12 @@ fn mismatched_merge_descriptors_fail_verification() {
         .merge(
             rng,
             app,
-            (&bundle_a.actions, &fees_a),
+            (&bundle_a.actions, fees_a),
             (
                 bundle_b.stamp.clone(),
                 mock_txid(&bundle_b),
                 [&foreign_action],
-                &fees_b,
+                fees_b,
             ),
         )
         .unwrap();

@@ -368,15 +368,12 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         .merge(
             rng,
             app,
-            (
-                &aggregate.actions,
-                &BTreeMap::from([(aggregate.fee, aggregate.fee_auth)]),
-            ),
+            (&aggregate.actions, [(aggregate.fee, aggregate.fee_auth)]),
             (
                 fee_bearing.stamp.clone(),
                 mock_txid(&fee_bearing),
                 &fee_bearing.actions,
-                &BTreeMap::from([(fee_bearing.fee, fee_bearing.fee_auth)]),
+                [(fee_bearing.fee, fee_bearing.fee_auth)],
             ),
         )
         .unwrap();
@@ -434,15 +431,12 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .merge(
             rng,
             app,
-            (
-                &signed.actions,
-                &BTreeMap::from([(signed.fee, signed.fee_auth)]),
-            ),
+            (&signed.actions, [(signed.fee, signed.fee_auth)]),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
                 &adjunct.actions,
-                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
+                [(adjunct.fee, adjunct.fee_auth)],
             ),
         )
         .unwrap();
@@ -482,15 +476,12 @@ fn fee_bearing_aggregates_merge_and_lift() {
             .merge(
                 rng,
                 app,
-                (
-                    &bundle.actions,
-                    &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
-                ),
+                (&bundle.actions, [(bundle.fee, bundle.fee_auth)]),
                 (
                     auto.stamp.clone(),
                     mock_txid(auto),
                     &auto.actions,
-                    &BTreeMap::from([(auto.fee, auto.fee_auth)]),
+                    [(auto.fee, auto.fee_auth)],
                 ),
             )
             .unwrap();
@@ -503,19 +494,13 @@ fn fee_bearing_aggregates_merge_and_lift() {
             app,
             (
                 left.actions.iter().chain(&left_auto.actions),
-                &[&left, &left_auto]
-                    .into_iter()
-                    .map(|bundle| (bundle.fee, bundle.fee_auth))
-                    .collect(),
+                [&left, &left_auto].map(|bundle| (bundle.fee, bundle.fee_auth)),
             ),
             (
                 right.stamp.clone(),
                 mock_txid(&right),
                 right.actions.iter().chain(&right_auto.actions),
-                &[&right, &right_auto]
-                    .into_iter()
-                    .map(|bundle| (bundle.fee, bundle.fee_auth))
-                    .collect(),
+                [&right, &right_auto].map(|bundle| (bundle.fee, bundle.fee_auth)),
             ),
         )
         .unwrap();
@@ -573,15 +558,12 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (
-                &innocent.actions,
-                &BTreeMap::from([(innocent.fee, innocent.fee_auth)]),
-            ),
+            (&innocent.actions, [(innocent.fee, innocent.fee_auth)]),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
                 &adjunct.actions,
-                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
+                [(adjunct.fee, adjunct.fee_auth)],
             ),
         )
         .unwrap();
@@ -593,18 +575,12 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (
-                &parent.actions,
-                &BTreeMap::from([(parent.fee, parent.fee_auth)]),
-            ),
+            (&parent.actions, [(parent.fee, parent.fee_auth)]),
             (
                 innocent.stamp.clone(),
                 mock_txid(&innocent),
                 innocent.actions.iter().chain(&adjunct.actions),
-                &[&innocent, &adjunct]
-                    .into_iter()
-                    .map(|bundle| (bundle.fee, bundle.fee_auth))
-                    .collect(),
+                [&innocent, &adjunct].map(|bundle| (bundle.fee, bundle.fee_auth)),
             ),
         )
         .unwrap();

@@ -368,12 +368,9 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
+    let based_fees = [(becomes_based.fee, becomes_based.fee_auth)];
     let innocent_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
-    let innocent_fees = [&autonome_a, &autonome_b]
-        .into_iter()
-        .map(|bundle| (bundle.fee, bundle.fee_auth))
-        .collect();
+    let innocent_fees = [&autonome_a, &autonome_b].map(|bundle| (bundle.fee, bundle.fee_auth));
     let innocent_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let (txid_a, txid_b) = (mock_txid(&autonome_a), mock_txid(&autonome_b));
     assert_eq!(innocent_stamp.adjuncts, BTreeSet::from([txid_b]));
@@ -383,8 +380,8 @@ fn based_aggregate_with_two_adjuncts() {
         .merge(
             rng,
             app,
-            (&becomes_based.actions, &based_fees),
-            (innocent_stamp, txid_a, innocent_actions, &innocent_fees),
+            (&becomes_based.actions, based_fees),
+            (innocent_stamp, txid_a, innocent_actions, innocent_fees),
         )
         .unwrap();
 
@@ -1395,11 +1392,7 @@ fn bundle_lift_preserves_coverage() {
     assert_eq!(unchanged_bytes, original_bytes);
     let mut stamp_bytes = Vec::new();
     bundle.stamp.write(&mut stamp_bytes).unwrap();
-    let unchanged_stamp = bundle
-        .stamp
-        .clone()
-        .lift(rng, app, [], &BTreeMap::new(), vec![])
-        .unwrap();
+    let unchanged_stamp = bundle.stamp.clone().lift(rng, app, [], [], vec![]).unwrap();
     let mut unchanged_stamp_bytes = Vec::new();
     unchanged_stamp.write(&mut unchanged_stamp_bytes).unwrap();
     assert_eq!(unchanged_stamp_bytes, stamp_bytes);
@@ -1429,24 +1422,21 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
-    let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
+    let zero_fees = [(zero.fee, zero.fee_auth)];
     let adjunct_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
-    let adjunct_fees = [&autonome_a, &autonome_b]
-        .into_iter()
-        .map(|bundle| (bundle.fee, bundle.fee_auth))
-        .collect();
+    let adjunct_fees = [&autonome_a, &autonome_b].map(|bundle| (bundle.fee, bundle.fee_auth));
     let adjunct_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let innocent = Bundle {
         stamp: seed
             .merge(
                 rng,
                 app,
-                (&zero.actions, &zero_fees),
+                (&zero.actions, zero_fees),
                 (
                     adjunct_stamp,
                     mock_txid(&autonome_a),
                     adjunct_actions,
-                    &adjunct_fees,
+                    adjunct_fees,
                 ),
             )
             .unwrap(),
