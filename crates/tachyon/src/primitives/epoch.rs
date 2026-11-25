@@ -1,5 +1,6 @@
 use core::ops;
 
+use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
 
 use super::BlockHeight;
@@ -67,6 +68,33 @@ impl EpochIndex {
     #[must_use]
     pub const fn last_block(self) -> BlockHeight {
         BlockHeight(self.first_block().0 + (EPOCH_SIZE - 1))
+    }
+
+    /// Read a 4-byte little-endian epoch index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the index is above [`EPOCH_MAX`].
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut bytes = [0u8; 4];
+        reader.read_exact(&mut bytes)?;
+        let index = u32::from_le_bytes(bytes);
+        if index > EPOCH_MAX {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "epoch index above EPOCH_MAX",
+            ));
+        }
+        Ok(Self(index))
+    }
+
+    /// Write a 4-byte little-endian epoch index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&self.0.to_le_bytes())
     }
 }
 

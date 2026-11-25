@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::array;
 
+use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
     Cycle as _, Polynomial, Rank as _, WalletRank,
@@ -342,6 +343,47 @@ impl QrProfile {
         array::from_fn(|position| {
             u32::try_from(position).is_ok_and(|selected| selected < self.depth)
         })
+    }
+
+    /// Read a profile as two 4-byte little-endian integers, depth then bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails, the depth exceeds
+    /// [`MAX_DEPTH`](Self::MAX_DEPTH), or a bit is set at or above the depth.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut depth_bytes = [0u8; 4];
+        reader.read_exact(&mut depth_bytes)?;
+        let mut bits_bytes = [0u8; 4];
+        reader.read_exact(&mut bits_bytes)?;
+        let depth = u32::from_le_bytes(depth_bytes);
+        let bits = u32::from_le_bytes(bits_bytes);
+        if depth > u32::BITS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "profile depth above MAX_DEPTH",
+            ));
+        }
+        if bits.checked_shr(depth).is_some_and(|above| above != 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "profile bit set at or above its depth",
+            ));
+        }
+        Ok(Self { depth, bits })
+    }
+
+    /// Write a profile as two 4-byte little-endian integers, depth then bits.
+    ///
+    /// The fields are written as given; a pair that represents no path is
+    /// written but rejected by [`read`](Self::read).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&self.depth.to_le_bytes())?;
+        writer.write_all(&self.bits.to_le_bytes())
     }
 }
 
