@@ -318,9 +318,6 @@ pub enum PlanError {
     /// The chosen fee exceeds the max-fee note's value.
     #[display("fee exceeds the planned maximum")]
     FeeExceedsMax,
-    /// An actionless plan has a nonzero max-fee note value.
-    #[display("nonzero max fee without actions")]
-    NonzeroMaxFeeWithoutActions,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -495,12 +492,6 @@ impl Plan {
         let value_balance = self
             .value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
-        if self.spends.is_empty()
-            && self.outputs.is_empty()
-            && self.max_fee_note.value != value::Positive::ZERO
-        {
-            return Err(PlanError::NonzeroMaxFeeWithoutActions);
-        }
         if fee > self.max_fee_note.value {
             return Err(PlanError::FeeExceedsMax);
         }
