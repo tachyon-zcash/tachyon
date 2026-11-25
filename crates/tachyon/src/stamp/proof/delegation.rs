@@ -30,12 +30,29 @@ use crate::{
     value,
 };
 
-/// A note's certified record: its commitment, its opening, and its master key
-/// (wallet-only).
+/// A note's commitment, opening and master key (wallet-only).
 ///
-/// [`NoteSeed`] proves that `mk` belongs to the note, so [`NullifierDerive`]
-/// can use it without proving the note's opening again.
-/// [`SpendBind`](super::spend::SpendBind) reads it.
+/// [`NullifierDerive`] reads `cm` and `mk`, while
+/// [`SpendBind`](super::spend::SpendBind) reads `cm`, `mk`, the value and
+/// `pk`.
+///
+/// # Injectivity
+///
+/// [`NoteSeed`] outputs this header. Every verified `NoteSecret` asserts that
+/// its prover knows a point $\mathsf{ak}$ and an element $\mathsf{nk}$ where
+///
+/// - `note.pk` is the [payment key](poseidon::payment_key) of $\mathsf{ak}$ and
+///   $\mathsf{nk}$,
+/// - `mk` is the [master key](poseidon::nf_master) of `note.psi` and
+///   $\mathsf{nk}$,
+/// - `cm` is the [note commitment](poseidon::note_commitment) of `note`,
+/// - `note.value` is an integer in `0..=MAX_MONEY`,
+/// - `note.rcm` is nonzero.
+///
+/// `cm` determines all four note fields; `pk` fixes both keys, so $\psi$ and
+/// $\mathsf{nk}$ fix `mk` and every epoch's nullifier. The converse fails:
+/// changing $\mathsf{ak}$, value or `rcm` alone leaves `mk` and all nullifiers
+/// unchanged. Steps joining headers for one note therefore match `cm`.
 #[derive(Clone, Debug)]
 pub struct NoteSecret;
 
@@ -83,21 +100,31 @@ impl Header<Fp> for NoteSecret {
     }
 }
 
-/// A proven contiguous range of derived nullifiers (wallet-only).
+/// A note's nullifiers over `epoch_start..=epoch_end` (wallet-only).
 ///
-/// Covers epochs `[epoch_start, epoch_end]`. The output polynomial is an
-/// [`NfSeqPoly`] with exactly one member per covered epoch. That
-/// invariant is established at [`NullifierDerive`], preserved by
-/// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
-/// lean on for per-epoch completeness. `cm` binds the range to the real
-/// note.
+/// # Injectivity
 ///
-/// No consumer reads the range. It serves [`NullifierFuse`]'s contiguity
-/// check, which keeps the product squarefree, and squarefreeness forces a
-/// tested sequence's members distinct at
-/// [`UnspentBind`](super::pool::UnspentBind).
+/// [`NullifierDerive`] and [`NullifierFuse`] output this header. Every verified
+/// `NoteNullifiers` asserts `epoch_start <= epoch_end <= EPOCH_MAX` over the
+/// integers, a prover-known verified [`NoteSecret`] carrying `cm` and master
+/// key $\mathsf{mk}$, and an [`NfSeqPoly`] equal to
 ///
-/// Masking is the consuming step's responsibility.
+/// $$
+///   S(X) = \prod_{e} F_{e,\ \mathsf{nf}_e}(X)
+/// $$
+///
+/// across $e \in \text{epoch\_start}..=\text{epoch\_end}$, where $F_{i,m}$ is
+/// the [indexed multiset](crate::collections::indexed_multiset) encoding of
+/// $(i, m)$ and $\mathsf{nf}_e$ is the
+/// [nullifier](poseidon::nullifier_group) of $\mathsf{mk}$ at $e$.
+///
+/// `cm` stands for the note and determines $\mathsf{mk}$ ([`NoteSecret`]), so
+/// the three header fields fix $S$. Both epoch fields use
+/// [`EpochIndex`](gadgets::epoch::EpochIndex) gadgets, making epoch equations
+/// hold over the integers. Because every epoch lies within the encoding's index
+/// bound, $S$ consists of one distinct irreducible factor per epoch in the
+/// range, determining the set of $(e, \mathsf{nf}_e)$ tuples and restricting
+/// any divisor of $S$ to a scalar multiple of a subset of those factors.
 #[derive(Clone, Debug)]
 pub struct NoteNullifiers;
 
@@ -145,18 +172,25 @@ impl Header<Fp> for NoteNullifiers {
 
 /// Certify a note's commitment and master key.
 ///
-/// Seed step. Witnesses the note's value and trapdoors and its proof
-/// authorizing key. The note's payment key is derived from `pak`, which pins
-/// `nk`; `mk` is derived from `nk` and `psi`; and `cm` commits to the
-/// assembled note. `nk` never leaves the step; only `pk`, which
-/// preimage-hides it, enters `cm`.
+/// Seed step. Witnesses the note's value, trapdoors and proof authorizing key.
+/// `nk` stays inside the step while the header exports its digests `pk` and
+/// `mk`.
 ///
 /// # Soundness
 ///
-/// A seed can invent a note, so `cm` closes downstream, at
-/// [`SpendableInit`](super::spendable::SpendableInit) and
-/// [`SpendBind`](super::spend::SpendBind). What this step establishes is
-/// the pairing: `mk` is *this* `cm`'s master key.
+/// Reading no input or challenge, the circuit enforces every [`NoteSecret`]
+/// equation directly on its wires. It range-checks `value` to `0..=MAX_MONEY`,
+/// holds `rcm` nonzero, and allocates $\mathsf{ak}$ as a non-identity curve
+/// point. It derives `pk` from $\mathsf{ak}$ and $\mathsf{nk}$, `mk` from
+/// $\psi$ and the same $\mathsf{nk}$ wire, and `cm` from `rcm`, `pk`, `value`
+/// and the same $\psi$ wire.
+///
+/// This step does not show that `cm` was published.
+/// [`SpendableInit`](super::spendable::SpendableInit)
+/// or [`QrSpendableInit`](super::spendable::QrSpendableInit) places `cm` among
+/// the roots of a stamp absorption or bucket, establishing publication once
+/// the absorption's anchor or the bucket's `anchor_next`, respectively, is
+/// canonical.
 #[derive(Debug)]
 pub struct NoteSeed;
 
@@ -211,7 +245,6 @@ impl Step<Pasta> for NoteSeed {
             &mut (),
             witness.as_ref().map(|&(_, _, rcm, _)| Fp::from(rcm)),
         )?;
-        rcm.clone().enforce_nonzero(dr)?;
         let nk = Element::alloc(
             dr,
             &mut (),
@@ -266,18 +299,19 @@ impl Step<Pasta> for NoteSeed {
 /// Derive one window of nullifiers and export it as a
 /// [`NoteNullifiers`].
 ///
-/// The window starts on a group boundary. One `Tachyon-NfDerive` sponge per
-/// group absorbs the note's master key and the group's first epoch, then
-/// produces `PoseidonFp::RATE` nullifiers.
-///
 /// # Soundness
 ///
-/// The input proof identifies the note's master key. The start epoch is fixed
-/// before the challenge; it must be a multiple of the sponge rate, and the
-/// final epoch must remain in range. The circuit derives every nullifier and
-/// index from those inputs. Opening the committed sequence at the random
-/// challenge checks the whole window, whose bounds are published on the output
-/// header.
+/// The input fixes `mk` and `cm`; staging fixes `epoch_start` before $\zeta$.
+/// Its epoch-width packing has two zero low bits, aligning it to four.
+/// Range-checking `epoch_end = epoch_start + 15` bounds all sixteen epochs by
+/// `EPOCH_MAX` without wrapping.
+///
+/// Four `Tachyon-NfDerive` sponges absorb `mk` and `epoch_start + 4k` to
+/// squeeze `PoseidonFp::RATE` nullifiers across each four-epoch group. Pairing
+/// each nullifier with its epoch, the circuit multiplies all sixteen factors at
+/// $\zeta$ and equates the product with the pre-committed output sequence's
+/// opening, establishing the product [`NoteNullifiers`] asserts while copying
+/// `cm` from the input.
 ///
 /// # Panics
 ///
@@ -401,25 +435,13 @@ impl Step<Pasta> for NullifierDerive {
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
-/// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end + 1`). Proves the concatenation of the input ranges as the
-/// product
-///
-/// $$
-///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
-/// $$
-///
-/// since concatenation of disjoint ranges is exactly multiplication.
-///
 /// # Soundness
 ///
-/// All three operands are committed and absorbed into the challenge, so the
-/// product identity pins `merged`'s member multiset to the union of the
-/// halves'. The contiguity check preserves the header invariant established
-/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
-/// so the announced range labels the member multiset truthfully.
-///
-/// Opens both input sequences and their concatenation once each.
+/// Matching `cm` fixes one master key; `left.epoch_end + 1 ==
+/// right.epoch_start` over the integers joins adjacent ranges. All three
+/// sequences precede $\zeta$. Checking output = left × right with one opening
+/// each preserves one factor per epoch across
+/// `left.epoch_start..=right.epoch_end`.
 #[derive(Debug)]
 pub struct NullifierFuse;
 

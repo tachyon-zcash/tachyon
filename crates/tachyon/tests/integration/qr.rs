@@ -250,8 +250,7 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
 }
 
 // Scaled-split characterization: book/src/proof-tree.md,
-// "Scaled splits: observed behavior and limits". Acceptance here is pinned, not
-// endorsed.
+// "Scaled splits". Acceptance here is pinned, not endorsed.
 
 #[test]
 fn scaled_qr_splits_accept_equal_roots_and_rootless_children() {
@@ -543,8 +542,8 @@ fn scaled_duplicate_split_answers_as_a_monic_stray_bucket() {
 }
 
 // Oversized-bucket characterization: book/src/proof-tree.md,
-// "Oversized buckets: observed behavior". Acceptance here is pinned, not
-// endorsed.
+// "Oversized buckets". The colliding profiles are documented in the fixtures;
+// this tests the depth limit and exact exclusion, not a circuit capacity rule.
 
 #[test]
 fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {

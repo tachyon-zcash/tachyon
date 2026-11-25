@@ -5,7 +5,7 @@ This chapter covers each layer, then shows the complete flow from action creatio
 
 ## Actions
 
-Each tachyaction requires a fresh randomized key pair.
+Each action requires a fresh randomized key pair.
 
 The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
 
@@ -98,12 +98,12 @@ The action descriptor digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ 
 
 $\mathsf{cvFeeMaxTachyon}$ is the [max fee note](./fee.md)'s value commitment. The fee is authorization data and stays out of the bundle commitment.
 
-The stamp proof binds the same actions by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-change-note) $d_{\fee,j}$ of the covered bundles,
+The stamp proof binds the same actions with the action accumulator, a Pedersen commitment to the set polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-steps) $d_{\fee,j}$ of the covered bundles:
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}\bigl(x(\mathsf{cv}_i), y(\mathsf{cv}_i), x(\mathsf{rk}_i), y(\mathsf{rk}_i), \mathsf{tg}_{i,0} + \mathsf{tg}_{i,1}, \mathsf{tg}_{i,0}\mathsf{tg}_{i,1}\bigr) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr) \prod_j \bigl(X - d_{\fee,j}\bigr)\Bigr) $$
 
-which is order-independent, as a set commitment must be to survive [aggregation](./aggregation.md). The BLAKE2b digest and the action accumulator both fix the actions and are not interchangeable.
+The action accumulator is order-independent, so it supports [aggregation](./aggregation.md). The BLAKE2b digest and the action accumulator both fix the actions and are not interchangeable.
 
 The stamp is excluded from the bundle commitment because it is stripped during aggregation.
 
@@ -124,9 +124,12 @@ Tachyon uses Pedersen commitments on the Pallas curve for value hiding:
 
 $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 
-where $v$ is the signed integer value (positive for spends, negative for outputs) and `rcv` is a random[^rcv-note] trapdoor in $\mathbb{F}_q$.
+where $v$ is the signed integer value (positive for spends, negative for outputs).
 
-[^rcv-note]: `rcv` is currently sampled as a uniformly random scalar (`Fq::random`). This derivation may be revised in the future to incorporate a hash of the note commitment or other action-specific data.
+Native sampling draws $\mathsf{rcv}$ uniformly from $\mathbb{F}_q$, and the planned commitment uses the whole scalar.
+Under the [bind steps' encoding](./proof-tree.md#stamp-construction), at $\mathsf{rcv} = 0$ or $\mathsf{rcv} = 2^{254}$ the bind step has no satisfying assignment.
+Above $2^{254}$, a successful bind step commits with the low bits, so the stamp proof covers a different commitment and fails verification against the planned body.
+A stamp proof for the planned body therefore requires $0 < \mathsf{rcv} < 2^{254}$; a uniform blind falls outside this range with negligible probability.
 
 The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived from the domain `z.cash:Orchard-cv`.[^generator-todo]
 
@@ -180,7 +183,7 @@ Each path consumes the same action plans but produces a different component of t
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
+- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
 Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
 
