@@ -252,10 +252,11 @@ impl ActionSigningKey<effect::Output> {
 }
 
 /// A [`reddsa::BindingAuth`] signing key $\mathsf{bsk}$, the scalar sum of each
-/// action's [`value::Trapdoor`] $\mathsf{rcv}_i$ used in the bundle.
+/// action's [`value::Trapdoor`] $\mathsf{rcv}_i$ used in the bundle and the
+/// max fee note's blind $r$.
 ///
 /// $$
-///   \mathsf{bsk} := \boxplus_i \mathsf{rcv}_i
+///   \mathsf{bsk} := \boxplus_i \mathsf{rcv}_i \boxplus r
 /// $$
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);

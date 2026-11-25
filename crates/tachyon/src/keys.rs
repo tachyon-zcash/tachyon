@@ -35,7 +35,8 @@
 //!
 //! - `sk`: Root spending key (full authority)
 //! - `ask`: Authorizes spends (long-lived, cannot sign directly)
-//! - `bsk = Σrcvᵢ`: Binding signing key (per-bundle)
+//! - `bsk = Σrcvᵢ + r`: Binding signing key (per-bundle), with `r` the max fee
+//!   note's blind
 //!
 //! ### Public keys ([`public`])
 //!

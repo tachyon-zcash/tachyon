@@ -71,20 +71,23 @@ impl From<ActionVerificationKey> for EpAffine {
 /// $$
 ///   \mathsf{bvk} :=
 ///     \left(\bigoplus_i \mathsf{cv}_i\right)
-///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
+///     \oplus \mathsf{cv}_{\mathsf{feemax}}
+///     \ominus \text{ValueCommit}_0\left(\mathsf{valueBalanceTachyon}\right)
 /// $$
 ///
-/// That is: sum all action value commitments (Pallas curve points),
-/// then subtract the deterministic commitment to the value balance
-/// with zero randomness. This key is **not encoded in the
-/// transaction**; validators recompute it from public data (§4.14).
+/// That is: sum all action value commitments and the max fee note's value
+/// commitment (Pallas curve points), then subtract the deterministic
+/// commitment to `valueBalanceTachyon` with zero randomness. This key is
+/// **not encoded in the transaction**; validators recompute it from public
+/// data (§4.14).
 ///
-/// When the transaction is correctly constructed,
-/// $\mathsf{bvk} = [\mathsf{bsk}]\mathcal{R}$ because the
+/// When the bundle is correctly constructed,
+/// $\mathsf{bvk} = \lbrack\mathsf{bsk}\rbrack\mathcal{R}$ because the
 /// $\mathcal{V}$-component cancels
-/// ($\sum_i v_i = \mathsf{vBalanceTachyon}$), leaving only the
-/// $\mathcal{R}$-component
-/// $[\sum_i \mathsf{rcv}_i]\mathcal{R} = [\mathsf{bsk}]\mathcal{R}$.
+/// ($\sum_i v_i - \mathsf{feemax} = \mathsf{valueBalanceTachyon}$), leaving
+/// only the $\mathcal{R}$-component
+/// $\lbrack\sum_i \mathsf{rcv}_i + r\rbrack\mathcal{R} =
+/// \lbrack\mathsf{bsk}\rbrack\mathcal{R}$.
 ///
 /// A validator checks balance by verifying the bundle's `binding_sig`
 /// against the transaction sighash under $\mathsf{bvk}$.
@@ -111,13 +114,14 @@ impl BindingVerificationKey {
     ///
     /// $$
     ///   \mathsf{bvk} =
-    ///     \left(\bigoplus_i \mathsf{cv}_i\right)
-    ///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
+    ///     \left(\bigoplus_j \mathsf{cv}_j\right) \ominus
+    ///     \text{ValueCommit}_0\left(\mathsf{valueBalanceTachyon}\right)
     /// $$
     ///
-    /// This is the validator-side derivation similar to Orchard. (§4.14). The
-    /// result should equal $[\mathsf{bsk}]\mathcal{R}$ when the signer
-    /// constructed the bundle correctly.
+    /// For a bundle, `cvs` chains the action value commitments with
+    /// `cv_feemax`. This is the validator-side derivation similar to Orchard
+    /// (§4.14). The result equals $\lbrack\mathsf{bsk}\rbrack\mathcal{R}$ when
+    /// the signer constructed the bundle correctly.
     #[must_use]
     pub fn derive(
         cvs: impl IntoIterator<Item = value::Commitment>,

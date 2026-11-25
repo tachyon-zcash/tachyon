@@ -40,9 +40,11 @@ $$ \alpha_{\text{spend}} = \text{Poseidon}_\text{Tachyon-Spend}(\theta, \mathsf{
 $$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \mathsf{cm}) $$
 
 `theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
-The stamp steps multiply by the output's 254 bits, so an output at or above $2^{254}$ has no proof.
-A uniform output reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
-The caller planning the action confirms that its `alpha` is below $2^{254}$, or it risks producing a proof that is false; nothing reselects `theta`.
+Both action steps decompose `alpha` into 254 bits, so an `alpha` at or above $2^{254}$ has no proof.
+`OutputAction` multiplies $\mathcal{G}$ by `alpha` directly, which leaves $\alpha = 0$ unassigned.
+`SpendAction` adds $\mathsf{ak}$ with Ragu's `FixedBase::mul_and_add`, which leaves at most five 254-bit `alpha` values per $\mathsf{ak}$ unassigned, including any that makes `rk` the identity.
+A uniform output reaches $2^{254}$ with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes; hitting one of the few unassigned values below it is far less likely.
+The caller planning the action confirms that its `alpha` is below $2^{254}$ (nonzero for an output, and avoiding the unassigned values for a spend), or it risks producing a proof that is false; nothing reselects `theta`.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,
@@ -386,12 +388,13 @@ and Proving
                 note over Stamper: cv = Pedersen(v, rcv)
                 note over Stamper: SpendHeader (cm, nf_e, nf_next, anchor, pk, cv)
             end
-            critical SpendAction(SpendHeader), witness theta, pak
+            critical SpendAction(SpendHeader), witness theta, pak, action_set, tachygram_set
                 note over Stamper: pk == Poseidon_PkDerive(x(ak), y(ak), nk)
                 note over Stamper: alpha = Poseidon_Spend(theta, cm)
                 note over Stamper: rk = ak + [alpha]G
                 note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk), nf_e + nf_next, nf_e * nf_next)
-                note over Stamper: Actions (Commit(X - d), Commit((X - nf_e)(X - nf_next)), anchor)
+                note over Stamper: output commitments: Commit(X - d), Commit((X - nf_e)(X - nf_next))
+                note over Stamper: Actions header (anchor)
             end
             loop per supplied anchor span, possibly none
                 note over Stamper: ActionLift, anchor is the span start or a member, becomes the span end
@@ -405,20 +408,22 @@ and Proving
                 note over Stamper: cv = Pedersen(-v, rcv)
                 note over Stamper: OutputHeader (cm, pad, cv)
             end
-            critical OutputAction(OutputHeader), witness theta, anchor
+            critical OutputAction(OutputHeader), witness theta, anchor, action_set, tachygram_set
                 note over Stamper: alpha = Poseidon_Output(theta, cm)
                 note over Stamper: rk = [alpha]G
                 note over Stamper: d = Poseidon_ActionDg(x(cv), y(cv), x(rk), y(rk), cm + pad, cm * pad)
-                note over Stamper: Actions (Commit(X - d), Commit((X - cm)(X - pad)), anchor)
+                note over Stamper: output commitments: Commit(X - d), Commit((X - cm)(X - pad))
+                note over Stamper: Actions header (anchor)
             end
         end
 
         loop while Actions > 1
-            critical ActionMerge(left, right)
+            critical ActionMerge(left, right), witness action_set, tachygram_set
                 note over Stamper: left.anchor == right.anchor
                 note over Stamper: merged_action = left.action_poly * right.action_poly
                 note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: Actions (Commit(merged_action), Commit(merged_tg), anchor)
+                note over Stamper: output commitments: Commit(merged_action), Commit(merged_tg)
+                note over Stamper: Actions header (anchor)
             end
         end
 

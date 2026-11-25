@@ -27,6 +27,8 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set commitment | `Tachyon-Proof` |
 | `hStampTachyon`, the stamp | `Tachyon-Stamp` |
 
+Personalizations shorter than 16 bytes are zero-padded on the right to the 16-byte BLAKE2b personalization field.
+
 ## BLAKE2b-512
 
 ### PRF expansion
@@ -59,8 +61,8 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Output alpha | `Tachyon-Output` |
 | Anchor stamp step | `Tachyon-AnchorSt` |
 | Anchor epoch step | `Tachyon-AnchorEp` |
-| evidence tree leaf | `Tachyon-QrBucket` |
-| evidence tree node | `Tachyon-EvidNode` |
+| Evidence tree leaf | `Tachyon-QrBucket` |
+| Evidence tree node | `Tachyon-EvidNode` |
 | Max fee note blind | `Tachyon-FeeBlind` |
 | Fee digest | `Tachyon-FeeDg` |
 
