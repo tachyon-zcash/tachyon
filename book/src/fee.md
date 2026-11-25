@@ -177,11 +177,21 @@ The stamp does not carry its action accumulator as a separate wire field.
 Consensus rebuilds the stamp's action set from the published action
 descriptors and pairs, fee descriptors, and fee change commitments,
 recomputes the action accumulator, and checks the proof against it. Consensus
-rejects repeated action descriptors, fee descriptors, or tachygrams. Two
-fee descriptors with the same max fee commitment and fee count as repeated
-even if their change commitments differ. An accepted proof therefore covers
-each signed max fee commitment at its published fee and binds the published
-fee change commitment.
+rejects a repeated tachygram within a stamp and [across stamps in the
+publication window](./tachygrams.md#consensus-validation). Replaying an output
+repeats its note commitment; two spends of the same note in one block both
+publish its nullifier for that block's epoch. Editing a descriptor alone
+preserves the tachygram set but changes the digest checked by the stamp proof.
+
+Reusing a max fee note at the same fee repeats its fee change commitment.
+At different fees, the change commitments differ, but the notes share a
+[nullifier at every epoch](./nullifiers.md#binding): it depends on the owner's
+nullifier key and $\psi$, not on value. Checking descriptors cannot prevent
+this reuse. Two max fee notes with different values but the same owner,
+$\psi$, and $\rcm$ have different `cvFeeMaxTachyon` and still produce change
+notes with the same nullifiers. Each bundle funds its own maximum fee. As with
+ordinary outputs, $\psi$ is private; see [Reused nullifier trapdoors](./proof-tree.md#what-the-stamp-proof-leaves-to-others)
+for the consequences of reuse.
 
 `FeeFuse` accepts only `Actions`, so it applies at most once per
 lineage. Merging and lifting carry fee digests and fee change commitments

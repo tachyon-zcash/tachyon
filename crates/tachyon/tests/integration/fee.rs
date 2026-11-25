@@ -357,52 +357,6 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
 }
 
 #[test]
-fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_, mut aggregate) = spend_with_fee(app);
-    let sighash = mock_sighash(aggregate.commitment());
-    let (_, fee_bearing) = alice(app);
-    aggregate.stamp = aggregate
-        .stamp
-        .clone()
-        .merge(
-            rng,
-            app,
-            (
-                &aggregate
-                    .actions
-                    .iter()
-                    .zip(&aggregate.action_auth)
-                    .map(|(&desc, &(_, pair))| (desc, pair))
-                    .collect(),
-                &BTreeMap::from([(aggregate.fee, aggregate.fee_auth)]),
-            ),
-            (
-                fee_bearing.stamp.clone(),
-                mock_txid(&fee_bearing),
-                &fee_bearing
-                    .actions
-                    .iter()
-                    .zip(&fee_bearing.action_auth)
-                    .map(|(&desc, &(_, pair))| (desc, pair))
-                    .collect(),
-                &BTreeMap::from([(fee_bearing.fee, fee_bearing.fee_auth)]),
-            ),
-        )
-        .unwrap();
-
-    let mut adjunct = fee_bearing.strip();
-    adjunct.fee = aggregate.fee;
-    assert_matches!(
-        aggregate.verify(rng, app, &sighash, &[&adjunct]),
-        Err(VerificationError::Coverage(
-            VerifyCoverageError::DuplicateFees
-        ))
-    );
-}
-
-#[test]
 fn verify_rejects_a_stamp_without_its_fee() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
