@@ -31,7 +31,7 @@ flowchart TB
     output_alpha -->|"rsk = alpha"| sign
 
     sign(("sign(rsk, sighash)"))
-    sign --- action["Signature for the planned action (cv, rk)"]
+    sign --- action["Action signature entry { descriptor (cv, rk) => sig }"]
 ```
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
@@ -185,7 +185,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
-Each action carries a signature and a tachygram pair for its descriptor. A binding signature covers the transaction sighash under the bundle's binding key. The fee, change commitment, and stamp complete the bundle. Signing and proving can run in either order or concurrently.
+Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. Assembly joins each action signature to its tachygram pair by descriptor. The signing and proving paths can run in either order or concurrently.
 
 ```mermaid
 flowchart LR
@@ -242,10 +242,9 @@ flowchart LR
         end
     end
     action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- proved_stamp["ProofStamp"]
-    leaf -.- pairs["tachygrams for each action"]
+    leaf -.- pairs["descriptor-keyed pair map"]
     zero_actions["0 actions"] -.- fee_seed -.- proved_stamp
-    max_fee_note -.- fee_fuse & fee_seed
-    max_fee_note & chosen_fee --> change["change commitment"]
+    max_fee_note -.- fee_fuse & fee_seed -.- proved_change["change commitment"]
     chosen_fee["caller-chosen fee"] -.- fee_fuse
     selected_anchor["selected anchor"] -.- fee_seed
 
@@ -271,7 +270,7 @@ flowchart LR
     signatures["action and binding signatures"] --> join{"assemble bundle"}
     pczt --> join
     pairs --> join
-    proved_stamp & chosen_fee & change --> join
+    proved_stamp & chosen_fee & proved_change --> join
     join --> action & binding_sig & stamp & fee & cm_change
 
     other1 --> other2
@@ -284,7 +283,9 @@ A modified descriptor breaks both checks. Changing a pair's members breaks stamp
 
 ## Detailed Sequence
 
-The sequence shows how separate custody and proving devices can contribute to one bundle. Custody confirms the transaction sighash before signing. The user associates each signature and pair with its planned action, and the recipient verifies the completed bundle.
+The sequence follows `bundle::Plan` through signing, `stamp::Plan::prove` through proving, `bundle::Plan::assemble` through assembly, and `Bundle::verify` through consensus.
+Custody is drawn as a separate participant for a device-split integration that does not exist yet.
+`Plan::sign` takes an opaque sighash and signs it; the recomputation and sighash confirmation shown under Custody are requirements on such an integration, not implemented API.
 The spend lineage (`NoteSecret`, `NoteSpendable`, anchor spans) is built during wallet sync and is described in [Proof Tree](./proof-tree.md).
 Diagram notes drop the `Tachyon-` prefix from Poseidon and BLAKE2b domain tags and use the Rust field names; `cTachygrams` is the wire name of `tachygram_set`.
 
@@ -346,7 +347,7 @@ par Authorizing
         note over Custody: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
         note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
-        note over Custody: confirm the transaction sighash before signing
+        note over Custody: confirm sighash (custody requirement, not performed by Plan::sign)
 
         loop per spend action
             note over Custody: rsk = ask + alpha
@@ -359,16 +360,18 @@ par Authorizing
             note over User: sig = Sign(alpha, sighash)
         end
 
-        critical binding signature
+        critical apply_signatures
+            note over User: every planned descriptor (cv, rk) has exactly one signature
             note over User: bsk = Sum rcv_i + r
             note over User: binding_sig = Sign(bsk, sighash)
+            note over User: signatures (descriptor to signature map, binding_sig)
         end
     end
 
 and Proving
     rect rgb(138, 43, 226, 0.1)
         note over User: select anchor
-        note over User: use the same spend and output plans, select the fee from the max-fee note
+        note over User: stamp_plan { spends (desc, theta, rcv), outputs (desc, theta, note, rcv), anchor, max_fee_note, fee }
 
         create participant Stamper
         User ->> Stamper: stamp_plan, pak { ak, nk }, per spend (NoteSecret, NoteSpendable, anchor spans)
@@ -440,12 +443,13 @@ and Proving
         note over Stamper: rerandomize proof
         note over Stamper: adjuncts = empty
         destroy Stamper
-        Stamper ->> User: stamp { anchor, tachygram_set, adjuncts, proof }
+        note over Stamper: each pair smaller tachygram first, pairs in descriptor order
+        Stamper ->> User: (ProofStamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map, cm_change, fee)
     end
 end
 
 critical stamp
-    note over User: derive each action's tachygrams and attach them with its signature
+    note over User: join signatures and tachygrams by planned descriptor into actions[] (descriptor, signature, tachygrams)
     note over User: attach the fee, change commitment, and proof stamp
 end
 break

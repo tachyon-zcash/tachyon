@@ -6,7 +6,6 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use ragu::udon::curve::Affine as _;
-use rand_core::CryptoRng;
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
@@ -17,8 +16,8 @@ use crate::{
     reddsa, serialization, value,
 };
 
-/// An authorized Tachyon action. The bundle's stamp binds the descriptor to
-/// the unordered tachygram pair.
+/// An authorized Tachyon action. Its signature binds the transaction sighash;
+/// its stamp binds the descriptor to the unordered tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
     /// The action's effecting data.
@@ -66,7 +65,7 @@ impl Descriptor {
     /// both identities; hand-built descriptors must uphold this requirement.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        ActionDigest::new(self.cv, self.rk, tachygrams)
+        ActionDigest::new(*self, tachygrams)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -154,23 +153,6 @@ impl<E: Effect> PartialOrd for Plan<E> {
 }
 
 impl Plan<effect::Spend> {
-    /// Sign the transaction sighash with the randomized custody key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the note commitment trapdoor is zero.
-    pub fn sign(
-        &self,
-        rng: &mut impl CryptoRng,
-        sighash: &[u8; 32],
-        ask: &private::SpendAuthorizingKey,
-    ) -> Signature {
-        let alpha = self
-            .theta
-            .randomizer::<effect::Spend>(self.note.commitment());
-        ask.derive_action_private(&alpha).sign(rng, sighash)
-    }
-
     /// Assemble a spend action plan.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
@@ -200,18 +182,6 @@ impl Plan<effect::Spend> {
 }
 
 impl Plan<effect::Output> {
-    /// Sign the transaction sighash with this output's randomizer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the note commitment trapdoor is zero.
-    pub fn sign(&self, rng: &mut impl CryptoRng, sighash: &[u8; 32]) -> Signature {
-        let alpha = self
-            .theta
-            .randomizer::<effect::Output>(self.note.commitment());
-        private::ActionSigningKey::new(&alpha).sign(rng, sighash)
-    }
-
     /// Assemble an output action plan.
     ///
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
@@ -237,20 +207,6 @@ impl Plan<effect::Output> {
 }
 
 impl<E: Effect> Plan<E> {
-    /// Attach the supplied authorization, writing the smaller tachygram first.
-    #[must_use]
-    pub(crate) fn authorize(
-        &self,
-        signature: Signature,
-        (first, second): (Tachygram, Tachygram),
-    ) -> Action {
-        Action {
-            descriptor: self.descriptor(),
-            signature,
-            tachygrams: (first.min(second), first.max(second)),
-        }
-    }
-
     /// Derive the value commitment of this action plan.
     ///
     /// $$
@@ -269,7 +225,7 @@ impl<E: Effect> Plan<E> {
     /// Callers constructing plans must ensure both points are non-identity.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        ActionDigest::new(self.cv(), self.rk, tachygrams)
+        self.descriptor().digest(tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.

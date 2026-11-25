@@ -11,7 +11,14 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::{boxed::Box, collections::BTreeSet, format, string::ToString as _, vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, BTreeSet},
+    format,
+    string::ToString as _,
+    vec,
+    vec::Vec,
+};
 use core::error;
 
 use corez::io::{self, Read, Write};
@@ -35,12 +42,12 @@ use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
     bridge_hash::bridge_hash,
     bundle::StateByte,
-    digest::{blake2b, poseidon},
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, EqAffine, Fp},
+    pasta::EqAffine,
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
@@ -344,40 +351,44 @@ impl<P: Proof> ProofStamp<P> {
     }
 }
 
-/// Spend and output plans for one proof stamp at a chosen anchor and fee.
-/// Each spend also needs its note-secret and spendable witnesses at proving
-/// time.
+/// Everything needed to produce a [`ProofStamp`].
+///
+/// The statement includes each action's descriptor and tachygram pair, the fee
+/// descriptor, and the `anchor`. The planned witnesses are each action's
+/// `theta` and `rcv`, each output's `note`, and the max fee note with the `fee`
+/// it pays and the derived fee change note. A spend's note comes from its
+/// [`delegation::NoteSecret`] PCD at [`Self::prove`].
 ///
 /// Construct via [`Plan::new`] or via
 /// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
 /// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<action::Plan<effect::Spend>>,
-    outputs: Vec<action::Plan<effect::Output>>,
+    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
     anchor: Anchor,
     max_fee_note: Note,
-    fee: fee::Descriptor,
-    fee_change_commitment: Tachygram,
+    fee: value::Positive,
+    fee_change_note: Note,
 }
 
 impl Plan {
-    /// Create a stamp plan from the spend and output action plans, the
-    /// max fee note and the fee. Derives the fee change commitment.
+    /// Create a stamp plan from paired action descriptors and witnesses, the
+    /// max fee note and the fee. Derives and stores the fee change note.
     ///
     /// # Panics
     ///
-    /// Panics if the fee exceeds the max fee note's value or its `rcm` is zero.
+    /// Panics if the fee exceeds the max fee note's value.
     #[must_use]
     pub fn new(
-        spends: Vec<action::Plan<effect::Spend>>,
-        outputs: Vec<action::Plan<effect::Output>>,
+        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+        outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
         #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
-        let change_note = Note {
+        let fee_change_note = Note {
             value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
                 .expect("fee should not exceed max fee"),
             ..max_fee_note
@@ -387,28 +398,15 @@ impl Plan {
             outputs,
             anchor,
             max_fee_note,
-            fee: fee::Descriptor {
-                cv_feemax: max_fee_note.cv_feemax(),
-                v_fee: fee,
-            },
-            fee_change_commitment: change_note.commitment().into(),
+            fee,
+            fee_change_note,
         }
-    }
-
-    /// The chosen fee and the max-fee note's value commitment.
-    #[must_use]
-    pub const fn fee_descriptor(&self) -> fee::Descriptor {
-        self.fee
-    }
-
-    /// The commitment to the max-fee note with its value reduced by the fee.
-    #[must_use]
-    pub const fn fee_change_commitment(&self) -> Tachygram {
-        self.fee_change_commitment
     }
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
+    /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
+    /// the fee change, and the fee. Each pair has the smaller tachygram first.
     /// Successful construction does not guarantee that the stamp verifies.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
@@ -440,7 +438,7 @@ impl Plan {
     /// actions and the max fee note's value is nonzero.
     #[expect(
         clippy::type_complexity,
-        reason = "a spend witness is its secret, spendable and anchor spans"
+        reason = "each spend's secret, spendable and spans; the stamp and its authorization data"
     )]
     #[expect(
         clippy::too_many_lines,
@@ -456,7 +454,19 @@ impl Plan {
             ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
             Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
-    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
+    ) -> Result<
+        (
+            ProofStamp<Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+            value::Positive,
+        ),
+        ProveError,
+    > {
+        let change = Tachygram::from(self.fee_change_note.commitment());
+
+        // Each entry pairs leaf stamp components with the descriptor of its
+        // covered action; merges concatenate both.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spend_pcds.len() {
@@ -470,7 +480,7 @@ impl Plan {
             ));
         }
 
-        for (index, (plan, (secret_pcd, spendable_pcd, spans))) in
+        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
             self.spends.into_iter().zip(spend_pcds).enumerate()
         {
             let reached = spans
@@ -488,14 +498,14 @@ impl Plan {
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), plan.rcv),
+                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
                     spendable_pcd,
                     secret_pcd,
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            let (digests, tachygrams, spend_anchor, spend_proof) =
-                ProofStamp::prove_spend(rng, app, plan.theta, bind_pcd, *pak)
+            let (digests, tachygrams, spend_anchor, spend_proof, pair) =
+                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)
                     .map_err(ProveError::ProofFailed)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for span in spans {
@@ -506,22 +516,35 @@ impl Plan {
             }
 
             let (proof, anchor) = stamp_pcd.into_parts();
-            entries.push((digests, tachygrams, anchor, Box::new(proof)));
+            entries.push((
+                BTreeMap::from([(desc, pair)]),
+                digests,
+                tachygrams,
+                anchor,
+                Box::new(proof),
+            ));
         }
 
-        for plan in self.outputs {
-            let (digests, tachygrams, anchor, proof) =
-                ProofStamp::prove_output(rng, app, &plan, self.anchor)
+        for (desc, theta, note, rcv) in self.outputs {
+            let (digests, tachygrams, anchor, proof, pair) =
+                ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)
                     .map_err(ProveError::ProofFailed)?;
-            entries.push((digests, tachygrams, anchor, proof));
+            entries.push((
+                BTreeMap::from([(desc, pair)]),
+                digests,
+                tachygrams,
+                anchor,
+                proof,
+            ));
         }
 
-        let (pcd, mut tachygrams) = match entries
+        let (pcd, descriptors, mut tachygrams) = match entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
-                let (left_digests, left_tachygrams, left_anchor, left_proof) = acc?;
-                let (right_digests, right_tachygrams, right_anchor, right_proof) = next?;
+                let (left_desc, left_digests, left_tachygrams, left_anchor, left_proof) = acc?;
+                let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
+                    next?;
 
                 let left_pcd = left_proof.carry::<Actions>(left_anchor);
                 let right_pcd = right_proof.carry::<Actions>(right_anchor);
@@ -545,7 +568,10 @@ impl Plan {
                     )
                     .map_err(ProveError::ProofFailed)?;
 
+                let merged_descs = left_desc.into_iter().chain(right_desc).collect();
+
                 Ok((
+                    merged_descs,
                     merged_digests,
                     merged_tachygrams,
                     *pcd.data(),
@@ -562,9 +588,9 @@ impl Plan {
                         witness::fee_seed(((), ()), self.max_fee_note, self.anchor),
                     )
                     .map_err(ProveError::ProofFailed)?;
-                (pcd, BTreeSet::new())
+                (pcd, BTreeMap::new(), BTreeSet::new())
             },
-            Some((digests, tachygrams, anchor, merged_proof)) => {
+            Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
                 let (pcd, ()) = app
                     .fuse(
                         rng,
@@ -572,7 +598,7 @@ impl Plan {
                         witness::fee_fuse(
                             (anchor, ()),
                             self.max_fee_note,
-                            self.fee.v_fee,
+                            self.fee,
                             &digests,
                             &tachygrams,
                         ),
@@ -580,7 +606,7 @@ impl Plan {
                         app.bootstrap_proof().clone().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
-                (pcd, tachygrams)
+                (pcd, descriptors, tachygrams)
             },
         };
 
@@ -588,18 +614,23 @@ impl Plan {
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
-        tachygrams.insert(self.fee_change_commitment);
+        tachygrams.insert(change);
         let tachygram_set = tachygrams
             .iter()
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        Ok(ProofStamp {
-            anchor,
-            tachygram_set,
-            adjuncts: BTreeSet::new(),
-            proof: Box::new(proof),
-        })
+        Ok((
+            ProofStamp {
+                anchor,
+                tachygram_set,
+                adjuncts: BTreeSet::new(),
+                proof: Box::new(proof),
+            },
+            descriptors,
+            change,
+            self.fee,
+        ))
     }
 }
 
@@ -661,11 +692,12 @@ pub struct ProofStamp<P: Proof> {
 
 impl ProofStamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
-    /// anchor, proof)`. The proof is not rerandomized.
+    /// anchor, proof, pair)`. The proof is not rerandomized.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputAction`]
     /// derives `alpha` from `theta` and the bound `cm`, proves the action over
-    /// the pair, and enforces the tachygram set.
+    /// the pair, and enforces the tachygram set. Both tachygrams
+    /// are returned for publication in the bundle's authorization data.
     /// `digests` holds the proved action's digest.
     ///
     /// # Errors
@@ -678,7 +710,9 @@ impl ProofStamp<Uncompressed> {
     fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         app: &App<'_>,
-        plan: &action::Plan<effect::Output>,
+        theta: ActionEntropy,
+        rcv: value::Trapdoor,
+        note: Note,
         anchor: Anchor,
     ) -> Result<
         (
@@ -686,33 +720,28 @@ impl ProofStamp<Uncompressed> {
             BTreeSet<Tachygram>,
             Anchor,
             Box<Uncompressed>,
+            (Tachygram, Tachygram),
         ),
         ragu::Error,
     > {
         let (bind_pcd, ()) = app.seed(
             rng,
             output::OutputBind,
-            witness::output_bind(((), ()), plan.note, plan.rcv),
+            witness::output_bind(((), ()), note, rcv),
         )?;
         let (cm, pad, cv) = *bind_pcd.data();
         let pair = (cm.min(pad), cm.max(pad));
-        let alpha = plan
-            .theta
-            .randomizer::<effect::Output>(plan.note.commitment());
+        let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::from(poseidon::action_digest(
-            EpAffine::from(cv),
-            EpAffine::from(rk),
-            (Fp::from(pair.0), Fp::from(pair.1)),
-        ));
+        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = app.fuse(
             rng,
             OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), plan.theta, anchor),
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
         )?;
@@ -722,12 +751,13 @@ impl ProofStamp<Uncompressed> {
             tachygrams,
             anchor,
             Box::new(pcd.proof().clone()),
+            pair,
         ))
     }
 
     /// Proves a single spend action from a bound
     /// [`SpendHeader`](spend::SpendHeader) PCD, returning `(digests,
-    /// tachygrams, anchor, proof)`. The proof is not rerandomized.
+    /// tachygrams, anchor, proof, pair)`. The proof is not rerandomized.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability and the value commitment `cv` are read straight off the
@@ -757,6 +787,7 @@ impl ProofStamp<Uncompressed> {
             BTreeSet<Tachygram>,
             Anchor,
             Box<Uncompressed>,
+            (Tachygram, Tachygram),
         ),
         ragu::Error,
     > {
@@ -767,11 +798,7 @@ impl ProofStamp<Uncompressed> {
         let rk = pak.ak.derive_action_public(&alpha);
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::from(poseidon::action_digest(
-            EpAffine::from(cv),
-            EpAffine::from(rk),
-            (Fp::from(pair.0), Fp::from(pair.1)),
-        ));
+        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
 
         let tachygrams = BTreeSet::from_iter([tg_current, tg_next]);
 
@@ -788,6 +815,7 @@ impl ProofStamp<Uncompressed> {
             tachygrams,
             anchor,
             Box::new(pcd.proof().clone()),
+            pair,
         ))
     }
 
@@ -935,7 +963,7 @@ impl ProofStamp<Uncompressed> {
         rng: &mut RNG,
         app: &App<'_>,
         actions: impl IntoIterator<Item = &'covered action::Action>,
-        fee_descriptors: impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
+        fee_descriptors: &BTreeMap<fee::Descriptor, Tachygram>,
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
@@ -945,7 +973,7 @@ impl ProofStamp<Uncompressed> {
         for action in actions {
             action_digests.insert(action.digest());
         }
-        for (descriptor, change) in fee_descriptors {
+        for (descriptor, &change) in fee_descriptors {
             action_digests.insert(descriptor.digest(change));
         }
 
@@ -956,7 +984,7 @@ impl ProofStamp<Uncompressed> {
     /// Successful construction does not guarantee that the merged stamp
     /// verifies.
     ///
-    /// Each side supplies its covered actions and fee entries, from which the
+    /// Each side supplies its covered actions and fee map, from which the
     /// action digests and tachygrams for the merge proof are derived.
     ///
     /// The merged stamp lists both stamps' adjuncts and `right_txid`, the txid
@@ -985,13 +1013,13 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         (left_actions, left_fees): (
             impl IntoIterator<Item = &'covered action::Action>,
-            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
         (right_stamp, right_txid, right_actions, right_fees): (
             Self,
             [u8; 32],
             impl IntoIterator<Item = &'covered action::Action>,
-            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut left_digests = BTreeSet::new();
@@ -1000,7 +1028,7 @@ impl ProofStamp<Uncompressed> {
             left_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             left_digests.insert(action.digest());
         }
-        for (descriptor, change) in left_fees {
+        for (descriptor, &change) in left_fees {
             left_tachygrams.insert(change);
             left_digests.insert(descriptor.digest(change));
         }
@@ -1011,7 +1039,7 @@ impl ProofStamp<Uncompressed> {
             right_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             right_digests.insert(action.digest());
         }
-        for (descriptor, change) in right_fees {
+        for (descriptor, &change) in right_fees {
             right_tachygrams.insert(change);
             right_digests.insert(descriptor.digest(change));
         }
@@ -1057,7 +1085,7 @@ impl ProofStamp<Uncompressed> {
     /// divisor's covered actions, fees and tachygrams. Rerandomizes the
     /// quotient.
     ///
-    /// Each side supplies its covered actions and fee entries. The quotient's
+    /// Each side supplies its covered actions and fee map. The quotient's
     /// action digests and tachygrams are the dividend's less the divisor's.
     /// A divisor that does not divide this stamp can produce a proof that
     /// fails verification, even when construction succeeds.
@@ -1087,13 +1115,13 @@ impl ProofStamp<Uncompressed> {
         app: &App<'_>,
         (actions, fees): (
             impl IntoIterator<Item = &'covered action::Action>,
-            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
         (divisor_stamp, divisor_txid, divisor_actions, divisor_fees): (
             Self,
             [u8; 32],
             impl IntoIterator<Item = &'covered action::Action>,
-            impl IntoIterator<Item = (fee::Descriptor, Tachygram)>,
+            &BTreeMap<fee::Descriptor, Tachygram>,
         ),
     ) -> Result<Self, ragu::Error> {
         let mut digests = BTreeSet::new();
@@ -1102,7 +1130,7 @@ impl ProofStamp<Uncompressed> {
             tachygrams_all.extend(<[Tachygram; 2]>::from(action.tachygrams));
             digests.insert(action.digest());
         }
-        for (descriptor, change) in fees {
+        for (descriptor, &change) in fees {
             tachygrams_all.insert(change);
             digests.insert(descriptor.digest(change));
         }
@@ -1113,7 +1141,7 @@ impl ProofStamp<Uncompressed> {
             divisor_tachygrams.extend(<[Tachygram; 2]>::from(action.tachygrams));
             divisor_digests.insert(action.digest());
         }
-        for (descriptor, change) in divisor_fees {
+        for (descriptor, &change) in divisor_fees {
             divisor_tachygrams.insert(change);
             divisor_digests.insert(descriptor.digest(change));
         }

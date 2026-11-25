@@ -80,18 +80,6 @@ pub struct Note {
 }
 
 impl Note {
-    /// The padding tachygram paired with this output note's commitment.
-    #[must_use]
-    pub fn commitment_pad(&self) -> Tachygram {
-        poseidon::pad_tachygram(
-            self.rcm.0,
-            self.pk.into(),
-            self.value.into(),
-            self.psi.into(),
-        )
-        .into()
-    }
-
     /// The feemax blind, the trapdoor $r$ of `cv_feemax`, derived from note
     /// fields.
     #[must_use]

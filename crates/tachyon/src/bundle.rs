@@ -53,7 +53,7 @@
 //! The fields are phase-ordered: effecting data through the memo, then signing
 //! data, then proving data. One action count frames all three action vectors.
 //! Each pair's two canonical field elements may occur in either order. The
-//! sender writes the smaller first, revealing neither member's role. All pair
+//! prover writes the smaller first, revealing neither member's role. All pair
 //! members and `cmChangeTachyon` must be distinct.
 //!
 //! `cvFeeMaxTachyon` is a canonical non-identity point. The bundle
@@ -102,11 +102,6 @@
 //! `hStampTachyon`, over the adjunct list and `hStampProofTachyon`. A stripped
 //! stamp has neither and takes the empty-input stamp hash. See
 //! [`blake2b::stamp_digest`].
-
-#![expect(
-    clippy::result_large_err,
-    reason = "the public Copy plan error identifies the missing spend by descriptor"
-)]
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -185,7 +180,8 @@ pub struct Bundle<S: StampState + ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
-    /// The bundle's actions, in wire order.
+    /// Wire order is shared by the descriptor, signature, and tachygram
+    /// sections.
     pub actions: Vec<action::Action>,
 
     /// The max fee note's value commitment and the fee paid by this bundle.
@@ -270,9 +266,6 @@ impl<S: StampState + ?Sized> Bundle<S> {
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignatureError {
-    /// The supplied signatures or balance are inconsistent with the plan.
-    #[display("invalid bundle plan: {_0}")]
-    Plan(PlanError),
     /// The binding signature is invalid.
     #[display("invalid binding signature {_0:?}")]
     Binding(#[error(not(source))] Signature),
@@ -304,10 +297,6 @@ pub enum VerifyCoverageError {
 /// Errors during bundle verification.
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "propagates the plan error with its spend descriptor"
-)]
 pub enum VerificationError {
     /// The bundle signatures did not verify.
     #[display("signature verification error: {_0}")]
@@ -323,23 +312,13 @@ pub enum VerificationError {
     Disproved,
 }
 
-/// Errors constructing a bundle from its plan.
+/// Errors that can occur while signing a bundle plan.
 #[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the missing spend is identified by its descriptor without allocation"
-)]
 pub enum PlanError {
-    /// The supplied actions' descriptors do not match the plan one-to-one.
+    /// The signatures do not match the planned actions.
     #[display("planned actions do not match signed actions")]
     ActionSigMismatch,
-    /// No tachygram pair was supplied for this planned spend.
-    #[display("missing spend tachygrams for {_0:?}")]
-    MissingSpendTachygrams(#[error(not(source))] action::Descriptor),
-    /// The chosen fee exceeds the max-fee note's value.
-    #[display("fee exceeds the planned maximum")]
-    FeeExceedsMax,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -452,22 +431,28 @@ impl Plan {
 
     /// Build a [`stamp::Plan`] from this bundle plan.
     ///
-    /// Uses the same spend and output plans and the max-fee note with `fee`.
-    /// The returned plan is ready to prove with
+    /// Collects each action's descriptor and proof witnesses, and the max fee
+    /// note with `fee`. The returned plan is ready to prove with
     /// [`stamp::Plan::prove`].
     ///
     /// # Panics
     ///
-    /// Panics if `fee` exceeds the max fee note's value or its `rcm` is zero.
+    /// Panics if `fee` exceeds the max fee note's value.
     #[must_use]
     pub fn stamp_plan(&self, anchor: Anchor, fee: value::Positive) -> stamp::Plan {
-        stamp::Plan::new(
-            self.spends.clone(),
-            self.outputs.clone(),
-            anchor,
-            self.max_fee_note,
-            fee,
-        )
+        let spends = self
+            .spends
+            .iter()
+            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv))
+            .collect();
+
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|plan| (plan.descriptor(), plan.theta, plan.note, plan.rcv))
+            .collect();
+
+        stamp::Plan::new(spends, outputs, anchor, self.max_fee_note, fee)
     }
 
     /// Derive the binding signing key, which is the scalar sum of value
@@ -540,7 +525,9 @@ impl Plan {
         self.value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
 
-        self.check_signing_descriptors(&authorized)?;
+        if self.descriptors() != authorized.keys().copied().collect() {
+            return Err(PlanError::ActionSigMismatch);
+        }
         let binding_sig = self.derive_bsk_private().sign(rng, sighash);
 
         Ok((authorized, binding_sig))
@@ -550,9 +537,12 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// Returns [`SignatureError::Plan`] for an out-of-range balance or
-    /// mismatched signature keys, or a signature error if verification
-    /// fails.
+    /// Returns [`SignatureError`] if any signature is invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan's balance is out of range or the signature keys do
+    /// not match the plan.
     pub fn verify_signatures(
         &self,
         sighash: &[u8; 32],
@@ -560,15 +550,13 @@ impl Plan {
     ) -> Result<(), SignatureError> {
         let action_sigs = &signatures.0;
         let binding_sig = &signatures.1;
-        self.check_signing_descriptors(action_sigs)
-            .map_err(SignatureError::Plan)?;
+        self.assert_signing_descriptors(action_sigs);
         let bvk = public::BindingVerificationKey::derive(
             action_sigs
                 .keys()
                 .map(|desc| desc.cv)
                 .chain([self.max_fee_note.cv_feemax()]),
-            self.value_balance()
-                .map_err(|_err| SignatureError::Plan(PlanError::BalanceOverflow))?,
+            self.signed_balance(),
         );
         bvk.verify(sighash, binding_sig)
             .map_err(|_err| SignatureError::Binding(*binding_sig))?;
@@ -580,78 +568,68 @@ impl Plan {
         Ok(())
     }
 
-    fn check_signing_descriptors(
+    fn assert_signing_descriptors(
         &self,
-        signatures: &BTreeMap<action::Descriptor, action::Signature>,
-    ) -> Result<(), PlanError> {
-        if !self.descriptors().iter().eq(signatures.keys()) {
-            return Err(PlanError::ActionSigMismatch);
-        }
-        Ok(())
+        action_sigs: &BTreeMap<action::Descriptor, action::Signature>,
+    ) {
+        assert!(
+            self.descriptors().iter().eq(action_sigs.keys()),
+            "action descriptors do not match"
+        );
     }
 
-    /// Join signatures and spend tachygrams to the planned actions in
-    /// descriptor order and attach the supplied stamp. Assembly does not
-    /// verify signatures or coverage.
+    #[expect(clippy::expect_used, reason = "signing checks the planned balance")]
+    fn signed_balance(&self) -> value::Balance {
+        self.value_balance().expect("planned balance is in range")
+    }
+
+    /// Join the action signatures and tachygram pairs by descriptor, then
+    /// attach the binding signature, stamp, fee change commitment, and fee.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Rejects mismatched signature keys, duplicate descriptors, missing spend
-    /// tachygrams, a fee above the planned
-    /// maximum, or an out-of-range balance.
-    pub fn assemble<S: StampState>(
+    /// Panics if the plan, signature and tachygram pair keys differ or the
+    /// plan's balance is out of range.
+    #[must_use]
+    #[expect(
+        clippy::type_complexity,
+        reason = "takes the prover's outputs as returned"
+    )]
+    pub fn assemble(
         &self,
         (action_sigs, binding_sig): (BTreeMap<action::Descriptor, action::Signature>, Signature),
-        mut spend_tachygrams: impl FnMut(&action::Plan<effect::Spend>) -> Option<(Tachygram, Tachygram)>,
-        fee: value::Positive,
-        fee_change_commitment: Tachygram,
-        stamp: S,
-    ) -> Result<Bundle<S>, PlanError> {
-        let value_balance = self
-            .value_balance()
-            .map_err(|_err| PlanError::BalanceOverflow)?;
-        if fee > self.max_fee_note.value {
-            return Err(PlanError::FeeExceedsMax);
-        }
-        self.check_signing_descriptors(&action_sigs)?;
-        if action_sigs.len() != self.spends.len() + self.outputs.len() {
-            return Err(PlanError::ActionSigMismatch);
-        }
-        let mut actions = Vec::with_capacity(action_sigs.len());
-        for spend in &self.spends {
-            let descriptor = spend.descriptor();
-            let signature = action_sigs
-                .get(&descriptor)
-                .ok_or(PlanError::ActionSigMismatch)?;
-            let pair =
-                spend_tachygrams(spend).ok_or(PlanError::MissingSpendTachygrams(descriptor))?;
-            actions.push(spend.authorize(*signature, pair));
-        }
-        for output in &self.outputs {
-            let signature = action_sigs
-                .get(&output.descriptor())
-                .ok_or(PlanError::ActionSigMismatch)?;
-            actions.push(output.authorize(
-                *signature,
-                (
-                    output.note.commitment().into(),
-                    output.note.commitment_pad(),
-                ),
-            ));
-        }
-        actions.sort_unstable_by_key(|action| action.descriptor);
-        Ok(Bundle {
+        (stamp, pairs, cm_change, fee): (
+            ProofStamp<stamp::Uncompressed>,
+            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+            Tachygram,
+            value::Positive,
+        ),
+    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
+        assert!(
+            self.descriptors().iter().eq(action_sigs.keys()) && action_sigs.keys().eq(pairs.keys()),
+            "action descriptors do not match"
+        );
+        let actions = action_sigs
+            .into_iter()
+            .zip(pairs.into_values())
+            .map(|((descriptor, signature), tachygrams)| action::Action {
+                descriptor,
+                signature,
+                tachygrams,
+            })
+            .collect();
+        Bundle {
             actions,
-            value_balance,
+            value_balance: self.signed_balance(),
             fee: fee::Descriptor {
                 cv_feemax: self.max_fee_note.cv_feemax(),
                 v_fee: fee,
             },
-            fee_auth: fee_change_commitment,
+            fee_auth: cm_change,
             binding_sig,
             memo: self.memo.clone(),
             stamp,
-        })
+        }
     }
 }
 
@@ -687,8 +665,9 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
             .iter()
             .chain(adjuncts.iter().flat_map(|adj| &adj.actions));
         let fees = iter::once((self.fee, self.fee_auth))
-            .chain(adjuncts.iter().map(|adj| (adj.fee, adj.fee_auth)));
-        let stamp = self.stamp.lift(rng, app, actions, fees, spans)?;
+            .chain(adjuncts.iter().map(|adj| (adj.fee, adj.fee_auth)))
+            .collect();
+        let stamp = self.stamp.lift(rng, app, actions, &fees, spans)?;
 
         Ok(Self { stamp, ..self })
     }

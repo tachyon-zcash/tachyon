@@ -100,12 +100,12 @@ pub(crate) fn merged(
             .merge(
                 rng,
                 app,
-                (&left.actions, [(left.fee, left.fee_auth)]),
+                (&left.actions, &BTreeMap::from([(left.fee, left.fee_auth)])),
                 (
                     right.stamp.clone(),
                     right_txid,
                     &right.actions,
-                    [(right.fee, right.fee_auth)],
+                    &BTreeMap::from([(right.fee, right.fee_auth)]),
                 ),
             )
             .unwrap()
@@ -135,7 +135,7 @@ pub(crate) fn lifted(
                 rng,
                 app,
                 &bundle.actions,
-                [(bundle.fee, bundle.fee_auth)],
+                &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 vec![span],
             )
             .unwrap()
@@ -321,7 +321,6 @@ impl WalletSim {
         key.extend_from_slice(&Fp::from(max_fee_note.commitment()).to_bytes());
         key.extend_from_slice(&u64::from(fee).to_le_bytes());
         BUNDLES.get(&key, |rng| {
-            let mut spend_pairs = BTreeMap::new();
             let mut spend_plans = Vec::new();
             let mut spend_pcds = Vec::new();
             for &(note, pool) in spends {
@@ -349,21 +348,10 @@ impl WalletSim {
                 );
                 let rcv = value::Trapdoor::random(rng);
                 let theta = ActionEntropy::random(rng);
-                let spend = action::Plan::spend(note, theta, rcv, |alpha| {
+                spend_plans.push(action::Plan::spend(note, theta, rcv, |alpha| {
                     self.pak.ak.derive_action_public(&alpha)
-                });
-                let secret = self.note_secret(app, note);
-                let master = secret.data().2;
-                let epoch = spendable.data().1;
-                spend_pairs.insert(
-                    spend.descriptor(),
-                    (
-                        master.derive_nullifier(epoch).into(),
-                        master.derive_nullifier(epoch.next().unwrap()).into(),
-                    ),
-                );
-                spend_plans.push(spend);
-                spend_pcds.push((secret, spendable, vec![]));
+                }));
+                spend_pcds.push((self.note_secret(app, note), spendable, vec![]));
             }
             let output_plans = outputs
                 .iter()
@@ -379,18 +367,11 @@ impl WalletSim {
             let signatures = plan
                 .sign(rng, &sighash, &self.sk.derive_auth_private())
                 .unwrap();
-            let stamp_plan = plan.stamp_plan(anchor, fee);
-            let change = stamp_plan.fee_change_commitment();
-            let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
-            let bundle = plan
-                .assemble(
-                    signatures,
-                    |spend| spend_pairs.get(&spend.descriptor()).copied(),
-                    fee,
-                    change,
-                    stamp,
-                )
+            let proof = plan
+                .stamp_plan(anchor, fee)
+                .prove(rng, app, &self.pak, spend_pcds)
                 .unwrap();
+            let bundle = plan.assemble(signatures, proof);
             (plan, bundle)
         })
     }

@@ -9,6 +9,7 @@ use zcash_tachyon::{
     ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
     TachygramSetPoly, action,
     constants::EPOCH_MAX,
+    digest::poseidon,
     entropy::ActionEntropy,
     keys::private,
     note,
@@ -928,7 +929,12 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let theta = ActionEntropy::random(rng);
     let plan = action::Plan::output(note, theta, rcv);
     let anchor = Anchor::random(rng);
-    let pad = note.commitment_pad();
+    let pad = Tachygram::from(poseidon::pad_tachygram(
+        Fp::from(note.rcm),
+        Fp::from(note.pk),
+        u64::from(note.value),
+        Fp::from(note.psi),
+    ));
 
     let (bind_pcd, ()) = app
         .seed(

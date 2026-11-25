@@ -3,11 +3,10 @@ use core::cmp::Ordering;
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 
 use crate::{
+    action,
     digest::poseidon,
-    keys::public,
     pasta::{EpAffine, Fp},
     primitives::Tachygram,
-    value,
 };
 
 /// Poseidon digest of an action's `cv`, `rk` and unordered tachygram pair.
@@ -39,23 +38,21 @@ impl Ord for ActionDigest {
 }
 
 impl ActionDigest {
-    /// Digests an action and its unordered tachygram pair. The digest absorbs
-    /// the pair's sum and product, so member order does not matter.
+    /// Digests an action descriptor and its unordered tachygram pair. The
+    /// digest absorbs the pair's sum and product, so member order does not
+    /// matter.
     ///
     /// # Panics
     ///
-    /// Panics if `cv` or `rk` is the identity, which has no affine coordinates
-    /// to absorb. Descriptor reading rejects both identities; callers supplying
-    /// hand-built values must ensure both points are non-identity.
+    /// Panics if the descriptor's `cv` or `rk` is the identity, which has no
+    /// affine coordinates to absorb. Descriptor reading rejects both
+    /// identities; callers supplying hand-built values must ensure both
+    /// points are non-identity.
     #[must_use]
-    pub fn new(
-        cv: value::Commitment,
-        rk: public::ActionVerificationKey,
-        tachygrams: (Tachygram, Tachygram),
-    ) -> Self {
+    pub fn new(descriptor: action::Descriptor, tachygrams: (Tachygram, Tachygram)) -> Self {
         Self(poseidon::action_digest(
-            EpAffine::from(cv),
-            EpAffine::from(rk),
+            EpAffine::from(descriptor.cv),
+            EpAffine::from(descriptor.rk),
             (Fp::from(tachygrams.0), Fp::from(tachygrams.1)),
         ))
     }

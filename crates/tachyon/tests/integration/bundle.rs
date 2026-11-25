@@ -137,71 +137,61 @@ fn assemble_joins_by_descriptor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (plan, original) = spend(app);
     let wallet = WalletSim::new(shared_sk());
-    let sighash = mock_sighash(plan.commitment().unwrap());
     let signatures = plan
-        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
-        .unwrap();
-    let joined = plan
-        .assemble(
-            signatures,
-            |spend| {
-                original
-                    .actions
-                    .iter()
-                    .find(|action| action.descriptor == spend.descriptor())
-                    .map(|action| (action.tachygrams.1, action.tachygrams.0))
-            },
-            original.fee.v_fee,
-            original.fee_auth,
-            original.stamp,
+        .sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
         )
         .unwrap();
+    let pairs: BTreeMap<_, _> = original
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
+    let joined = plan.assemble(
+        signatures,
+        (
+            original.stamp,
+            pairs.clone(),
+            original.fee_auth,
+            original.fee.v_fee,
+        ),
+    );
     assert!(
         joined
             .actions
             .iter()
             .map(|action| (action.descriptor, action.tachygrams))
-            .eq(original
-                .actions
-                .iter()
-                .map(|action| (action.descriptor, action.tachygrams)))
+            .eq(pairs)
     );
-    joined.verify(rng, app, &sighash, &[]).unwrap();
+    joined
+        .verify(rng, app, &mock_sighash(joined.commitment()), &[])
+        .unwrap();
 }
 
 #[test]
-fn assemble_rejects_mismatched_descriptors() {
+#[should_panic(expected = "action descriptors do not match")]
+fn assemble_panics_on_mismatched_descriptors() {
+    let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
+    let (plan, original) = spend(app);
     let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-    let max_fee = wallet.random_note(0);
-    let plan = Plan::new(vec![spend], vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-    let signatures = plan.sign(rng, &sighash, &ask).unwrap();
-    let fee = value::Positive::ZERO;
-    let change = max_fee.commitment().into();
-    let missing = (BTreeMap::new(), signatures.1);
-    assert_matches!(
-        plan.verify_signatures(&sighash, &missing),
-        Err(SignatureError::Plan(PlanError::ActionSigMismatch))
-    );
-    assert_eq!(
-        plan.assemble(missing, |_| None, fee, change, StrippedStamp)
-            .unwrap_err(),
-        PlanError::ActionSigMismatch
-    );
-    let duplicate = Plan::new(vec![spend, spend], vec![], max_fee);
-    assert_eq!(
-        duplicate
-            .assemble(signatures.clone(), |_| None, fee, change, StrippedStamp)
-            .unwrap_err(),
-        PlanError::ActionSigMismatch
-    );
-    assert_eq!(
-        plan.assemble(signatures, |_| None, fee, change, StrippedStamp)
-            .unwrap_err(),
-        PlanError::MissingSpendTachygrams(spend.descriptor())
+    let signatures = plan
+        .sign(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            &wallet.sk.derive_auth_private(),
+        )
+        .unwrap();
+    let _bundle = plan.assemble(
+        signatures,
+        (
+            original.stamp,
+            BTreeMap::new(),
+            original.fee_auth,
+            original.fee.v_fee,
+        ),
     );
 }
 
@@ -302,17 +292,8 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.note_secret(app, note);
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
-    let master = secret.data().2;
-    let epoch = spendable.data().1;
-    let pair = (
-        master.derive_nullifier(epoch).into(),
-        master.derive_nullifier(epoch.next().unwrap()).into(),
-    );
-    let stamp_plan =
-        Plan::new(vec![plan], vec![], max_fee_note).stamp_plan(anchor, value::Positive::ZERO);
-    let fee = stamp_plan.fee_descriptor();
-    let cm_change = stamp_plan.fee_change_commitment();
-    let honest_stamp = stamp_plan
+    let (honest_stamp, pairs, cm_change, fee) = Plan::new(vec![plan], vec![], max_fee_note)
+        .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
     let doubled = 2 * i64::try_from(u64::from(note.value)).unwrap();
@@ -330,6 +311,7 @@ fn duplicated_spend_cannot_inflate() {
         .derive_auth_private()
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
+    let pair = pairs[&descriptor];
     let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee_note)
         .derive_bsk_private()
         .sign(rng, &sighash);
@@ -345,7 +327,10 @@ fn duplicated_spend_cannot_inflate() {
         value_balance,
         binding_sig,
         memo: Vec::new(),
-        fee,
+        fee: fee::Descriptor {
+            cv_feemax,
+            v_fee: fee,
+        },
         fee_auth: cm_change,
         stamp: honest_stamp,
     };
@@ -383,9 +368,12 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_fees = [(becomes_based.fee, becomes_based.fee_auth)];
+    let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
     let innocent_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
-    let innocent_fees = [&autonome_a, &autonome_b].map(|bundle| (bundle.fee, bundle.fee_auth));
+    let innocent_fees = [&autonome_a, &autonome_b]
+        .into_iter()
+        .map(|bundle| (bundle.fee, bundle.fee_auth))
+        .collect();
     let innocent_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let (txid_a, txid_b) = (mock_txid(&autonome_a), mock_txid(&autonome_b));
     assert_eq!(innocent_stamp.adjuncts, BTreeSet::from([txid_b]));
@@ -395,8 +383,8 @@ fn based_aggregate_with_two_adjuncts() {
         .merge(
             rng,
             app,
-            (&becomes_based.actions, based_fees),
-            (innocent_stamp, txid_a, innocent_actions, innocent_fees),
+            (&becomes_based.actions, &based_fees),
+            (innocent_stamp, txid_a, innocent_actions, &innocent_fees),
         )
         .unwrap();
 
@@ -447,6 +435,22 @@ fn based_aggregate_with_two_adjuncts() {
             VerifyCoverageError::DuplicateActions
         ))
     );
+}
+
+#[test]
+fn read_requires_a_signature_and_pair_for_every_action() {
+    let app = &application();
+    let (_, bundle) = spend(app);
+    let stripped = bundle.strip();
+    let mut bytes = Vec::new();
+    stripped.write(&mut bytes).unwrap();
+    // End the input one record short in each authorization phase.
+    let pairs_end = bytes.len() - 8 - 32;
+    let sigs_end = pairs_end - 64 * stripped.actions.len() - 64;
+    for end in [sigs_end, pairs_end] {
+        let err = Bundle::<StrippedStamp>::read(&bytes[..end - 64]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
 }
 
 #[test]
@@ -1350,23 +1354,24 @@ fn memo_round_trips_and_rejects_truncation() {
 fn plan_memo_reaches_the_signed_bundle() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
     let memo = vec![0x7Fu8; 900];
     let (plan, original) = alice(app);
     let bundle_plan = plan.with_memo(memo.clone());
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
     let signatures = bundle_plan
-        .sign(rng, &sighash, &shared_sk().derive_auth_private())
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .unwrap();
-    let bundle = bundle_plan
-        .assemble(
-            signatures,
-            |_| None,
-            original.fee.v_fee,
-            original.fee_auth,
-            original.stamp,
-        )
-        .unwrap();
+    let pairs = original
+        .actions
+        .iter()
+        .map(|action| (action.descriptor, action.tachygrams))
+        .collect();
+    let bundle = bundle_plan.assemble(
+        signatures,
+        (original.stamp, pairs, original.fee_auth, original.fee.v_fee),
+    );
 
     assert_eq!(bundle.memo, memo);
     assert_eq!(bundle.commitment(), bundle_plan.commitment().unwrap());
@@ -1390,7 +1395,11 @@ fn bundle_lift_preserves_coverage() {
     assert_eq!(unchanged_bytes, original_bytes);
     let mut stamp_bytes = Vec::new();
     bundle.stamp.write(&mut stamp_bytes).unwrap();
-    let unchanged_stamp = bundle.stamp.clone().lift(rng, app, [], [], vec![]).unwrap();
+    let unchanged_stamp = bundle
+        .stamp
+        .clone()
+        .lift(rng, app, [], &BTreeMap::new(), vec![])
+        .unwrap();
     let mut unchanged_stamp_bytes = Vec::new();
     unchanged_stamp.write(&mut unchanged_stamp_bytes).unwrap();
     assert_eq!(unchanged_stamp_bytes, stamp_bytes);
@@ -1420,21 +1429,24 @@ fn bundle_lift_over_an_aggregate() {
     let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
 
     let seed = zero.stamp.clone();
-    let zero_fees = [(zero.fee, zero.fee_auth)];
+    let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
     let adjunct_actions = autonome_a.actions.iter().chain(&autonome_b.actions);
-    let adjunct_fees = [&autonome_a, &autonome_b].map(|bundle| (bundle.fee, bundle.fee_auth));
+    let adjunct_fees = [&autonome_a, &autonome_b]
+        .into_iter()
+        .map(|bundle| (bundle.fee, bundle.fee_auth))
+        .collect();
     let adjunct_stamp = merged(app, &autonome_a, &autonome_b).stamp;
     let innocent = Bundle {
         stamp: seed
             .merge(
                 rng,
                 app,
-                (&zero.actions, zero_fees),
+                (&zero.actions, &zero_fees),
                 (
                     adjunct_stamp,
                     mock_txid(&autonome_a),
                     adjunct_actions,
-                    adjunct_fees,
+                    &adjunct_fees,
                 ),
             )
             .unwrap(),

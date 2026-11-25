@@ -1,6 +1,9 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeSet, vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec,
+};
 use core::assert_matches;
 
 use ragu::udon::field::Field as _;
@@ -73,18 +76,20 @@ fn fee_less_output_bundle(
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
-        let sighash = mock_sighash(plan.commitment().unwrap());
         let signatures = plan
-            .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+            .sign(
+                rng,
+                &mock_sighash(plan.commitment().unwrap()),
+                &wallet.sk.derive_auth_private(),
+            )
             .unwrap();
-        plan.assemble(
-            signatures,
-            |_| None,
-            value::Positive::ZERO,
-            max_fee_note.commitment().into(),
+        let proof = (
             stamp,
-        )
-        .unwrap()
+            BTreeMap::from([(output_plan.descriptor(), (cm.min(pad), cm.max(pad)))]),
+            max_fee_note.commitment().into(),
+            value::Positive::ZERO,
+        );
+        plan.assemble(signatures, proof)
     })
 }
 
@@ -278,35 +283,22 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     )];
     let commitment = at_fixture_fee.commitment();
     let sighash = mock_sighash(commitment);
+    let signatures = (
+        at_fixture_fee
+            .actions
+            .iter()
+            .map(|action| (action.descriptor, action.signature))
+            .collect::<BTreeMap<_, _>>(),
+        at_fixture_fee.binding_sig,
+    );
+
     let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
         let fee = value::Positive::try_from(amount).unwrap();
-        let stamp_plan = bundle_plan.stamp_plan(anchor, fee);
-        let change = stamp_plan.fee_change_commitment();
-        let stamp = stamp_plan
+        let proof = bundle_plan
+            .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
-        bundle_plan
-            .assemble(
-                (
-                    at_fixture_fee
-                        .actions
-                        .iter()
-                        .map(|action| (action.descriptor, action.signature))
-                        .collect(),
-                    at_fixture_fee.binding_sig,
-                ),
-                |spend| {
-                    at_fixture_fee
-                        .actions
-                        .iter()
-                        .find(|action| action.descriptor == spend.descriptor())
-                        .map(|action| action.tachygrams)
-                },
-                fee,
-                change,
-                stamp,
-            )
-            .unwrap()
+        bundle_plan.assemble(signatures.clone(), proof)
     });
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
@@ -376,12 +368,15 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         .merge(
             rng,
             app,
-            (&aggregate.actions, [(aggregate.fee, aggregate.fee_auth)]),
+            (
+                &aggregate.actions,
+                &BTreeMap::from([(aggregate.fee, aggregate.fee_auth)]),
+            ),
             (
                 fee_bearing.stamp.clone(),
                 mock_txid(&fee_bearing),
                 &fee_bearing.actions,
-                [(fee_bearing.fee, fee_bearing.fee_auth)],
+                &BTreeMap::from([(fee_bearing.fee, fee_bearing.fee_auth)]),
             ),
         )
         .unwrap();
@@ -439,12 +434,15 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .merge(
             rng,
             app,
-            (&signed.actions, [(signed.fee, signed.fee_auth)]),
+            (
+                &signed.actions,
+                &BTreeMap::from([(signed.fee, signed.fee_auth)]),
+            ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
                 &adjunct.actions,
-                [(adjunct.fee, adjunct.fee_auth)],
+                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
         .unwrap();
@@ -484,12 +482,15 @@ fn fee_bearing_aggregates_merge_and_lift() {
             .merge(
                 rng,
                 app,
-                (&bundle.actions, [(bundle.fee, bundle.fee_auth)]),
+                (
+                    &bundle.actions,
+                    &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
+                ),
                 (
                     auto.stamp.clone(),
                     mock_txid(auto),
                     &auto.actions,
-                    [(auto.fee, auto.fee_auth)],
+                    &BTreeMap::from([(auto.fee, auto.fee_auth)]),
                 ),
             )
             .unwrap();
@@ -502,13 +503,19 @@ fn fee_bearing_aggregates_merge_and_lift() {
             app,
             (
                 left.actions.iter().chain(&left_auto.actions),
-                [&left, &left_auto].map(|bundle| (bundle.fee, bundle.fee_auth)),
+                &[&left, &left_auto]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
+                    .collect(),
             ),
             (
                 right.stamp.clone(),
                 mock_txid(&right),
                 right.actions.iter().chain(&right_auto.actions),
-                [&right, &right_auto].map(|bundle| (bundle.fee, bundle.fee_auth)),
+                &[&right, &right_auto]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
+                    .collect(),
             ),
         )
         .unwrap();
@@ -566,12 +573,15 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (&innocent.actions, [(innocent.fee, innocent.fee_auth)]),
+            (
+                &innocent.actions,
+                &BTreeMap::from([(innocent.fee, innocent.fee_auth)]),
+            ),
             (
                 adjunct.stamp.clone(),
                 mock_txid(&adjunct),
                 &adjunct.actions,
-                [(adjunct.fee, adjunct.fee_auth)],
+                &BTreeMap::from([(adjunct.fee, adjunct.fee_auth)]),
             ),
         )
         .unwrap();
@@ -583,12 +593,18 @@ fn innocent_seed_merges_and_strips() {
         .merge(
             rng,
             app,
-            (&parent.actions, [(parent.fee, parent.fee_auth)]),
+            (
+                &parent.actions,
+                &BTreeMap::from([(parent.fee, parent.fee_auth)]),
+            ),
             (
                 innocent.stamp.clone(),
                 mock_txid(&innocent),
                 innocent.actions.iter().chain(&adjunct.actions),
-                [&innocent, &adjunct].map(|bundle| (bundle.fee, bundle.fee_auth)),
+                &[&innocent, &adjunct]
+                    .into_iter()
+                    .map(|bundle| (bundle.fee, bundle.fee_auth))
+                    .collect(),
             ),
         )
         .unwrap();
