@@ -375,12 +375,24 @@ impl Plan {
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
+        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+        let change_note = Note {
+            value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+                .expect("fee should not exceed max fee"),
+            ..max_fee_note
+        };
         Self {
             spends,
             outputs,
             anchor,
             max_fee_note,
-            fee_entry: max_fee_note.fee_entry(fee),
+            fee_entry: (
+                fee::Descriptor {
+                    cv_feemax: max_fee_note.cv_feemax(),
+                    v_fee: fee,
+                },
+                change_note.commitment().into(),
+            ),
         }
     }
 

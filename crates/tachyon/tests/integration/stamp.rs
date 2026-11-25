@@ -133,8 +133,16 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    let pair_a = secret_a.data().2.spend_tachygrams(sp_a.data().1).unwrap();
-    let pair_b = secret_b.data().2.spend_tachygrams(sp_b.data().1).unwrap();
+    let [pair_a, pair_b] = [
+        (secret_a.data().2, sp_a.data().1),
+        (secret_b.data().2, sp_b.data().1),
+    ]
+    .map(|(master, epoch)| {
+        (
+            master.derive_nullifier(epoch).into(),
+            master.derive_nullifier(epoch.next().unwrap()).into(),
+        )
+    });
     let swapped = plan
         .prove(
             rng,
@@ -203,11 +211,12 @@ fn plan_prove_lifts_a_spend_along_spans() {
         value::Positive::ZERO,
     );
 
-    let spend_pair = secret
-        .data()
-        .2
-        .spend_tachygrams(spendable.data().1)
-        .unwrap();
+    let master = secret.data().2;
+    let epoch = spendable.data().1;
+    let spend_pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
     let (fee_descriptor, change) = plan.fee_entry();
     let digests = [
         spend.digest(spend_pair),
@@ -296,11 +305,12 @@ fn overlapping_stamps_cannot_aggregate() {
     let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
     let sighash = mock_sighash(plan.commitment().unwrap());
     let secret = wallet.note_secret(app, note);
-    let pair = secret
-        .data()
-        .2
-        .spend_tachygrams(spendable.data().1)
-        .unwrap();
+    let master = secret.data().2;
+    let epoch = spendable.data().1;
+    let pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
     let spend_action = spend_plan.authorize(
         spend_plan.sign(rng, &sighash, &wallet.sk.derive_auth_private()),
         pair,

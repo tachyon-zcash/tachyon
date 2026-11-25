@@ -9,7 +9,7 @@ use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
-    note,
+    fee, note,
     pasta::Fp,
     stamp::{
         self, Proof as _, ProofStamp,
@@ -78,7 +78,13 @@ fn fee_less_output_bundle(
         plan.assemble(
             vec![action],
             plan.binding_signature(rng, &sighash).unwrap(),
-            max_fee_note.fee_entry(value::Positive::ZERO),
+            (
+                fee::Descriptor {
+                    cv_feemax: max_fee_note.cv_feemax(),
+                    v_fee: value::Positive::ZERO,
+                },
+                max_fee_note.commitment().into(),
+            ),
             stamp,
         )
         .unwrap()

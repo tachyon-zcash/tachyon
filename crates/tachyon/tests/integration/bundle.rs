@@ -50,7 +50,11 @@ fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
         .unwrap();
     let signature = spend.sign(rng, &sighash, &wallet.sk.derive_auth_private());
     let master = wallet.pak.nk.derive_note_private(spend.note.psi);
-    let pair = master.spend_tachygrams(BlockHeight(1).epoch()).unwrap();
+    let epoch = BlockHeight(1).epoch();
+    let pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
     let mut actions = vec![spend.authorize(signature, pair)];
     actions.extend(
         plan.iter_actions(|_| None, |output| Some(*output))
@@ -84,16 +88,18 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
     let ask = wallet.sk.derive_auth_private();
     let spend = spend_plan_at(rng, &wallet, &ask, 200);
     let max_fee_note = wallet.random_note(0);
-    let fee = max_fee_note.fee_entry(value::Positive::ZERO);
     let plan = Plan::new(vec![spend], vec![], max_fee_note);
+    let fee = plan
+        .stamp_plan(Anchor::random(rng), value::Positive::ZERO)
+        .fee_entry();
     let sighash = mock_sighash(plan.commitment().unwrap());
     let sig = plan.binding_signature(rng, &sighash).unwrap();
-    let pair = wallet
-        .pak
-        .nk
-        .derive_note_private(spend.note.psi)
-        .spend_tachygrams(BlockHeight(1).epoch())
-        .unwrap();
+    let master = wallet.pak.nk.derive_note_private(spend.note.psi);
+    let epoch = BlockHeight(1).epoch();
+    let pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
     let action = spend.authorize(spend.sign(rng, &sighash, &ask), pair);
     let other = output_plan(rng, wallet.random_note(42)).signed_action(rng, &sighash);
     for rows in [vec![], vec![action, action], vec![other]] {
@@ -109,7 +115,13 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
             .unwrap_err(),
         PlanError::ActionMismatch
     );
-    let foreign_fee = wallet.random_note(1).fee_entry(value::Positive::ZERO);
+    let foreign_fee = (
+        fee::Descriptor {
+            cv_feemax: wallet.random_note(1).cv_feemax(),
+            ..fee.0
+        },
+        fee.1,
+    );
     let excessive_fee = (
         fee::Descriptor {
             v_fee: value::Positive::try_from(1u64).unwrap(),
@@ -234,14 +246,16 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.note_secret(app, note);
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
-    let pair = secret
-        .data()
-        .2
-        .spend_tachygrams(spendable.data().1)
-        .unwrap();
-    let (fee, cm_change) = max_fee_note.fee_entry(value::Positive::ZERO);
-    let honest_stamp = Plan::new(vec![plan], vec![], max_fee_note)
-        .stamp_plan(anchor, value::Positive::ZERO)
+    let master = secret.data().2;
+    let epoch = spendable.data().1;
+    let pair = (
+        master.derive_nullifier(epoch).into(),
+        master.derive_nullifier(epoch.next().unwrap()).into(),
+    );
+    let stamp_plan =
+        Plan::new(vec![plan], vec![], max_fee_note).stamp_plan(anchor, value::Positive::ZERO);
+    let (fee, cm_change) = stamp_plan.fee_entry();
+    let honest_stamp = stamp_plan
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
     let doubled = 2 * i64::try_from(u64::from(note.value)).unwrap();
@@ -263,14 +277,7 @@ fn duplicated_spend_cannot_inflate() {
         .derive_bsk_private()
         .sign(rng, &sighash);
     let bundle = Bundle {
-        actions: vec![
-            action::Action {
-                descriptor,
-                signature: sig,
-                tachygrams: pair
-            };
-            2
-        ],
+        actions: vec![plan.authorize(sig, pair); 2],
         value_balance,
         binding_sig,
         memo: Vec::new(),
@@ -1189,7 +1196,8 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 plan.assemble(
                     vec![],
                     sig,
-                    wallet.random_note(0).fee_entry(value::Positive::ZERO),
+                    plan.stamp_plan(Anchor::random(rng), value::Positive::ZERO)
+                        .fee_entry(),
                     StrippedStamp
                 )
                 .unwrap_err(),

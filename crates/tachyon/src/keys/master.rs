@@ -9,7 +9,7 @@ use crate::{
     digest::poseidon,
     nullifier::{NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
-    primitives::{EpochIndex, Tachygram},
+    primitives::EpochIndex,
 };
 
 /// Per-note master key.
@@ -25,17 +25,6 @@ use crate::{
 pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
 
 impl NoteMasterKey {
-    /// The spend's nullifiers at the spendable's current and next epochs.
-    /// There is no pair at the final epoch.
-    #[must_use]
-    pub fn spend_tachygrams(&self, epoch: EpochIndex) -> Option<(Tachygram, Tachygram)> {
-        let next = epoch.next()?;
-        Some((
-            self.derive_nullifier(epoch).into(),
-            self.derive_nullifier(next).into(),
-        ))
-    }
-
     /// Derive the nullifier for a single epoch.
     #[must_use]
     #[expect(

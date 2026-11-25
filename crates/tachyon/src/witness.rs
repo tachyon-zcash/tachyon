@@ -563,8 +563,18 @@ pub fn fee_fuse(
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, FeeFuse> {
-    let (descriptor, fee_change_commitment) = max_fee_note.fee_entry(fee);
-    let fee_digest = descriptor.digest(fee_change_commitment);
+    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    let fee_change_note = Note {
+        value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+            .expect("fee should not exceed max fee"),
+        ..max_fee_note
+    };
+    let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
+    let fee_digest = fee::Descriptor {
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: fee,
+    }
+    .digest(fee_change_commitment);
 
     let mut output_action_digests = action_digests.clone();
     output_action_digests.insert(fee_digest);
