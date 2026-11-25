@@ -30,6 +30,7 @@ use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBuc
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
     let plan = output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
@@ -38,7 +39,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
         WalletSim::new(shared_sk()).random_note(0),
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    (plan.descriptor(), plan.sign(rng, &sighash))
+    let (action_sigs, _) = bundle_plan.sign(rng, &sighash, &ask).unwrap();
+    action_sigs.into_iter().next().unwrap()
 }
 
 pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
@@ -319,7 +321,9 @@ impl WalletSim {
         key.extend_from_slice(&Fp::from(max_fee_note.commitment()).to_bytes());
         key.extend_from_slice(&u64::from(fee).to_le_bytes());
         BUNDLES.get(&key, |rng| {
-            let mut spend_inputs = Vec::new();
+            let mut spend_pairs = BTreeMap::new();
+            let mut spend_plans = Vec::new();
+            let mut spend_pcds = Vec::new();
             for &(note, pool) in spends {
                 let cm = Tachygram::from(note.commitment());
                 let creation = pool
@@ -348,9 +352,20 @@ impl WalletSim {
                 let spend = action::Plan::spend(note, theta, rcv, |alpha| {
                     self.pak.ak.derive_action_public(&alpha)
                 });
-                spend_inputs.push((spend, self.note_secret(app, note), spendable));
+                let secret = self.note_secret(app, note);
+                let master = secret.data().2;
+                let epoch = spendable.data().1;
+                spend_pairs.insert(
+                    spend.descriptor(),
+                    (
+                        master.derive_nullifier(epoch).into(),
+                        master.derive_nullifier(epoch.next().unwrap()).into(),
+                    ),
+                );
+                spend_plans.push(spend);
+                spend_pcds.push((secret, spendable, vec![]));
             }
-            let output_plans: Vec<_> = outputs
+            let output_plans = outputs
                 .iter()
                 .copied()
                 .map(|note| {
@@ -359,42 +374,22 @@ impl WalletSim {
                     action::Plan::output(note, theta, rcv)
                 })
                 .collect();
-            let plan = bundle::Plan::new(
-                spend_inputs.iter().map(|input| input.0).collect(),
-                output_plans.clone(),
-                max_fee_note,
-            );
+            let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
             let sighash = mock_sighash(plan.commitment().unwrap());
+            let signatures = plan
+                .sign(rng, &sighash, &self.sk.derive_auth_private())
+                .unwrap();
             let stamp_plan = plan.stamp_plan(anchor, fee);
             let change = stamp_plan.fee_change_commitment();
-            let ask = self.sk.derive_auth_private();
-            let mut actions = Vec::new();
-            let mut spend_pcds = Vec::new();
-            for (spend, secret, spendable) in spend_inputs {
-                let master = secret.data().2;
-                let epoch = spendable.data().1;
-                actions.push(spend.authorize(
-                    spend.sign(rng, &sighash, &ask),
-                    (
-                        master.derive_nullifier(epoch).into(),
-                        master.derive_nullifier(epoch.next().unwrap()).into(),
-                    ),
-                ));
-                spend_pcds.push((secret, spendable, vec![]));
-            }
-            actions.extend(output_plans.iter().map(|output| {
-                output.authorize(
-                    output.sign(rng, &sighash),
-                    (
-                        output.note.commitment().into(),
-                        output.note.commitment_pad(),
-                    ),
-                )
-            }));
-            let binding_sig = plan.binding_signature(rng, &sighash).unwrap();
             let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
             let bundle = plan
-                .assemble(actions, binding_sig, fee, change, stamp)
+                .assemble(
+                    signatures,
+                    |spend| spend_pairs.get(&spend.descriptor()).copied(),
+                    fee,
+                    change,
+                    stamp,
+                )
                 .unwrap();
             (plan, bundle)
         })

@@ -239,7 +239,7 @@ impl Plan<effect::Output> {
 impl<E: Effect> Plan<E> {
     /// Attach the supplied authorization, writing the smaller tachygram first.
     #[must_use]
-    pub fn authorize(
+    pub(crate) fn authorize(
         &self,
         signature: Signature,
         (first, second): (Tachygram, Tachygram),

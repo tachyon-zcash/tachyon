@@ -312,10 +312,9 @@ fn overlapping_stamps_cannot_aggregate() {
         master.derive_nullifier(epoch).into(),
         master.derive_nullifier(epoch.next().unwrap()).into(),
     );
-    let spend_action = spend_plan.authorize(
-        spend_plan.sign(rng, &sighash, &wallet.sk.derive_auth_private()),
-        pair,
-    );
+    let signatures = plan
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+        .unwrap();
     let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
     let fee_change = stamp_plan.fee_change_commitment();
     let spend_stamp = stamp_plan
@@ -323,17 +322,8 @@ fn overlapping_stamps_cannot_aggregate() {
         .unwrap();
     let spend_b = plan
         .assemble(
-            vec![
-                spend_action,
-                output.authorize(
-                    output.sign(rng, &sighash),
-                    (
-                        output.note.commitment().into(),
-                        output.note.commitment_pad(),
-                    ),
-                ),
-            ],
-            plan.binding_signature(rng, &sighash).unwrap(),
+            signatures,
+            |_| Some(pair),
             value::Positive::ZERO,
             fee_change,
             spend_stamp,

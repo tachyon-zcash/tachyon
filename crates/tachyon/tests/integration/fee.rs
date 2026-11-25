@@ -74,10 +74,12 @@ fn fee_less_output_bundle(
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
         let sighash = mock_sighash(plan.commitment().unwrap());
-        let action = output_plan.authorize(output_plan.sign(rng, &sighash), (cm, pad));
+        let signatures = plan
+            .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+            .unwrap();
         plan.assemble(
-            vec![action],
-            plan.binding_signature(rng, &sighash).unwrap(),
+            signatures,
+            |_| None,
             value::Positive::ZERO,
             max_fee_note.commitment().into(),
             stamp,
@@ -285,8 +287,21 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .unwrap();
         bundle_plan
             .assemble(
-                at_fixture_fee.actions.clone(),
-                at_fixture_fee.binding_sig,
+                (
+                    at_fixture_fee
+                        .actions
+                        .iter()
+                        .map(|action| (action.descriptor, action.signature))
+                        .collect(),
+                    at_fixture_fee.binding_sig,
+                ),
+                |spend| {
+                    at_fixture_fee
+                        .actions
+                        .iter()
+                        .find(|action| action.descriptor == spend.descriptor())
+                        .map(|action| action.tachygrams)
+                },
                 fee,
                 change,
                 stamp,

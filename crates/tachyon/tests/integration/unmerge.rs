@@ -295,26 +295,11 @@ fn unmerge_splitting_a_bundle() {
     let change = stamp_plan.fee_change_commitment();
     let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
     let sighash = mock_sighash(plan.commitment().unwrap());
-    let actions = [kept_plan, removed_plan]
-        .iter()
-        .map(|output| {
-            output.authorize(
-                output.sign(rng, &sighash),
-                (
-                    output.note.commitment().into(),
-                    output.note.commitment_pad(),
-                ),
-            )
-        })
-        .collect();
+    let signatures = plan
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+        .unwrap();
     let mut whole = plan
-        .assemble(
-            actions,
-            plan.binding_signature(rng, &sighash).unwrap(),
-            value::Positive::ZERO,
-            change,
-            stamp,
-        )
+        .assemble(signatures, |_| None, value::Positive::ZERO, change, stamp)
         .unwrap();
     let kept_digest = whole
         .actions
@@ -367,14 +352,9 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         let change = stamp_plan.fee_change_commitment();
         let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
         plan.assemble(
-            vec![output.authorize(
-                output.sign(rng, &sighash),
-                (
-                    output.note.commitment().into(),
-                    output.note.commitment_pad(),
-                ),
-            )],
-            plan.binding_signature(rng, &sighash).unwrap(),
+            plan.sign(rng, &sighash, &wallet.sk.derive_auth_private())
+                .unwrap(),
+            |_| None,
             fee,
             change,
             stamp,
