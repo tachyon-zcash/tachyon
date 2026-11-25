@@ -21,12 +21,14 @@ use super::{
     Compressed, Stamp,
     proof::{
         HEADER_SIZE, pool,
-        transaction::{Transaction, TransactionLift, TransactionMerge, TransactionUnmerge},
+        transaction::{
+            Transaction, TransactionConvert, TransactionLift, TransactionMerge, TransactionUnmerge,
+        },
     },
 };
 use crate::{
-    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, witness,
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, Tachygram, TachygramSetBridge,
+    TachygramSetCommit, TachygramSetPoly, witness,
 };
 
 /// A full aggregator-rank transaction proof, its adjunct list and the roots
@@ -285,8 +287,13 @@ impl AggregatorProof {
 
     /// Rerandomize and compress the transaction for publication.
     ///
+    /// A transaction still carrying its imported wallet bridge hash, as from
+    /// [`Bundle::decompress`](crate::Bundle::decompress) with no later step,
+    /// first passes through [`TransactionConvert`] to take the aggregator's.
+    ///
     /// # Errors
-    /// Returns a Ragu error if rerandomization or compression fails.
+    /// Returns a Ragu error if conversion, rerandomization or compression
+    /// fails.
     pub fn compress<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -300,7 +307,20 @@ impl AggregatorProof {
     ) -> ragu::Result<super::Aggregate> {
         let anchor = self.anchor();
         let [_, tachygrams] = self.pcd.commitments();
-        let refreshed = app.rerandomize(self.pcd, &mut *rng)?;
+        let own = TachygramSetBridge::from(app.bridge_hash(tachygrams)?);
+        let pcd = if self.pcd.data().0 == own {
+            self.pcd
+        } else {
+            app.fuse(
+                &mut *rng,
+                TransactionConvert,
+                (),
+                self.pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )?
+            .0
+        };
+        let refreshed = app.rerandomize(pcd, &mut *rng)?;
         let (frame, _) = app.compress(&refreshed, rng)?.into_parts();
         Ok(Stamp {
             anchor,

@@ -112,13 +112,13 @@ impl Header<Fp> for Actions {
 ///
 /// # Injectivity
 ///
-/// [`FeeFuse`], [`FeeSeed`], [`TransactionMerge`], [`TransactionLift`] and
-/// [`TransactionUnmerge`] output this header. Every verified `Transaction`
-/// asserts the same leaf multiset structure as [`Actions`], extended with
-/// optional single-tachygram fee leaves and allowing an empty multiset ($A = T
-/// = 1$, as from [`TransactionUnmerge`]), plus a [bridge
-/// hash](TachygramSetBridge) `tachygram_set_bridge` of $T$'s accumulator. Even
-/// a nonempty `Transaction` need not contain a fee leaf.
+/// [`FeeFuse`], [`FeeSeed`], [`TransactionMerge`], [`TransactionLift`],
+/// [`TransactionUnmerge`] and [`TransactionConvert`] output this header. Every
+/// verified `Transaction` asserts the same leaf multiset structure as
+/// [`Actions`], extended with optional single-tachygram fee leaves and allowing
+/// an empty multiset ($A = T = 1$, as from [`TransactionUnmerge`]), plus a
+/// [bridge hash](TachygramSetBridge) `tachygram_set_bridge` of $T$'s
+/// accumulator. Even a nonempty `Transaction` need not contain a fee leaf.
 ///
 /// Each *fee leaf* consists of a prover-known note $(\mathsf{rcm}, \mathsf{pk},
 /// m, \psi)$ and integer $f$ satisfying $0 \leq f \leq m \leq
@@ -1278,6 +1278,95 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionUnmerge {
         });
         let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: left_anchor_element,
+            tachygram_set_bridge,
+        });
+        Ok(((left_encoded, right_encoded, encoded), data, D::unit()))
+    }
+}
+
+/// Re-emit a [`Transaction`] under the executing application's bridge hash.
+///
+/// An aggregator that imports a wallet transaction holds a header whose
+/// `tachygram_set_bridge` is the wallet's bridge hash. This step keeps both
+/// polynomials and the anchor and emits its own bridge hash of the same
+/// tachygram set, which at the input's rank is the input's.
+///
+/// Opens both input and output action and tachygram sets.
+///
+/// # Soundness
+///
+/// All four set polynomials precede $\zeta$; matching both output openings to
+/// the input's ([checks at the challenge](super#checks-at-the-challenge))
+/// preserves its leaves, and copying the anchor wire keeps their chains' end.
+#[derive(Debug)]
+pub struct TransactionConvert;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionConvert {
+    type Aux<'source> = ();
+    type Left = Transaction;
+    type Output = Transaction;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(39);
+
+    // Preserve the left action and tachygram sets.
+    fn prepare(
+        &self,
+        &(): &Self::Witness<'_>,
+        left: HeaderInput<'_, Fp, Self::Left>,
+        _: HeaderInput<'_, Fp, Self::Right>,
+    ) -> ragu::Result<Prepared<Fp, Self::Output>> {
+        let prepared = ActionSetPoly::SLOT.copy_from(Prepared::new(), &left, ActionSetPoly::SLOT);
+        Ok(TachygramSetPoly::SLOT.copy_from(prepared, &left, TachygramSetPoly::SLOT))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
+        right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
+    ) -> ragu::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<Fp>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(dr, &mut (), left.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(dr, &mut (), right)?;
+        let z = oracles.zeta().clone();
+        let left_actions = oracles.left(ActionSetPoly::SLOT).open(dr, &z)?;
+        let output_actions = oracles.output(ActionSetPoly::SLOT).open(dr, &z)?;
+        left_actions.enforce_equal(dr, &output_actions)?;
+        let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
+        let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
+        left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
+        let anchor = left_encoded.as_gadget().anchor.clone();
+        let tachygram_set_bridge = [
+            oracles.bridge_hash().x().clone(),
+            oracles.bridge_hash().y().clone(),
+        ];
+        let [x, y] = tachygram_set_bridge.each_ref().map(Element::value);
+        let data = D::just(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "the oracle supplies commitment coordinates"
+            )]
+            let bridge_hash = EpAffine::from_xy(*x.take(), *y.take())
+                .expect("the bridge hash commitment is a curve point");
+            let (_, left_anchor) = left.take();
+            (TachygramSetBridge::from(bridge_hash), left_anchor)
+        });
+        let encoded = Encoded::from_gadget(TransactionOutput {
+            anchor,
             tachygram_set_bridge,
         });
         Ok(((left_encoded, right_encoded, encoded), data, D::unit()))

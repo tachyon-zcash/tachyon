@@ -6,11 +6,13 @@ use core::assert_matches;
 use ragu::{Rank as _, WalletRank};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, Bundle, DecompressError, Tachygram, TachygramSetPoly, stamp::UnmergeError, value,
+    Anchor, Bundle, DecompressError, Tachygram, TachygramSetBridge, TachygramSetPoly,
+    stamp::{UnmergeError, proof::transaction::TransactionConvert},
+    value,
 };
 
 use super::fixtures::{
-    aggregator::aggregator,
+    aggregator::{aggregator, raw_import},
     application, mock_sighash, mock_txid,
     wallet::{WalletSim, compressed, zero_action},
 };
@@ -206,7 +208,35 @@ fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
 }
 
 #[test]
-#[ignore = "Ragu #1024: wallet and aggregator bridge hashes differ at this pin"]
+fn convert_relabels_an_import_and_keeps_an_aggregator_transaction() {
+    let rng = &mut StdRng::seed_from_u64(61);
+    let app = aggregator();
+    let anchor = Anchor::random(rng);
+    let imported = raw_import(rng, &app, &zero_action(&application(), anchor).1);
+    let [_, tachygrams] = imported.commitments();
+    let own = TachygramSetBridge::from(app.bridge_hash(tachygrams).unwrap());
+    assert_ne!(imported.data().0, own);
+    let mut pcd = imported;
+    // An imported wallet transaction takes the aggregator's bridge hash; an
+    // aggregator transaction keeps its own.
+    for _ in 0..2 {
+        let commitments = pcd.commitments();
+        (pcd, ()) = app
+            .fuse(
+                rng,
+                TransactionConvert,
+                (),
+                pcd,
+                app.bootstrap_proof().clone().carry::<()>(()),
+            )
+            .unwrap();
+        assert_eq!(*pcd.data(), (own, anchor));
+        assert_eq!(pcd.commitments(), commitments);
+        assert!(app.verify_uncompressed(&pcd, &mut *rng).unwrap());
+    }
+}
+
+#[test]
 fn untouched_wallet_import_verifies_after_aggregator_compression() {
     let rng = &mut StdRng::seed_from_u64(59);
     let app = aggregator();

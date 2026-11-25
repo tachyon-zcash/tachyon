@@ -253,5 +253,6 @@ fn register_steps<C: profile::ProfiledCycle<Base = Pasta, CircuitField = Fp>, R:
         .register(transaction::ActionLift)?
         .register(transaction::FeeSeed)?
         .register(transaction::TransactionUnmerge)?
-        .register(qr::QrSideSelect)
+        .register(qr::QrSideSelect)?
+        .register(transaction::TransactionConvert)
 }

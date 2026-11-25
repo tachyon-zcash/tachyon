@@ -141,6 +141,7 @@ Verification always rebuilds `Pcd<Transaction>`.
 | TransactionMerge | no | no | yes |
 | TransactionLift | yes | possible | yes |
 | TransactionUnmerge | no | no | yes |
+| TransactionConvert | no | no | yes |
 
 ## Proof framework
 
@@ -255,14 +256,14 @@ Finally, rule 5 assigns each bundle to a single stamp in its sole block, so rule
 
 See [Aggregation](./aggregation.md#merge-to-produce-aggregate) for the publication rule and the crate's current support for compression.
 
-Any party holding an uncompressed stamp proof can lift, merge or unmerge it with the requisite inputs, rerandomize it, and compress it. `TransactionLift`, `TransactionMerge` and `TransactionUnmerge` are the only registered steps reading `Transaction`; generic rerandomization also reads it.
+Any party holding an uncompressed stamp proof can lift, merge or unmerge it with the requisite inputs, rerandomize it, and compress it. `TransactionLift`, `TransactionMerge`, `TransactionUnmerge` and `TransactionConvert` are the only registered steps reading `Transaction`; generic rerandomization also reads it.
 Lifting preserves coverage and can advance a canonical anchor within its epoch. Merging adds leaves; unmerging removes them. These operations preserve the covered transactions' `txid`s. The receiver need not have proved the input leaves. If the output proof verifies, its leaves satisfy the `Transaction` assertion regardless of who ran the step. The consensus conclusions apply to any stamp consensus accepts.
 
 Bundle signatures omit the stamp, the fee and each action's tachygram pair, leaving the stamp's leaves to fix them.
 Fees apply after signing ([Dynamic Fee](./fee.md)). Signatures fix the maximum via the max fee commitment; the fee leaf fixes the fee and fee change. Producing a new fee leaf requires the max fee note's opening and a fee at or below the maximum for which the circuit has an assignment. Reusing an existing fee leaf does not require its opening.
 Building a new action leaf for a published action requires the action's entropy and note commitment. A delegate given all the spend witnesses and a valid spendable at a later epoch can re-prove that spend under the same value commitment and key with a new nullifier pair. The signing key enters no step. Spending still requires the action signature.
 
-An uncompressed stamp proof carries both set polynomials. A full aggregator stamp stores the typed PCD with its header. Wallet stamps and compressed publications omit that header: the receiver reconstructs it from the stamp's anchor and the bridge hash of its tachygram accumulator. To decompress a wallet publication, the aggregator rebuilds both polynomials from the covered bodies and supplies their coefficients to Ragu’s `decompress_with_polynomials`, which verifies the wallet proof, refuses coefficients that miss its commitments, and binds the header to the imported proof. Rule 2 binds the polynomials to the published bundles, whose digests determine the fee and output notes, each spend's master key and value, and the value commitment openings.
+An uncompressed stamp proof carries both set polynomials. A full aggregator stamp stores the typed PCD with its header. Wallet stamps and compressed publications omit that header: the receiver reconstructs it from the stamp's anchor and the bridge hash of its tachygram accumulator. To decompress a wallet publication, the aggregator rebuilds both polynomials from the covered bodies and supplies their coefficients to Ragu’s `decompress_with_polynomials`, which verifies the wallet proof, refuses coefficients that miss its commitments, and binds the header to the imported proof. The imported header still carries the wallet's bridge hash, whereas the aggregator's own steps and verifier use its rank's. Before compressing a transaction no aggregator step has re-emitted, the aggregator runs `TransactionConvert`, which equates both polynomials with its input's at $\zeta$, copies the anchor and emits its own bridge hash. Rule 2 binds the polynomials to the published bundles, whose digests determine the fee and output notes, each spend's master key and value, and the value commitment openings.
 
 ### What the stamp proof leaves to others
 
@@ -422,7 +423,7 @@ Step budgets split as follows.
 `TransactionUnmerge` witnesses quotient sets and checks dividend = divisor × quotient for both polynomials. Matching digests cancel the same tachygram factors with multiplicity. Any `Transaction` at the shared anchor whose digests form a sub-multiset of the dividend's therefore divides it regardless of merge history, and the quotient may be empty.
 [`FeeFuse`](./fee.md#fee-steps) converts `Actions` into a `Transaction` by multiplying each set polynomial by its linear fee factor, absorbing the same fee change commitment into the fee digest and tachygram set, while `FeeSeed` emits those two linear factors alone for a zero-action, zero-fee bundle.
 
-`OutputAction` and `FeeSeed` witness prover-chosen anchors, `SpendAction` copies the spendable's anchor via `SpendBind` and `SpendHeader`, and `FeeFuse` copies `Actions`'s anchor. `ActionMerge`, `TransactionMerge` and `TransactionUnmerge` equate their input anchors, while `ActionLift` and `TransactionLift` advance an anchor matching a span's start or member to that span's end.
+`OutputAction` and `FeeSeed` witness prover-chosen anchors, `SpendAction` copies the spendable's anchor via `SpendBind` and `SpendHeader`, and `FeeFuse` and `TransactionConvert` copy their input's anchor. `ActionMerge`, `TransactionMerge` and `TransactionUnmerge` equate their input anchors, while `ActionLift` and `TransactionLift` advance an anchor matching a span's start or member to that span's end.
 Every `Transaction`-emitting step writes its tachygram-set bridge hash to `tachygram_set_bridge`.
 
 ## Rerandomization at trust boundaries
@@ -631,6 +632,7 @@ Slots lists each header's polynomial types in slot order, with the slot's name w
 | TransactionMerge | Transaction | Transaction | merged action_set, merged tachygram_set | Transaction |
 | TransactionLift | Transaction | AnchorSpan | action_set | Transaction |
 | TransactionUnmerge | Transaction | Transaction | quotient action_set, quotient tachygram_set | Transaction |
+| TransactionConvert | Transaction | — | — | Transaction |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.
