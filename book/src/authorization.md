@@ -185,7 +185,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
-Signing produces a signature per action and a binding signature for the bundle. Independently, proving supplies a tachygram pair per action, the change commitment, the chosen fee, and the stamp. Assembly matches each signature to its pair by descriptor.
+Signing produces a signature per action and a binding signature for the bundle. Proving supplies a tachygram pair per action, the change commitment, the chosen fee, and the stamp. Assembly matches each signature to its pair by descriptor. The signing and proving paths can run in either order or concurrently.
 
 ```mermaid
 flowchart LR

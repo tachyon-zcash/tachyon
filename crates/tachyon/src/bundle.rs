@@ -342,18 +342,28 @@ pub struct Plan {
 impl Plan {
     /// Create a new bundle plan from assembled action plans and a max fee note,
     /// carrying no memo.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any two planned actions have the same descriptor.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         spends: Vec<action::Plan<effect::Spend>>,
         outputs: Vec<action::Plan<effect::Output>>,
         max_fee_note: Note,
     ) -> Self {
-        Self {
+        let plan = Self {
             spends,
             outputs,
             max_fee_note,
             memo: Vec::new(),
-        }
+        };
+        assert_eq!(
+            plan.descriptors().len(),
+            plan.spends.len() + plan.outputs.len(),
+            "duplicate action descriptor"
+        );
+        plan
     }
 
     /// Attach an opaque recipient-directed payload, replacing any existing one.
@@ -922,9 +932,10 @@ impl<S: StampState> Bundle<S> {
             ));
         }
 
-        let descriptors = iter::repeat_with(|| action::Descriptor::read(&mut reader))
-            .take(n_actions)
-            .collect::<io::Result<Vec<_>>>()?;
+        let mut descriptors = Vec::new();
+        for _ in 0..n_actions {
+            descriptors.push(action::Descriptor::read(&mut reader)?);
+        }
 
         let cv_feemax = {
             let point = serialization::read_ep_affine(&mut reader)?;
@@ -954,9 +965,10 @@ impl<S: StampState> Bundle<S> {
             memo.extend_from_slice(&chunk[..take]);
         }
 
-        let signatures = iter::repeat_with(|| action::Signature::read(&mut reader))
-            .take(n_actions)
-            .collect::<io::Result<Vec<_>>>()?;
+        let mut signatures = Vec::new();
+        for _ in 0..n_actions {
+            signatures.push(action::Signature::read(&mut reader)?);
+        }
         let binding_sig = Signature::read(&mut reader)?;
 
         let mut tachygram_pairs = Vec::new();
@@ -983,9 +995,7 @@ impl<S: StampState> Bundle<S> {
         }
 
         let stamp = S::read(&mut reader)?;
-        let actions = descriptors
-            .into_iter()
-            .zip(signatures)
+        let actions = iter::zip(descriptors, signatures)
             .zip(tachygram_pairs)
             .map(|((descriptor, signature), tachygrams)| action::Action {
                 descriptor,

@@ -275,6 +275,16 @@ fn zero_action_bundle_requires_a_zero_balance() {
 }
 
 #[test]
+#[should_panic(expected = "duplicate action descriptor")]
+fn plan_rejects_a_descriptor_shared_by_a_spend_and_an_output() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let output = output_plan(rng, wallet.random_note(0));
+    let spend = action::Plan::spend(output.note, output.theta, output.rcv, |_| output.rk);
+    let _plan = Plan::new(vec![spend], vec![output], wallet.random_note(0));
+}
+
+#[test]
 fn duplicated_spend_cannot_inflate() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
@@ -312,9 +322,9 @@ fn duplicated_spend_cannot_inflate() {
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
     let pair = pairs[&descriptor];
-    let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee_note)
-        .derive_bsk_private()
-        .sign(rng, &sighash);
+    let binding_sig =
+        private::BindingSigningKey::from([rcv, rcv, max_fee_note.derive_feemax_blind()])
+            .sign(rng, &sighash);
     let bundle = Bundle {
         actions: vec![
             action::Action {
