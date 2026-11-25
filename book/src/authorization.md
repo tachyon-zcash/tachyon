@@ -219,7 +219,7 @@ flowchart LR
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
             value_balance
-            action@{ shape: st-rect, label: "actions (descriptor, signature, pair)" }
+            action@{ shape: st-rect, label: "actions (descriptor, signature, tachygrams)" }
             cv_feemax
             binding_sig
             memo_2[memo]
