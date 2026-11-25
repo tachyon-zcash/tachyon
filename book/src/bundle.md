@@ -162,9 +162,7 @@ end
 
 ## Lifecycle
 
-Signing and proving use the same planned spends and outputs. Custody signs each spend; the output creator can sign each output and derive its commitment and padding tachygram from the note. A spend's pair comes from its note master key at the spendable's current and next epochs, even if its stamp is later lifted. The witness holder can supply those two values without sharing the key.
-
-The proof worker produces a stamp. The sender may reuse the tachygrams calculated during proving or obtain them independently. With a signature and pair for each planned action, the sender orders the complete actions by descriptor and adds the binding signature, the fee and its change commitment, and the stamp.
+The spend key holder signs each spend. A spend's tachygram pair consists of its note's nullifiers at the spendable's current and next epochs; an output's pair consists of its commitment and padding tachygram. The bundle carries each action's descriptor, signature, and pair in descriptor order, together with the binding signature, fee, change commitment, and stamp.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 

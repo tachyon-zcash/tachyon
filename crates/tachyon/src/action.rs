@@ -66,7 +66,7 @@ impl Descriptor {
     /// both identities; hand-built descriptors must uphold this requirement.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        ActionDigest::new(*self, tachygrams)
+        ActionDigest::new(self.cv, self.rk, tachygrams)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -212,18 +212,6 @@ impl Plan<effect::Output> {
         private::ActionSigningKey::new(&alpha).sign(rng, sighash)
     }
 
-    /// Sign and derive both tachygrams from the planned output note.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the note commitment trapdoor is zero.
-    pub fn signed_action(&self, rng: &mut impl CryptoRng, sighash: &[u8; 32]) -> Action {
-        self.authorize(
-            self.sign(rng, sighash),
-            (self.note.commitment().into(), self.note.commitment_pad()),
-        )
-    }
-
     /// Assemble an output action plan.
     ///
     /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
@@ -281,7 +269,7 @@ impl<E: Effect> Plan<E> {
     /// Callers constructing plans must ensure both points are non-identity.
     #[must_use]
     pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
-        self.descriptor().digest(tachygrams)
+        ActionDigest::new(self.cv(), self.rk, tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.

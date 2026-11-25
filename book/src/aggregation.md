@@ -42,7 +42,7 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. The crate does not implement this yet because the pinned Ragu version lacks the support Tachyon stamps need.
 
-The prover produces an uncompressed stamp for lifting, merging, or unmerging. Publication uses the compressed form.
+In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 

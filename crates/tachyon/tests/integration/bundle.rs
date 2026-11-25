@@ -62,22 +62,24 @@ fn sign_and_verify_every_plan_shape() {
             .iter()
             .map(|planned| planned.authorize(planned.sign(rng, &sighash, &ask), pair))
             .collect();
-        actions.extend(
-            outputs
-                .iter()
-                .map(|planned| planned.signed_action(rng, &sighash)),
-        );
+        actions.extend(outputs.iter().map(|planned| {
+            planned.authorize(
+                planned.sign(rng, &sighash),
+                (
+                    planned.note.commitment().into(),
+                    planned.note.commitment_pad(),
+                ),
+            )
+        }));
         let bundle = plan
             .assemble(
                 actions,
                 plan.binding_signature(rng, &sighash).unwrap(),
-                (
-                    fee::Descriptor {
-                        cv_feemax: max_fee_note.cv_feemax(),
-                        v_fee: value::Positive::ZERO,
-                    },
-                    max_fee_note.commitment().into(),
-                ),
+                fee::Descriptor {
+                    cv_feemax: max_fee_note.cv_feemax(),
+                    v_fee: value::Positive::ZERO,
+                },
+                max_fee_note.commitment().into(),
                 StrippedStamp,
             )
             .unwrap();
@@ -123,14 +125,23 @@ fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
     actions.extend(
         plan.iter_actions(|_| None, |output| Some(*output))
             .flatten()
-            .map(|output| output.signed_action(rng, &sighash)),
+            .map(|output| {
+                output.authorize(
+                    output.sign(rng, &sighash),
+                    (
+                        output.note.commitment().into(),
+                        output.note.commitment_pad(),
+                    ),
+                )
+            }),
     );
     actions.sort_by_key(|action| Reverse(action.descriptor));
     let joined = plan
         .assemble(
             actions,
             plan.binding_signature(rng, &sighash).unwrap(),
-            (received.fee, received.fee_auth),
+            received.fee,
+            received.fee_auth,
             received.stamp,
         )
         .unwrap();
@@ -155,9 +166,9 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
     let spend = spend_plan_at(rng, &wallet, &ask, 200);
     let max_fee_note = wallet.random_note(0);
     let plan = Plan::new(vec![spend], vec![], max_fee_note);
-    let fee = plan
-        .stamp_plan(Anchor::random(rng), value::Positive::ZERO)
-        .fee_entry();
+    let stamp_plan = plan.stamp_plan(Anchor::random(rng), value::Positive::ZERO);
+    let fee = stamp_plan.fee_descriptor();
+    let change = stamp_plan.fee_change_commitment();
     let sighash = mock_sighash(plan.commitment().unwrap());
     let sig = plan.binding_signature(rng, &sighash).unwrap();
     let master = wallet.pak.nk.derive_note_private(spend.note.psi);
@@ -167,37 +178,39 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
         master.derive_nullifier(epoch.next().unwrap()).into(),
     );
     let action = spend.authorize(spend.sign(rng, &sighash, &ask), pair);
-    let other = output_plan(rng, wallet.random_note(42)).signed_action(rng, &sighash);
+    let output = output_plan(rng, wallet.random_note(42));
+    let other = output.authorize(
+        output.sign(rng, &sighash),
+        (
+            output.note.commitment().into(),
+            output.note.commitment_pad(),
+        ),
+    );
     for rows in [vec![], vec![action, action], vec![other]] {
         assert_eq!(
-            plan.assemble(rows, sig, fee, StrippedStamp).unwrap_err(),
+            plan.assemble(rows, sig, fee, change, StrippedStamp)
+                .unwrap_err(),
             PlanError::ActionMismatch
         );
     }
     let duplicate_plan = Plan::new(vec![spend, spend], vec![], max_fee_note);
     assert_eq!(
         duplicate_plan
-            .assemble(vec![action, action], sig, fee, StrippedStamp)
+            .assemble(vec![action, action], sig, fee, change, StrippedStamp)
             .unwrap_err(),
         PlanError::ActionMismatch
     );
-    let foreign_fee = (
-        fee::Descriptor {
-            cv_feemax: wallet.random_note(1).cv_feemax(),
-            ..fee.0
-        },
-        fee.1,
-    );
-    let excessive_fee = (
-        fee::Descriptor {
-            v_fee: value::Positive::try_from(1u64).unwrap(),
-            ..fee.0
-        },
-        fee.1,
-    );
+    let foreign_fee = fee::Descriptor {
+        cv_feemax: wallet.random_note(1).cv_feemax(),
+        ..fee
+    };
+    let excessive_fee = fee::Descriptor {
+        v_fee: value::Positive::try_from(1u64).unwrap(),
+        ..fee
+    };
     for invalid_fee in [foreign_fee, excessive_fee] {
         assert_eq!(
-            plan.assemble(vec![action], sig, invalid_fee, StrippedStamp)
+            plan.assemble(vec![action], sig, invalid_fee, change, StrippedStamp)
                 .unwrap_err(),
             PlanError::FeeMismatch
         );
@@ -207,7 +220,7 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
         ..action
     };
     let bundle = plan
-        .assemble(vec![bad_sig], sig, fee, StrippedStamp)
+        .assemble(vec![bad_sig], sig, fee, change, StrippedStamp)
         .unwrap();
     assert_matches!(
         bundle.verify_signatures(&sighash),
@@ -320,7 +333,8 @@ fn duplicated_spend_cannot_inflate() {
     );
     let stamp_plan =
         Plan::new(vec![plan], vec![], max_fee_note).stamp_plan(anchor, value::Positive::ZERO);
-    let (fee, cm_change) = stamp_plan.fee_entry();
+    let fee = stamp_plan.fee_descriptor();
+    let cm_change = stamp_plan.fee_change_commitment();
     let honest_stamp = stamp_plan
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
@@ -1258,12 +1272,13 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 value::OutOfRange
             );
             let sig = plan.derive_bsk_private().sign(rng, &[0; 32]);
+            let stamp_plan = plan.stamp_plan(Anchor::random(rng), value::Positive::ZERO);
             assert_eq!(
                 plan.assemble(
                     vec![],
                     sig,
-                    plan.stamp_plan(Anchor::random(rng), value::Positive::ZERO)
-                        .fee_entry(),
+                    stamp_plan.fee_descriptor(),
+                    stamp_plan.fee_change_commitment(),
                     StrippedStamp
                 )
                 .unwrap_err(),
@@ -1373,13 +1388,22 @@ fn plan_memo_reaches_the_signed_bundle() {
     let actions = bundle_plan
         .iter_actions(|_| None, |output| Some(*output))
         .flatten()
-        .map(|output| output.signed_action(rng, &sighash))
+        .map(|output| {
+            output.authorize(
+                output.sign(rng, &sighash),
+                (
+                    output.note.commitment().into(),
+                    output.note.commitment_pad(),
+                ),
+            )
+        })
         .collect();
     let bundle = bundle_plan
         .assemble(
             actions,
             bundle_plan.binding_signature(rng, &sighash).unwrap(),
-            (original.fee, original.fee_auth),
+            original.fee,
+            original.fee_auth,
             original.stamp,
         )
         .unwrap();

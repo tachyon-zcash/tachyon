@@ -35,12 +35,12 @@ use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
     bridge_hash::bridge_hash,
     bundle::StateByte,
-    digest::blake2b,
+    digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::EqAffine,
+    pasta::{EpAffine, EqAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
@@ -357,12 +357,13 @@ pub struct Plan {
     outputs: Vec<action::Plan<effect::Output>>,
     anchor: Anchor,
     max_fee_note: Note,
-    fee_entry: (fee::Descriptor, Tachygram),
+    fee: fee::Descriptor,
+    fee_change_commitment: Tachygram,
 }
 
 impl Plan {
     /// Create a stamp plan from the spend and output action plans, the
-    /// max fee note and the fee. Derives and stores the fee entry.
+    /// max fee note and the fee. Derives the fee change commitment.
     ///
     /// # Panics
     ///
@@ -386,27 +387,29 @@ impl Plan {
             outputs,
             anchor,
             max_fee_note,
-            fee_entry: (
-                fee::Descriptor {
-                    cv_feemax: max_fee_note.cv_feemax(),
-                    v_fee: fee,
-                },
-                change_note.commitment().into(),
-            ),
+            fee: fee::Descriptor {
+                cv_feemax: max_fee_note.cv_feemax(),
+                v_fee: fee,
+            },
+            fee_change_commitment: change_note.commitment().into(),
         }
     }
 
-    /// The chosen fee descriptor and the already derived fee change commitment.
+    /// The chosen fee and the max-fee note's value commitment.
     #[must_use]
-    pub const fn fee_entry(&self) -> (fee::Descriptor, Tachygram) {
-        self.fee_entry
+    pub const fn fee_descriptor(&self) -> fee::Descriptor {
+        self.fee
+    }
+
+    /// The commitment to the max-fee note with its value reduced by the fee.
+    #[must_use]
+    pub const fn fee_change_commitment(&self) -> Tachygram {
+        self.fee_change_commitment
     }
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// Returns only the stamp. To receive the pairs as well, use
-    /// [`Self::prove_with_tachygrams`]. Successful construction does not
-    /// guarantee that the stamp verifies.
+    /// Successful construction does not guarantee that the stamp verifies.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -439,6 +442,10 @@ impl Plan {
         clippy::type_complexity,
         reason = "a spend witness is its secret, spendable and anchor spans"
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "proves, lifts and merges every planned action"
+    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -449,42 +456,6 @@ impl Plan {
             ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
             Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
         )>,
-    ) -> Result<ProofStamp<Uncompressed>, ProveError> {
-        self.prove_with_tachygrams(rng, app, pak, spend_pcds, |_, _| {}, |_, _| {})
-    }
-
-    /// As [`Self::prove`], also delivering each computed pair, smaller member
-    /// first, with its originating action plan. Spend callbacks run in spend
-    /// plan order, followed by outputs in output plan order. Discard partial
-    /// results if proving fails. Neither callback needs a signing key.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same witness and proof-system errors as [`Self::prove`].
-    ///
-    /// # Panics
-    ///
-    /// Panics under the same conditions as [`Self::prove`].
-    #[expect(
-        clippy::type_complexity,
-        reason = "a spend witness is its secret, spendable and anchor spans"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "proves, lifts and merges every planned action"
-    )]
-    pub fn prove_with_tachygrams<RNG: CryptoRng>(
-        self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        pak: &ProofAuthorizingKey,
-        spend_pcds: Vec<(
-            ragu::Pcd<Pasta, WalletRank, delegation::NoteSecret>,
-            ragu::Pcd<Pasta, WalletRank, spendable::NoteSpendable>,
-            Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
-        )>,
-        mut spend_pair: impl FnMut(&action::Plan<effect::Spend>, (Tachygram, Tachygram)),
-        mut output_pair: impl FnMut(&action::Plan<effect::Output>, (Tachygram, Tachygram)),
     ) -> Result<ProofStamp<Uncompressed>, ProveError> {
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
@@ -523,7 +494,7 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            let (digests, tachygrams, spend_anchor, spend_proof, pair) =
+            let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, app, plan.theta, bind_pcd, *pak)
                     .map_err(ProveError::ProofFailed)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
@@ -535,15 +506,13 @@ impl Plan {
             }
 
             let (proof, anchor) = stamp_pcd.into_parts();
-            spend_pair(&plan, pair);
             entries.push((digests, tachygrams, anchor, Box::new(proof)));
         }
 
         for plan in self.outputs {
-            let (digests, tachygrams, anchor, proof, pair) =
+            let (digests, tachygrams, anchor, proof) =
                 ProofStamp::prove_output(rng, app, &plan, self.anchor)
                     .map_err(ProveError::ProofFailed)?;
-            output_pair(&plan, pair);
             entries.push((digests, tachygrams, anchor, proof));
         }
 
@@ -603,7 +572,7 @@ impl Plan {
                         witness::fee_fuse(
                             (anchor, ()),
                             self.max_fee_note,
-                            self.fee_entry.0.v_fee,
+                            self.fee.v_fee,
                             &digests,
                             &tachygrams,
                         ),
@@ -619,7 +588,7 @@ impl Plan {
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
-        tachygrams.insert(self.fee_entry.1);
+        tachygrams.insert(self.fee_change_commitment);
         let tachygram_set = tachygrams
             .iter()
             .copied()
@@ -692,12 +661,11 @@ pub struct ProofStamp<P: Proof> {
 
 impl ProofStamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
-    /// anchor, proof, pair)`. The proof is not rerandomized.
+    /// anchor, proof)`. The proof is not rerandomized.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputAction`]
     /// derives `alpha` from `theta` and the bound `cm`, proves the action over
-    /// the pair, and enforces the tachygram set. Both tachygrams
-    /// are returned for publication in the bundle's authorization data.
+    /// the pair, and enforces the tachygram set.
     /// `digests` holds the proved action's digest.
     ///
     /// # Errors
@@ -718,7 +686,6 @@ impl ProofStamp<Uncompressed> {
             BTreeSet<Tachygram>,
             Anchor,
             Box<Uncompressed>,
-            (Tachygram, Tachygram),
         ),
         ragu::Error,
     > {
@@ -735,7 +702,11 @@ impl ProofStamp<Uncompressed> {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = app.fuse(
@@ -751,13 +722,12 @@ impl ProofStamp<Uncompressed> {
             tachygrams,
             anchor,
             Box::new(pcd.proof().clone()),
-            pair,
         ))
     }
 
     /// Proves a single spend action from a bound
     /// [`SpendHeader`](spend::SpendHeader) PCD, returning `(digests,
-    /// tachygrams, anchor, proof, pair)`. The proof is not rerandomized.
+    /// tachygrams, anchor, proof)`. The proof is not rerandomized.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability and the value commitment `cv` are read straight off the
@@ -787,7 +757,6 @@ impl ProofStamp<Uncompressed> {
             BTreeSet<Tachygram>,
             Anchor,
             Box<Uncompressed>,
-            (Tachygram, Tachygram),
         ),
         ragu::Error,
     > {
@@ -798,7 +767,11 @@ impl ProofStamp<Uncompressed> {
         let rk = pak.ak.derive_action_public(&alpha);
         // The successful bind step establishes a non-identity cv; an identity
         // rk would require finding a preimage of the randomizer hash.
-        let digest = ActionDigest::new(action::Descriptor { cv, rk }, pair);
+        let digest = ActionDigest::from(poseidon::action_digest(
+            EpAffine::from(cv),
+            EpAffine::from(rk),
+            (Fp::from(pair.0), Fp::from(pair.1)),
+        ));
 
         let tachygrams = BTreeSet::from_iter([tg_current, tg_next]);
 
@@ -815,7 +788,6 @@ impl ProofStamp<Uncompressed> {
             tachygrams,
             anchor,
             Box::new(pcd.proof().clone()),
-            pair,
         ))
     }
 

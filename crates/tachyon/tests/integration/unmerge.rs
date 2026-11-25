@@ -292,18 +292,28 @@ fn unmerge_splitting_a_bundle() {
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
     let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
-    let fee = stamp_plan.fee_entry();
+    let fee_descriptor = stamp_plan.fee_descriptor();
+    let change = stamp_plan.fee_change_commitment();
     let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
     let sighash = mock_sighash(plan.commitment().unwrap());
     let actions = [kept_plan, removed_plan]
         .iter()
-        .map(|output| output.signed_action(rng, &sighash))
+        .map(|output| {
+            output.authorize(
+                output.sign(rng, &sighash),
+                (
+                    output.note.commitment().into(),
+                    output.note.commitment_pad(),
+                ),
+            )
+        })
         .collect();
     let mut whole = plan
         .assemble(
             actions,
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee,
+            fee_descriptor,
+            change,
             stamp,
         )
         .unwrap();
@@ -355,12 +365,20 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
         let sighash = mock_sighash(plan.commitment().unwrap());
         let stamp_plan = plan.stamp_plan(anchor, fee);
-        let fee_entry = stamp_plan.fee_entry();
+        let fee_descriptor = stamp_plan.fee_descriptor();
+        let change = stamp_plan.fee_change_commitment();
         let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
         plan.assemble(
-            vec![output.signed_action(rng, &sighash)],
+            vec![output.authorize(
+                output.sign(rng, &sighash),
+                (
+                    output.note.commitment().into(),
+                    output.note.commitment_pad(),
+                ),
+            )],
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee_entry,
+            fee_descriptor,
+            change,
             stamp,
         )
         .unwrap()

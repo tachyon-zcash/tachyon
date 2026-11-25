@@ -17,7 +17,7 @@ use super::{
     spend::{SpendHeader, SpendHeaderOutput},
 };
 use crate::{
-    ActionSetPoly, TachygramSetPoly, action,
+    ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
     digest::poseidon,
     entropy::ActionEntropy,
@@ -257,7 +257,7 @@ impl Step<Pasta> for OutputAction {
             .0
             .randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let digest = ActionDigest::new(action::Descriptor { cv, rk }, (cm, pad));
+        let digest = ActionDigest::new(cv, rk, (cm, pad));
         let (action_set, tachygram_set) = (&witness.2, &witness.3);
         let prepared = ActionSetPoly::SLOT.poly(Prepared::new(), action_set);
         Ok(TachygramSetPoly::SLOT
@@ -385,7 +385,8 @@ impl Step<Pasta> for SpendAction {
         let alpha = witness.0.randomizer::<effect::Spend>(cm);
         let rk = witness.1.ak.derive_action_public(&alpha);
         let digest = ActionDigest::new(
-            action::Descriptor { cv, rk },
+            cv,
+            rk,
             (Tachygram::from(nf_current), Tachygram::from(nf_next)),
         );
         let (action_set, tachygram_set) = (&witness.2, &witness.3);

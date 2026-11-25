@@ -445,7 +445,7 @@ and Proving
 end
 
 critical stamp
-    note over User: attach each signature and pair to its planned action, using witness values or reusing the pair from proving
+    note over User: derive each action's tachygrams and attach them with its signature
     note over User: attach the fee, change commitment, and proof stamp
 end
 break

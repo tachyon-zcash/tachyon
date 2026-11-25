@@ -315,7 +315,7 @@ pub enum PlanError {
     /// The supplied actions do not match the plan one-to-one.
     #[display("planned actions do not match authorized actions")]
     ActionMismatch,
-    /// The fee entry does not use the planned maximum.
+    /// The supplied fee does not match the planned maximum.
     #[display("fee does not match max-fee note")]
     FeeMismatch,
     /// The value balance overflows the representable range.
@@ -475,9 +475,7 @@ impl Plan {
     }
 
     /// Assemble complete actions in descriptor order and attach the supplied
-    /// stamp. The fee entry is the fee descriptor and its change
-    /// commitment, as used by the stamp operations. Assembly does not
-    /// verify signatures or coverage.
+    /// stamp. Assembly does not verify signatures or coverage.
     ///
     /// # Errors
     ///
@@ -487,7 +485,8 @@ impl Plan {
         &self,
         mut actions: Vec<action::Action>,
         binding_sig: Signature,
-        (fee, fee_auth): (fee::Descriptor, Tachygram),
+        fee: fee::Descriptor,
+        fee_change_commitment: Tachygram,
         stamp: S,
     ) -> Result<Bundle<S>, PlanError> {
         let value_balance = self
@@ -510,7 +509,7 @@ impl Plan {
             actions,
             value_balance,
             fee,
-            fee_auth,
+            fee_auth: fee_change_commitment,
             binding_sig,
             memo: self.memo.clone(),
             stamp,

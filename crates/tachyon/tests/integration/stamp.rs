@@ -217,7 +217,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
         master.derive_nullifier(epoch).into(),
         master.derive_nullifier(epoch.next().unwrap()).into(),
     );
-    let (fee_descriptor, change) = plan.fee_entry();
+    let fee_descriptor = plan.fee_descriptor();
+    let change = plan.fee_change_commitment();
     let digests = [
         spend.digest(spend_pair),
         output.digest((
@@ -316,15 +317,26 @@ fn overlapping_stamps_cannot_aggregate() {
         pair,
     );
     let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
-    let fee_entry = stamp_plan.fee_entry();
+    let fee_descriptor = stamp_plan.fee_descriptor();
+    let fee_change = stamp_plan.fee_change_commitment();
     let spend_stamp = stamp_plan
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
     let spend_b = plan
         .assemble(
-            vec![spend_action, output.signed_action(rng, &sighash)],
+            vec![
+                spend_action,
+                output.authorize(
+                    output.sign(rng, &sighash),
+                    (
+                        output.note.commitment().into(),
+                        output.note.commitment_pad(),
+                    ),
+                ),
+            ],
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee_entry,
+            fee_descriptor,
+            fee_change,
             spend_stamp,
         )
         .unwrap();

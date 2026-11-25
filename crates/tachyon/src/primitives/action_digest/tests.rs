@@ -3,7 +3,6 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
-    action,
     entropy::ActionEntropy,
     keys::{private, public},
     note,
@@ -23,13 +22,7 @@ fn digest_panics_on_identity_commitment() {
     .derive_action_public();
     let pair = (Tachygram::random(rng), Tachygram::random(rng));
 
-    let _digest = ActionDigest::new(
-        action::Descriptor {
-            cv: value::Commitment::default(),
-            rk,
-        },
-        pair,
-    );
+    let _digest = ActionDigest::new(value::Commitment::default(), rk, pair);
 }
 
 #[test]
@@ -41,11 +34,5 @@ fn digest_panics_on_identity_verification_key() {
         public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
     let pair = (Tachygram::random(rng), Tachygram::random(rng));
 
-    let _digest = ActionDigest::new(
-        action::Descriptor {
-            cv,
-            rk: identity_rk,
-        },
-        pair,
-    );
+    let _digest = ActionDigest::new(cv, identity_rk, pair);
 }

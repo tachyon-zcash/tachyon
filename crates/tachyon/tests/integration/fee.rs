@@ -78,13 +78,11 @@ fn fee_less_output_bundle(
         plan.assemble(
             vec![action],
             plan.binding_signature(rng, &sighash).unwrap(),
-            (
-                fee::Descriptor {
-                    cv_feemax: max_fee_note.cv_feemax(),
-                    v_fee: value::Positive::ZERO,
-                },
-                max_fee_note.commitment().into(),
-            ),
+            fee::Descriptor {
+                cv_feemax: max_fee_note.cv_feemax(),
+                v_fee: value::Positive::ZERO,
+            },
+            max_fee_note.commitment().into(),
             stamp,
         )
         .unwrap()
@@ -266,7 +264,7 @@ fn fee_fuse_slack_boundaries() {
 }
 
 #[test]
-fn fee_entry_commits_to_the_change_note() {
+fn stamp_plan_commits_to_the_change_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let max_fee_note = wallet.random_note(100);
@@ -278,7 +276,9 @@ fn fee_entry_commits_to_the_change_note() {
     let anchor = Anchor::random(rng);
     for (paid, remaining) in [(0u64, 100u64), (30, 70), (100, 0)] {
         let amount = value::Positive::try_from(paid).unwrap();
-        let (descriptor, change) = plan.stamp_plan(anchor, amount).fee_entry();
+        let stamp_plan = plan.stamp_plan(anchor, amount);
+        let descriptor = stamp_plan.fee_descriptor();
+        let change = stamp_plan.fee_change_commitment();
         let change_note = Note {
             value: value::Positive::try_from(remaining).unwrap(),
             ..max_fee_note
@@ -308,7 +308,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
         let fee = value::Positive::try_from(amount).unwrap();
         let stamp_plan = bundle_plan.stamp_plan(anchor, fee);
-        let fee_entry = stamp_plan.fee_entry();
+        let fee_descriptor = stamp_plan.fee_descriptor();
+        let change = stamp_plan.fee_change_commitment();
         let stamp = stamp_plan
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
@@ -316,7 +317,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .assemble(
                 at_fixture_fee.actions.clone(),
                 at_fixture_fee.binding_sig,
-                fee_entry,
+                fee_descriptor,
+                change,
                 stamp,
             )
             .unwrap()
