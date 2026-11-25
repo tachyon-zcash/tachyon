@@ -16,8 +16,14 @@ use ragu::{
 
 use crate::pasta::Fp;
 
-/// A value held as `BITS` little-endian Boolean bits, so it is below
-/// $2^{BITS}$.
+/// An integer held as `BITS` little-endian Boolean wires $b_i$.
+///
+/// # Injectivity
+///
+/// Every width here is at most 254. Since $n=\sum_i2^i b_i$ lies below both
+/// Pasta moduli, distinct bit strings give distinct [`pack`](Self::pack)
+/// outputs in $\mathbb{F}_p$ and [fixed-base](super::fixed_base) scalars in
+/// $\mathbb{F}_q$.
 #[derive(Gadget)]
 pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
     #[ragu(gadget)]
@@ -25,9 +31,12 @@ pub(crate) struct Uint<'dr, D: Driver<'dr>, const BITS: usize> {
 }
 
 impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
-    /// Allocates the low `BITS` bits of `value`, an element of either Pasta
-    /// field. The bits are free: a caller whose value may be wider binds them
-    /// to it, as [`from_element`](Self::from_element) does.
+    /// Allocates `BITS` Boolean wires assigned to the low bits of `value`, an
+    /// element of either Pasta field.
+    ///
+    /// No constraint ties the bits to `value` or any other wire. Callers
+    /// needing a specific integer constrain [`pack`](Self::pack)'s output or
+    /// call [`from_element`](Self::from_element).
     pub(crate) fn alloc<V: Field>(dr: &mut D, value: DriverValue<D, V>) -> Result<Self> {
         let bits = value.map(|element| element.to_le_bits());
         Ok(Self {
@@ -42,14 +51,16 @@ impl<'dr, D: Driver<'dr, F = Fp>, const BITS: usize> Uint<'dr, D, BITS> {
         })
     }
 
-    /// Decomposes `element` into `BITS` bits that pack back to it.
+    /// The unique `BITS`-bit decomposition that packs back to `element`.
+    /// Packing never wraps at these widths, so elements at or above
+    /// $2^{\mathsf{BITS}}$ have no assignment.
     pub(crate) fn from_element(dr: &mut D, element: &Element<'dr, D>) -> Result<Self> {
         Ok(Self {
             bits: decompose_n(dr, &mut (), element)?,
         })
     }
 
-    /// The value the bits encode.
+    /// The element $\sum_i 2^i b_i$, a linear combination of the bit wires.
     pub(crate) fn pack(&self, dr: &mut D) -> Result<Element<'dr, D>> {
         Ok(single_packed_element(multipack(dr, &self.bits)?))
     }

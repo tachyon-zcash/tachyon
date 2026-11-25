@@ -38,9 +38,10 @@ r = \mathsf{Poseidon}_\texttt{Tachyon-FeeBlind}(\pk, \psi, \rcm),
 $$
 
 with $r$ embedded in the scalar field.
-The fee steps multiply by the 254 bits of $r$, so an opening whose $r$ is at or above $2^{254}$ has no proof.
-A uniform $r$ reaches that bound with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
-The caller constructs the max fee note and is responsible for choosing inputs that give $r < 2^{254}$. The planner does not reselect $\rcm$.
+At $r \geq 2^{254}$, no 254 bits recompose to the derived digest; at $r = 0$, the blind point is the identity.
+In either case the fee step has no satisfying assignment, so the prover cannot produce a valid stamp for that opening.
+A uniform $r$ is at least $2^{254}$ with probability about $2^{-129}$ and steering one there takes about $2^{129}$ hashes.
+The caller constructs the max fee note and chooses inputs that give $0 < r < 2^{254}$. The planner does not reselect $\rcm$.
 The blind binds the fee change note's owner fields into the commitment. Each
 max fee note takes a fresh secret $\rcm$ because reusing an opening reuses the
 blind.
@@ -151,6 +152,13 @@ the witnessed anchor.
 The fee steps prove that the fee digest and fee change commitment come from
 one max fee note opening and one fee. Funding comes from the bundle's
 actions, the binding signature, and transaction accounting.
+
+At the level of stamp multisets, replacing a fee adds the new fee leaf and
+removes the old one. The holder of the max fee note opening can use `FeeFuse`
+to pair each fee leaf with the same auxiliary `Actions` proof at the stamp's
+anchor. Adding the new-fee stamp and subtracting the old-fee stamp cancels the
+auxiliary leaves. For the temporary merge, the added stamp's action digests
+and tachygrams must be disjoint from the original stamp's sets.
 
 The prover applies `FeeFuse` after proving and merging a bundle's
 actions, or `FeeSeed` when the bundle has none. The bundle body's

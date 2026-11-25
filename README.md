@@ -64,6 +64,7 @@ Formatting uses the pinned toolchain `nightly-2026-05-23`.
 
 ```sh
 just test          # unit tests, then integration tests and doctests with --release
+just coverage      # combined release-mode coverage for unit tests and the integration target
 just lint          # build the docs, then clippy for no_std and for all targets
 just fmt           # format with the pinned nightly
 just check         # cargo check for no_std and for all targets
