@@ -291,18 +291,22 @@ fn unmerge_splitting_a_bundle() {
 
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
-    let proof = plan
-        .stamp_plan(anchor, value::Positive::ZERO)
-        .prove(rng, app, &wallet.pak, vec![])
-        .unwrap();
-    let signatures = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
+    let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
+    let fee = stamp_plan.fee_entry();
+    let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let actions = [kept_plan, removed_plan]
+        .iter()
+        .map(|output| output.signed_action(rng, &sighash))
+        .collect();
+    let mut whole = plan
+        .assemble(
+            actions,
+            plan.binding_signature(rng, &sighash).unwrap(),
+            fee,
+            stamp,
         )
         .unwrap();
-    let mut whole = plan.assemble(signatures, proof);
     let kept_digest = whole
         .actions
         .iter()
@@ -349,18 +353,17 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
     let [original, reproven] = [(), ()].map(|()| {
         let output = output_plan(rng, note);
         let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
-        let signatures = plan
-            .sign(
-                rng,
-                &mock_sighash(plan.commitment().unwrap()),
-                &wallet.sk.derive_auth_private(),
-            )
-            .unwrap();
-        let proof = plan
-            .stamp_plan(anchor, fee)
-            .prove(rng, app, &wallet.pak, vec![])
-            .unwrap();
-        plan.assemble(signatures, proof)
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let stamp_plan = plan.stamp_plan(anchor, fee);
+        let fee_entry = stamp_plan.fee_entry();
+        let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
+        plan.assemble(
+            vec![output.signed_action(rng, &sighash)],
+            plan.binding_signature(rng, &sighash).unwrap(),
+            fee_entry,
+            stamp,
+        )
+        .unwrap()
     });
     let (_, other) = wallet.bundle(
         app,

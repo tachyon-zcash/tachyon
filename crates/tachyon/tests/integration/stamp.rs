@@ -133,7 +133,9 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    let (swapped, swapped_pairs, ..) = plan
+    let pair_a = secret_a.data().2.spend_tachygrams(sp_a.data().1).unwrap();
+    let pair_b = secret_b.data().2.spend_tachygrams(sp_b.data().1).unwrap();
+    let swapped = plan
         .prove(
             rng,
             app,
@@ -149,11 +151,7 @@ fn plan_prove_rejects_invalid_inputs() {
             .verify_proof(
                 rng,
                 app,
-                [
-                    plan_a.digest(swapped_pairs[&plan_a.descriptor()]),
-                    plan_b.digest(swapped_pairs[&plan_b.descriptor()]),
-                    fee_digest
-                ]
+                [plan_a.digest(pair_b), plan_b.digest(pair_a), fee_digest]
             )
             .unwrap()
     );
@@ -161,7 +159,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
-    let (foreign, foreign_pairs, ..) = stamp::Plan::new(
+    let foreign = stamp::Plan::new(
         vec![foreign_a],
         vec![],
         anchor,
@@ -172,14 +170,7 @@ fn plan_prove_rejects_invalid_inputs() {
     .unwrap();
     assert!(
         !foreign
-            .verify_proof(
-                rng,
-                app,
-                [
-                    foreign_a.digest(foreign_pairs[&foreign_a.descriptor()]),
-                    fee_digest
-                ]
-            )
+            .verify_proof(rng, app, [foreign_a.digest(pair_a), fee_digest])
             .unwrap()
     );
 }
@@ -212,6 +203,20 @@ fn plan_prove_lifts_a_spend_along_spans() {
         value::Positive::ZERO,
     );
 
+    let spend_pair = secret
+        .data()
+        .2
+        .spend_tachygrams(spendable.data().1)
+        .unwrap();
+    let (fee_descriptor, change) = plan.fee_entry();
+    let digests = [
+        spend.digest(spend_pair),
+        output.digest((
+            output.note.commitment().into(),
+            output.note.commitment_pad(),
+        )),
+        fee_descriptor.digest(change),
+    ];
     for spans in [
         vec![pool.anchor_span(app, cm_height..=plan_height)],
         vec![
@@ -223,7 +228,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
             pool.anchor_span(app, middle..=plan_height),
         ],
     ] {
-        let (stamp, pairs, cm_change, v_fee) = plan
+        let stamp = plan
             .clone()
             .prove(
                 rng,
@@ -232,16 +237,6 @@ fn plan_prove_lifts_a_spend_along_spans() {
                 vec![(secret.clone(), spendable.clone(), spans)],
             )
             .unwrap();
-        assert!(pairs.values().all(|&(first, second)| first < second));
-        let digests: Vec<ActionDigest> = pairs
-            .iter()
-            .map(|(desc, &pair)| desc.digest(pair))
-            .chain([fee::Descriptor {
-                cv_feemax: max_fee_note.cv_feemax(),
-                v_fee,
-            }
-            .digest(cm_change)])
-            .collect();
         assert_eq!(stamp.anchor, plan_anchor);
         assert!(stamp.verify_proof(rng, app, digests).unwrap());
     }
@@ -263,18 +258,9 @@ fn plan_prove_lifts_a_spend_along_spans() {
         pool.anchor_span(app, cm_height..=cm_height),
         pool.anchor_span(app, plan_height..=plan_height),
     ];
-    let (forged, pairs, cm_change, v_fee) = plan
+    let forged = plan
         .prove(rng, app, &user.pak, vec![(secret, spendable, gapped)])
         .unwrap();
-    let digests: Vec<ActionDigest> = pairs
-        .iter()
-        .map(|(desc, &pair)| desc.digest(pair))
-        .chain([fee::Descriptor {
-            cv_feemax: max_fee_note.cv_feemax(),
-            v_fee,
-        }
-        .digest(cm_change)])
-        .collect();
     assert!(!forged.verify_proof(rng, app, digests).unwrap());
 }
 
@@ -308,23 +294,30 @@ fn overlapping_stamps_cannot_aggregate() {
     });
     let output = output_plan(rng, wallet.random_note(600));
     let plan = bundle::Plan::new(vec![spend_plan], vec![output], wallet.random_note(0));
-    let signatures = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let secret = wallet.note_secret(app, note);
+    let pair = secret
+        .data()
+        .2
+        .spend_tachygrams(spendable.data().1)
+        .unwrap();
+    let spend_action = spend_plan.authorize(
+        spend_plan.sign(rng, &sighash, &wallet.sk.derive_auth_private()),
+        pair,
+    );
+    let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
+    let fee_entry = stamp_plan.fee_entry();
+    let spend_stamp = stamp_plan
+        .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
+        .unwrap();
+    let spend_b = plan
+        .assemble(
+            vec![spend_action, output.signed_action(rng, &sighash)],
+            plan.binding_signature(rng, &sighash).unwrap(),
+            fee_entry,
+            spend_stamp,
         )
         .unwrap();
-    let proof = plan
-        .stamp_plan(anchor, value::Positive::ZERO)
-        .prove(
-            rng,
-            app,
-            &wallet.pak,
-            vec![(wallet.note_secret(app, note), spendable, vec![])],
-        )
-        .unwrap();
-    let spend_b = plan.assemble(signatures, proof);
     let fixture_fees = [(spend_a.fee, spend_a.fee_auth)];
     let overlap_fees = [(spend_b.fee, spend_b.fee_auth)];
 

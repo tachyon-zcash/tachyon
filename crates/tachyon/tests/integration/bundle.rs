@@ -1,11 +1,6 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
+use alloc::{collections::BTreeSet, string::ToString as _, vec, vec::Vec};
 use core::{assert_matches, cmp::Reverse, mem};
 
 use corez::io;
@@ -42,156 +37,103 @@ use crate::fixtures::{
 };
 
 #[test]
-fn sign_and_apply_signatures_verify_every_plan_shape() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    for (spends, outputs) in [
-        (&[200][..], &[100][..]),
-        (&[200][..], &[][..]),
-        (&[][..], &[200][..]),
-        (&[][..], &[][..]),
-    ] {
-        let plan = Plan::new(
-            spends
-                .iter()
-                .map(|&amount| spend_plan_at(rng, &wallet, &ask, amount))
-                .collect(),
-            outputs
-                .iter()
-                .map(|&amount| output_plan(rng, wallet.random_note(amount)))
-                .collect(),
-            wallet.random_note(0),
-        );
-        let sighash = mock_sighash(plan.commitment().unwrap());
-        let signatures = plan.sign(rng, &sighash, &ask).unwrap();
-        plan.verify_signatures(&sighash, &signatures).unwrap();
-        let (authorized, _) = signatures;
-        let applied = plan.apply_signatures(rng, &sighash, authorized).unwrap();
-        plan.verify_signatures(&sighash, &applied).unwrap();
-    }
-}
-
-#[test]
-fn apply_signatures_rejects_wrong_sig_count() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
-    let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
-    let spend_c = spend_plan_at(rng, &wallet, &ask, 300);
-    let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
-    let sighash = mock_sighash(plan.commitment().unwrap());
-    let sig = ask
-        .derive_action_private(
-            &spend_a
-                .theta
-                .randomizer::<effect::Spend>(spend_a.note.commitment()),
-        )
-        .sign(rng, &sighash);
-
-    for authorized in [
-        BTreeMap::from([(spend_a.descriptor(), sig)]),
-        BTreeMap::from([
-            (spend_a.descriptor(), sig),
-            (spend_b.descriptor(), sig),
-            (spend_c.descriptor(), sig),
-        ]),
-    ] {
-        assert_eq!(
-            plan.apply_signatures(rng, &sighash, authorized)
-                .unwrap_err(),
-            PlanError::ActionSigMismatch
-        );
-    }
-}
-
-#[test]
-fn apply_signatures_with_shuffled_sigs_fails_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-
-    let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
-    let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
-    let plan = Plan::new(vec![spend_a, spend_b], vec![], wallet.random_note(0));
-
-    let sighash = mock_sighash(plan.commitment().unwrap());
-    let (action_sigs, _) = plan.sign(rng, &sighash, &ask).unwrap();
-    let mut sigs: Vec<action::Signature> = action_sigs.into_values().collect();
-
-    sigs.reverse();
-    let authorized = plan.descriptors().into_iter().zip(sigs).collect();
-
-    let signatures = plan.apply_signatures(rng, &sighash, authorized).unwrap();
-
-    assert_matches!(
-        plan.verify_signatures(&sighash, &signatures),
-        Err(SignatureError::Action(_))
-    );
-}
-
-#[test]
-fn assemble_joins_by_descriptor() {
+fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
     let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (plan, original) = spend(app);
+    let (plan, received) = spend(app);
+    let rng = &mut StdRng::seed_from_u64(17);
     let wallet = WalletSim::new(shared_sk());
-    let signatures = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let spend = plan
+        .iter_actions(|spend| Some(*spend), |_| None)
+        .flatten()
+        .next()
+        .unwrap();
+    let signature = spend.sign(rng, &sighash, &wallet.sk.derive_auth_private());
+    let master = wallet.pak.nk.derive_note_private(spend.note.psi);
+    let pair = master.spend_tachygrams(BlockHeight(1).epoch()).unwrap();
+    let mut actions = vec![spend.authorize(signature, pair)];
+    actions.extend(
+        plan.iter_actions(|_| None, |output| Some(*output))
+            .flatten()
+            .map(|output| output.signed_action(rng, &sighash)),
+    );
+    actions.sort_by_key(|action| Reverse(action.descriptor));
+    let joined = plan
+        .assemble(
+            actions,
+            plan.binding_signature(rng, &sighash).unwrap(),
+            (received.fee, received.fee_auth),
+            received.stamp,
         )
         .unwrap();
-    let pairs: BTreeMap<_, _> = original
-        .actions
-        .iter()
-        .map(|action| (action.descriptor, action.tachygrams))
-        .collect();
-    let joined = plan.assemble(
-        signatures,
-        (
-            original.stamp,
-            pairs.clone(),
-            original.fee_auth,
-            original.fee.v_fee,
-        ),
-    );
     assert!(
         joined
             .actions
             .iter()
-            .map(|action| (action.descriptor, action.tachygrams))
-            .eq(pairs)
+            .zip(&received.actions)
+            .all(|(left, right)| left.descriptor == right.descriptor
+                && left.tachygrams == right.tachygrams)
     );
-    joined
-        .verify(rng, app, &mock_sighash(joined.commitment()), &[])
-        .unwrap();
+    joined.verify(rng, app, &sighash, &[]).unwrap();
 }
 
 #[test]
-#[should_panic(expected = "action descriptors do not match")]
-fn assemble_panics_on_mismatched_descriptors() {
-    let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (plan, original) = spend(app);
+fn assemble_rejects_missing_extra_and_substituted_actions() {
+    let rng = &mut StdRng::seed_from_u64(2);
     let wallet = WalletSim::new(shared_sk());
-    let signatures = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
+    let ask = wallet.sk.derive_auth_private();
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+    let max_fee_note = wallet.random_note(0);
+    let fee = max_fee_note.fee_entry(value::Positive::ZERO);
+    let plan = Plan::new(vec![spend], vec![], max_fee_note);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sig = plan.binding_signature(rng, &sighash).unwrap();
+    let pair = wallet
+        .pak
+        .nk
+        .derive_note_private(spend.note.psi)
+        .spend_tachygrams(BlockHeight(1).epoch())
         .unwrap();
-    let _bundle = plan.assemble(
-        signatures,
-        (
-            original.stamp,
-            BTreeMap::new(),
-            original.fee_auth,
-            original.fee.v_fee,
-        ),
+    let action = spend.authorize(spend.sign(rng, &sighash, &ask), pair);
+    let other = output_plan(rng, wallet.random_note(42)).signed_action(rng, &sighash);
+    for rows in [vec![], vec![action, action], vec![other]] {
+        assert_eq!(
+            plan.assemble(rows, sig, fee, StrippedStamp).unwrap_err(),
+            PlanError::ActionMismatch
+        );
+    }
+    let duplicate_plan = Plan::new(vec![spend, spend], vec![], max_fee_note);
+    assert_eq!(
+        duplicate_plan
+            .assemble(vec![action, action], sig, fee, StrippedStamp)
+            .unwrap_err(),
+        PlanError::ActionMismatch
+    );
+    let foreign_fee = wallet.random_note(1).fee_entry(value::Positive::ZERO);
+    let excessive_fee = (
+        fee::Descriptor {
+            v_fee: value::Positive::try_from(1u64).unwrap(),
+            ..fee.0
+        },
+        fee.1,
+    );
+    for invalid_fee in [foreign_fee, excessive_fee] {
+        assert_eq!(
+            plan.assemble(vec![action], sig, invalid_fee, StrippedStamp)
+                .unwrap_err(),
+            PlanError::FeeMismatch
+        );
+    }
+    let bad_sig = action::Action {
+        signature: other.signature,
+        ..action
+    };
+    let bundle = plan
+        .assemble(vec![bad_sig], sig, fee, StrippedStamp)
+        .unwrap();
+    assert_matches!(
+        bundle.verify_signatures(&sighash),
+        Err(SignatureError::Action(_))
     );
 }
 
@@ -292,7 +234,13 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.note_secret(app, note);
     let max_fee_note = wallet.random_note(0);
     let cv_feemax = max_fee_note.cv_feemax();
-    let (honest_stamp, pairs, cm_change, fee) = Plan::new(vec![plan], vec![], max_fee_note)
+    let pair = secret
+        .data()
+        .2
+        .spend_tachygrams(spendable.data().1)
+        .unwrap();
+    let (fee, cm_change) = max_fee_note.fee_entry(value::Positive::ZERO);
+    let honest_stamp = Plan::new(vec![plan], vec![], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
         .unwrap();
@@ -311,7 +259,6 @@ fn duplicated_spend_cannot_inflate() {
         .derive_auth_private()
         .derive_action_private(&alpha)
         .sign(rng, &sighash);
-    let pair = pairs[&descriptor];
     let binding_sig = Plan::new(vec![plan, plan], vec![], max_fee_note)
         .derive_bsk_private()
         .sign(rng, &sighash);
@@ -327,10 +274,7 @@ fn duplicated_spend_cannot_inflate() {
         value_balance,
         binding_sig,
         memo: Vec::new(),
-        fee: fee::Descriptor {
-            cv_feemax,
-            v_fee: fee,
-        },
+        fee,
         fee_auth: cm_change,
         stamp: honest_stamp,
     };
@@ -827,12 +771,8 @@ fn bundles_round_trip_at_action_count_limits() {
     let wallet = WalletSim::new(shared_sk());
     let max_fee_note = wallet.random_note(0);
     let plan = Plan::new(vec![], vec![], max_fee_note);
-    let (_, binding_sig) = plan
-        .sign(
-            rng,
-            &mock_sighash(plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
+    let binding_sig = plan
+        .binding_signature(rng, &mock_sighash(plan.commitment().unwrap()))
         .unwrap();
     let (descriptor, signature) = random_action(rng);
     assert_eq!((WalletRank::num_coeffs() - 2) / 2, 4095);
@@ -1241,18 +1181,18 @@ fn plan_value_balance_is_bounded_by_max_money() {
             assert_eq!(plan.value_balance(), Err(value::OutOfRange));
             assert_eq!(plan.commitment().unwrap_err(), value::OutOfRange);
             assert_eq!(
-                plan.sign(rng, &[0u8; 32], &ask).unwrap_err(),
+                plan.binding_signature(rng, &[0u8; 32]).unwrap_err(),
                 value::OutOfRange
             );
-            let signature = random_action(rng).1;
-            let authorized = plan
-                .descriptors()
-                .into_iter()
-                .map(|descriptor| (descriptor, signature))
-                .collect::<BTreeMap<_, _>>();
+            let sig = plan.derive_bsk_private().sign(rng, &[0; 32]);
             assert_eq!(
-                plan.apply_signatures(rng, &[0u8; 32], authorized)
-                    .unwrap_err(),
+                plan.assemble(
+                    vec![],
+                    sig,
+                    wallet.random_note(0).fee_entry(value::Positive::ZERO),
+                    StrippedStamp
+                )
+                .unwrap_err(),
                 PlanError::BalanceOverflow
             );
         }
@@ -1351,24 +1291,24 @@ fn memo_round_trips_and_rejects_truncation() {
 fn plan_memo_reaches_the_signed_bundle() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
     let memo = vec![0x7Fu8; 900];
     let (plan, original) = alice(app);
     let bundle_plan = plan.with_memo(memo.clone());
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
-    let signatures = bundle_plan
-        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
-        .unwrap();
-    let pairs = original
-        .actions
-        .iter()
-        .map(|action| (action.descriptor, action.tachygrams))
+    let actions = bundle_plan
+        .iter_actions(|_| None, |output| Some(*output))
+        .flatten()
+        .map(|output| output.signed_action(rng, &sighash))
         .collect();
-    let bundle = bundle_plan.assemble(
-        signatures,
-        (original.stamp, pairs, original.fee_auth, original.fee.v_fee),
-    );
+    let bundle = bundle_plan
+        .assemble(
+            actions,
+            bundle_plan.binding_signature(rng, &sighash).unwrap(),
+            (original.fee, original.fee_auth),
+            original.stamp,
+        )
+        .unwrap();
 
     assert_eq!(bundle.memo, memo);
     assert_eq!(bundle.commitment(), bundle_plan.commitment().unwrap());

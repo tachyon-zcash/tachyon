@@ -30,7 +30,6 @@ use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBuc
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
     let plan = output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(
@@ -39,8 +38,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
         WalletSim::new(shared_sk()).random_note(0),
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let (action_sigs, _) = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-    action_sigs.into_iter().next().unwrap()
+    (plan.descriptor(), plan.sign(rng, &sighash))
 }
 
 pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
@@ -364,14 +362,38 @@ impl WalletSim {
                 .collect();
             let plan = bundle::Plan::new(spend_plans, output_plans, max_fee_note);
             let sighash = mock_sighash(plan.commitment().unwrap());
-            let signatures = plan
-                .sign(rng, &sighash, &self.sk.derive_auth_private())
+            let stamp_plan = plan.stamp_plan(anchor, fee);
+            let fee_entry = stamp_plan.fee_entry();
+            let mut spends_with_pairs = Vec::new();
+            let mut outputs_with_pairs = Vec::new();
+            let stamp = stamp_plan
+                .prove_with_tachygrams(
+                    rng,
+                    app,
+                    &self.pak,
+                    spend_pcds,
+                    |spend, pair| spends_with_pairs.push((*spend, pair)),
+                    |output, pair| outputs_with_pairs.push((*output, pair)),
+                )
                 .unwrap();
-            let proof = plan
-                .stamp_plan(anchor, fee)
-                .prove(rng, app, &self.pak, spend_pcds)
+            let ask = self.sk.derive_auth_private();
+            let mut actions: Vec<_> = spends_with_pairs
+                .into_iter()
+                .map(|(spend, pair)| spend.authorize(spend.sign(rng, &sighash, &ask), pair))
+                .collect();
+            actions.extend(
+                outputs_with_pairs
+                    .into_iter()
+                    .map(|(output, pair)| output.authorize(output.sign(rng, &sighash), pair)),
+            );
+            let bundle = plan
+                .assemble(
+                    actions,
+                    plan.binding_signature(rng, &sighash).unwrap(),
+                    fee_entry,
+                    stamp,
+                )
                 .unwrap();
-            let bundle = plan.assemble(signatures, proof);
             (plan, bundle)
         })
     }

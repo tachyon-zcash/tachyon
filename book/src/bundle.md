@@ -162,7 +162,9 @@ end
 
 ## Lifecycle
 
-Signing and proving are independent. Signing produces a signature for each planned action descriptor and a binding signature for the bundle. Proving produces a tachygram pair for each descriptor, a proof stamp, the chosen fee, and the fee change commitment. The bundle joins the signatures and tachygram pairs by descriptor, so each planned action carries its own authorization.
+Signing and proving use the same planned spends and outputs. Custody signs each spend; the output creator can sign each output and derive its commitment and padding tachygram from the note. A spend's pair comes from its note master key at the spendable's current and next epochs, even if its stamp is later lifted. The witness holder can supply those two values without sharing the key.
+
+The proof worker produces a stamp. The sender may reuse the tachygrams calculated during proving or obtain them independently. With a signature and pair for each planned action, the sender orders the complete actions by descriptor and adds the binding signature, the fee and its change commitment, and the stamp.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
@@ -200,7 +202,7 @@ A single `nActionsTachyon` frames all three action vectors; there are no additio
 
 `nActionsTachyon` is at most 4095, the most actions whose pairs fit one set polynomial beside the bundle's fee change. Parsing rejects a larger count.
 
-The prover writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
+The sender writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 

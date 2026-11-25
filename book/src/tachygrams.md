@@ -30,7 +30,7 @@ $$
 \mathsf{tg}_0 = \mathsf{nf}_e, \qquad \mathsf{tg}_1 = \mathsf{nf}_{e+1}
 $$
 
-Each action digest absorbs the pair as $(\mathsf{tg}_0 + \mathsf{tg}_1, \mathsf{tg}_0 \mathsf{tg}_1)$, binding its members without their order. The prover writes each pair smaller tachygram first, so the published order reveals neither member's role; the encoding does not require it. Both action kinds publish two members, concealing the split between spends and outputs in one version of a transaction.
+Each action digest absorbs the pair as $(\mathsf{tg}_0 + \mathsf{tg}_1, \mathsf{tg}_0 \mathsf{tg}_1)$, binding its members without their order. The sender writes each pair smaller tachygram first, so the published order reveals neither member's role; the encoding does not require it. Both action kinds publish two members, concealing the split between spends and outputs in one version of a transaction.
 
 An observer learns which two tachygrams belong to each action and which tachygram is each bundle's fee change. Re-proving a spend at another epoch replaces its pair, while an output keeps its pair. Comparing two versions therefore identifies the spend and output actions. A fee change alone leaves the action pairs unchanged.
 

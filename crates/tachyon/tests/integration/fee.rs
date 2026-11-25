@@ -1,9 +1,6 @@
 extern crate alloc;
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec,
-};
+use alloc::{collections::BTreeSet, vec};
 use core::assert_matches;
 
 use ragu::udon::field::Field as _;
@@ -76,20 +73,15 @@ fn fee_less_output_bundle(
         };
 
         let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
-        let signatures = plan
-            .sign(
-                rng,
-                &mock_sighash(plan.commitment().unwrap()),
-                &wallet.sk.derive_auth_private(),
-            )
-            .unwrap();
-        let proof = (
+        let sighash = mock_sighash(plan.commitment().unwrap());
+        let action = output_plan.authorize(output_plan.sign(rng, &sighash), (cm, pad));
+        plan.assemble(
+            vec![action],
+            plan.binding_signature(rng, &sighash).unwrap(),
+            max_fee_note.fee_entry(value::Positive::ZERO),
             stamp,
-            BTreeMap::from([(output_plan.descriptor(), (cm.min(pad), cm.max(pad)))]),
-            max_fee_note.commitment().into(),
-            value::Positive::ZERO,
-        );
-        plan.assemble(signatures, proof)
+        )
+        .unwrap()
     })
 }
 
@@ -283,22 +275,21 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     )];
     let commitment = at_fixture_fee.commitment();
     let sighash = mock_sighash(commitment);
-    let signatures = (
-        at_fixture_fee
-            .actions
-            .iter()
-            .map(|action| (action.descriptor, action.signature))
-            .collect::<BTreeMap<_, _>>(),
-        at_fixture_fee.binding_sig,
-    );
-
     let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
         let fee = value::Positive::try_from(amount).unwrap();
-        let proof = bundle_plan
-            .stamp_plan(anchor, fee)
+        let stamp_plan = bundle_plan.stamp_plan(anchor, fee);
+        let fee_entry = stamp_plan.fee_entry();
+        let stamp = stamp_plan
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
-        bundle_plan.assemble(signatures.clone(), proof)
+        bundle_plan
+            .assemble(
+                at_fixture_fee.actions.clone(),
+                at_fixture_fee.binding_sig,
+                fee_entry,
+                stamp,
+            )
+            .unwrap()
     });
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
