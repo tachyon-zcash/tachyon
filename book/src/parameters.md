@@ -24,8 +24,8 @@ Values defined outside the crate come from Ragu at the pinned revision and from 
 | Fee | $0 \leq \fee \leq \feemax \leq \mathsf{MAX\_MONEY}$ | `fee.rs`, `stamp/proof/stamp.rs` |
 | Value balance | $-\mathsf{MAX\_MONEY} \leq v^{\mathsf{bal}} \leq \mathsf{MAX\_MONEY}$ | `value.rs` |
 | Note commitment trapdoor $\rcm$ | $\neq 0$ | `note.rs`, `gadgets/note.rs` |
-| Action randomizer $\alpha$ | $< 2^{254}$; $\neq 0$ for outputs, at most five unassigned values per $\ak$ for spends | `stamp/proof/stamp.rs`, Ragu `FixedBase` |
-| Action value trapdoor $\rcv$ and max-fee blind $r$ | $0 < x < 2^{254}$ | Ragu `FixedBase`, `stamp/proof/spend.rs`, `stamp/proof/output.rs`, `stamp/proof/stamp.rs`, `gadgets/note.rs` |
+| Action randomizer $\alpha$ | $< 2^{254}$; $\neq 0$ for outputs, at most five unassigned values per $\ak$ for spends | `stamp/proof/stamp.rs`, `gadgets/fixed_base.rs`, Ragu `FixedBase` |
+| Action value trapdoor $\rcv$ and max-fee blind $r$ | $0 < x < 2^{254}$ | Ragu `FixedBase`, `gadgets/fixed_base.rs`, `stamp/proof/spend.rs`, `stamp/proof/output.rs`, `stamp/proof/stamp.rs`, `gadgets/note.rs` |
 
 ## Chain and epochs
 

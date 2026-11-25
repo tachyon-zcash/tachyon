@@ -139,7 +139,8 @@ impl Plan<effect::Spend> {
     /// `Fp::CAPACITY` bits and is not one of the at most five values per
     /// $\mathsf{ak}$ that `FixedBase::mul_and_add` leaves unassigned, including
     /// any that makes `rk` the identity, or it risks producing a proof that is
-    /// false.
+    /// false. It also confirms that `rcv` is nonzero and below $2^{254}$, or
+    /// the proof fails or binds a `cv` other than the action's.
     #[must_use]
     pub fn spend(
         note: Note,
@@ -169,7 +170,8 @@ impl Plan<effect::Output> {
     ///
     /// The caller confirms that the randomizer $\alpha$ its `theta` gives fits
     /// `Fp::CAPACITY` bits and is nonzero, or it risks producing a proof that
-    /// is false.
+    /// is false. It also confirms that `rcv` is nonzero and below $2^{254}$,
+    /// or the proof fails or binds a `cv` other than the action's.
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();
