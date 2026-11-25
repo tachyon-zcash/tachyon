@@ -364,8 +364,8 @@ impl<P: Proof> ProofStamp<P> {
 /// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
-    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+    spends: Vec<action::Plan<effect::Spend>>,
+    outputs: Vec<action::Plan<effect::Output>>,
     anchor: Anchor,
     max_fee_note: Note,
     fee: value::Positive,
@@ -373,7 +373,7 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Create a stamp plan from paired action descriptors and witnesses, the
+    /// Create a stamp plan from the spend and output action plans, the
     /// max fee note and the fee. Derives and stores the fee change note.
     ///
     /// # Panics
@@ -381,8 +381,8 @@ impl Plan {
     /// Panics if the fee exceeds the max fee note's value.
     #[must_use]
     pub fn new(
-        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
-        outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+        spends: Vec<action::Plan<effect::Spend>>,
+        outputs: Vec<action::Plan<effect::Output>>,
         anchor: Anchor,
         max_fee_note: Note,
         fee: value::Positive,
@@ -480,7 +480,7 @@ impl Plan {
             ));
         }
 
-        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
+        for (index, (plan, (secret_pcd, spendable_pcd, spans))) in
             self.spends.into_iter().zip(spend_pcds).enumerate()
         {
             let reached = spans
@@ -498,14 +498,14 @@ impl Plan {
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), rcv),
+                    witness::spend_bind((*spendable_pcd.data(), *secret_pcd.data()), plan.rcv),
                     spendable_pcd,
                     secret_pcd,
                 )
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof, pair) =
-                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)
+                ProofStamp::prove_spend(rng, app, plan.theta, bind_pcd, *pak)
                     .map_err(ProveError::ProofFailed)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for span in spans {
@@ -517,7 +517,7 @@ impl Plan {
 
             let (proof, anchor) = stamp_pcd.into_parts();
             entries.push((
-                BTreeMap::from([(desc, pair)]),
+                BTreeMap::from([(plan.descriptor(), pair)]),
                 digests,
                 tachygrams,
                 anchor,
@@ -525,12 +525,12 @@ impl Plan {
             ));
         }
 
-        for (desc, theta, note, rcv) in self.outputs {
+        for plan in self.outputs {
             let (digests, tachygrams, anchor, proof, pair) =
-                ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)
+                ProofStamp::prove_output(rng, app, plan.theta, plan.rcv, plan.note, self.anchor)
                     .map_err(ProveError::ProofFailed)?;
             entries.push((
-                BTreeMap::from([(desc, pair)]),
+                BTreeMap::from([(plan.descriptor(), pair)]),
                 digests,
                 tachygrams,
                 anchor,

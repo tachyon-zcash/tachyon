@@ -106,10 +106,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let secret_a = user.note_secret(app, note_a);
     let secret_b = user.note_secret(app, note_b);
     let plan = stamp::Plan::new(
-        vec![
-            (plan_a.descriptor(), theta_a, rcv_a),
-            (plan_b.descriptor(), theta_b, rcv_b),
-        ],
+        vec![plan_a, plan_b],
         vec![],
         anchor,
         max_fee_note,
@@ -165,7 +162,7 @@ fn plan_prove_rejects_invalid_inputs() {
         other.pak.ak.derive_action_public(&alpha)
     });
     let (foreign, foreign_pairs, ..) = stamp::Plan::new(
-        vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+        vec![foreign_a],
         vec![],
         anchor,
         max_fee_note,
@@ -208,8 +205,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let secret = user.note_secret(app, note);
     let max_fee_note = user.random_note(0);
     let plan = stamp::Plan::new(
-        vec![(spend.descriptor(), theta, rcv)],
-        vec![(output.descriptor(), output.theta, output.note, output.rcv)],
+        vec![spend],
+        vec![output],
         plan_anchor,
         max_fee_note,
         value::Positive::ZERO,

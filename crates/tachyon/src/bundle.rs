@@ -439,19 +439,13 @@ impl Plan {
     /// Panics if `fee` exceeds the max fee note's value.
     #[must_use]
     pub fn stamp_plan(&self, anchor: Anchor, fee: value::Positive) -> stamp::Plan {
-        let spends = self
-            .spends
-            .iter()
-            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv))
-            .collect();
-
-        let outputs = self
-            .outputs
-            .iter()
-            .map(|plan| (plan.descriptor(), plan.theta, plan.note, plan.rcv))
-            .collect();
-
-        stamp::Plan::new(spends, outputs, anchor, self.max_fee_note, fee)
+        stamp::Plan::new(
+            self.spends.clone(),
+            self.outputs.clone(),
+            anchor,
+            self.max_fee_note,
+            fee,
+        )
     }
 
     /// Derive the binding signing key, which is the scalar sum of value
