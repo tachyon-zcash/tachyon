@@ -159,8 +159,8 @@ fn plan_prove_rejects_invalid_inputs() {
                 rng,
                 app,
                 [
-                    ActionDigest::new(plan_a.cv(), plan_a.rk, swapped_pairs[&plan_a.descriptor()]),
-                    ActionDigest::new(plan_b.cv(), plan_b.rk, swapped_pairs[&plan_b.descriptor()]),
+                    plan_a.digest(swapped_pairs[&plan_a.descriptor()]),
+                    plan_b.digest(swapped_pairs[&plan_b.descriptor()]),
                     fee_digest
                 ]
             )
@@ -185,11 +185,7 @@ fn plan_prove_rejects_invalid_inputs() {
                 rng,
                 app,
                 [
-                    ActionDigest::new(
-                        foreign_a.cv(),
-                        foreign_a.rk,
-                        foreign_pairs[&foreign_a.descriptor()]
-                    ),
+                    foreign_a.digest(foreign_pairs[&foreign_a.descriptor()]),
                     fee_digest
                 ]
             )
@@ -248,7 +244,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         assert!(pairs.values().all(|&(first, second)| first < second));
         let digests: Vec<ActionDigest> = pairs
             .iter()
-            .map(|(desc, &pair)| ActionDigest::new(desc.cv, desc.rk, pair))
+            .map(|(desc, &pair)| desc.digest(pair))
             .chain([fee::Descriptor {
                 cv_feemax: max_fee_note.cv_feemax(),
                 v_fee,
@@ -281,7 +277,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         .unwrap();
     let digests: Vec<ActionDigest> = pairs
         .iter()
-        .map(|(desc, &pair)| ActionDigest::new(desc.cv, desc.rk, pair))
+        .map(|(desc, &pair)| desc.digest(pair))
         .chain([fee::Descriptor {
             cv_feemax: max_fee_note.cv_feemax(),
             v_fee,
@@ -380,7 +376,7 @@ fn overlapping_stamps_cannot_aggregate() {
         for (descriptors, fees) in [left_covered, right_covered] {
             for (descriptor, &pair) in descriptors {
                 merged_tachygrams.extend(<[Tachygram; 2]>::from(pair));
-                digests.push(ActionDigest::new(descriptor.cv, descriptor.rk, pair));
+                digests.push(descriptor.digest(pair));
             }
             for (descriptor, &change) in fees {
                 merged_tachygrams.push(change);
@@ -423,18 +419,24 @@ fn verify_proof_action_multiset_invariants() {
             .unwrap()
     );
 
-    let (foreign, _) = random_action(rng);
-    let extra = ActionDigest::new(
-        foreign.cv,
-        foreign.rk,
-        (Tachygram::random(rng), Tachygram::random(rng)),
-    );
     for edited in [
         digests[1..].to_vec(),
         digests[..digests.len() - 1].to_vec(),
         [digests.as_slice(), &digests[..1]].concat(),
-        [digests.as_slice(), &[extra]].concat(),
-        [&[extra][..], &digests[1..]].concat(),
+        [
+            digests.as_slice(),
+            &[random_action(rng)
+                .0
+                .digest((Tachygram::random(rng), Tachygram::random(rng)))],
+        ]
+        .concat(),
+        [
+            &[random_action(rng)
+                .0
+                .digest((Tachygram::random(rng), Tachygram::random(rng)))],
+            &digests[1..],
+        ]
+        .concat(),
     ] {
         assert!(!stamped.stamp.verify_proof(rng, app, edited).unwrap());
     }
@@ -560,11 +562,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         .unwrap();
     assert!(
         !mismatched
-            .verify_proof(
-                rng,
-                app,
-                [ActionDigest::new(foreign.cv, foreign.rk, pair), fee_digest],
-            )
+            .verify_proof(rng, app, [foreign.digest(pair), fee_digest],)
             .unwrap()
     );
 }
@@ -674,7 +672,7 @@ fn mismatched_merge_descriptors_fail_verification() {
         .0
         .into_iter()
         .chain([
-            ActionDigest::new(foreign.cv, foreign.rk, bundle_b.actions[0].tachygrams),
+            foreign.digest(bundle_b.actions[0].tachygrams),
             bundle_b.fee.digest(bundle_b.fee_auth),
         ])
         .collect();

@@ -35,7 +35,7 @@ impl Action {
     /// Panics if the descriptor's `cv` or `rk` is the identity point.
     #[must_use]
     pub fn digest(&self) -> ActionDigest {
-        ActionDigest::new(self.descriptor.cv, self.descriptor.rk, self.tachygrams)
+        self.descriptor.digest(self.tachygrams)
     }
 }
 
@@ -56,6 +56,17 @@ pub struct Descriptor {
 }
 
 impl Descriptor {
+    /// Derive the action digest.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cv` or `rk` is the identity point. Descriptor reading rejects
+    /// both identities; hand-built descriptors must uphold this requirement.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
+        ActionDigest::new(*self, tachygrams)
+    }
+
     /// Read an action descriptor from the consensus wire format.
     ///
     /// # Errors
@@ -203,6 +214,17 @@ impl<E: Effect> Plan<E> {
     #[must_use]
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
+    }
+
+    /// Derive the action digest.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this plan's value commitment or `rk` is the identity point.
+    /// Callers constructing plans must ensure both points are non-identity.
+    #[must_use]
+    pub fn digest(&self, tachygrams: (Tachygram, Tachygram)) -> ActionDigest {
+        self.descriptor().digest(tachygrams)
     }
 
     /// Obtain a descriptor for this planned action.

@@ -11,6 +11,7 @@ use alloc::collections::BTreeSet;
 use ragu::{header::Header, pasta::Pasta, step::Step};
 
 use crate::{
+    action,
     constants::EVIDENCE_TREE_ARITY,
     entropy::ActionEntropy,
     fee,
@@ -455,8 +456,10 @@ pub fn output_action(
     let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
     let digest = ActionDigest::new(
-        cv,
-        private::ActionSigningKey::new(&alpha).derive_action_public(),
+        action::Descriptor {
+            cv,
+            rk: private::ActionSigningKey::new(&alpha).derive_action_public(),
+        },
         (cm, pad),
     );
 
@@ -488,8 +491,10 @@ pub fn spend_action(
     let alpha = theta.randomizer::<effect::Spend>(cm);
 
     let digest = ActionDigest::new(
-        cv,
-        pak.ak.derive_action_public(&alpha),
+        action::Descriptor {
+            cv,
+            rk: pak.ak.derive_action_public(&alpha),
+        },
         (Tachygram::from(nf_current), Tachygram::from(nf_next)),
     );
 
