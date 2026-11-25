@@ -366,7 +366,6 @@ impl WalletSim {
             );
             let sighash = mock_sighash(plan.commitment().unwrap());
             let stamp_plan = plan.stamp_plan(anchor, fee);
-            let fee_descriptor = stamp_plan.fee_descriptor();
             let change = stamp_plan.fee_change_commitment();
             let ask = self.sk.derive_auth_private();
             let mut actions = Vec::new();
@@ -395,7 +394,7 @@ impl WalletSim {
             let binding_sig = plan.binding_signature(rng, &sighash).unwrap();
             let stamp = stamp_plan.prove(rng, app, &self.pak, spend_pcds).unwrap();
             let bundle = plan
-                .assemble(actions, binding_sig, fee_descriptor, change, stamp)
+                .assemble(actions, binding_sig, fee, change, stamp)
                 .unwrap();
             (plan, bundle)
         })

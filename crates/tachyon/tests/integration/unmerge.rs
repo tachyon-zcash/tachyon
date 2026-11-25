@@ -292,7 +292,6 @@ fn unmerge_splitting_a_bundle() {
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
     let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
-    let fee_descriptor = stamp_plan.fee_descriptor();
     let change = stamp_plan.fee_change_commitment();
     let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
     let sighash = mock_sighash(plan.commitment().unwrap());
@@ -312,7 +311,7 @@ fn unmerge_splitting_a_bundle() {
         .assemble(
             actions,
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee_descriptor,
+            value::Positive::ZERO,
             change,
             stamp,
         )
@@ -365,7 +364,6 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
         let plan = bundle::Plan::new(vec![], vec![output], max_fee_note);
         let sighash = mock_sighash(plan.commitment().unwrap());
         let stamp_plan = plan.stamp_plan(anchor, fee);
-        let fee_descriptor = stamp_plan.fee_descriptor();
         let change = stamp_plan.fee_change_commitment();
         let stamp = stamp_plan.prove(rng, app, &wallet.pak, vec![]).unwrap();
         plan.assemble(
@@ -377,7 +375,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                 ),
             )],
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee_descriptor,
+            fee,
             change,
             stamp,
         )

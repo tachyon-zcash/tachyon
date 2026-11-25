@@ -317,7 +317,6 @@ fn overlapping_stamps_cannot_aggregate() {
         pair,
     );
     let stamp_plan = plan.stamp_plan(anchor, value::Positive::ZERO);
-    let fee_descriptor = stamp_plan.fee_descriptor();
     let fee_change = stamp_plan.fee_change_commitment();
     let spend_stamp = stamp_plan
         .prove(rng, app, &wallet.pak, vec![(secret, spendable, vec![])])
@@ -335,7 +334,7 @@ fn overlapping_stamps_cannot_aggregate() {
                 ),
             ],
             plan.binding_signature(rng, &sighash).unwrap(),
-            fee_descriptor,
+            value::Positive::ZERO,
             fee_change,
             spend_stamp,
         )

@@ -313,11 +313,11 @@ pub enum VerificationError {
 #[non_exhaustive]
 pub enum PlanError {
     /// The supplied actions do not match the plan one-to-one.
-    #[display("planned actions do not match authorized actions")]
-    ActionMismatch,
-    /// The supplied fee does not match the planned maximum.
-    #[display("fee does not match max-fee note")]
-    FeeMismatch,
+    #[display("planned actions do not match signed actions")]
+    ActionSigMismatch,
+    /// The chosen fee exceeds the max-fee note's value.
+    #[display("fee exceeds the planned maximum")]
+    FeeExceedsMax,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -479,21 +479,21 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// Rejects missing, extra or duplicate actions, a fee inconsistent with
-    /// the planned maximum, or an out-of-range balance.
+    /// Rejects missing, extra or duplicate actions, a fee above the planned
+    /// maximum, or an out-of-range balance.
     pub fn assemble<S: StampState>(
         &self,
         mut actions: Vec<action::Action>,
         binding_sig: Signature,
-        fee: fee::Descriptor,
+        fee: value::Positive,
         fee_change_commitment: Tachygram,
         stamp: S,
     ) -> Result<Bundle<S>, PlanError> {
         let value_balance = self
             .value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
-        if fee.cv_feemax != self.max_fee_note.cv_feemax() || fee.v_fee > self.max_fee_note.value {
-            return Err(PlanError::FeeMismatch);
+        if fee > self.max_fee_note.value {
+            return Err(PlanError::FeeExceedsMax);
         }
         actions.sort_unstable_by_key(|action| action.descriptor);
         let planned = self.descriptors();
@@ -503,12 +503,15 @@ impl Plan {
                 .copied()
                 .eq(actions.iter().map(|action| action.descriptor))
         {
-            return Err(PlanError::ActionMismatch);
+            return Err(PlanError::ActionSigMismatch);
         }
         Ok(Bundle {
             actions,
             value_balance,
-            fee,
+            fee: fee::Descriptor {
+                cv_feemax: self.max_fee_note.cv_feemax(),
+                v_fee: fee,
+            },
             fee_auth: fee_change_commitment,
             binding_sig,
             memo: self.memo.clone(),

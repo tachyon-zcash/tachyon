@@ -75,10 +75,7 @@ fn sign_and_verify_every_plan_shape() {
             .assemble(
                 actions,
                 plan.binding_signature(rng, &sighash).unwrap(),
-                fee::Descriptor {
-                    cv_feemax: max_fee_note.cv_feemax(),
-                    v_fee: value::Positive::ZERO,
-                },
+                value::Positive::ZERO,
                 max_fee_note.commitment().into(),
                 StrippedStamp,
             )
@@ -140,7 +137,7 @@ fn assemble_accepts_independently_authorized_plans_and_a_received_stamp() {
         .assemble(
             actions,
             plan.binding_signature(rng, &sighash).unwrap(),
-            received.fee,
+            received.fee.v_fee,
             received.fee_auth,
             received.stamp,
         )
@@ -166,8 +163,8 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
     let spend = spend_plan_at(rng, &wallet, &ask, 200);
     let max_fee_note = wallet.random_note(0);
     let plan = Plan::new(vec![spend], vec![], max_fee_note);
-    let stamp_plan = plan.stamp_plan(Anchor::random(rng), value::Positive::ZERO);
-    let fee = stamp_plan.fee_descriptor();
+    let fee = value::Positive::ZERO;
+    let stamp_plan = plan.stamp_plan(Anchor::random(rng), fee);
     let change = stamp_plan.fee_change_commitment();
     let sighash = mock_sighash(plan.commitment().unwrap());
     let sig = plan.binding_signature(rng, &sighash).unwrap();
@@ -190,7 +187,7 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
         assert_eq!(
             plan.assemble(rows, sig, fee, change, StrippedStamp)
                 .unwrap_err(),
-            PlanError::ActionMismatch
+            PlanError::ActionSigMismatch
         );
     }
     let duplicate_plan = Plan::new(vec![spend, spend], vec![], max_fee_note);
@@ -198,23 +195,14 @@ fn assemble_rejects_missing_extra_and_substituted_actions() {
         duplicate_plan
             .assemble(vec![action, action], sig, fee, change, StrippedStamp)
             .unwrap_err(),
-        PlanError::ActionMismatch
+        PlanError::ActionSigMismatch
     );
-    let foreign_fee = fee::Descriptor {
-        cv_feemax: wallet.random_note(1).cv_feemax(),
-        ..fee
-    };
-    let excessive_fee = fee::Descriptor {
-        v_fee: value::Positive::try_from(1u64).unwrap(),
-        ..fee
-    };
-    for invalid_fee in [foreign_fee, excessive_fee] {
-        assert_eq!(
-            plan.assemble(vec![action], sig, invalid_fee, change, StrippedStamp)
-                .unwrap_err(),
-            PlanError::FeeMismatch
-        );
-    }
+    let excessive_fee = value::Positive::try_from(1u64).unwrap();
+    assert_eq!(
+        plan.assemble(vec![action], sig, excessive_fee, change, StrippedStamp)
+            .unwrap_err(),
+        PlanError::FeeExceedsMax
+    );
     let bad_sig = action::Action {
         signature: other.signature,
         ..action
@@ -1261,7 +1249,7 @@ fn plan_value_balance_is_bounded_by_max_money() {
                 plan.assemble(
                     vec![],
                     sig,
-                    stamp_plan.fee_descriptor(),
+                    value::Positive::ZERO,
                     stamp_plan.fee_change_commitment(),
                     StrippedStamp
                 )
@@ -1386,7 +1374,7 @@ fn plan_memo_reaches_the_signed_bundle() {
         .assemble(
             actions,
             bundle_plan.binding_signature(rng, &sighash).unwrap(),
-            original.fee,
+            original.fee.v_fee,
             original.fee_auth,
             original.stamp,
         )
