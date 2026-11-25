@@ -199,7 +199,7 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | | `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
 | | `cmChangeTachyon` | 32 bytes | canonical field element, the fee change note commitment |
 
-A single `nActionsTachyon` frames all three action vectors; there are no additional vector counts. `cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
+A single `nActionsTachyon` frames all three action vectors; there are no additional vector counts. `cvFeeMaxTachyon` is effecting data. It and each action's `cv` and `rk` must be canonical encodings of non-identity points, because the action and fee digests absorb their affine coordinates and the identity has none. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
 
 `nActionsTachyon` is at most 4095, the most actions whose pairs fit one set polynomial beside the bundle's fee change. Parsing rejects a larger count.
 
@@ -222,7 +222,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
 | `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
 
-`cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Parsing rejects the identity point. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
+`cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Parsing rejects the identity point, which has no affine coordinates for the [bridge hash](./anchor.md#stamp-absorption). Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
 Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore commits to $2N + B$ tachygrams, at most $2^{13} - 1$, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$. Full validation rejects a larger or repeating union.
 
