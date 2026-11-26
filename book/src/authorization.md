@@ -440,7 +440,6 @@ and Proving
                 note over Stamper: Transaction header (bridge(cTachygrams), anchor)
             end
         end
-        note over Stamper: rerandomize proof
         note over Stamper: adjuncts = empty
         destroy Stamper
         note over Stamper: each pair smaller tachygram first, pairs in descriptor order
@@ -460,6 +459,8 @@ break
     note over User: verify stamp proof with header (bridge(cTachygrams), anchor)
 end
 
+User ->> User: stamp.compress(rng, app)
+note over User: rerandomize the transaction proof, then compress it for publication
 create participant Consensus
 note over User: transaction { actions[], value_balance, cv_feemax, binding_sig, memo, fee, cm_change, stamp { anchor, tachygram_set, adjuncts, proof } }
 deactivate User

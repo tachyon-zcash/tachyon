@@ -425,7 +425,8 @@ Every `Transaction`-emitting step writes its tachygram-set bridge hash to `tachy
 
 ## Rerandomization at trust boundaries
 
-Before a wallet broadcasts an autonome or an aggregator releases an aggregate, it rerandomizes the stamp proof for the same header, using fresh, unpredictable randomness and the release's shared bootstrap proof. Rerandomization precedes compression. A party verifies a received stamp before extending it.
+Before a wallet broadcasts an autonome or an aggregator releases an aggregate, it rerandomizes the stamp proof for the same header, using fresh, unpredictable randomness and the release's shared bootstrap proof. Compression performs this rerandomization, because a compressed frame names its last step and carries that step's commitments.
+Proving, lifting, merging and unmerging do not rerandomize. A full proof holds its last step's trace in the clear, such as the fee step's max fee note opening, so a party handing a full stamp to anyone but the owner of its notes rerandomizes it first. A party verifies a received stamp before extending it.
 
 ## Simple transaction
 

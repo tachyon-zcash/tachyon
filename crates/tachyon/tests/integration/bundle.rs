@@ -36,8 +36,8 @@ use crate::fixtures::{
     mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
-        WalletSim, alice, compressed, entry_spends, merged, output_plan, random_action, shared_sk,
-        spend, zero_action,
+        WalletSim, alice, compressed, entry_spends, lifted, merged, output_plan, random_action,
+        shared_sk, spend, zero_action,
     },
 };
 
@@ -553,6 +553,61 @@ fn stamped_bundle_round_trips() {
         block.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Disproved)
     );
+}
+
+#[test]
+fn rerandomized_stamps_still_verify() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(40);
+    let (_, signed) = alice(app);
+    let sighash = mock_sighash(signed.commitment());
+    let fresh = Bundle {
+        stamp: signed.stamp.clone().rerandomize(rng, app).unwrap(),
+        ..signed.clone()
+    };
+    assert_ne!(
+        fresh.stamp.proof.to_bytes().unwrap(),
+        signed.stamp.proof.to_bytes().unwrap()
+    );
+    assert_eq!(
+        fresh.verify(rng, app, &sighash, &[]).unwrap(),
+        signed.stamp.tachygram_set
+    );
+}
+
+#[test]
+fn compressed_transactions_bind_the_covered_body() {
+    let app = &application();
+    let rng = &mut StdRng::seed_from_u64(39);
+    let (_, output) = alice(app);
+    let (_, fee_only) = zero_action(app, output.stamp.anchor);
+    let lifted_output = lifted(
+        app,
+        &output,
+        PoolSim::shared(),
+        BlockHeight(1)..=BlockHeight(2),
+    );
+    for (signed, foreign) in [(&lifted_output, &fee_only), (&fee_only, &lifted_output)] {
+        let sighash = mock_sighash(signed.commitment());
+        let mut bytes = Vec::new();
+        compressed(app, signed).write(&mut bytes).unwrap();
+        let mut decoded = Bundle::<Stamp<stamp::Compressed>>::read(bytes.as_slice()).unwrap();
+        let (digests, tachygrams) = decoded.verify_covered(&[]).unwrap();
+        let actions = ActionSetPoly::from_iter(digests.iter().copied()).commit();
+        assert_eq!(
+            decoded.stamp.proof.online_commitments(),
+            [actions.into(), tachygrams.into()]
+        );
+        assert_eq!(decoded.verify(rng, app, &sighash, &[]).unwrap(), tachygrams);
+
+        for index in 0..digests.len() {
+            let mut substituted = digests.clone();
+            substituted[index] = foreign.fee.digest(foreign.fee_auth);
+            assert!(!decoded.verify_proof(rng, app, &substituted).unwrap());
+        }
+        decoded.stamp.tachygram_set = foreign.stamp.tachygram_set;
+        assert!(!decoded.verify_proof(rng, app, &digests).unwrap());
+    }
 }
 
 #[test]

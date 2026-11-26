@@ -417,8 +417,9 @@ impl Plan {
     /// The planned actions are recursively merged via [`ActionMerge`] into a
     /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
     /// then applies the fee, or [`FeeSeed`] proves it for a plan with no
-    /// actions. This method rerandomizes the resulting stamp, which lists no
-    /// adjuncts.
+    /// actions. The resulting stamp lists no adjuncts and is not rerandomized:
+    /// its proof holds the fee step's trace, including the max fee note's
+    /// opening and the fee, until [`Stamp::compress`].
     ///
     /// # Errors
     ///
@@ -602,10 +603,7 @@ impl Plan {
             },
         };
 
-        let (proof, (_, anchor)) = app
-            .rerandomize(pcd, rng)
-            .map_err(ProveError::ProofFailed)?
-            .into_parts();
+        let (proof, (_, anchor)) = pcd.into_parts();
         tachygrams.insert(change);
         let tachygram_set = tachygrams
             .iter()
@@ -650,16 +648,16 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// [`Self::tachygram_set`].
 ///
 /// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
-/// proof. [`Self::compress`] produces a stamp with a [`Compressed`] proof.
-/// A stamp with either proof type can be read, written and verified. The crate
-/// cannot decompress a proof.
+/// proof. [`Self::compress`] rerandomizes the proof and produces a stamp with a
+/// [`Compressed`] proof for publication. A stamp with either proof type can be
+/// read, written and verified. The crate cannot decompress a proof.
 ///
 /// Verify every received stamp before extending it. Draw randomness for every
-/// proving call from an unpredictable source. Rerandomize a stamp before
-/// releasing it, using the release's shared bootstrap proof. A full proof
-/// that was not rerandomized holds in the clear its inputs' headers, the steps
-/// that made them and their instances, and its own opening points and values.
-/// For [`spend::SpendBind`] that is the spent note's opening and master key.
+/// proving call from an unpredictable source. A full proof holds in the clear
+/// its last step's trace and its inputs' commitments and challenges. Proving
+/// and lifting do not rerandomize, so a caller handing a full stamp to anyone
+/// but the owner of its notes rerandomizes it first with
+/// [`Stamp::rerandomize`].
 #[derive(Clone, Debug)]
 pub struct Stamp<P: Proof> {
     /// The historic pool state for which this stamp is valid.
@@ -932,8 +930,7 @@ impl Stamp<Uncompressed> {
                 )?
                 .0;
         }
-        let anchor = transaction_pcd.data().1;
-        let proof = app.rerandomize(transaction_pcd, rng)?.proof().clone();
+        let (proof, (_, anchor)) = transaction_pcd.into_parts();
 
         Ok(Self {
             anchor,
@@ -948,8 +945,10 @@ impl Stamp<Uncompressed> {
     /// Successful construction does not guarantee that the lifted stamp
     /// verifies.
     ///
-    /// Rerandomizes after the last span. If `spans` is empty, returns the
-    /// original stamp without inspecting the descriptors or rerandomizing.
+    /// The lifted proof is not rerandomized: it holds the last lift's trace,
+    /// including the prior header and the span's, until
+    /// [`Stamp::compress`]. If `spans` is empty, returns the original
+    /// stamp without inspecting the descriptors.
     ///
     /// # Errors
     ///
@@ -980,7 +979,7 @@ impl Stamp<Uncompressed> {
         self.prove_lift(rng, app, action_digests, spans)
     }
 
-    /// Merges two stamps into one covering stamp and rerandomizes it.
+    /// Merges two stamps into one covering stamp, without rerandomizing it.
     /// Successful construction does not guarantee that the merged stamp
     /// verifies.
     ///
@@ -1064,15 +1063,6 @@ impl Stamp<Uncompressed> {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
-        let proof = app
-            .rerandomize(
-                merged_proof
-                    .carry::<Transaction>((bridge_hash(tachygram_set.into()).into(), anchor)),
-                rng,
-            )?
-            .proof()
-            .clone();
-
         let mut adjuncts = self.adjuncts;
         adjuncts.extend(right_stamp.adjuncts);
         adjuncts.insert(right_txid);
@@ -1081,13 +1071,13 @@ impl Stamp<Uncompressed> {
             anchor,
             tachygram_set,
             adjuncts,
-            proof: Box::new(proof),
+            proof: merged_proof,
         })
     }
 
     /// Divides this stamp by a divisor stamp at the same anchor, removing the
-    /// divisor's covered actions, fees and tachygrams. Rerandomizes the
-    /// quotient.
+    /// divisor's covered actions, fees and tachygrams. The quotient is not
+    /// rerandomized.
     ///
     /// Each side supplies borrowed action and fee maps. The quotient's action
     /// digests and tachygrams are the dividend's less the divisor's. A divisor
@@ -1190,8 +1180,7 @@ impl Stamp<Uncompressed> {
             divisor_pcd,
         )?;
 
-        let anchor = pcd.data().1;
-        let proof = app.rerandomize(pcd, rng)?.proof().clone();
+        let (proof, (_, anchor)) = pcd.into_parts();
 
         Ok(Self {
             anchor,
@@ -1206,7 +1195,35 @@ impl Stamp<Uncompressed> {
         })
     }
 
-    /// Compresses the stamp's proof.
+    /// Rerandomizes the stamp's full proof for the same header, using fresh
+    /// randomness and the application's shared bootstrap proof.
+    ///
+    /// Call this before handing a full stamp to anyone but the owner of its
+    /// notes: proving and lifting leave the last step's trace in the clear.
+    /// [`Self::compress`] rerandomizes on its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu::Error`] if the proof system fails.
+    pub fn rerandomize<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+    ) -> Result<Self, ragu::Error> {
+        let bridge = bridge_hash(self.tachygram_set.into()).into();
+        let pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
+        let (proof, _) = app.rerandomize(pcd, rng)?.into_parts();
+        Ok(Self {
+            proof: Box::new(proof),
+            ..self
+        })
+    }
+
+    /// Rerandomizes the stamp's proof and compresses it for publication.
+    ///
+    /// The proof carries this stamp's own header, the bridge hash of
+    /// [`Self::tachygram_set`] and [`Self::anchor`]. A trailer that does not
+    /// match the proof yields an error or a publication that does not verify.
     ///
     /// # Errors
     ///
@@ -1218,7 +1235,8 @@ impl Stamp<Uncompressed> {
     ) -> Result<Stamp<Compressed>, ragu::Error> {
         let bridge = bridge_hash(self.tachygram_set.into()).into();
         let pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
-        let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
+        let refreshed = app.rerandomize(pcd, &mut *rng)?;
+        let (compressed, _) = app.compress(&refreshed, rng)?.into_parts();
         Ok(Stamp {
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
