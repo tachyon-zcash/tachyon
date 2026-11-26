@@ -37,11 +37,14 @@
 //!   slot. Unopened output slots hold the constant one, and no registered step
 //!   can open a `Padding` slot. Ragu binds the two bridge hash wires to a
 //!   bridge hash of the last output slot's accumulator outside the step
-//!   circuit. Every tree consists of steps registered in [`new_application`],
-//!   Ragu's unit-header bootstrap step, and Ragu's rerandomization step.
-//!   Rerandomization preserves the input header and each online polynomial, so
-//!   header documentation lists only registered producers. The application uses
-//!   Ragu's standard profile, which includes no decompression step.
+//!   circuit. Both applications register the same Tachyon steps alongside
+//!   Ragu's unit-header bootstrap and rerandomization. The standard wallet
+//!   profile has no decompression step. [`new_aggregator_application`] also
+//!   admits decompression: it verifies a wallet proof under the captured wallet
+//!   registry and binds the same header and both online commitments. Thus an
+//!   import preserves the wallet assertion, just as rerandomization preserves
+//!   the input header and each online polynomial. Header documentation lists
+//!   only the Tachyon steps that produce the assertion.
 //! - **Poseidon.** See [tagged hashing](crate::digest::poseidon#injectivity)
 //!   and the [stamp-absorption random-function
 //!   premise](pool::AnchorSpanSeed#soundness) used by `AnchorSpanSeed` alone.
@@ -75,10 +78,13 @@
 //! header fields, need not be fixed before $\zeta$.
 //!
 //! Two distinct polynomials fixed before $\zeta$ agree there only at a root
-//! of their difference. A product of
-//! two slots has degree below $2^{14}$, so one attempt at a false identity of
-//! this degree passes with probability below $2^{14}/p$. These bounds add
-//! across tree steps and prover attempts.
+//! of their difference. If the proving rank allows $N$ coefficients per slot
+//! ($N = 2^{13}$ at wallet rank), a product of two slots has degree below $2N$.
+//! One attempt at a false identity of this degree passes with probability below
+//! $2N/p$ ($2^{14}/p$ at wallet rank). These bounds add
+//! across tree steps and prover attempts. They cover any polynomial a prover
+//! commits at its rank, although honest set polynomials stay below $2^{13}$
+//! coefficients at either rank.
 //!
 //! Opening at any other point evaluates the committed polynomial there, so a
 //! zero opening proves a root.
@@ -138,11 +144,14 @@ pub mod transaction;
 
 use alloc::boxed::Box;
 
+use polynomials::AggregatorRank;
 use ragu::{
     AcceleratedProver, Application, ApplicationBuilder, Rank, WalletRank,
+    circuits::polynomials,
     pasta::{Fp, Pasta},
-    pcd::profile,
+    pcd::profile::{self, Aggregator, Decompression, Profiled},
 };
+use ragu_pcd::pasta::baked_aggregator;
 
 use crate::pasta;
 
@@ -166,6 +175,39 @@ pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, Accelerat
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
     register_steps::<Pasta, WalletRank>()?
         .finalize(pasta::baked())
+        .map(Box::new)
+}
+
+/// Builds the aggregator application with the baked aggregator setup.
+///
+/// It registers the same steps at aggregator rank and holds a wallet-rank
+/// application under the same setup to verify and decompress wallet proofs.
+///
+/// # Errors
+/// Returns a Ragu error if either registry or its decompression context cannot
+/// be built.
+#[expect(
+    clippy::type_complexity,
+    reason = "the rank and profile identify this application"
+)]
+pub fn new_aggregator_application<RNG: rand_core::CryptoRng>(
+    rng: &mut RNG,
+) -> ragu::Result<
+    Box<
+        Application<
+            'static,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+    >,
+> {
+    let params = baked_aggregator();
+    let wallet = register_steps::<Pasta, WalletRank>()?.finalize(params)?;
+    let context = Decompression::new(wallet, rng)?;
+    register_steps()?
+        .finalize_with(params, context)
         .map(Box::new)
 }
 
@@ -213,6 +255,3 @@ fn register_steps<C: profile::ProfiledCycle<Base = Pasta, CircuitField = Fp>, R:
         .register(transaction::TransactionUnmerge)?
         .register(qr::QrSideSelect)
 }
-
-#[cfg(test)]
-mod tests;

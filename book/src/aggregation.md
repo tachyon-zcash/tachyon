@@ -42,7 +42,7 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block.
 
-In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `Stamp::compress` produces the compressed form. Ragu provides `decompress_with_polynomials`, but the crate does not integrate it to import a published stamp for aggregation.
+`Plan::prove` returns a full wallet stamp, and `compress` rerandomizes it and produces a compressed proof for publication. Given a compressed wallet bundle and its adjuncts, `Bundle::decompress` verifies the host signatures and coverage and imports the proof as an `AggregatorProof`, with both set polynomials rebuilt from the covered bodies. The `AggregatorProof` keeps those roots, so `AggregatorProof::merge` and `AggregatorProof::unmerge` take only the other proof and its `txid`. After the last operation, `compress` rerandomizes the proof and produces a compressed aggregator stamp that anyone can verify. This stamp has no bundle wire encoding yet and cannot itself be decompressed, so an aggregator that keeps working keeps its `AggregatorProof`.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -56,7 +56,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
 6. Publish aggregate transaction with its [adjunct list](#adjunct-list)
 
-An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `Stamp::merge`.
+An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`. The aggregator compresses and decompresses that stamp like any wallet publication, then absorbs the adjuncts' proofs with `AggregatorProof::merge`.
 
 Tachygrams covered by a stamp must be distinct.
 [Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
@@ -65,7 +65,7 @@ Validation recomputes `cTachygrams` from the derived union, so such a stamp fail
 An honest aggregator never merges stamps whose tachygram sets overlap.
 
 The derived union holds at most $2^{13} - 1$ tachygrams, so one aggregate covers at most 4,095 actions, with each covered bundle's fee change also taking space.
-This follows from Ragu's production rank and is not a policy limit.
+The bound is the wallet rank's, and it holds at aggregator rank too: the set polynomials an aggregator commits to must stay representable in the wallet profile, as must the anchors that absorb them. `AggregatorProof::merge` refuses two transactions whose tachygrams together exceed it.
 
 ### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
 

@@ -72,6 +72,11 @@ pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = 
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3f69fe6ce03eb4518061b48ddeb735ec275a2be4", default-features = false, features = [
     "baked",
 ] }
+# The larger baked tables for the aggregator's rank. The `ragu` facade does
+# not forward this feature.
+ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "3f69fe6ce03eb4518061b48ddeb735ec275a2be4", default-features = false, features = [
+    "baked-aggregator",
+] }
 rand_core = { version = "0.10", default-features = false }
 reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
 
@@ -81,11 +86,6 @@ rand = { version = "0.10", default-features = false, features = [
 ] }
 ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3f69fe6ce03eb4518061b48ddeb735ec275a2be4", default-features = false, features = [
     "test-utils",
-] }
-# Tests only: the larger baked tables for a second rank. The `ragu` facade
-# does not forward this feature.
-ragu_pcd = { git = "https://github.com/tachyon-zcash/ragu", rev = "3f69fe6ce03eb4518061b48ddeb735ec275a2be4", default-features = false, features = [
-    "baked-aggregator",
 ] }
 zcash_tachyon = { path = ".", features = [
     "test-utils",

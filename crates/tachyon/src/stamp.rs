@@ -9,7 +9,9 @@
 
 extern crate alloc;
 
+mod aggregator;
 pub mod proof;
+mod publication;
 
 use alloc::{
     boxed::Box,
@@ -21,10 +23,11 @@ use alloc::{
 };
 use core::error;
 
+pub use aggregator::{AggregatorProof, MergeError, UnmergeError};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Error};
 use proof::{
-    App, output,
+    App, HEADER_SIZE, output,
     transaction::{
         ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Transaction,
         TransactionLift, TransactionMerge, TransactionUnmerge,
@@ -33,7 +36,10 @@ use proof::{
 use ragu::{
     Rank as _, WalletRank,
     pasta::Pasta,
-    pcd::serialization,
+    pcd::{
+        profile::{Aggregator, Profiled},
+        serialization,
+    },
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
@@ -116,12 +122,19 @@ impl StampState for () {
 }
 
 mod sealed {
+    use ragu::CompressedProof;
+
+    use super::{Aggregator, HEADER_SIZE, Pasta, Profiled};
+
     pub trait Sealed {}
     impl Sealed for super::Uncompressed {}
     impl Sealed for super::Compressed {}
+    impl Sealed for CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>> {}
 }
 
-/// The Ragu proof a [`Stamp`] carries: [`Uncompressed`] or [`Compressed`].
+/// A wallet-profile Ragu proof a [`Stamp`] carries: [`Uncompressed`] or
+/// [`Compressed`]. An aggregator's published stamp instead carries Ragu's
+/// compressed proof under the aggregator profile.
 pub trait Proof: sealed::Sealed {
     /// The proof-encoding transport bound for this application.
     fn encoded_len() -> usize;
@@ -210,12 +223,7 @@ impl Proof for Compressed {
         app: &App<'_>,
         header: (ActionSetCommit, TachygramSetCommit, Anchor),
     ) -> Result<bool, ragu::Error> {
-        let [action_slot, tachygram_slot] = self.online_commitments();
-        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
-            return Ok(false);
-        }
-        let bridge = bridge_hash(header.1.into()).into();
-        app.verify_compressed(&self.clone().carry::<Transaction>((bridge, header.2)))
+        publication::verified_transaction(app, self, header)
     }
 }
 
@@ -642,15 +650,17 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 
 /// A stamp carrying an anchor, a tachygram set commitment, and a proof.
 ///
-/// The PCD header `(tachygram_bridge, anchor)` is entirely not stored
-/// here. A verifier must reconstruct the header from public data and check the
-/// proof's output slots against the covered actions and
-/// [`Self::tachygram_set`].
+/// The stamp does not store the PCD header: the verifier reconstructs
+/// `(tachygram_bridge, anchor)` from the trailer and checks both output
+/// commitments against the claimed action digests and [`Self::tachygram_set`].
 ///
-/// In this crate, lifting, merging and unmerging take an [`Uncompressed`]
-/// proof. [`Self::compress`] rerandomizes the proof and produces a stamp with a
-/// [`Compressed`] proof for publication. A stamp with either proof type can be
-/// read, written and verified. The crate cannot decompress a proof.
+/// Wallets prove and lift [`Uncompressed`] proofs, and [`Self::compress`]
+/// rerandomizes one and publishes it as a [`Compressed`] proof. An aggregator
+/// decompresses a compressed wallet bundle into an [`AggregatorProof`], merges
+/// and unmerges there, and compresses the result into Ragu's compressed proof
+/// under the aggregator profile.
+/// The resulting aggregator stamp can be verified but is not yet a wire bundle
+/// and cannot be decompressed.
 ///
 /// Verify every received stamp before extending it. Draw randomness for every
 /// proving call from an unpredictable source. A full proof holds in the clear
@@ -659,7 +669,7 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// but the owner of its notes rerandomizes it first with
 /// [`Stamp::rerandomize`].
 #[derive(Clone, Debug)]
-pub struct Stamp<P: Proof> {
+pub struct Stamp<P: sealed::Sealed> {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 

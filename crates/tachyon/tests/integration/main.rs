@@ -18,6 +18,8 @@
 )]
 
 #[cfg(test)]
+mod aggregator;
+#[cfg(test)]
 mod bundle;
 #[cfg(test)]
 mod evidence;

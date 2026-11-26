@@ -115,15 +115,18 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
+use polynomials::AggregatorRank;
 use ragu::{
-    Rank as _, WalletRank,
+    AcceleratedProver, Application, Rank as _, WalletRank,
+    circuits::polynomials,
     pasta::Pasta,
+    pcd::profile::{Aggregator, Profiled},
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     digest::blake2b,
     fee,
     keys::{private, public},
@@ -131,8 +134,8 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, Stamp, StampState,
-        proof::{App, pool},
+        self, AggregatorProof, Stamp, StampState,
+        proof::{App, HEADER_SIZE, pool, transaction::Transaction},
     },
     value,
 };
@@ -317,6 +320,21 @@ pub enum VerificationError {
     /// The proof did not verify.
     #[display("proof did not verify")]
     Disproved,
+}
+
+/// Errors from [`Bundle::decompress`].
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum DecompressError {
+    /// The host signatures did not verify.
+    #[display("signature verification error: {_0}")]
+    Signatures(SignatureError),
+    /// The stamp does not cover this bundle and the given adjuncts.
+    #[display("coverage verification error: {_0}")]
+    Coverage(VerifyCoverageError),
+    /// Ragu refused the frame or the rebuilt polynomials, or proving failed.
+    #[display("proof error: {_0}")]
+    Proof(ragu::Error),
 }
 
 /// Errors that can occur while signing a bundle plan.
@@ -736,6 +754,74 @@ impl Bundle<Stamp<stamp::Compressed>> {
         }
         Ok(bundle)
     }
+
+    /// Verify the wallet publication and import it at aggregator rank, with
+    /// both set polynomials rebuilt from this bundle and its adjuncts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failed signature or coverage check, or the Ragu error that
+    /// refused the frame, refused the rebuilt polynomials or failed proving.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
+    pub fn decompress<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        app: &Application<
+            '_,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+        sighash: &[u8; 32],
+        adjuncts: &[&Bundle<()>],
+    ) -> Result<AggregatorProof, DecompressError> {
+        self.verify_signatures(sighash)
+            .map_err(DecompressError::Signatures)?;
+        let (actions, tachygrams) = self
+            .covered_roots(adjuncts)
+            .map_err(DecompressError::Coverage)?;
+        let bridge = app
+            .context()
+            .wallet()
+            .bridge_hash(self.stamp.tachygram_set.into())
+            .map_err(DecompressError::Proof)?
+            .into();
+        let frame = self
+            .stamp
+            .proof
+            .as_ref()
+            .clone()
+            .carry::<Transaction>((bridge, self.stamp.anchor));
+        let pcd = app
+            .decompress_with_polynomials(
+                rng,
+                &frame,
+                [
+                    actions
+                        .iter()
+                        .copied()
+                        .collect::<ActionSetPoly>()
+                        .coefficients(),
+                    tachygrams
+                        .iter()
+                        .copied()
+                        .collect::<TachygramSetPoly>()
+                        .coefficients(),
+                ],
+            )
+            .map_err(DecompressError::Proof)?;
+        Ok(AggregatorProof {
+            pcd,
+            adjuncts: self.stamp.adjuncts.clone(),
+            actions,
+            tachygrams,
+        })
+    }
 }
 
 impl<P: stamp::Proof> Bundle<Stamp<P>> {
@@ -791,6 +877,16 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
         &self,
         adjuncts: &[&Bundle<()>],
     ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
+        let (digests, _) = self.covered_roots(adjuncts)?;
+        Ok((digests, self.stamp.tachygram_set))
+    }
+
+    /// The covered action and fee digests and the covered tachygrams, checked
+    /// as [`Self::verify_covered`] checks them.
+    fn covered_roots(
+        &self,
+        adjuncts: &[&Bundle<()>],
+    ) -> Result<(Vec<ActionDigest>, Vec<Tachygram>), VerifyCoverageError> {
         let n_actions =
             self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
         let n_fees = 1 + adjuncts.len();
@@ -833,16 +929,19 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
             digests.push(fee_descriptor.digest(cm_change));
         }
 
-        let tachygram_set = covered_tachygrams
-            .into_iter()
-            .collect::<TachygramSetPoly>()
-            .commit();
+        let tachygrams: Vec<Tachygram> = covered_tachygrams.into_iter().collect();
 
-        if self.stamp.tachygram_set != tachygram_set {
+        if self.stamp.tachygram_set
+            != tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit()
+        {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
-        Ok((digests, tachygram_set))
+        Ok((digests, tachygrams))
     }
 
     /// Verify the stamp's proof against the given action digests, which

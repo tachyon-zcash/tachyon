@@ -4,11 +4,14 @@
 //!
 //! An accumulator $\sum_j c_j G_j$ weights host generators by polynomial
 //! coefficients without a blinding term. No discrete-log relation is known
-//! among the host generators, so at the slot limit of $2^{13}$ coefficients,
-//! each accumulator determines its polynomial and hence, for a [multiset],
-//! its fewer than $2^{13}$ members.
+//! among the host generators, so at these wrappers' limit of $2^{13}$
+//! coefficients, each accumulator determines its polynomial and hence, for a
+//! [multiset], its fewer than $2^{13}$ members.
 //! The wrappers accept arbitrary polynomials and points.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::iter;
 
 use corez::io::{self, Read, Write};
@@ -16,7 +19,10 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
     Cycle as _, Polynomial, WalletRank,
     pasta::Pasta,
-    udon::curve::{Affine as _, Projective as _},
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
@@ -26,6 +32,16 @@ use crate::{
     pasta::{EpAffine, EqAffine, Fp},
     serialization,
 };
+
+/// A set polynomial's coefficients in ascending degree through its leading
+/// one, as a decompression takes them.
+fn monic_coefficients(poly: &Polynomial<Fp, WalletRank>) -> Vec<Fp> {
+    let len = poly
+        .iter_coeffs()
+        .rposition(|coefficient| coefficient != Fp::ZERO)
+        .map_or(0, |leading| leading + 1);
+    poly.iter_coeffs().take(len).collect()
+}
 
 /// Accumulator of a tachygram set, the Pedersen commitment to its
 /// [`TachygramSetPoly`] ([Injectivity](self#injectivity)).
@@ -146,6 +162,11 @@ impl TachygramSetPoly {
                 .to_affine(),
         )
     }
+
+    /// Coefficients in ascending degree through the leading one.
+    pub(crate) fn coefficients(&self) -> Vec<Fp> {
+        monic_coefficients(&self.0)
+    }
 }
 
 impl ActionSetPoly {
@@ -160,6 +181,11 @@ impl ActionSetPoly {
                 .commit(Pasta::host_generators(pasta::baked()))
                 .to_affine(),
         )
+    }
+
+    /// Coefficients in ascending degree through the leading one.
+    pub(crate) fn coefficients(&self) -> Vec<Fp> {
+        monic_coefficients(&self.0)
     }
 }
 
