@@ -1,4 +1,4 @@
-//! Stamp header and stamp-producing/transforming steps.
+//! Transaction header and stamp-producing/transforming steps.
 
 use ragu::{
     drivers::{Driver, DriverValue},
@@ -34,7 +34,7 @@ use crate::{
 /// One or more proven actions at one anchor, with no fee.
 ///
 /// Carries the actions' digest set and tachygram set polynomials, which
-/// [`FeeFuse`] turns into a [`Stamp`].
+/// [`FeeFuse`] turns into a [`Transaction`].
 ///
 /// # Injectivity
 ///
@@ -112,12 +112,13 @@ impl Header<Fp> for Actions {
 ///
 /// # Injectivity
 ///
-/// [`FeeFuse`], [`FeeSeed`], [`StampMerge`], [`StampLift`] and [`StampUnmerge`]
-/// output this header. Every verified `Stamp` asserts the same leaf multiset
-/// structure as [`Actions`], extended with optional single-tachygram fee leaves
-/// and allowing an empty multiset ($A = T = 1$, as from [`StampUnmerge`]),
-/// plus a [bridge hash](TachygramSetBridge) `tachygram_set_bridge` of
-/// $T$'s accumulator. Even a nonempty `Stamp` need not contain a fee leaf.
+/// [`FeeFuse`], [`FeeSeed`], [`TransactionMerge`], [`TransactionLift`] and
+/// [`TransactionUnmerge`] output this header. Every verified `Transaction`
+/// asserts the same leaf multiset structure as [`Actions`], extended with
+/// optional single-tachygram fee leaves and allowing an empty multiset ($A = T
+/// = 1$, as from [`TransactionUnmerge`]), plus a [bridge
+/// hash](TachygramSetBridge) `tachygram_set_bridge` of $T$'s accumulator. Even
+/// a nonempty `Transaction` need not contain a fee leaf.
 ///
 /// Each *fee leaf* consists of a prover-known note $(\mathsf{rcm}, \mathsf{pk},
 /// m, \psi)$ and integer $f$ satisfying $0 \leq f \leq m \leq
@@ -146,7 +147,7 @@ impl Header<Fp> for Actions {
 /// [`OutputBind`](super::output::OutputBind) holds `cm` and `pad` nonzero,
 /// [`SpendBind`](super::spend::SpendBind) both nullifiers, and
 /// [`FeeFuse`] and [`FeeSeed`] the fee change commitment. Thus no leaf of a
-/// verified `Stamp` contributes a zero root to the published [set
+/// verified `Transaction` contributes a zero root to the published [set
 /// polynomial](crate::collections::multiset). Its factors record no roles:
 /// zero always contributes $X$.
 ///
@@ -156,19 +157,19 @@ impl Header<Fp> for Actions {
 /// collision resistance: zero cannot be the published root that
 /// [`SpendableInit`](super::spendable::SpendableInit) tests for membership.
 #[derive(Debug)]
-pub struct Stamp;
+pub struct Transaction;
 
 #[derive(Gadget, Write)]
-pub struct StampOutput<'dr, D: Driver<'dr>> {
+pub struct TransactionOutput<'dr, D: Driver<'dr>> {
     pub anchor: Element<'dr, D>,
     pub tachygram_set_bridge: [Element<'dr, D>; 2],
 }
 
-impl Header<Fp> for Stamp {
+impl Header<Fp> for Transaction {
     /// `(tachygram_set_bridge, anchor)`
     type Data = (TachygramSetBridge, Anchor);
     type OnlinePolyCommit = (PolySlot<ActionSetPoly>, PolySlot<TachygramSetPoly>);
-    type Output = Kind![Fp; StampOutput<'_, _>];
+    type Output = Kind![Fp; TransactionOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
 
@@ -186,7 +187,7 @@ impl Header<Fp> for Stamp {
                 .coordinates()
                 .expect("bridge hash is not the identity")
         });
-        Ok(StampOutput {
+        Ok(TransactionOutput {
             anchor: Element::alloc(
                 dr,
                 allocator,
@@ -488,13 +489,13 @@ impl Step<Pasta> for SpendAction {
 ///
 /// Follows [`ActionMerge`], unchanged by fee leaves or empty multisets.
 #[derive(Debug)]
-pub struct StampMerge;
+pub struct TransactionMerge;
 
-impl Step<Pasta> for StampMerge {
+impl Step<Pasta> for TransactionMerge {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
-    type Right = Stamp;
+    type Left = Transaction;
+    type Output = Transaction;
+    type Right = Transaction;
     /// `(action_set, tachygram_set)`
     type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
@@ -565,7 +566,7 @@ impl Step<Pasta> for StampMerge {
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: left_anchor_element,
             tachygram_set_bridge,
         });
@@ -675,12 +676,12 @@ impl Step<Pasta> for ActionMerge {
 ///
 /// Follows [`ActionLift`], unchanged by fee leaves or an empty multiset.
 #[derive(Debug)]
-pub struct StampLift;
+pub struct TransactionLift;
 
-impl Step<Pasta> for StampLift {
+impl Step<Pasta> for TransactionLift {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
+    type Left = Transaction;
+    type Output = Transaction;
     type Right = AnchorSpan;
     /// `(action_set,)`
     type Witness<'source> = (ActionSetPoly,);
@@ -735,7 +736,7 @@ impl Step<Pasta> for StampLift {
         let left_tachygrams = oracles.left(TachygramSetPoly::SLOT).open(dr, &z)?;
         let output_tachygrams = oracles.output(TachygramSetPoly::SLOT).open(dr, &z)?;
         left_tachygrams.enforce_equal(dr, &output_tachygrams)?;
-        let StampOutput { anchor, .. } = left_encoded.as_gadget().clone();
+        let TransactionOutput { anchor, .. } = left_encoded.as_gadget().clone();
         let anchor_evaluation = oracles.right(AnchorSetPoly::SLOT).open(dr, &anchor)?;
         let delta = anchor.sub(dr, &anchor_start);
         let membership = anchor_evaluation.mul(dr, &delta)?;
@@ -747,7 +748,7 @@ impl Step<Pasta> for StampLift {
             let (_, span_anchor_end) = right.take();
             (stamp_bridge, span_anchor_end)
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: anchor_end,
             tachygram_set_bridge: [
                 oracles.bridge_hash().x().clone(),
@@ -842,8 +843,8 @@ impl Step<Pasta> for ActionLift {
     }
 }
 
-/// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
-/// note's commitment to the action and tachygram sets.
+/// Turns [`Actions`] into a [`Transaction`] by adding the fee digest and fee
+/// change note's commitment to the action and tachygram sets.
 ///
 /// Opens both input and output sets. The fee note and fee are fixed before
 /// the challenge.
@@ -873,7 +874,7 @@ pub struct FeeFuse;
 impl Step<Pasta> for FeeFuse {
     type Aux<'source> = ();
     type Left = Actions;
-    type Output = Stamp;
+    type Output = Transaction;
     type Right = ();
     /// `(max_fee_note, fee, (output_action_set, output_tachygram_set))`
     type Witness<'source> = (Note, value::Positive, (ActionSetPoly, TachygramSetPoly));
@@ -1010,7 +1011,7 @@ impl Step<Pasta> for FeeFuse {
                 Anchor::from(*anchor.value().take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor,
             tachygram_set_bridge,
         });
@@ -1042,7 +1043,7 @@ pub struct FeeSeed;
 impl Step<Pasta> for FeeSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = Stamp;
+    type Output = Transaction;
     type Right = ();
     /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
     type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
@@ -1162,7 +1163,7 @@ impl Step<Pasta> for FeeSeed {
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: anchor_element,
             tachygram_set_bridge,
         });
@@ -1188,17 +1189,17 @@ impl Step<Pasta> for FeeSeed {
 /// leaves' factors, or one if every leaf pairs off.
 ///
 /// Equating both `anchor` wires and outputting the left one preserves the end
-/// of every remaining leaf's stamp chain. Any verified `Stamp` at that anchor
-/// whose digests form a sub-multiset of the dividend's divides it regardless of
-/// how the dividend was assembled.
+/// of every remaining leaf's stamp chain. Any verified `Transaction` at that
+/// anchor whose digests form a sub-multiset of the dividend's divides it
+/// regardless of how the dividend was assembled.
 #[derive(Debug)]
-pub struct StampUnmerge;
+pub struct TransactionUnmerge;
 
-impl Step<Pasta> for StampUnmerge {
+impl Step<Pasta> for TransactionUnmerge {
     type Aux<'source> = ();
-    type Left = Stamp;
-    type Output = Stamp;
-    type Right = Stamp;
+    type Left = Transaction;
+    type Output = Transaction;
+    type Right = Transaction;
     /// `(action_set, tachygram_set)`
     type Witness<'source> = (ActionSetPoly, TachygramSetPoly);
 
@@ -1270,7 +1271,7 @@ impl Step<Pasta> for StampUnmerge {
                 Anchor::from(*anchor_value.take()),
             )
         });
-        let encoded = Encoded::from_gadget(StampOutput {
+        let encoded = Encoded::from_gadget(TransactionOutput {
             anchor: left_anchor_element,
             tachygram_set_bridge,
         });

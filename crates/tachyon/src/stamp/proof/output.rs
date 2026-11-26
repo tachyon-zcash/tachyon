@@ -24,8 +24,8 @@ use crate::{
 /// An output's tachygram pair and value commitment, derived from one note
 /// (wallet-only).
 ///
-/// [`OutputAction`](super::stamp::OutputAction) reads all three fields and
-/// derives `rk`.
+/// [`OutputAction`](super::transaction::OutputAction) reads all three fields
+/// and derives `rk`.
 ///
 /// # Injectivity
 ///
@@ -40,9 +40,10 @@ use crate::{
 /// $\mathsf{cv}=\[-v\]\mathcal{V}+\[r\]\mathcal{R}$ binds the opening $(-v,r)$.
 ///
 /// Both `cm` and `pad` are nonzero, ruling out roots at zero
-/// ([`Stamp`](super::stamp::Stamp#injectivity)), and $\mathsf{rcm}$ is nonzero.
-/// Nothing here constrains $\mathsf{pk}$ to a derived payment key, which
-/// [`NoteSeed`](super::delegation::NoteSeed) proves when spending the note.
+/// ([`Transaction`](super::transaction::Transaction#injectivity)), and
+/// $\mathsf{rcm}$ is nonzero. Nothing here constrains $\mathsf{pk}$ to a
+/// derived payment key, which [`NoteSeed`](super::delegation::NoteSeed) proves
+/// when spending the note.
 #[derive(Debug)]
 pub struct OutputHeader;
 

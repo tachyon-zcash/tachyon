@@ -33,11 +33,11 @@ use crate::{
         },
         spend::SpendBind,
         spendable::SpendableInit,
-        stamp::{
-            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift, StampMerge,
-            StampUnmerge,
-        },
         summary::{SummaryAdvance, SummarySeed},
+        transaction::{
+            ActionMerge, FeeFuse, FeeSeed, OutputAction, SpendAction, TransactionLift,
+            TransactionMerge, TransactionUnmerge,
+        },
     },
     value,
 };
@@ -501,22 +501,22 @@ pub fn spend_action(
     )
 }
 
-/// Prepare the witness for [`StampMerge`]: `(action_set, tachygram_set)`.
+/// Prepare the witness for [`TransactionMerge`]: `(action_set, tachygram_set)`.
 #[must_use]
-pub const fn stamp_merge(
-    (_left, _right): (StepLeft<StampMerge>, StepRight<StampMerge>),
+pub const fn transaction_merge(
+    (_left, _right): (StepLeft<TransactionMerge>, StepRight<TransactionMerge>),
     action_set: ActionSetPoly,
     tachygram_set: TachygramSetPoly,
-) -> StepWitness<'static, StampMerge> {
+) -> StepWitness<'static, TransactionMerge> {
     (action_set, tachygram_set)
 }
 
-/// Prepare the witness for [`StampLift`]: `(action_set,)`.
+/// Prepare the witness for [`TransactionLift`]: `(action_set,)`.
 #[must_use]
-pub const fn stamp_lift(
-    (_left, _right): (StepLeft<StampLift>, StepRight<StampLift>),
+pub const fn transaction_lift(
+    (_left, _right): (StepLeft<TransactionLift>, StepRight<TransactionLift>),
     action_set: ActionSetPoly,
-) -> StepWitness<'static, StampLift> {
+) -> StepWitness<'static, TransactionLift> {
     (action_set,)
 }
 
@@ -530,13 +530,14 @@ pub const fn action_merge(
     (action_set, tachygram_set)
 }
 
-/// Prepare the witness for [`StampUnmerge`]: `(action_set, tachygram_set)`.
+/// Prepare the witness for [`TransactionUnmerge`]: `(action_set,
+/// tachygram_set)`.
 #[must_use]
-pub const fn stamp_unmerge(
-    (_left, _right): (StepLeft<StampUnmerge>, StepRight<StampUnmerge>),
+pub const fn transaction_unmerge(
+    (_left, _right): (StepLeft<TransactionUnmerge>, StepRight<TransactionUnmerge>),
     action_set: ActionSetPoly,
     tachygram_set: TachygramSetPoly,
-) -> StepWitness<'static, StampUnmerge> {
+) -> StepWitness<'static, TransactionUnmerge> {
     (action_set, tachygram_set)
 }
 
