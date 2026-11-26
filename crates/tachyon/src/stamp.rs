@@ -229,7 +229,7 @@ impl<P: Proof> StampState for ProofStamp<P> {
         let proof = self.proof.to_bytes().expect("stamp proof is encodable");
 
         blake2b::stamp_digest(
-            &self.adjuncts.iter().copied().collect::<Vec<_>>(),
+            &self.adjuncts,
             &blake2b::stamp_proof_digest(
                 self.anchor.0.to_bytes(),
                 self.tachygram_set.as_ref().to_bytes(),
