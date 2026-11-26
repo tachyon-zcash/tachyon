@@ -34,7 +34,7 @@ The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\math
 | Layer | Orchard | Tachyon | Rationale |
 | ----- | ------- | ------- | --------- |
 | Root | Spending key ($\mathsf{sk}$) | Spending key ($\mathsf{sk}$) | Identical |
-| Auth | $\mathsf{ask} \to \mathsf{ak}$ | $\mathsf{ask} \to \mathsf{ak}$ | Identical (RedPallas) |
+| Auth | $\mathsf{ask} \to \mathsf{ak}$ | $\mathsf{ask} \to \mathsf{ak}$ | Identical (RedPallas; $\mathsf{sk}$ with $\mathsf{ask} = 0$ is discarded) |
 | Viewing | Full viewing key ($\mathsf{ak}, \mathsf{nk}, \mathsf{rivk}$) | **Removed** | Out-of-band |
 | Incoming | $\mathsf{dk}, \mathsf{ivk}, \mathsf{ovk}$ | **Removed** | Out-of-band |
 | Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{ak}_y, \mathsf{nk})$ | No diversification; binds to pak |

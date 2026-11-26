@@ -15,7 +15,9 @@ use crate::{
 };
 
 fn note_secret(app: &App<'_>, rng: &mut StdRng) -> ragu::Pcd<Pasta, WalletRank, NoteSecret> {
-    let pak = private::SpendingKey::from([0xAB; 32]).derive_proof_private();
+    let pak = private::SpendingKey::from_bytes([0xAB; 32])
+        .unwrap()
+        .derive_proof_private();
     let note = Note {
         pk: pak.derive_payment_key(),
         value: value::Positive::try_from(500u64).unwrap(),

@@ -27,7 +27,7 @@ fn payment_key_binds_nk() {
 
 #[test]
 fn debug_spending_key_redacts_bytes() {
-    let sk = private::SpendingKey::from([0xAB; 32]);
+    let sk = private::SpendingKey::from_bytes([0xAB; 32]).unwrap();
     assert_eq!(alloc::format!("{sk:?}"), "SpendingKey(..)");
 }
 

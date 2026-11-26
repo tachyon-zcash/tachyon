@@ -128,26 +128,17 @@ pub fn action_digest(cv: EpAffine, rk: EpAffine, (first, second): (Fp, Fp)) -> F
 
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
-/// Derives a payment key from a spend validating key and nullifier key.
+/// Derives a payment key from the affine coordinates of a spend validating key
+/// and a nullifier key.
 ///
 /// $$
 ///   \mathsf{pk} = \mathsf{Poseidon}_\texttt{Tachyon-PkDerive}(
-///     x(\mathsf{ak}),\ y(\mathsf{ak}),\ \mathsf{nk}
+///     \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
 ///   )
 /// $$
-///
-/// # Panics
-///
-/// Panics if `ak` is the identity.
 #[must_use]
-pub fn payment_key(ak: EpAffine, nk: Fp) -> Fp {
-    #[expect(
-        clippy::expect_used,
-        reason = "ak = [ask]G for a PRF-derived ask is not the identity"
-    )]
-    let (x, y) = ak.coordinates().expect("ak must not be the identity");
-
-    let [hash] = emulated(PAYMENT_KEY_DOMAIN, [x, y, nk]);
+pub fn payment_key(ak_x: Fp, ak_y: Fp, nk: Fp) -> Fp {
+    let [hash] = emulated(PAYMENT_KEY_DOMAIN, [ak_x, ak_y, nk]);
     hash
 }
 

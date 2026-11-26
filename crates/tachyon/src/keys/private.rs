@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use derive_more::{Debug, From};
+use derive_more::Debug;
 use ff::PrimeField as _;
 use ragu::udon::field::Field as _;
 use rand_core::CryptoRng;
@@ -25,8 +25,9 @@ use crate::{
 /// The root key from which all other keys are derived. This key must
 /// be kept secret as it provides full spending authority.
 ///
-/// Matches Orchard's representation: raw `[u8; 32]` (not a field element),
-/// preserving the full 256-bit key space.
+/// Matches Orchard's representation: raw `[u8; 32]` (not a field element).
+/// As in Orchard (§4.2.3), a key whose $\mathsf{ask}$ would be zero is
+/// discarded, so $\mathsf{ak}$ is never the identity.
 ///
 /// Derives child keys via purpose-specific methods:
 /// - [`derive_auth_private`](Self::derive_auth_private) →
@@ -36,15 +37,28 @@ use crate::{
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
 ///   [`proof::ProofAuthorizingKey`] (`ak` + `nk`)
-#[derive(Clone, Copy, Debug, From)]
+#[derive(Clone, Copy, Debug)]
 pub struct SpendingKey(#[debug(skip)] [u8; 32]);
 
 impl SpendingKey {
-    /// Create a new spending key from 32 bytes of random data.
+    /// Parse a spending key from 32 bytes. Returns `None` if the derived
+    /// $\mathsf{ask}$ is zero (Orchard §4.2.3).
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        let ask = Fq::from_uniform_bytes(&blake2b::prf_expand_ask(&bytes));
+        (ask != Fq::ZERO).then_some(Self(bytes))
+    }
+
+    /// Sample a new spending key, resampling while the derived
+    /// $\mathsf{ask}$ is zero (Orchard §4.2.3).
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        let mut rand_bytes = [0u8; 32];
-        rng.fill_bytes(&mut rand_bytes);
-        Self(rand_bytes)
+        loop {
+            let mut rand_bytes = [0u8; 32];
+            rng.fill_bytes(&mut rand_bytes);
+            if let Some(sk) = Self::from_bytes(rand_bytes) {
+                return sk;
+            }
+        }
     }
 
     /// Derive $\mathsf{ask}$ from $\mathsf{sk}$ with RedPallas sign
@@ -59,7 +73,8 @@ impl SpendingKey {
     /// $$
     ///
     /// BLAKE2b-512 of $(\mathsf{sk} \Vert \texttt{0x21})$, reduced to
-    /// $\mathbb{F}_q$ via `from_uniform_bytes`.
+    /// $\mathbb{F}_q$ via `from_uniform_bytes`. Construction discards any
+    /// $\mathsf{sk}$ with $\mathsf{ask} = 0$, so the result is nonzero.
     ///
     /// # Sign normalization (§5.4.7.1)
     ///
