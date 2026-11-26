@@ -266,7 +266,7 @@ An uncompressed stamp proof carries both set polynomials. A full aggregator stam
 
 ### What the stamp proof leaves to others
 
-- **Balance.** The stamp proof ties each value commitment to its note's value. The binding signature shows that the signed committed values sum to the bundle's value balance ([Authorization](./authorization.md), [Dynamic Fee](./fee.md)). Because a stamp covers fewer than $2^{13}$ leaves and each value is bounded by `MAX_MONEY`, the sum cannot wrap modulo the group order and the equality holds over the integers.
+- **Balance.** The stamp proof ties each value commitment to its note's value. The binding signature shows that the signed committed values sum to the bundle's value balance ([Authorization](./authorization.md), [Dynamic Fee](./fee.md)). Each covered leaf contributes at least one tachygram, so the protocol cap `MAX_STAMP_TACHYGRAMS` also bounds the number of leaves. With each value bounded by `MAX_MONEY`, the sum cannot wrap modulo the group order and the equality holds over the integers.
 - **Authorization.** The stamp proof builds each spend's randomized key from the note's spend validating key, while the action signature proves knowledge of the matching signing key.
 - **Reused nullifier trapdoors.** Notes sharing $\psi$ and a nullifier key have identical nullifiers[^nullifiers]. Spending one can therefore block another already-published note: it cannot reuse the published pair or prove exclusion across that spend's epoch. Wallets must avoid reuse.
 - **Anchors without a spend.** A prover may choose any anchor when producing a stamp without spend leaves. Rule 3 still constrains that choice.

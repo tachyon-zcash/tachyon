@@ -205,7 +205,7 @@ For every nonzero state above, the state byte is followed by the same bundle bod
 
 A single `nActionsTachyon` frames all three action vectors; there are no additional vector counts. `cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
 
-`nActionsTachyon` is at most 4095, the most actions whose pairs fit one set polynomial beside the bundle's fee change. Parsing rejects a larger count.
+`nActionsTachyon` is at most 4095: each action's pair and the bundle's fee change count toward `MAX_STAMP_TACHYGRAMS`. Parsing rejects a larger count.
 
 The prover writes each pair smaller tachygram first, so the order reveals neither member's role. The encoding accepts either order, and [`tachyon_auth_digest`](./transaction-identifiers.md) hashes each pair as written. Parsing rejects any repeated member among the action pairs and `cmChangeTachyon`, in either bundle state.
 
@@ -227,7 +227,7 @@ For `tachyonBundleState` values `0x01` and `0x03`, the bundle body is followed b
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Parsing rejects the identity point. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
-Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore commits to $2N + B$ tachygrams, at most $2^{13} - 1$, because a set polynomial with $n$ roots has $n + 1$ coefficients and Ragu's production rank gives $2^{13}$. Full validation rejects a larger or repeating union.
+Every action contributes exactly two tachygrams, and every covered bundle's fee descriptor one fee change note commitment. A stamp covering $N$ actions in $B$ bundles therefore commits to $2N + B$ tachygrams. The protocol caps this union at `MAX_STAMP_TACHYGRAMS` ($2^{13} - 1$). Full validation rejects a larger or repeating union.
 
 A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set. A max fee note publishes its fee change note's commitment.
 

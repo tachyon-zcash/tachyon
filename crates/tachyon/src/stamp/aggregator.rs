@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, witness,
+    TachygramSetPoly, constants::MAX_STAMP_TACHYGRAMS, witness,
 };
 
 /// A full aggregator-rank transaction proof, its adjunct list and the roots
@@ -46,8 +46,7 @@ pub struct AggregatorProof {
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum MergeError {
-    /// The two transactions together hold more tachygrams than one set
-    /// polynomial has roots.
+    /// The two transactions together exceed [`MAX_STAMP_TACHYGRAMS`].
     #[display("too many roots for one set polynomial")]
     TooManyRoots,
     /// Proving failed.
@@ -203,7 +202,7 @@ impl AggregatorProof {
     ///
     /// # Errors
     /// - [`MergeError::TooManyRoots`] if the two transactions together hold
-    ///   more tachygrams than one set polynomial has roots.
+    ///   more than [`MAX_STAMP_TACHYGRAMS`] tachygrams.
     /// - [`MergeError::Proof`] if proving fails.
     pub fn merge<RNG: CryptoRng>(
         mut self,
@@ -220,7 +219,7 @@ impl AggregatorProof {
     ) -> Result<Self, MergeError> {
         // Every transaction holds at least as many tachygrams as action and fee
         // digests, so the tachygram count bounds both polynomials.
-        if self.tachygrams.len() + right.tachygrams.len() >= WalletRank::num_coeffs() {
+        if self.tachygrams.len() + right.tachygrams.len() > MAX_STAMP_TACHYGRAMS {
             return Err(MergeError::TooManyRoots);
         }
         self.actions.extend(right.actions);

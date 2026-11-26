@@ -46,6 +46,11 @@ pub(crate) mod orchard {
 /// Maximum representable value in zatoshis (§5.3 of the protocol spec).
 pub const MAX_MONEY: u64 = 2_100_000_000_000_000;
 
+/// Maximum tachygrams covered by one stamp: two per action and one fee change
+/// per covered bundle. This protocol limit must fit a wallet-rank set
+/// polynomial.
+pub const MAX_STAMP_TACHYGRAMS: usize = (1 << 13) - 1;
+
 /// Maximum block height (the protocol spec uses u32).
 pub const BLOCK_MAX: u32 = u32::MAX;
 

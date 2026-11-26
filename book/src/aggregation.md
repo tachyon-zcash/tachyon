@@ -67,7 +67,7 @@ Validation recomputes `cTachygrams` from the derived union, so such a stamp fail
 An honest aggregator never merges stamps whose tachygram sets overlap.
 
 The derived union holds at most $2^{13} - 1$ tachygrams, so one aggregate covers at most 4,095 actions, with each covered bundle's fee change also taking space.
-The bound is the wallet rank's, and it holds at aggregator rank too: the set polynomials an aggregator commits to must stay representable in the wallet profile, as must the anchors that absorb them. `AggregatorProof::merge` refuses two transactions whose tachygrams together exceed it.
+The bound is a protocol constant, `MAX_STAMP_TACHYGRAMS`. `AggregatorProof::merge` refuses two transactions whose tachygrams together exceed it.
 
 ### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
 

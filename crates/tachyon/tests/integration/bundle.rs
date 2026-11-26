@@ -21,7 +21,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, action,
     bundle::{Plan, PlanError, Signature},
-    constants::MAX_MONEY,
+    constants::{MAX_MONEY, MAX_STAMP_TACHYGRAMS},
     digest::blake2b,
     effect,
     entropy::ActionEntropy,
@@ -861,8 +861,10 @@ fn bundles_round_trip_at_action_count_limits() {
         .unwrap()
         .binding;
     let (descriptor, signature) = random_action(rng);
-    assert_eq!((WalletRank::num_coeffs() - 2) / 2, 4095);
-    for n in [0, 4095] {
+    assert!(MAX_STAMP_TACHYGRAMS < WalletRank::num_coeffs());
+    let max_actions = (MAX_STAMP_TACHYGRAMS - 1) / 2;
+    assert_eq!(max_actions, 4095);
+    for n in [0, max_actions] {
         // Read enforces wire shape and uniqueness, not signature validity or
         // descriptor multiplicity; those belong to later verification.
         let bundle = Bundle {
@@ -1305,7 +1307,7 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
 
 #[test]
 fn read_bounds_the_action_count() {
-    let most = (WalletRank::num_coeffs() - 2) / 2;
+    let most = (MAX_STAMP_TACHYGRAMS - 1) / 2;
     for (n_actions, kind) in [
         (most, io::ErrorKind::UnexpectedEof),
         (most + 1, io::ErrorKind::InvalidData),
@@ -1366,7 +1368,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
 
     let count_at = empty.len() - proof_len - 1;
     assert_eq!(empty[count_at], 0);
-    let most = WalletRank::num_coeffs() - 2 - 2 * alice.actions.len();
+    let most = MAX_STAMP_TACHYGRAMS - 1 - 2 * alice.actions.len();
     for n_adjuncts in [most, most + 1] {
         let mut bytes = empty[..count_at].to_vec();
         CompactSize::try_from(n_adjuncts)
@@ -1403,7 +1405,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     // The standalone cap is enforced immediately, before reading the list.
     let mut trailer = trailer_prefix(&alice.stamp);
     let trailer_start = count_at - trailer.len();
-    CompactSize::try_from(WalletRank::num_coeffs() - 1)
+    CompactSize::try_from(MAX_STAMP_TACHYGRAMS)
         .unwrap()
         .write(&mut trailer)
         .unwrap();
@@ -1447,7 +1449,7 @@ fn verify_covered_bounds_the_covered_tachygrams() {
     let bundle =
         compressed(app, &host).restamp(imported(&agg, &host).compress(&mut rng, &agg).unwrap());
     // Two bundles' fee changes leave room for this many actions' pairs.
-    let most = (WalletRank::num_coeffs() - 3) / 2;
+    let most = (MAX_STAMP_TACHYGRAMS - 2) / 2;
     for (n_actions, expected) in [
         (most, VerifyCoverageError::DuplicateActions),
         (most + 1, VerifyCoverageError::WrongTachygramSet),

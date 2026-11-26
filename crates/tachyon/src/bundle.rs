@@ -65,8 +65,8 @@
 //!
 //! `cvFeeMaxTachyon` is a canonical non-identity point. The bundle
 //! contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
-//! `nActionsTachyon` is at most 4095, the most actions whose tachygrams fit
-//! one set polynomial beside the bundle's fee change.
+//! `nActionsTachyon` is at most 4095: two tachygrams per action and one fee
+//! change must fit the protocol limit of [`MAX_STAMP_TACHYGRAMS`] (8191).
 //!
 //! The memo is effecting data, so it is covered by the transaction sighash
 //! rather than by `auth_digest`. Its length is public, and `nMemoTachyon == 0`
@@ -93,8 +93,9 @@
 //! `vAdjunctsTachyon` is strictly ascending by bytewise comparison, so it holds
 //! no repeat. Every adjunct holds at least its fee change, so a stamp with
 //! `2 * nActionsTachyon + nAdjunctsTachyon + 1 > 8191` is rejected after the
-//! whole trailer is read. The standalone stamp reader checks
-//! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
+//! whole trailer is read. This is the [`MAX_STAMP_TACHYGRAMS`] limit. The
+//! standalone stamp reader checks `nAdjunctsTachyon + 1 <= 8191` before reading
+//! the adjunct list.
 //!
 //! A stamped bundle carries a wallet's [`Compressed`](stamp::Compressed) proof
 //! under `0x01`, or an aggregator's compressed proof under the aggregator
@@ -119,7 +120,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use polynomials::AggregatorRank;
 use ragu::{
-    AcceleratedProver, Application, Rank as _, WalletRank,
+    AcceleratedProver, Application, WalletRank,
     circuits::polynomials,
     pasta::Pasta,
     pcd::profile::{Aggregator, Profiled},
@@ -129,6 +130,7 @@ use rand_core::CryptoRng;
 
 use crate::{
     ActionDigest, ActionSetPoly, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
+    constants::MAX_STAMP_TACHYGRAMS,
     digest::blake2b,
     fee,
     keys::{private, public},
@@ -304,7 +306,7 @@ pub enum VerifyCoverageError {
     #[display("tachygrams are not unique")]
     DuplicateTachygrams,
     /// The covered bundles' tachygrams do not reproduce the stamp's set
-    /// commitment, or number more than one set polynomial has roots. The
+    /// commitment, or exceed [`MAX_STAMP_TACHYGRAMS`]. The
     /// stamp does not cover exactly this bundle and these adjuncts as given.
     #[display("tachygrams do not reproduce the set commitment")]
     WrongTachygramSet,
@@ -801,9 +803,7 @@ impl<P, A> Bundle<Stamp<P, A>> {
             self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
         let n_fees = 1 + adjuncts.len();
 
-        // A set polynomial with n roots has n + 1 coefficients, so no
-        // commitment matches a larger set.
-        if 2 * n_actions + n_fees > WalletRank::num_coeffs() - 1 {
+        if 2 * n_actions + n_fees > MAX_STAMP_TACHYGRAMS {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
@@ -892,7 +892,7 @@ where
     /// # Errors
     ///
     /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
-    /// or the covered tachygrams number more than one set polynomial has roots
+    /// or the covered tachygrams exceed [`MAX_STAMP_TACHYGRAMS`]
     /// or do not reproduce the tachygram set commitment the stamp carries.
     ///
     /// # Panics
@@ -1062,7 +1062,7 @@ impl Bundle<stamp::Aggregate> {
     /// # Errors
     ///
     /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
-    /// or the covered tachygrams number more than one set polynomial has roots
+    /// or the covered tachygrams exceed [`MAX_STAMP_TACHYGRAMS`]
     /// or do not reproduce the tachygram set commitment the stamp carries.
     ///
     /// # Panics
@@ -1125,7 +1125,7 @@ impl<S: StampState> Bundle<S> {
 
     fn read_after_state<R: Read>(reader: R) -> io::Result<Self> {
         let bundle = Self::read_body(reader)?;
-        if bundle.stamp.n_adjuncts() > WalletRank::num_coeffs() - 2 - 2 * bundle.actions.len() {
+        if bundle.stamp.n_adjuncts() > MAX_STAMP_TACHYGRAMS - 1 - 2 * bundle.actions.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many adjuncts",
@@ -1181,9 +1181,7 @@ impl<S: StampState> Bundle<S> {
                 )
             })?;
 
-        // A bundle's two tachygrams per action and its fee change are roots of
-        // one set polynomial, which has one more coefficient than roots.
-        if 2 * n_actions + 1 > WalletRank::num_coeffs() - 1 {
+        if 2 * n_actions + 1 > MAX_STAMP_TACHYGRAMS {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many actions",

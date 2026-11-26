@@ -47,6 +47,7 @@ use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
     bridge_hash::bridge_hash,
     bundle::StateByte,
+    constants::MAX_STAMP_TACHYGRAMS,
     digest::{blake2b, poseidon},
     effect,
     entropy::ActionEntropy,
@@ -270,7 +271,7 @@ impl StampState for Aggregate {
             let n_adjuncts = usize::try_from(read_compactsize(&mut *reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
-            if n_adjuncts + 1 > WalletRank::num_coeffs() - 1 {
+            if n_adjuncts + 1 > MAX_STAMP_TACHYGRAMS {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many adjuncts",
