@@ -138,7 +138,7 @@ Verification always rebuilds `Pcd<Transaction>`.
 | ActionLift | yes | no | no |
 | FeeFuse | yes | no | no |
 | FeeSeed | yes | no | yes |
-| TransactionMerge | yes | no | yes |
+| TransactionMerge | no | no | yes |
 | TransactionLift | yes | possible | yes |
 | TransactionUnmerge | no | no | yes |
 

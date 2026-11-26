@@ -7,42 +7,23 @@ use ragu::{Rank as _, WalletRank};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, Bundle, DecompressError, Tachygram, TachygramSetPoly,
-    stamp::{
-        Compressed, Stamp, Uncompressed, UnmergeError,
-        proof::{self, App},
-    },
+    stamp::{Compressed, Stamp, UnmergeError},
     value,
 };
 
 use super::fixtures::{
+    aggregator::aggregator,
     application, mock_sighash, mock_txid,
-    wallet::{WalletSim, zero_action},
+    wallet::{WalletSim, compressed, zero_action},
 };
-
-fn publish(
-    rng: &mut StdRng,
-    app: &App<'_>,
-    signed: Bundle<Stamp<Uncompressed>>,
-) -> Bundle<Stamp<Compressed>> {
-    let stamp = signed.stamp.compress(rng, app).unwrap();
-    Bundle {
-        stamp,
-        actions: signed.actions,
-        fee: signed.fee,
-        fee_auth: signed.fee_auth,
-        value_balance: signed.value_balance,
-        binding_sig: signed.binding_sig,
-        memo: signed.memo,
-    }
-}
 
 #[test]
 fn decompress_checks_the_host_its_coverage_and_its_frame() {
     let rng = &mut StdRng::seed_from_u64(57);
-    let app = proof::new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let wallet = &application();
     let anchor = Anchor::random(rng);
-    let host = publish(rng, wallet, zero_action(wallet, anchor).1);
+    let host = compressed(wallet, &zero_action(wallet, anchor).1);
     let owner = WalletSim::random(rng);
     let (_, signed) = owner.bundle(
         wallet,
@@ -52,7 +33,7 @@ fn decompress_checks_the_host_its_coverage_and_its_frame() {
         owner.random_note(0),
         value::Positive::ZERO,
     );
-    let other = publish(rng, wallet, signed);
+    let other = compressed(wallet, &signed);
     let sighash = mock_sighash(host.commitment());
 
     assert_matches!(
@@ -78,7 +59,7 @@ fn decompress_checks_the_host_its_coverage_and_its_frame() {
 #[test]
 fn wallet_publications_merge_and_unmerge() {
     let rng = &mut StdRng::seed_from_u64(58);
-    let app = proof::new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let wallet = &application();
     let owner = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
@@ -90,8 +71,8 @@ fn wallet_publications_merge_and_unmerge() {
         owner.random_note(0),
         value::Positive::ZERO,
     );
-    let left = publish(rng, wallet, signed);
-    let right = publish(rng, wallet, zero_action(wallet, anchor).1);
+    let left = compressed(wallet, &signed);
+    let right = compressed(wallet, &zero_action(wallet, anchor).1);
     let left_work = left
         .decompress(rng, &app, &mock_sighash(left.commitment()), &[])
         .unwrap();
@@ -106,7 +87,7 @@ fn wallet_publications_merge_and_unmerge() {
     // The merge step equates the two anchors, so transactions at different
     // anchors merge into a proof that does not verify.
     let other_anchor = Anchor::random(rng);
-    let elsewhere = publish(rng, wallet, zero_action(wallet, other_anchor).1);
+    let elsewhere = compressed(wallet, &zero_action(wallet, other_anchor).1);
     let elsewhere_work = elsewhere
         .decompress(rng, &app, &mock_sighash(elsewhere.commitment()), &[])
         .unwrap();
@@ -142,7 +123,7 @@ fn wallet_publications_merge_and_unmerge() {
 #[test]
 fn merge_and_unmerge_keep_a_repeated_root_with_multiplicity() {
     let rng = &mut StdRng::seed_from_u64(61);
-    let app = proof::new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let wallet = &application();
     let owner = WalletSim::random(rng);
     let anchor = Anchor::random(rng);
@@ -157,7 +138,7 @@ fn merge_and_unmerge_keep_a_repeated_root_with_multiplicity() {
             owner.random_note(0),
             value::Positive::ZERO,
         );
-        publish(rng, wallet, signed)
+        compressed(wallet, &signed)
     });
     let [first_work, second_work] = [&first, &second].map(|bundle| {
         bundle
@@ -195,7 +176,7 @@ fn merge_and_unmerge_keep_a_repeated_root_with_multiplicity() {
 #[test]
 fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
     let rng = &mut StdRng::seed_from_u64(62);
-    let app = proof::new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let wallet = &application();
     let anchor = Anchor::random(rng);
     let owner = WalletSim::random(rng);
@@ -208,7 +189,7 @@ fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
             owner.random_note(0),
             value::Positive::ZERO,
         );
-        let bundle = publish(rng, wallet, signed);
+        let bundle = compressed(wallet, &signed);
         let work = bundle
             .decompress(rng, &app, &mock_sighash(bundle.commitment()), &[])
             .unwrap();
@@ -226,10 +207,10 @@ fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
 #[ignore = "Ragu #1024: wallet and aggregator bridge hashes differ at this pin"]
 fn untouched_wallet_import_verifies_after_aggregator_compression() {
     let rng = &mut StdRng::seed_from_u64(59);
-    let app = proof::new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let wallet = app.context().wallet();
     let anchor = Anchor::random(rng);
-    let body = publish(rng, wallet, zero_action(wallet, anchor).1);
+    let body = compressed(wallet, &zero_action(wallet, anchor).1);
     let stamp = body
         .decompress(rng, &app, &mock_sighash(body.commitment()), &[])
         .unwrap()

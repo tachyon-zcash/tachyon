@@ -35,11 +35,12 @@ use zcash_tachyon::{
 
 use super::fixtures::application;
 use crate::fixtures::{
+    aggregator::{aggregated, aggregator, import_span, imported, publication, verify_on},
     mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
-        WalletSim, alice, compressed, entry_spends, lifted, merged, output_plan, random_action,
-        shared_sk, spend, zero_action,
+        WalletSim, alice, compressed, entry_spends, lifted, output_plan, random_action, shared_sk,
+        spend, zero_action,
     },
 };
 
@@ -370,88 +371,58 @@ fn duplicated_spend_cannot_inflate() {
 
 #[test]
 fn based_aggregate_with_two_adjuncts() {
-    let app = &application();
+    let wallet = &application();
+    let app = &aggregator();
     let rng = &mut StdRng::seed_from_u64(0);
-    let [(_, autonome_a), (_, autonome_b), (_, mut becomes_based)] = entry_spends(app);
-
+    let [(_, autonome_a), (_, autonome_b), (_, becomes_based)] = entry_spends(wallet);
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_desc = becomes_based
-        .actions
-        .iter()
-        .map(|action| (action.descriptor, action.tachygrams))
-        .collect();
-    let based_fees = BTreeMap::from([(becomes_based.fee, becomes_based.fee_auth)]);
-    let innocent_desc = [&autonome_a, &autonome_b]
-        .into_iter()
-        .flat_map(|bundle| {
-            bundle
-                .actions
-                .iter()
-                .map(|action| (action.descriptor, action.tachygrams))
-        })
-        .collect();
-    let innocent_fees = [&autonome_a, &autonome_b]
-        .into_iter()
-        .map(|bundle| (bundle.fee, bundle.fee_auth))
-        .collect();
-    let innocent_stamp = merged(app, &autonome_a, &autonome_b).stamp;
+    let innocent = aggregated(app, &autonome_a, &autonome_b);
     let (txid_a, txid_b) = (mock_txid(&autonome_a), mock_txid(&autonome_b));
-    assert_eq!(innocent_stamp.adjuncts, BTreeSet::from([txid_b]));
-
-    let based_stamp = becomes_based
-        .stamp
-        .merge(
-            rng,
-            app,
-            (&based_desc, &based_fees),
-            (innocent_stamp, txid_a, &innocent_desc, &innocent_fees),
-        )
+    assert_eq!(innocent.adjuncts(), &BTreeSet::from([txid_b]));
+    let aggregate = imported(app, &becomes_based)
+        .merge(rng, app, innocent, txid_a)
         .unwrap();
-
-    becomes_based.stamp = based_stamp;
+    let based = publication(&becomes_based, aggregate.compress(rng, app).unwrap());
 
     let adjunct_a = autonome_a.strip();
     let adjunct_b = autonome_b.strip();
     let adjuncts = [&adjunct_a, &adjunct_b];
 
-    assert!(becomes_based.is_aggregate());
-    assert_eq!(
-        becomes_based.stamp.adjuncts,
-        BTreeSet::from([txid_a, txid_b])
-    );
-    becomes_based.verify(rng, app, &sighash, &adjuncts).unwrap();
+    assert!(based.is_aggregate());
+    assert_eq!(based.stamp.adjuncts, BTreeSet::from([txid_a, txid_b]));
+    based.verify(app, &sighash, &adjuncts).unwrap();
 
     {
-        let mut edited = becomes_based.clone();
+        let mut edited = based.clone();
         let mut adjunct = adjunct_a.clone();
         mem::swap(
             &mut edited.actions[0].tachygrams.1,
             &mut adjunct.actions[0].tachygrams.1,
         );
         assert_matches!(
-            edited.verify(rng, app, &sighash, &[&adjunct, &adjunct_b]),
+            edited.verify(app, &sighash, &[&adjunct, &adjunct_b]),
             Err(VerificationError::Disproved)
         );
     }
     {
-        let mut edited = becomes_based.clone();
+        let mut edited = based.clone();
         let mut adjunct = adjunct_a.clone();
         mem::swap(&mut edited.fee_auth, &mut adjunct.fee_auth);
         assert_matches!(
-            edited.verify(rng, app, &sighash, &[&adjunct, &adjunct_b]),
+            edited.verify(app, &sighash, &[&adjunct, &adjunct_b]),
             Err(VerificationError::Disproved)
         );
     }
 
     assert_matches!(
-        becomes_based.verify(rng, app, &sighash, &adjuncts[..1]),
+        based.verify(app, &sighash, &adjuncts[..1]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
     );
     assert_matches!(
-        becomes_based.verify(rng, app, &sighash, &[&adjunct_a, &adjunct_b, &adjunct_a]),
+        based.verify(app, &sighash, &[&adjunct_a, &adjunct_b, &adjunct_a]),
         Err(VerificationError::Coverage(
             VerifyCoverageError::DuplicateActions
         ))
@@ -1686,96 +1657,46 @@ fn bundle_lift_preserves_coverage() {
 
 #[test]
 fn bundle_lift_over_an_aggregate() {
-    let app = &application();
+    let wallet = &application();
+    let app = &aggregator();
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let epoch1 = EpochIndex::new(1);
-    let [(_, autonome_a), (_, autonome_b), _] = entry_spends(app);
-    let (_, zero) = zero_action(app, pool.entry_anchor(epoch1));
+    let [(_, autonome_a), (_, autonome_b), _] = entry_spends(wallet);
+    let (_, zero) = zero_action(wallet, pool.entry_anchor(epoch1));
+    let sighash = mock_sighash(zero.commitment());
 
-    let seed = zero.stamp.clone();
-    let zero_desc = zero
-        .actions
-        .iter()
-        .map(|action| (action.descriptor, action.tachygrams))
-        .collect();
-    let zero_fees = BTreeMap::from([(zero.fee, zero.fee_auth)]);
-    let adjunct_desc = [&autonome_a, &autonome_b]
-        .into_iter()
-        .flat_map(|bundle| {
-            bundle
-                .actions
-                .iter()
-                .map(|action| (action.descriptor, action.tachygrams))
-        })
-        .collect();
-    let adjunct_fees = [&autonome_a, &autonome_b]
-        .into_iter()
-        .map(|bundle| (bundle.fee, bundle.fee_auth))
-        .collect();
-    let adjunct_stamp = merged(app, &autonome_a, &autonome_b).stamp;
-    let innocent = Bundle {
-        stamp: seed
-            .merge(
-                rng,
-                app,
-                (&zero_desc, &zero_fees),
-                (
-                    adjunct_stamp,
-                    mock_txid(&autonome_a),
-                    &adjunct_desc,
-                    &adjunct_fees,
-                ),
-            )
-            .unwrap(),
-        ..zero
-    };
-    assert_eq!(
-        innocent.stamp.adjuncts,
-        BTreeSet::from([mock_txid(&autonome_a), mock_txid(&autonome_b)])
-    );
-
-    let adjunct_a = autonome_a.strip();
-    let adjunct_b = autonome_b.strip();
-    innocent
-        .verify(
+    let innocent = imported(app, &zero)
+        .merge(
             rng,
             app,
-            &mock_sighash(innocent.commitment()),
-            &[&adjunct_a, &adjunct_b],
+            aggregated(app, &autonome_a, &autonome_b),
+            mock_txid(&autonome_a),
         )
         .unwrap();
-    let adjuncts = [&adjunct_a, &adjunct_b];
-    let adjunct_txids = innocent.stamp.adjuncts.clone();
+    let adjunct_txids = BTreeSet::from([mock_txid(&autonome_a), mock_txid(&autonome_b)]);
+    assert_eq!(innocent.adjuncts(), &adjunct_txids);
+    let adjunct_a = autonome_a.strip();
+    let adjunct_b = autonome_b.strip();
+    verify_on(app, rng, &zero, innocent.clone(), &[&adjunct_a, &adjunct_b]).unwrap();
 
     let first = epoch1.first_block();
-    let span = pool.anchor_span(app, first..=first);
+    let span = import_span(rng, app, pool, first, first);
+    let lifted = innocent.lift(rng, app, vec![span]).unwrap();
+    assert_eq!(lifted.anchor(), pool.block(first).anchor());
+    assert_eq!(lifted.adjuncts(), &adjunct_txids);
 
-    let lifted = innocent.lift(rng, app, &adjuncts, vec![span]).unwrap();
-
-    assert_eq!(lifted.stamp.anchor, pool.block(first).anchor());
-    assert_eq!(lifted.stamp.adjuncts, adjunct_txids);
-
-    let (digests, tachygram_set) = lifted.verify_covered(&adjuncts).unwrap();
-    assert_eq!(tachygram_set, lifted.stamp.tachygram_set);
-    assert!(lifted.verify_proof(rng, app, &digests).unwrap());
-
-    let mut bytes = Vec::new();
-    lifted.stamp.write(&mut bytes).unwrap();
-    let decoded = Stamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
-    assert_eq!(decoded.adjuncts, adjunct_txids);
-    assert!(
-        decoded
-            .verify_proof(rng, app, digests.iter().copied())
-            .unwrap()
-    );
-    bytes.clear();
-    decoded
-        .compress(rng, app)
-        .unwrap()
-        .write(&mut bytes)
+    let published = publication(&zero, lifted.compress(rng, app).unwrap());
+    let decoded =
+        Bundle::<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>>::try_from(
+            round_trip_block(
+                &TachyonBundle::from(published),
+                bundle::StateByte::Aggregated,
+            ),
+        )
         .unwrap();
-    let decoded_stamp = Stamp::<stamp::Compressed>::read(&*bytes).unwrap();
-    assert_eq!(decoded_stamp.adjuncts, adjunct_txids);
-    assert!(decoded_stamp.verify_proof(app, digests).unwrap());
+    assert_eq!(decoded.stamp.adjuncts, adjunct_txids);
+    decoded
+        .verify(app, &sighash, &[&adjunct_a, &adjunct_b])
+        .unwrap();
 }

@@ -10,6 +10,7 @@ use zcash_tachyon::{
     stamp::{self, proof::App},
 };
 
+pub mod aggregator;
 pub mod pool;
 pub mod qr;
 pub mod wallet;
