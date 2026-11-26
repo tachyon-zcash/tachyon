@@ -10,6 +10,7 @@ use zcash_tachyon::{
     stamp::{self, proof::App},
 };
 
+pub mod aggregator;
 pub mod pool;
 pub mod qr;
 pub mod wallet;
@@ -60,12 +61,12 @@ pub(crate) fn keyed_rng(name: &str, key: &[u8]) -> StdRng {
 }
 
 /// Values that their key determines, each proved once for the process.
-pub(crate) struct Proved<V> {
+pub(crate) struct Proved<V, K = Vec<u8>> {
     name: &'static str,
-    slots: Mutex<BTreeMap<Vec<u8>, Arc<Mutex<Option<V>>>>>,
+    slots: Mutex<BTreeMap<K, Arc<Mutex<Option<V>>>>>,
 }
 
-impl<V: Clone> Proved<V> {
+impl<V: Clone, K: Ord> Proved<V, K> {
     pub(crate) const fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -73,22 +74,25 @@ impl<V: Clone> Proved<V> {
         }
     }
 
-    /// The value under `key`. The first caller proves it, with an rng seeded
-    /// from this fixture's name and the key. A caller that asks while it is
-    /// being proved waits. If proving panicked, every later caller panics too.
-    pub(crate) fn get(&self, key: &[u8], prove: impl FnOnce(&mut StdRng) -> V) -> V {
+    fn get_keyed(&self, key: K, prove: impl FnOnce() -> V) -> V {
         let slot = {
             let mut slots = self.slots.lock().unwrap();
-            Arc::clone(slots.entry(key.to_vec()).or_default())
+            Arc::clone(slots.entry(key).or_default())
         };
         let name = self.name;
         let mut stored = slot
             .lock()
             .unwrap_or_else(|_| panic!("{name} failed to prove"));
         if stored.is_none() {
-            *stored = Some(prove(&mut keyed_rng(name, key)));
+            *stored = Some(prove());
         }
         stored.as_ref().unwrap().clone()
+    }
+}
+
+impl<V: Clone> Proved<V> {
+    pub(crate) fn get(&self, key: &[u8], prove: impl FnOnce(&mut StdRng) -> V) -> V {
+        self.get_keyed(key.to_vec(), || prove(&mut keyed_rng(self.name, key)))
     }
 }
 

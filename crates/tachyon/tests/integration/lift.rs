@@ -11,51 +11,15 @@ use ragu::{
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, BlockHeight, Bundle,
-    stamp::proof::{HEADER_SIZE, new_aggregator_application, pool},
+    stamp::proof::{HEADER_SIZE, pool},
     value, witness,
 };
 
 use super::fixtures::{
+    aggregator::{aggregator, import_span},
     pool::{PoolSim, random_block},
     wallet::WalletSim,
 };
-
-/// The wallet compresses a span of `chain`, and the aggregator imports it with
-/// the endpoints, members and absorbed tachygrams it reads from history.
-fn import_span(
-    rng: &mut StdRng,
-    app: &Application<
-        '_,
-        Profiled<Pasta, Aggregator<HEADER_SIZE>>,
-        polynomials::AggregatorRank,
-        HEADER_SIZE,
-        AcceleratedProver,
-    >,
-    chain: &PoolSim,
-    first: BlockHeight,
-    last: BlockHeight,
-) -> Pcd<Profiled<Pasta, Aggregator<HEADER_SIZE>>, polynomials::AggregatorRank, pool::AnchorSpan> {
-    let wallet = app.context().wallet();
-    let span = chain.anchor_span(wallet, first..=last);
-    let refreshed = wallet.rerandomize(span, &mut *rng).unwrap();
-    let (frame, _) = wallet.compress(&refreshed, &mut *rng).unwrap().into_parts();
-
-    let members = chain.anchors_in(first..=last);
-    let absorbed = if members.len() == 1 {
-        chain.block(first).stamps[0].1.as_slice()
-    } else {
-        &[]
-    };
-    pool::AnchorSpan::decompress(
-        rng,
-        app,
-        &frame,
-        (chain.block(first).prev, chain.block(last).anchor()),
-        &members,
-        absorbed,
-    )
-    .unwrap()
-}
 
 fn check_lift(
     rng: &mut StdRng,
@@ -114,7 +78,7 @@ fn check_lift(
 #[test]
 fn aggregator_lifts_over_imported_wallet_spans() {
     let rng = &mut StdRng::seed_from_u64(641);
-    let app = new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let mut chain = PoolSim::genesis_with(random_block(rng, 2, 1));
     chain.advance(3, |_| random_block(rng, 2, 1));
     let [start, middle, end, next] = [0, 1, 2, 3].map(|i| chain.block(BlockHeight(i)).anchor());
@@ -144,7 +108,7 @@ fn aggregator_lifts_over_imported_wallet_spans() {
 #[test]
 fn aggregator_seed_reaches_wallet_endpoint_and_lifts() {
     let rng = &mut StdRng::seed_from_u64(642);
-    let app = new_aggregator_application(rng).unwrap();
+    let app = aggregator();
     let chain = PoolSim::genesis_with(random_block(rng, 2, 1));
     let height = BlockHeight(0);
     let wallet_span = chain.anchor_span(app.context().wallet(), height..=height);

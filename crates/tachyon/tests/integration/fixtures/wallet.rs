@@ -26,7 +26,7 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use super::{Proved, keyed_rng, mock_sighash, mock_txid, pool::PoolSim, qr::QrBucketEntry};
+use super::{Proved, keyed_rng, mock_sighash, pool::PoolSim, qr::QrBucketEntry};
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, action::Signature) {
     let wallet = WalletSim::random(rng);
@@ -57,7 +57,7 @@ pub(crate) fn other_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0B0B_05EE_D000_0001))
 }
 
-fn stamp_key(bundle: &Bundle<Stamp<stamp::Uncompressed>>) -> Vec<u8> {
+pub(crate) fn stamp_key(bundle: &Bundle<Stamp<stamp::Uncompressed>>) -> Vec<u8> {
     let stamp = &bundle.stamp;
     let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
     key.extend_from_slice(&u32::try_from(stamp.adjuncts.len()).unwrap().to_le_bytes());
@@ -82,49 +82,6 @@ fn stamp_key(bundle: &Bundle<Stamp<stamp::Uncompressed>>) -> Vec<u8> {
         key.extend_from_slice(&Fp::from(tachygram).to_bytes());
     }
     key
-}
-
-pub(crate) fn merged(
-    app: &App<'_>,
-    left: &Bundle<Stamp<stamp::Uncompressed>>,
-    right: &Bundle<Stamp<stamp::Uncompressed>>,
-) -> Bundle<Stamp<stamp::Uncompressed>> {
-    static MERGES: Proved<Stamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
-    let right_txid = mock_txid(right);
-    let mut key = stamp_key(left);
-    key.extend_from_slice(&stamp_key(right));
-    key.extend_from_slice(&right_txid);
-    let stamp = MERGES.get(&key, |rng| {
-        left.stamp
-            .clone()
-            .merge(
-                rng,
-                app,
-                (
-                    &left
-                        .actions
-                        .iter()
-                        .map(|action| (action.descriptor, action.tachygrams))
-                        .collect(),
-                    &BTreeMap::from([(left.fee, left.fee_auth)]),
-                ),
-                (
-                    right.stamp.clone(),
-                    right_txid,
-                    &right
-                        .actions
-                        .iter()
-                        .map(|action| (action.descriptor, action.tachygrams))
-                        .collect(),
-                    &BTreeMap::from([(right.fee, right.fee_auth)]),
-                ),
-            )
-            .unwrap()
-    });
-    Bundle {
-        stamp,
-        ..left.clone()
-    }
 }
 
 pub(crate) fn lifted(
