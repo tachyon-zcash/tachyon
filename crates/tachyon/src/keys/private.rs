@@ -173,8 +173,8 @@ impl SpendAuthorizingKey {
     /// Derive the spend validating (public) key: `ak = [ask]G`.
     #[must_use]
     pub fn derive_auth_public(&self) -> proof::SpendValidatingKey {
-        // reddsa::VerificationKey::from(&signing_key) performs [sk]G
-        // (scalar-times-basepoint), not a trivial type conversion.
+        // Copies the key that reddsa computed as [ask]G when building the
+        // SigningKey.
         proof::SpendValidatingKey(reddsa::VerificationKey::from(&self.0))
     }
 
@@ -225,8 +225,8 @@ impl<E: Effect> ActionSigningKey<E> {
     /// Derive the per-action verification (public) key: `rk = [rsk]G`.
     #[must_use]
     pub fn derive_action_public(&self) -> public::ActionVerificationKey {
-        // reddsa::VerificationKey::from(&signing_key) performs [sk]G
-        // (scalar-times-basepoint), not a trivial type conversion.
+        // Copies the key that reddsa computed as [rsk]G when building or
+        // randomizing the SigningKey.
         let vk = reddsa::VerificationKey::from(&self.0);
         public::ActionVerificationKey(vk)
     }
