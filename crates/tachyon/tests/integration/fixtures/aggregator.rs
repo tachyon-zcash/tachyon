@@ -8,7 +8,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use polynomials::AggregatorRank;
 use ragu::{
-    AcceleratedProver, Application, CompressedProof, Pcd,
+    AcceleratedProver, Application, Pcd,
     circuits::polynomials,
     pasta::Pasta,
     pcd::profile::{Aggregator, Profiled},
@@ -57,7 +57,7 @@ pub(crate) fn imported(
     static IMPORTED: Proved<AggregatorProof> = Proved::new("imported_stamp");
     IMPORTED.get(&stamp_key(bundle), |rng| {
         let body = compressed(&application(), bundle);
-        body.decompress(rng, app, &mock_sighash(body.commitment()), &[])
+        body.decompress(rng, app, &mock_sighash(body.commitment()))
             .unwrap()
     })
 }
@@ -126,17 +126,9 @@ pub(crate) fn proves(
 /// `host`'s body carrying `stamp`, as a block or mempool carries it.
 pub(crate) fn publication(
     host: &Bundle<Stamp<Uncompressed>>,
-    stamp: Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>,
-) -> Bundle<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>> {
-    Bundle {
-        stamp,
-        actions: host.actions.clone(),
-        fee: host.fee,
-        fee_auth: host.fee_auth,
-        value_balance: host.value_balance,
-        binding_sig: host.binding_sig,
-        memo: host.memo.clone(),
-    }
+    stamp: zcash_tachyon::Aggregate,
+) -> Bundle<zcash_tachyon::Aggregate> {
+    compressed(&application(), host).restamp(stamp)
 }
 
 /// The wallet compresses a span of `chain`, and the aggregator imports it with
@@ -190,7 +182,7 @@ pub(crate) fn raw_import(
     bundle: &Bundle<Stamp<Uncompressed>>,
 ) -> Pcd<Profiled<Pasta, Aggregator<HEADER_SIZE>>, AggregatorRank, Transaction> {
     let body = compressed(&application(), bundle);
-    let (digests, tachygram_set) = body.verify_covered(&[]).unwrap();
+    let (digests, tachygram_set) = body.verify_covered().unwrap();
     let tachygrams = bundle
         .actions
         .iter()

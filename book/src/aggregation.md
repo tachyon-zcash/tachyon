@@ -20,11 +20,11 @@ These two states do not correspond perfectly with 'aggregate' and 'not aggregate
 
 | Term | State | Covered bodies |
 | ---- | ----- | -------------- |
-| **autonome** | stamped | Its own bundle only; the adjunct list is empty |
-| **aggregate** | stamped | Its own bundle and one or more listed adjuncts |
+| **autonome** | stamped | Its own bundle only; no adjunct list |
+| **aggregate** | stamped | Its own bundle and any listed adjuncts |
 | **adjunct** | stripped | Covered by another transaction's stamp |
 
-The adjunct list determines whether a stamped bundle is an autonome or an aggregate. The state byte identifies its proof profile: `0x01` for a wallet or `0x03` for an aggregator. Either profile can publish either category.
+The state byte identifies the publication: `0x01` is a wallet autonome; `0x03` is an aggregate. Only an aggregate has an adjunct list. Its list can be empty, for example when an aggregator lifts a single transaction.
 
 Aggregates may be further named:
 
@@ -42,9 +42,9 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block.
+The wire format requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block.
 
-`Plan::prove` returns a full wallet stamp, and `compress` rerandomizes it and produces a compressed proof for publication. Given a compressed wallet bundle and its adjuncts, `Bundle::decompress` verifies the host signatures and coverage and imports the proof as an `AggregatorProof`, with both set polynomials rebuilt from the covered bodies. The `AggregatorProof` keeps those roots, so `AggregatorProof::merge` and `AggregatorProof::unmerge` take only the other proof and its `txid`. After the last operation, `compress` rerandomizes the proof and produces a compressed aggregator stamp that anyone can verify, and `Bundle::restamp` puts it on the host's bundle under state byte `0x03`. That stamp cannot itself be decompressed, so an aggregator that keeps working keeps its `AggregatorProof`.
+`Plan::prove` returns a full wallet stamp, and `compress` rerandomizes it and produces a compressed proof for publication. Given an autonome, `Bundle::decompress` verifies the host signatures and coverage and imports the proof as an `AggregatorProof`, with both set polynomials rebuilt from its body. The `AggregatorProof` keeps those roots, so `AggregatorProof::merge` and `AggregatorProof::unmerge` take only the other proof and its `txid`. After the last operation, `compress` rerandomizes the proof and produces a compressed aggregator stamp that anyone can verify, and `Bundle::restamp` puts it on the host's bundle under state byte `0x03`. That stamp cannot itself be decompressed, so an aggregator that keeps working keeps its `AggregatorProof`.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -200,7 +200,7 @@ An aggregate's stamp proves its own actions together with every covered adjunct'
 A verifier reconstructs the header from the covered bundles.
 The stamp's `vAdjunctsTachyon` lists the `txid` of every other transaction whose bundle it covers (see [Bundles → Wire Format](./bundle.md#stamp-trailer)), so a node gathers the covered bundles by lookup.
 In the mempool those transactions are still stamped, and in a block they are stripped.
-The carrying bundle is never in its own list, and an autonome's list is empty.
+The aggregate never lists its own carrying bundle. An autonome has no list.
 
 The list is authorization data.
 It contributes to `auth_digest` through the stamp digest, and neither the stamp proof nor a signature binds it.

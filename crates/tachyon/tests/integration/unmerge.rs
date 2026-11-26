@@ -5,7 +5,7 @@ use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, Bundle, Tachygram, TachygramSetPoly, VerificationError,
+    ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, bundle,
     stamp::{
         UnmergeError,
@@ -20,7 +20,7 @@ use crate::fixtures::{
     mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
-        WalletSim, alice, alice_max_fee_note, bob, later_output, lifted, output_plan,
+        WalletSim, alice, alice_max_fee_note, bob, compressed, later_output, lifted, output_plan,
         outputs_with_fees, shared_sk,
     },
 };
@@ -50,7 +50,10 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             .clone()
             .unmerge(rng, app, divisor, bob_txid)
             .unwrap();
-        let stripped: Vec<_> = adjuncts.into_iter().map(Bundle::strip).collect();
+        let stripped: Vec<_> = adjuncts
+            .into_iter()
+            .map(|body| compressed(wallet, &body).strip())
+            .collect();
         assert_eq!(
             unmerged.adjuncts(),
             &stripped.iter().map(mock_txid).collect()
@@ -104,7 +107,14 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
         .unmerge(rng, app, imported(app, &alice), alice_txid)
         .unwrap();
     assert_eq!(quotient.adjuncts(), &BTreeSet::from([bob_txid]));
-    verify_on(app, rng, &carol, quotient, &[&bob.strip()]).unwrap();
+    verify_on(
+        app,
+        rng,
+        &carol,
+        quotient,
+        &[&compressed(wallet, &bob).strip()],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -128,7 +138,7 @@ fn unmerge_by_a_lifted_divisor() {
         app,
         rng,
         unaligned,
-        &later.verify_covered(&[]).unwrap().0
+        &later.verify_covered().unwrap().0
     ));
 
     let quotient = dividend
@@ -193,7 +203,7 @@ fn unmerge_splitting_a_bundle() {
         .iter()
         .position(|action| action.descriptor == kept_descriptor)
         .unwrap();
-    let kept_digest = whole.verify_covered(&[]).unwrap().0[kept_index];
+    let kept_digest = whole.verify_covered().unwrap().0[kept_index];
 
     // Alice's bundle holds the removed action and the same fee leaf.
     let quotient = imported(app, &whole)
@@ -274,8 +284,8 @@ fn unmerge_binds_its_sets() {
         .iter()
         .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([bob.fee_auth]);
-    let alice_digests = alice.verify_covered(&[]).unwrap().0;
-    let bob_digests = bob.verify_covered(&[]).unwrap().0;
+    let alice_digests = alice.verify_covered().unwrap().0;
+    let bob_digests = bob.verify_covered().unwrap().0;
     let alice_actions: ActionSetPoly = alice_digests.iter().copied().collect();
     let bob_actions: ActionSetPoly = bob_digests.iter().copied().collect();
     let alice_tachygrams: TachygramSetPoly = alice_members.clone().collect();

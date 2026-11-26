@@ -218,7 +218,7 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
             Some("a transaction anchor outside the span"),
         ),
     ] {
-        let (digests, _) = bundle.verify_covered(&[]).unwrap();
+        let (digests, _) = bundle.verify_covered().unwrap();
         let stamp = &bundle.stamp;
         let transaction_pcd = stamp.proof.clone().carry::<transaction::Transaction>((
             app.bridge_hash(stamp.tachygram_set.into()).unwrap().into(),
@@ -248,7 +248,7 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
 
     // The lifted header's bridge hash comes from the lift's own tachygram slot,
     // not from the input header, even when the input header carries another.
-    let (digests, _) = start_bundle.verify_covered(&[]).unwrap();
+    let (digests, _) = start_bundle.verify_covered().unwrap();
     let foreign = app
         .bridge_hash(fork_bundle.stamp.tachygram_set.into())
         .unwrap()

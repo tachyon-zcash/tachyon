@@ -1,3 +1,4 @@
+use zcash_tachyon::stamp::StampState as _;
 extern crate alloc;
 
 use alloc::{
@@ -10,9 +11,7 @@ use core::{assert_matches, cmp::Reverse, mem};
 
 use corez::io;
 use ragu::{
-    CompressedProof, Rank as _, WalletRank,
-    pasta::Pasta,
-    pcd::profile::{Aggregator, Profiled},
+    Rank as _, WalletRank,
     udon::{
         curve::{Affine as _, Projective as _},
         field::Field as _,
@@ -29,11 +28,10 @@ use zcash_tachyon::{
     fee,
     keys::private,
     pasta::{Ep, EqAffine, Fp},
-    stamp::{self, Stamp, proof::HEADER_SIZE},
-    value, *,
+    stamp, value, *,
 };
 
-use super::fixtures::application;
+use super::fixtures::{application, trailer_prefix};
 use crate::fixtures::{
     aggregator::{aggregated, aggregator, import_span, imported, publication, verify_on},
     mock_sighash, mock_txid,
@@ -168,7 +166,7 @@ fn assemble_joins_by_descriptor() {
             .eq(pairs)
     );
     joined
-        .verify(rng, app, &mock_sighash(joined.commitment()), &[])
+        .verify(rng, app, &mock_sighash(joined.commitment()))
         .unwrap();
 }
 
@@ -345,7 +343,7 @@ fn duplicated_spend_cannot_inflate() {
     };
 
     let mut buf = Vec::new();
-    bundle.clone().strip().write(&mut buf).unwrap();
+    compressed(app, &bundle).strip().write(&mut buf).unwrap();
     let err = Bundle::<()>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "tachygrams are not unique");
@@ -362,7 +360,7 @@ fn duplicated_spend_cannot_inflate() {
     );
 
     assert_matches!(
-        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
+        bundle.verify(rng, app, &mock_sighash(bundle.commitment())),
         Err(VerificationError::Coverage(
             VerifyCoverageError::DuplicateActions
         ))
@@ -385,11 +383,11 @@ fn based_aggregate_with_two_adjuncts() {
         .unwrap();
     let based = publication(&becomes_based, aggregate.compress(rng, app).unwrap());
 
-    let adjunct_a = autonome_a.strip();
-    let adjunct_b = autonome_b.strip();
+    let adjunct_a = compressed(wallet, &autonome_a).strip();
+    let adjunct_b = compressed(wallet, &autonome_b).strip();
     let adjuncts = [&adjunct_a, &adjunct_b];
 
-    assert!(based.is_aggregate());
+    assert!(TachyonBundle::from(based.clone()).is_aggregate());
     assert_eq!(based.stamp.adjuncts, BTreeSet::from([txid_a, txid_b]));
     based.verify(app, &sighash, &adjuncts).unwrap();
 
@@ -435,7 +433,7 @@ fn autonome_verify_rejects_flipped_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = spend(app);
     let sighash = mock_sighash(bundle.commitment());
-    bundle.verify(rng, app, &sighash, &[]).unwrap();
+    bundle.verify(rng, app, &sighash).unwrap();
 
     let mut binding_bytes = Vec::new();
     bundle.binding_sig.write(&mut binding_bytes).unwrap();
@@ -443,7 +441,7 @@ fn autonome_verify_rejects_flipped_signatures() {
     let mut bad_binding = bundle.clone();
     bad_binding.binding_sig = Signature::read(&mut binding_bytes.as_slice()).unwrap();
     assert_matches!(
-        bad_binding.verify(rng, app, &sighash, &[]),
+        bad_binding.verify(rng, app, &sighash),
         Err(VerificationError::Signatures(SignatureError::Binding(_)))
     );
 
@@ -457,7 +455,7 @@ fn autonome_verify_rejects_flipped_signatures() {
     let mut bad_action = bundle;
     bad_action.actions[0].signature = bad_sig;
     assert_matches!(
-        bad_action.verify(rng, app, &sighash, &[]),
+        bad_action.verify(rng, app, &sighash),
         Err(VerificationError::Signatures(SignatureError::Action(sig))) if sig == bad_sig
     );
 }
@@ -470,7 +468,7 @@ fn autonome_verify_rejects_exchanged_tachygrams() {
     let (first, rest) = bundle.actions.split_at_mut(1);
     mem::swap(&mut first[0].tachygrams.1, &mut rest[0].tachygrams.1);
     assert_matches!(
-        bundle.verify(rng, app, &mock_sighash(bundle.commitment()), &[]),
+        bundle.verify(rng, app, &mock_sighash(bundle.commitment())),
         Err(VerificationError::Disproved)
     );
 }
@@ -481,23 +479,21 @@ fn stamped_bundle_round_trips() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, uncompressed) = spend(app);
     let sighash = mock_sighash(uncompressed.commitment());
-    uncompressed.verify(rng, app, &sighash, &[]).unwrap();
+    uncompressed.verify(rng, app, &sighash).unwrap();
     // The stripped body under the 0x01 byte, then the uncompressed stamp's
     // own trailer: its proof is not a compressed proof's length.
     let mut uncompressed_bytes = Vec::new();
-    uncompressed
-        .clone()
+    compressed(app, &uncompressed)
         .strip()
         .write(&mut uncompressed_bytes)
         .unwrap();
     uncompressed_bytes[0] = 0x01;
     uncompressed.stamp.write(&mut uncompressed_bytes).unwrap();
     for err in [
-        Bundle::<Stamp<stamp::Compressed>>::read(&*uncompressed_bytes).unwrap_err(),
+        Bundle::<Autonome>::read(&*uncompressed_bytes).unwrap_err(),
         TachyonBundle::read(&*uncompressed_bytes).unwrap_err(),
     ] {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(err.to_string(), "unexpected proof length");
     }
     let mut bytes = Vec::new();
     compressed(app, &uncompressed).write(&mut bytes).unwrap();
@@ -505,7 +501,7 @@ fn stamped_bundle_round_trips() {
     let erased = TachyonBundle::from(compressed(app, &uncompressed));
     erased.write(&mut erased_buf).unwrap();
     assert_eq!(erased_buf, bytes);
-    let mut block = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
+    let mut block = Bundle::<Autonome>::read(&*bytes).unwrap();
     assert_eq!(block.actions, uncompressed.actions);
     assert_eq!(block.value_balance, uncompressed.value_balance);
     assert_eq!(block.fee.v_fee, uncompressed.fee.v_fee);
@@ -513,17 +509,19 @@ fn stamped_bundle_round_trips() {
     assert_eq!(block.stamp.anchor, uncompressed.stamp.anchor);
     assert_eq!(TachyonBundle::read(&*bytes).unwrap(), erased);
     Bundle::<()>::try_from(erased).unwrap_err();
-    block.verify(app, &sighash, &[]).unwrap();
+    block.verify(app, &sighash).unwrap();
     let (mut stripped_block, mut stripped_uncompressed) = (Vec::new(), Vec::new());
     block.clone().strip().write(&mut stripped_block).unwrap();
     uncompressed
+        .compress(rng, app)
+        .unwrap()
         .strip()
         .write(&mut stripped_uncompressed)
         .unwrap();
     assert_eq!(stripped_block, stripped_uncompressed);
     block.stamp.anchor = Anchor::random(rng);
     assert_matches!(
-        block.verify(app, &sighash, &[]),
+        block.verify(app, &sighash),
         Err(VerificationError::Disproved)
     );
 }
@@ -543,7 +541,7 @@ fn rerandomized_stamps_still_verify() {
         signed.stamp.proof.to_bytes().unwrap()
     );
     assert_eq!(
-        fresh.verify(rng, app, &sighash, &[]).unwrap(),
+        fresh.verify(rng, app, &sighash).unwrap(),
         signed.stamp.tachygram_set
     );
 }
@@ -563,14 +561,14 @@ fn compressed_transactions_bind_the_covered_body() {
         let sighash = mock_sighash(signed.commitment());
         let mut bytes = Vec::new();
         compressed(app, signed).write(&mut bytes).unwrap();
-        let mut decoded = Bundle::<Stamp<stamp::Compressed>>::read(bytes.as_slice()).unwrap();
-        let (digests, tachygrams) = decoded.verify_covered(&[]).unwrap();
+        let mut decoded = Bundle::<Autonome>::read(bytes.as_slice()).unwrap();
+        let (digests, tachygrams) = decoded.verify_covered().unwrap();
         let actions = ActionSetPoly::from_iter(digests.iter().copied()).commit();
         assert_eq!(
             decoded.stamp.proof.online_commitments(),
             [actions.into(), tachygrams.into()]
         );
-        assert_eq!(decoded.verify(app, &sighash, &[]).unwrap(), tachygrams);
+        assert_eq!(decoded.verify(app, &sighash).unwrap(), tachygrams);
 
         for index in 0..digests.len() {
             let mut substituted = digests.clone();
@@ -768,12 +766,7 @@ fn read_bounds_the_fee() {
     let mut maximum_fee = bytes.clone();
     maximum_fee[fee_at..fee_at + 8].copy_from_slice(&MAX_MONEY.to_le_bytes());
     assert_eq!(
-        u64::from(
-            Bundle::<Stamp<stamp::Compressed>>::read(&*maximum_fee)
-                .unwrap()
-                .fee
-                .v_fee
-        ),
+        u64::from(Bundle::<Autonome>::read(&*maximum_fee).unwrap().fee.v_fee),
         MAX_MONEY
     );
     let mut maximum_stripped = stripped.clone();
@@ -793,7 +786,7 @@ fn read_bounds_the_fee() {
         let mut invalid_stripped = stripped.clone();
         invalid_stripped[fee_at..fee_at + 8].copy_from_slice(&amount.to_le_bytes());
         for err in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*invalid).unwrap_err(),
+            Bundle::<Autonome>::read(&*invalid).unwrap_err(),
             TachyonBundle::read(&*invalid).unwrap_err(),
             Bundle::<()>::read(&*invalid_stripped).unwrap_err(),
             TachyonBundle::read(&*invalid_stripped).unwrap_err(),
@@ -829,7 +822,7 @@ fn read_rejects_identity_action_and_fee_points() {
         let mut stripped_action = stripped.clone();
         stripped_action[point_at..point_at + 32].copy_from_slice(&identity);
         for action_error in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*invalid_action).unwrap_err(),
+            Bundle::<Autonome>::read(&*invalid_action).unwrap_err(),
             TachyonBundle::read(&*stripped_action).unwrap_err(),
         ] {
             assert_eq!(action_error.kind(), io::ErrorKind::InvalidData);
@@ -841,7 +834,7 @@ fn read_rejects_identity_action_and_fee_points() {
     let mut invalid_stripped = stripped;
     invalid_stripped[cv_feemax_at..cv_feemax_at + 32].copy_from_slice(&identity);
     for err in [
-        Bundle::<Stamp<stamp::Compressed>>::read(&*invalid).unwrap_err(),
+        Bundle::<Autonome>::read(&*invalid).unwrap_err(),
         TachyonBundle::read(&*invalid).unwrap_err(),
         Bundle::<()>::read(&*invalid_stripped).unwrap_err(),
         TachyonBundle::read(&*invalid_stripped).unwrap_err(),
@@ -919,7 +912,7 @@ fn bundles_round_trip_at_action_count_limits() {
         };
         bytes.clear();
         proof_bundle.write(&mut bytes).unwrap();
-        let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
+        let decoded = Bundle::<Autonome>::read(&*bytes).unwrap();
         assert_eq!(decoded.actions.len(), n);
         assert_eq!(decoded.actions, proof_bundle.actions);
         let mut round_trip = Vec::new();
@@ -949,18 +942,13 @@ fn bundle_state_mismatches_are_rejected() {
     }
     for tag in [0, 2, 3] {
         assert_eq!(
-            wrong_state(Bundle::<Stamp<stamp::Compressed>>::read(&[tag][..]).map(drop)),
+            wrong_state(Bundle::<Autonome>::read(&[tag][..]).map(drop)),
             "unexpected tachyonBundleState"
         );
     }
     for tag in [0, 1, 2] {
         assert_eq!(
-            wrong_state(
-                Bundle::<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>>::read(
-                    &[tag][..],
-                )
-                .map(drop)
-            ),
+            wrong_state(Bundle::<Aggregate>::read(&[tag][..],).map(drop)),
             "unexpected tachyonBundleState"
         );
     }
@@ -978,12 +966,12 @@ fn bundle_state_mismatches_are_rejected() {
         "unexpected tachyonBundleState"
     );
     assert_eq!(
-        Bundle::<Stamp<stamp::Compressed>>::read(&*adjunct_buf)
+        Bundle::<Autonome>::read(&*adjunct_buf)
             .unwrap_err()
             .to_string(),
         "unexpected tachyonBundleState"
     );
-    Bundle::<Stamp<stamp::Compressed>>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
+    Bundle::<Autonome>::try_from(TachyonBundle::from(adjunct)).unwrap_err();
 }
 
 fn round_trip_block(bundle: &TachyonBundle, tag: bundle::StateByte) -> TachyonBundle {
@@ -1000,73 +988,28 @@ fn round_trip_block(bundle: &TachyonBundle, tag: bundle::StateByte) -> TachyonBu
     decoded
 }
 
-/// A trailer framing `len` bytes of proof must hold exactly `P`'s encoded
-/// length, which the reader checks before reading the frame.
-fn assert_frame_length_checked<P: stamp::Proof>(other: usize) {
-    let len = P::encoded_len();
-    let mut prefix = Vec::new();
-    Anchor::from(Fp::from(1)).write(&mut prefix).unwrap();
-    TachygramSetCommit::default().write(&mut prefix).unwrap();
-    prefix.push(0); // no adjuncts
-    for n in [0, len - 1, len + 1, other, 1_000_000, len] {
-        let mut bytes = prefix.clone();
-        if n == len {
-            bytes.push(0xfe); // noncanonical four-byte length
-            bytes.extend_from_slice(&u32::try_from(n).unwrap().to_le_bytes());
-        } else {
-            CompactSize::try_from(n).unwrap().write(&mut bytes).unwrap();
-        }
-        // A request past the length field consumes the sentinel and then hits EOF.
-        bytes.push(0x7b);
-        let mut reader = bytes.as_slice();
-        assert_eq!(
-            Stamp::<P>::read(&mut reader).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
-        );
-        assert_eq!(reader, [0x7b]);
-    }
-    let mut truncated = prefix;
-    CompactSize::try_from(len)
-        .unwrap()
-        .write(&mut truncated)
-        .unwrap();
-    truncated.resize(truncated.len() + len - 1, 0);
-    assert_eq!(
-        Stamp::<P>::read(truncated.as_slice()).unwrap_err().kind(),
-        io::ErrorKind::UnexpectedEof
-    );
-}
-
-#[test]
-fn publication_lengths_are_checked_before_reading_the_frame() {
-    use stamp::{Compressed, Proof};
-
-    assert_frame_length_checked::<Compressed>(<CompressedProof<
-        Profiled<Pasta, Aggregator<HEADER_SIZE>>,
-    > as Proof>::encoded_len());
-    assert_frame_length_checked::<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>(
-        <Compressed as Proof>::encoded_len(),
-    );
-}
-
 /// Round-trip `host` through the block and mempool readers and check the
 /// digests the wire format determines. Returns the block reader's copy.
-fn check_published_block<P>(host: &Bundle<Stamp<P>>, other: bundle::StateByte) -> Bundle<Stamp<P>>
+fn check_published_block<S>(
+    host: &Bundle<S>,
+    other: bundle::StateByte,
+    frame: &[u8],
+    expected: [u8; 32],
+) -> Bundle<S>
 where
-    P: stamp::Proof + Clone,
-    Stamp<P>: stamp::StampState,
-    TachyonBundle: From<Bundle<Stamp<P>>>,
-    Bundle<Stamp<P>>: TryFrom<TachyonBundle, Error = derive_more::TryIntoError<TachyonBundle>>,
+    S: stamp::StampState + Clone,
+    TachyonBundle: From<Bundle<S>>,
+    Bundle<S>: TryFrom<TachyonBundle, Error = derive_more::TryIntoError<TachyonBundle>>,
 {
     use stamp::StampState;
-    let tag = Stamp::<P>::state_byte();
+    let tag = S::state_byte();
     let block = TachyonBundle::from(host.clone());
-    let decoded = Bundle::<Stamp<P>>::try_from(round_trip_block(&block, tag)).unwrap();
+    let decoded = Bundle::<S>::try_from(round_trip_block(&block, tag)).unwrap();
     let mut bytes = Vec::new();
     block.write(&mut bytes).unwrap();
     bytes.push(0x7b);
     let mut reader = bytes.as_slice();
-    let submission = Bundle::<Stamp<P>>::read(&mut reader).unwrap();
+    let submission = Bundle::<S>::read(&mut reader).unwrap();
     assert_eq!(reader, [0x7b]);
     for bundle in [&submission, &decoded] {
         assert_eq!(bundle.commitment(), host.commitment());
@@ -1075,14 +1018,8 @@ where
         assert_eq!(bundle.auth_digest(), host.auth_digest());
     }
     bytes.pop();
-    let frame = &bytes[bytes.len() - P::encoded_len()..];
-    let proof_hash = blake2b::stamp_proof_digest(
-        Fp::from(host.stamp.anchor).to_bytes(),
-        host.stamp.tachygram_set.as_ref().to_bytes(),
-        frame,
-    );
-    let stamp_hash = blake2b::stamp_digest(&host.stamp.adjuncts, &proof_hash);
-    assert_eq!(stamp_hash, decoded.stamp.stamp_digest());
+    assert!(bytes.ends_with(frame));
+    assert_eq!(expected, decoded.stamp.stamp_digest());
     // Hash the same signed body and stamp, substituting only the outer state byte.
     let records: Vec<[u8; 128]> = host
         .actions
@@ -1105,7 +1042,7 @@ where
             host.fee.v_fee.into(),
             &Fp::from(host.fee_auth).to_bytes(),
             &binding,
-            &stamp_hash,
+            &expected,
         )
     };
     assert_eq!(auth(tag), decoded.auth_digest());
@@ -1114,8 +1051,8 @@ where
     let mut trailer = Vec::new();
     decoded.stamp.write(&mut trailer).unwrap();
     let mut trailer_reader = trailer.as_slice();
-    let read = <Stamp<P> as StampState>::read(&mut trailer_reader).unwrap();
-    assert_eq!(read.stamp_digest(), stamp_hash);
+    let read = <S as StampState>::read(&mut trailer_reader).unwrap();
+    assert_eq!(read.stamp_digest(), expected);
     assert_eq!(trailer_reader, []);
     decoded
 }
@@ -1123,7 +1060,6 @@ where
 #[test]
 fn published_bundles_verify_after_block_and_mempool_round_trip() {
     use bundle::StateByte;
-    use stamp::Compressed;
 
     let wallet = &application();
     let rng = &mut StdRng::seed_from_u64(58);
@@ -1132,24 +1068,41 @@ fn published_bundles_verify_after_block_and_mempool_round_trip() {
     let (_, right_body) = zero_action(wallet, left_body.stamp.anchor);
     let sighash = mock_sighash(left_body.commitment());
     let right_id = mock_txid(&right_body);
-    let stripped = right_body.clone().strip();
+    let stripped = compressed(wallet, &right_body).strip();
     let (left, right) = (
         compressed(wallet, &left_body),
         compressed(wallet, &right_body),
     );
     for published in [&left, &right] {
-        let read = check_published_block(published, StateByte::Aggregated);
-        assert!(read.is_autonome());
+        let frame = published.stamp.proof.to_bytes().unwrap();
+        let mut trailer = Vec::new();
+        published.stamp.write(&mut trailer).unwrap();
         assert_eq!(
-            read.verify(wallet, &mock_sighash(published.commitment()), &[])
+            trailer,
+            [trailer_prefix(&published.stamp).as_slice(), &frame].concat()
+        );
+        trailer.pop();
+        assert_eq!(
+            Autonome::read(&mut trailer.as_slice()).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        let expected = blake2b::stamp_proof_digest(
+            Fp::from(published.stamp.anchor).to_bytes(),
+            published.stamp.tachygram_set.as_ref().to_bytes(),
+            &frame,
+        );
+        let read = check_published_block(published, StateByte::Aggregated, &frame, expected);
+        assert!(TachyonBundle::from(read.clone()).is_autonome());
+        assert_eq!(
+            read.verify(wallet, &mock_sighash(published.commitment()))
                 .unwrap(),
             published.stamp.tachygram_set
         );
     }
 
-    let left_work = left.decompress(rng, &app, &sighash, &[]).unwrap();
+    let left_work = left.decompress(rng, &app, &sighash).unwrap();
     let right_work = right
-        .decompress(rng, &app, &mock_sighash(right.commitment()), &[])
+        .decompress(rng, &app, &mock_sighash(right.commitment()))
         .unwrap();
     let aggregate = left_work
         .merge(rng, &app, right_work.clone(), right_id)
@@ -1160,8 +1113,35 @@ fn published_bundles_verify_after_block_and_mempool_round_trip() {
         .unwrap();
     for (work, adjuncts) in [(aggregate, vec![&stripped]), (singleton, vec![])] {
         let body = left.clone().restamp(work.compress(rng, &app).unwrap());
-        let read = check_published_block(&body, StateByte::Stamped);
-        assert_eq!(read.is_autonome(), adjuncts.is_empty());
+        let frame = body.stamp.proof.to_bytes().unwrap();
+        let mut trailer = Vec::new();
+        body.stamp.write(&mut trailer).unwrap();
+        let mut expected_tail = Vec::new();
+        CompactSize::try_from(body.stamp.adjuncts.len())
+            .unwrap()
+            .write(&mut expected_tail)
+            .unwrap();
+        for txid in &body.stamp.adjuncts {
+            expected_tail.extend_from_slice(txid);
+        }
+        expected_tail.extend_from_slice(&frame);
+        assert_eq!(
+            trailer,
+            [trailer_prefix(&body.stamp).as_slice(), &expected_tail].concat()
+        );
+        trailer.pop();
+        assert_eq!(
+            Aggregate::read(&mut trailer.as_slice()).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        let digest = blake2b::stamp_proof_digest(
+            Fp::from(body.stamp.anchor).to_bytes(),
+            body.stamp.tachygram_set.as_ref().to_bytes(),
+            &frame,
+        );
+        let expected = blake2b::stamp_digest(&body.stamp.adjuncts, &digest);
+        let read = check_published_block(&body, StateByte::Stamped, &frame, expected);
+        assert!(TachyonBundle::from(read.clone()).is_aggregate());
         assert_eq!(
             read.stamp.adjuncts.contains(&right_id),
             !adjuncts.is_empty()
@@ -1170,9 +1150,71 @@ fn published_bundles_verify_after_block_and_mempool_round_trip() {
             read.verify(&app, &sighash, &adjuncts).unwrap(),
             body.stamp.tachygram_set
         );
-        let err = Bundle::<Stamp<Compressed>>::try_from(TachyonBundle::from(read)).unwrap_err();
+        let err = Bundle::<Autonome>::try_from(TachyonBundle::from(read)).unwrap_err();
         assert_eq!(err.input, TachyonBundle::from(body));
     }
+}
+
+#[test]
+fn readers_reject_prefixed_and_cross_profile_frames() {
+    let wallet = &application();
+    let app = &aggregator();
+    let rng = &mut StdRng::seed_from_u64(59);
+    let (_, host) = alice(wallet);
+    let (_, adjunct) = zero_action(wallet, host.stamp.anchor);
+    let autonome = compressed(wallet, &host);
+    let aggregate = autonome
+        .clone()
+        .restamp(aggregated(app, &host, &adjunct).compress(rng, app).unwrap());
+    let wallet_frame = autonome.stamp.proof.to_bytes().unwrap();
+    let aggregate_frame = aggregate.stamp.proof.to_bytes().unwrap();
+    let mut wallet_bytes = Vec::new();
+    let mut aggregate_bytes = Vec::new();
+    autonome.write(&mut wallet_bytes).unwrap();
+    aggregate.write(&mut aggregate_bytes).unwrap();
+    let wallet_prefix = wallet_bytes.strip_suffix(wallet_frame.as_slice()).unwrap();
+    let aggregate_prefix = aggregate_bytes
+        .strip_suffix(aggregate_frame.as_slice())
+        .unwrap();
+
+    // Layer 8 encoded an empty adjunct count and a proof length before the wallet
+    // frame.
+    let mut previous = wallet_prefix.to_vec();
+    CompactSize::try_from(0usize)
+        .unwrap()
+        .write(&mut previous)
+        .unwrap();
+    CompactSize::try_from(wallet_frame.len())
+        .unwrap()
+        .write(&mut previous)
+        .unwrap();
+    previous.extend_from_slice(&wallet_frame);
+    let wrong_wallet = [wallet_prefix, &aggregate_frame].concat();
+    for wire in [&previous, &wrong_wallet] {
+        assert_eq!(
+            Bundle::<Autonome>::read(wire.as_slice())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            TachyonBundle::read(wire.as_slice()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+    let wrong_aggregate = [aggregate_prefix, &wallet_frame].concat();
+    assert_eq!(
+        Bundle::<Aggregate>::read(wrong_aggregate.as_slice())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::UnexpectedEof
+    );
+    assert_eq!(
+        TachyonBundle::read(wrong_aggregate.as_slice())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::UnexpectedEof
+    );
 }
 
 #[test]
@@ -1182,12 +1224,13 @@ fn auth_digest_invariants() {
     let stamped = compressed(app, &spend(app).1);
     let (commitment, auth_digest) = (stamped.commitment(), stamped.auth_digest());
     let stripped = stamped.clone().strip();
-    // Set by hand so that only the list differs from `stamped`. A merge would
-    // also change the proof and the tachygram set.
-    let mut aggregate_a = stamped.clone();
+    // Restamping changes the proof and state byte. The two aggregates differ
+    // from one another only in their lists.
+    let agg = aggregator();
+    let work = imported(&agg, &spend(app).1);
+    let mut aggregate_a = stamped.clone().restamp(work.compress(rng, &agg).unwrap());
     aggregate_a.stamp.adjuncts.insert(mock_txid(&stripped));
-    let mut aggregate_b = stamped.clone();
-    aggregate_b.stamp.adjuncts.insert(mock_txid(&stripped));
+    let mut aggregate_b = aggregate_a.clone();
     aggregate_b.stamp.adjuncts.insert([0x11u8; 32]);
     assert_eq!(stripped.commitment(), commitment);
     assert_ne!(stripped.auth_digest(), auth_digest);
@@ -1206,6 +1249,10 @@ fn auth_digest_invariants() {
     }
 
     assert_ne!(aggregate_a.auth_digest(), aggregate_b.auth_digest());
+    for aggregate in [&aggregate_a, &aggregate_b] {
+        assert_eq!(aggregate.commitment(), commitment);
+        assert_ne!(aggregate.auth_digest(), auth_digest);
+    }
     let mut fee = stamped.clone();
     fee.fee.v_fee = value::Positive::try_from(u64::from(stamped.fee.v_fee) + 1).unwrap();
     let mut pair = stamped.clone();
@@ -1222,17 +1269,7 @@ fn auth_digest_invariants() {
     proof.stamp.proof = compressed(app, &alice(app).1).stamp.proof;
     let mut fee_change = stamped;
     fee_change.fee_auth = Tachygram::random(rng);
-    for edited in [
-        aggregate_a,
-        aggregate_b,
-        fee,
-        pair,
-        flipped,
-        anchor,
-        tachygram_set,
-        proof,
-        fee_change,
-    ] {
+    for edited in [fee, pair, flipped, anchor, tachygram_set, proof, fee_change] {
         assert_eq!(edited.commitment(), commitment);
         assert_ne!(edited.auth_digest(), auth_digest);
     }
@@ -1249,19 +1286,19 @@ fn a_pair_verifies_in_either_order_but_not_repeated() {
     bundle.actions[0].tachygrams = (second, first);
     assert_eq!(bundle.actions[0].digest(), action_digest);
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
+    let decoded = Bundle::<Autonome>::read(&*bytes).unwrap();
     assert_eq!(decoded.actions, bundle.actions);
-    let verified = decoded.verify(app, &mock_sighash(decoded.commitment()), &[]);
+    let verified = decoded.verify(app, &mock_sighash(decoded.commitment()));
     assert_eq!(verified.unwrap(), decoded.stamp.tachygram_set);
 
     bundle.actions[0].tachygrams = (first, first);
     bytes.clear();
     bundle.write(&mut bytes).unwrap();
-    let err = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap_err();
+    let err = Bundle::<Autonome>::read(&*bytes).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(err.to_string(), "tachygrams are not unique");
     assert_matches!(
-        bundle.verify_covered(&[]),
+        bundle.verify_covered(),
         Err(VerifyCoverageError::DuplicateTachygrams)
     );
 }
@@ -1280,7 +1317,7 @@ fn read_bounds_the_action_count() {
             .write(&mut bytes)
             .unwrap();
         for err in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap_err(),
+            Bundle::<Autonome>::read(&*bytes).unwrap_err(),
             TachyonBundle::read(&*bytes).unwrap_err(),
         ] {
             assert_eq!(err.kind(), kind);
@@ -1294,7 +1331,11 @@ fn read_bounds_the_action_count() {
 #[test]
 fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let app = &application();
-    let alice = compressed(app, &alice(app).1);
+    let wallet_body = alice(app).1;
+    let agg = aggregator();
+    let rng = &mut StdRng::seed_from_u64(94);
+    let alice = compressed(app, &wallet_body)
+        .restamp(imported(&agg, &wallet_body).compress(rng, &agg).unwrap());
     let mut empty = Vec::new();
     alice.write(&mut empty).unwrap();
     let (low, high) = ([0x11u8; 32], [0x22u8; 32]);
@@ -1302,25 +1343,20 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     bundle.stamp.adjuncts.extend([low, high]);
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
-    let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*buf).unwrap();
+    let decoded = Bundle::<Aggregate>::read(&*buf).unwrap();
     assert_eq!(decoded.stamp.adjuncts, bundle.stamp.adjuncts);
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    assert!(decoded.is_aggregate());
+    assert!(TachyonBundle::from(decoded).is_aggregate());
 
     let proof_len = alice.stamp.proof.to_bytes().unwrap().len();
-    let mut proof_prefix = Vec::new();
-    CompactSize::try_from(proof_len)
-        .unwrap()
-        .write(&mut proof_prefix)
-        .unwrap();
-    let list_end = buf.len() - proof_len - proof_prefix.len();
-    let list = list_end - 64..list_end;
+    let list_end = buf.len() - proof_len;
+    let list = list_end - low.len() - high.len()..list_end;
     assert_eq!(&buf[list.clone()], [low, high].concat());
     for edited_list in [[high, low].concat(), [low, low].concat()] {
         let mut edited = buf.clone();
         edited[list.clone()].copy_from_slice(&edited_list);
         for err in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*edited).unwrap_err(),
+            Bundle::<Aggregate>::read(&*edited).unwrap_err(),
             TachyonBundle::read(&*edited).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -1328,7 +1364,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
         }
     }
 
-    let count_at = empty.len() - proof_len - proof_prefix.len() - 1;
+    let count_at = empty.len() - proof_len - 1;
     assert_eq!(empty[count_at], 0);
     let most = WalletRank::num_coeffs() - 2 - 2 * alice.actions.len();
     for n_adjuncts in [most, most + 1] {
@@ -1338,7 +1374,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
             .write(&mut bytes)
             .unwrap();
         for err in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap_err(),
+            Bundle::<Aggregate>::read(&*bytes).unwrap_err(),
             TachyonBundle::read(&*bytes).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
@@ -1357,7 +1393,7 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     let mut complete = Vec::new();
     oversized.write(&mut complete).unwrap();
     for overcap_error in [
-        Bundle::<Stamp<stamp::Compressed>>::read(&*complete).unwrap_err(),
+        Bundle::<Aggregate>::read(&*complete).unwrap_err(),
         TachyonBundle::read(&*complete).unwrap_err(),
     ] {
         assert_eq!(overcap_error.kind(), io::ErrorKind::InvalidData);
@@ -1365,20 +1401,19 @@ fn adjunct_list_round_trips_and_read_rejects_noncanonical_lists() {
     }
 
     // The standalone cap is enforced immediately, before reading the list.
-    let mut trailer = Vec::new();
-    alice.stamp.write(&mut trailer).unwrap();
-    trailer.truncate(64);
+    let mut trailer = trailer_prefix(&alice.stamp);
+    let trailer_start = count_at - trailer.len();
     CompactSize::try_from(WalletRank::num_coeffs() - 1)
         .unwrap()
         .write(&mut trailer)
         .unwrap();
-    let count_error = Stamp::<stamp::Compressed>::read(&*trailer).unwrap_err();
+    let count_error = Aggregate::read(&mut trailer.as_slice()).unwrap_err();
     assert_eq!(count_error.kind(), io::ErrorKind::InvalidData);
     assert_eq!(count_error.to_string(), "too many adjuncts");
-    let mut bytes = empty[..count_at - 64].to_vec();
+    let mut bytes = empty[..trailer_start].to_vec();
     bytes.extend_from_slice(&trailer);
     for standalone_error in [
-        Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap_err(),
+        Bundle::<Aggregate>::read(&*bytes).unwrap_err(),
         TachyonBundle::read(&*bytes).unwrap_err(),
     ] {
         assert_eq!(standalone_error.kind(), io::ErrorKind::InvalidData);
@@ -1394,7 +1429,7 @@ fn read_rejects_an_identity_tachygram_set() {
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
     for err in [
-        Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap_err(),
+        Bundle::<Autonome>::read(&*bytes).unwrap_err(),
         TachyonBundle::read(&*bytes).unwrap_err(),
     ] {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -1405,8 +1440,12 @@ fn read_rejects_an_identity_tachygram_set() {
 #[test]
 fn verify_covered_bounds_the_covered_tachygrams() {
     let app = &application();
-    let (_, bundle) = alice(app);
-    let adjunct = bundle.clone().strip();
+    let (_, host) = alice(app);
+    let adjunct = compressed(app, &host).strip();
+    let agg = aggregator();
+    let mut rng = StdRng::seed_from_u64(95);
+    let bundle =
+        compressed(app, &host).restamp(imported(&agg, &host).compress(&mut rng, &agg).unwrap());
     // Two bundles' fee changes leave room for this many actions' pairs.
     let most = (WalletRank::num_coeffs() - 3) / 2;
     for (n_actions, expected) in [
@@ -1499,7 +1538,7 @@ fn read_bounds_the_value_balance() {
 
     for value_balance in [max_money, -max_money] {
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
-        let decoded: i64 = Bundle::<Stamp<stamp::Compressed>>::read(&*buf)
+        let decoded: i64 = Bundle::<Autonome>::read(&*buf)
             .unwrap()
             .value_balance
             .into();
@@ -1508,7 +1547,7 @@ fn read_bounds_the_value_balance() {
     for value_balance in [max_money + 1, -max_money - 1, i64::MAX, i64::MIN] {
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
         for err in [
-            Bundle::<Stamp<stamp::Compressed>>::read(&*buf).unwrap_err(),
+            Bundle::<Autonome>::read(&*buf).unwrap_err(),
             TachyonBundle::read(&*buf).unwrap_err(),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -1526,7 +1565,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
     let mut change = stamped.clone();
     change.fee_auth = Tachygram::random(rng);
     assert_matches!(
-        change.verify_covered(&[]),
+        change.verify_covered(),
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 
@@ -1546,7 +1585,7 @@ fn verify_covered_rejects_an_edited_tachygram() {
     pairs.first_entry().unwrap().get_mut().1 = Tachygram::random(rng);
     let bundle = plan.assemble(signatures, stamped.stamp, pairs, stamped.fee.v_fee);
     assert_matches!(
-        bundle.verify_covered(&[]),
+        bundle.verify_covered(),
         Err(VerifyCoverageError::WrongTachygramSet)
     );
 }
@@ -1575,19 +1614,14 @@ fn memo_round_trips_and_rejects_truncation() {
         bundle.memo = memo.clone();
         let mut buf = Vec::new();
         bundle.write(&mut buf).unwrap();
-        assert_eq!(
-            Bundle::<Stamp<stamp::Compressed>>::read(&*buf)
-                .unwrap()
-                .memo,
-            memo
-        );
+        assert_eq!(Bundle::<Autonome>::read(&*buf).unwrap().memo, memo);
     }
 
     bundle.memo = vec![0x33u8; 8192];
     let mut buf = Vec::new();
     bundle.write(&mut buf).unwrap();
     buf.truncate(1024);
-    let err = Bundle::<Stamp<stamp::Compressed>>::read(&*buf).unwrap_err();
+    let err = Bundle::<Autonome>::read(&*buf).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
@@ -1623,11 +1657,11 @@ fn bundle_lift_preserves_coverage() {
     let pool = PoolSim::shared();
     let (_, bundle) = spend(app);
 
-    let covered = bundle.verify_covered(&[]).unwrap();
+    let covered = bundle.verify_covered().unwrap();
 
     let mut stamp_bytes = Vec::new();
     bundle.stamp.write(&mut stamp_bytes).unwrap();
-    let unchanged = bundle.clone().lift(rng, app, &[], vec![]).unwrap();
+    let unchanged = bundle.clone().lift(rng, app, vec![]).unwrap();
     let mut unchanged_bytes = Vec::new();
     unchanged.stamp.write(&mut unchanged_bytes).unwrap();
     assert_eq!(unchanged_bytes, stamp_bytes);
@@ -1640,18 +1674,23 @@ fn bundle_lift_preserves_coverage() {
     unchanged_stamp.write(&mut unchanged_stamp_bytes).unwrap();
     assert_eq!(unchanged_stamp_bytes, stamp_bytes);
     let mut body_before = Vec::new();
-    bundle.clone().strip().write(&mut body_before).unwrap();
+    compressed(app, &bundle)
+        .strip()
+        .write(&mut body_before)
+        .unwrap();
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
 
-    let lifted = bundle.lift(rng, app, &[], vec![span]).unwrap();
+    let lifted = bundle.lift(rng, app, vec![span]).unwrap();
     let mut body_after = Vec::new();
-    lifted.clone().strip().write(&mut body_after).unwrap();
+    compressed(app, &lifted)
+        .strip()
+        .write(&mut body_after)
+        .unwrap();
     assert_eq!(body_after, body_before);
 
     assert_eq!(lifted.stamp.anchor, pool.block(BlockHeight(2)).anchor());
-    assert!(lifted.is_autonome());
-    assert_eq!(lifted.verify_covered(&[]).unwrap(), covered);
+    assert_eq!(lifted.verify_covered().unwrap(), covered);
     assert!(lifted.verify_proof(rng, app, &covered.0).unwrap());
 }
 
@@ -1676,8 +1715,8 @@ fn bundle_lift_over_an_aggregate() {
         .unwrap();
     let adjunct_txids = BTreeSet::from([mock_txid(&autonome_a), mock_txid(&autonome_b)]);
     assert_eq!(innocent.adjuncts(), &adjunct_txids);
-    let adjunct_a = autonome_a.strip();
-    let adjunct_b = autonome_b.strip();
+    let adjunct_a = compressed(wallet, &autonome_a).strip();
+    let adjunct_b = compressed(wallet, &autonome_b).strip();
     verify_on(app, rng, &zero, innocent.clone(), &[&adjunct_a, &adjunct_b]).unwrap();
 
     let first = epoch1.first_block();
@@ -1687,14 +1726,11 @@ fn bundle_lift_over_an_aggregate() {
     assert_eq!(lifted.adjuncts(), &adjunct_txids);
 
     let published = publication(&zero, lifted.compress(rng, app).unwrap());
-    let decoded =
-        Bundle::<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>>::try_from(
-            round_trip_block(
-                &TachyonBundle::from(published),
-                bundle::StateByte::Aggregated,
-            ),
-        )
-        .unwrap();
+    let decoded = Bundle::<Aggregate>::try_from(round_trip_block(
+        &TachyonBundle::from(published),
+        bundle::StateByte::Aggregated,
+    ))
+    .unwrap();
     assert_eq!(decoded.stamp.adjuncts, adjunct_txids);
     decoded
         .verify(app, &sighash, &[&adjunct_a, &adjunct_b])

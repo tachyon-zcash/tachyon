@@ -9,10 +9,7 @@ use ragu::{
     },
 };
 
-use super::{
-    Stamp,
-    proof::{HEADER_SIZE, transaction::Transaction},
-};
+use super::proof::{HEADER_SIZE, transaction::Transaction};
 use crate::{
     ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit,
     pasta::{EpAffine, EqAffine, Fp},
@@ -36,7 +33,7 @@ where
     app.verify_compressed(&proof.clone().carry::<Transaction>((bridge, anchor)))
 }
 
-impl Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {
+impl super::Aggregate {
     /// Checks both transaction commitments and verifies the aggregator frame.
     ///
     /// # Errors

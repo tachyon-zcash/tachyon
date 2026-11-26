@@ -181,7 +181,8 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
     })
 }
 
-/// `hStampTachyon` for a stamp.
+/// `hStampTachyon` for an aggregate. An autonome uses [`stamp_proof_digest`]
+/// directly.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
@@ -191,7 +192,8 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
 /// $$
 ///
 /// Adjunct txids are hashed in the order given, without a count. The list is
-/// empty for an autonome. A stripped stamp instead uses [`STAMP_DIGEST_EMPTY`].
+/// empty for an aggregate covering only its host. A stripped stamp instead uses
+/// [`STAMP_DIGEST_EMPTY`].
 #[must_use]
 pub fn stamp_digest<'txid>(
     adjuncts: impl IntoIterator<Item = &'txid [u8; 32]>,

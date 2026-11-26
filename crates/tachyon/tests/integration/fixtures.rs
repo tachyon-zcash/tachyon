@@ -15,6 +15,14 @@ pub mod pool;
 pub mod qr;
 pub mod wallet;
 
+/// The fields before the adjunct list or frame in a stamp trailer.
+pub(crate) fn trailer_prefix<P, A>(stamp: &stamp::Stamp<P, A>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    stamp.anchor.write(&mut bytes).unwrap();
+    stamp.tachygram_set.write(&mut bytes).unwrap();
+    bytes
+}
+
 /// Applications that are not currently leased.
 static APPLICATIONS: Mutex<Vec<Box<App<'static>>>> = Mutex::new(Vec::new());
 

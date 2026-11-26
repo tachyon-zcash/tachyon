@@ -25,7 +25,9 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | Action descriptors | `Tachyon-Actions` |
 | Memo payload | `Tachyon-Memo` |
 | `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set commitment | `Tachyon-Proof` |
-| `hStampTachyon`, the stamp | `Tachyon-Stamp` |
+| `hStampTachyon` for an aggregate (adjunct txids followed by `hStampProofTachyon`) or a stripped bundle (empty input) | `Tachyon-Stamp` |
+
+An autonome uses `hStampProofTachyon` directly as `hStampTachyon`, under `Tachyon-Proof`. A transaction with no Tachyon bundle has no stamp digest.
 
 ## BLAKE2b-512
 
