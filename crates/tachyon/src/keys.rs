@@ -203,13 +203,21 @@ mod note {
         /// # Panics
         ///
         /// Panics if `ak` is the identity, which has no affine coordinates.
+        /// A [`SpendValidatingKey`] derives from a spending key, which
+        /// excludes $\mathsf{ask} = 0$, so this is unreachable outside this
+        /// crate.
         #[must_use]
         pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
             let ak_bytes: [u8; 32] = ak.0.into();
-            #[expect(clippy::expect_used, reason = "a validating key is a curve point")]
-            let point =
-                EpAffine::from_bytes(ak_bytes).expect("ak bytes should be a valid curve point");
-            Self(poseidon::payment_key(point, nk.0))
+            #[expect(
+                clippy::expect_used,
+                reason = "a validating key derives from a spending key, whose ask is nonzero, \
+                          so it is a curve point other than the identity"
+            )]
+            let (ak_x, ak_y) = EpAffine::from_bytes(ak_bytes)
+                .and_then(|point| point.coordinates())
+                .expect("ak must be a curve point other than the identity");
+            Self(poseidon::payment_key(ak_x, ak_y, nk.0))
         }
     }
 }
