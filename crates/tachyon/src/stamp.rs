@@ -22,7 +22,7 @@ use alloc::{
 use core::error;
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
+use derive_more::{Debug, Display, Error};
 use proof::{
     App, output,
     transaction::{
@@ -54,23 +54,22 @@ use crate::{
     value, witness,
 };
 
-/// An empty stamp whose proof is carried by
-/// an aggregate whose [`ProofStamp::adjuncts`] lists the txid of this bundle's
-/// transaction.
-#[derive(Clone, Debug, PartialEq, TotalEq)]
-pub struct StrippedStamp;
-
 mod stamp_sealed {
     pub trait Sealed {}
-    impl<P: super::Proof> Sealed for super::ProofStamp<P> {}
-    impl Sealed for super::StrippedStamp {}
+    impl Sealed for super::Stamp<super::Compressed> {}
+    impl Sealed for () {}
 }
 
-/// Bundle states that carry a stamp: [`ProofStamp`] or [`StrippedStamp`].
+/// Consensus wire states of a bundle's stamp.
+///
+/// These are a [`Stamp`] with a [`Compressed`] proof, and `()` once stripped.
+/// A stripped bundle's proof is carried by an aggregate whose
+/// [`Stamp::adjuncts`] lists its transaction's txid. A [`Stamp`] with an
+/// [`Uncompressed`] proof is not a wire state.
 pub trait StampState: stamp_sealed::Sealed {
     /// A stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
     ///
-    /// A [`StrippedStamp`] hashes an empty input.
+    /// A stripped stamp hashes an empty input.
     fn stamp_digest(&self) -> [u8; 32];
 
     /// The `tachyonBundleState` wire byte for this state.
@@ -98,17 +97,17 @@ pub trait StampState: stamp_sealed::Sealed {
         Self: Sized;
 }
 
-impl StampState for StrippedStamp {
+impl StampState for () {
     fn stamp_digest(&self) -> [u8; 32] {
         *blake2b::STAMP_DIGEST_EMPTY
     }
 
     fn state_byte() -> StateByte {
-        StateByte::StrippedStamp
+        StateByte::Stripped
     }
 
     fn read<R: Read>(_reader: &mut R) -> io::Result<Self> {
-        Ok(Self)
+        Ok(())
     }
 
     fn write<W: Write>(&self, _writer: &mut W) -> io::Result<()> {
@@ -122,7 +121,7 @@ mod sealed {
     impl Sealed for super::Compressed {}
 }
 
-/// The Ragu proof a [`ProofStamp`] carries: [`Uncompressed`] or [`Compressed`].
+/// The Ragu proof a [`Stamp`] carries: [`Uncompressed`] or [`Compressed`].
 pub trait Proof: sealed::Sealed {
     /// The proof-encoding transport bound for this application.
     fn encoded_len() -> usize;
@@ -220,7 +219,7 @@ impl Proof for Compressed {
     }
 }
 
-impl<P: Proof> StampState for ProofStamp<P> {
+impl StampState for Stamp<Compressed> {
     fn stamp_digest(&self) -> [u8; 32] {
         #[expect(
             clippy::expect_used,
@@ -239,7 +238,7 @@ impl<P: Proof> StampState for ProofStamp<P> {
     }
 
     fn state_byte() -> StateByte {
-        StateByte::ProofStamp
+        StateByte::Stamped
     }
 
     fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
@@ -251,7 +250,7 @@ impl<P: Proof> StampState for ProofStamp<P> {
     }
 }
 
-impl<P: Proof> ProofStamp<P> {
+impl<P: Proof> Stamp<P> {
     /// Read the stamp trailer from the consensus wire format.
     /// The adjunct list and the proof blob each have a
     /// compactSize prefix. The proof is bounded by the proof type's encoded
@@ -351,7 +350,7 @@ impl<P: Proof> ProofStamp<P> {
     }
 }
 
-/// Everything needed to produce a [`ProofStamp`].
+/// Everything needed to produce a [`Stamp`].
 ///
 /// The statement includes each action's descriptor and tachygram pair, the fee
 /// descriptor, and the `anchor`. The planned witnesses are each action's
@@ -387,12 +386,7 @@ impl Plan {
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
-        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
-        let fee_change_note = Note {
-            value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
-                .expect("fee should not exceed max fee"),
-            ..max_fee_note
-        };
+        let fee_change_note = max_fee_note.fee_change(fee);
         Self {
             spends,
             outputs,
@@ -403,22 +397,22 @@ impl Plan {
         }
     }
 
-    /// Prove a single [`ProofStamp`] for this plan.
+    /// Prove a single [`Stamp`] for this plan.
     ///
-    /// Returns the proof stamp, a descriptor-keyed map of tachygram pairs,
-    /// the fee change, and the fee. Each pair has the smaller tachygram first.
+    /// Returns the stamp and a descriptor-keyed map of tachygram pairs. Each
+    /// pair has the smaller tachygram first.
     /// Successful construction does not guarantee that the stamp verifies.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
-    /// [`ProofStamp::prove_spend`] proves the action at the spendable's
+    /// [`Stamp::prove_spend`] proves the action at the spendable's
     /// anchor. If that anchor differs from the plan's anchor, the spend comes
     /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
     /// polynomials. [`ActionLift`] moves the spend's actions along each span in
     /// order. The first span must contain the spendable's anchor, each later
     /// span must contain the previous span's `anchor_end`, and the last span
     /// must end at the plan's anchor. For each **output**,
-    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
+    /// [`Stamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// The planned actions are recursively merged via [`ActionMerge`] into a
     /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
@@ -456,10 +450,8 @@ impl Plan {
         )>,
     ) -> Result<
         (
-            ProofStamp<Uncompressed>,
+            Stamp<Uncompressed>,
             BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
-            Tachygram,
-            value::Positive,
         ),
         ProveError,
     > {
@@ -505,7 +497,7 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof, pair) =
-                ProofStamp::prove_spend(rng, app, theta, bind_pcd, *pak)
+                Stamp::prove_spend(rng, app, theta, bind_pcd, *pak)
                     .map_err(ProveError::ProofFailed)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>(spend_anchor);
             for span in spans {
@@ -527,7 +519,7 @@ impl Plan {
 
         for (desc, theta, note, rcv) in self.outputs {
             let (digests, tachygrams, anchor, proof, pair) =
-                ProofStamp::prove_output(rng, app, theta, rcv, note, self.anchor)
+                Stamp::prove_output(rng, app, theta, rcv, note, self.anchor)
                     .map_err(ProveError::ProofFailed)?;
             entries.push((
                 BTreeMap::from([(desc, pair)]),
@@ -621,15 +613,13 @@ impl Plan {
             .collect::<TachygramSetPoly>()
             .commit();
         Ok((
-            ProofStamp {
+            Stamp {
                 anchor,
                 tachygram_set,
                 adjuncts: BTreeSet::new(),
                 proof: Box::new(proof),
             },
             descriptors,
-            change,
-            self.fee,
         ))
     }
 }
@@ -671,7 +661,7 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// that made them and their instances, and its own opening points and values.
 /// For [`spend::SpendBind`] that is the spent note's opening and master key.
 #[derive(Clone, Debug)]
-pub struct ProofStamp<P: Proof> {
+pub struct Stamp<P: Proof> {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
@@ -690,7 +680,7 @@ pub struct ProofStamp<P: Proof> {
     pub proof: Box<P>,
 }
 
-impl ProofStamp<Uncompressed> {
+impl Stamp<Uncompressed> {
     /// Proves a single output action, returning `(digests, tachygrams,
     /// anchor, proof, pair)`. The proof is not rerandomized.
     ///
@@ -1225,11 +1215,11 @@ impl ProofStamp<Uncompressed> {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-    ) -> Result<ProofStamp<Compressed>, ragu::Error> {
+    ) -> Result<Stamp<Compressed>, ragu::Error> {
         let bridge = bridge_hash(self.tachygram_set.into()).into();
         let pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
         let (compressed, _) = app.compress(&pcd, rng)?.into_parts();
-        Ok(ProofStamp {
+        Ok(Stamp {
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
             adjuncts: self.adjuncts,
@@ -1238,7 +1228,7 @@ impl ProofStamp<Uncompressed> {
     }
 }
 
-impl<P: Proof> ProofStamp<P> {
+impl<P: Proof> Stamp<P> {
     /// Reconstruct the PCD header and verify the proof.
     ///
     /// # Soundness

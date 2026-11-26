@@ -185,7 +185,7 @@ Each path consumes the same action plans but produces a different component of t
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [`FeeFuse`](./fee.md#fee-steps) applies the fee to produce a stamp. A zero-action plan uses `FeeSeed`.
 
-Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the proof stamp, a descriptor-keyed pair map, the change commitment, and the chosen fee. `bundle::Plan::assemble` combines both outputs with the plan, checking that their descriptor keys match. The paths can run in either order or concurrently.
+Authorizing and binding produce the descriptor-keyed action signatures and the binding signature. Proving returns the stamp and a descriptor-keyed pair map. `bundle::Plan::assemble` combines both outputs and the chosen fee with the plan, checking that their descriptor keys match, and derives the change commitment from the max fee note and the fee. The paths can run in either order or concurrently.
 
 ```mermaid
 flowchart LR
@@ -241,10 +241,10 @@ flowchart LR
             fee_seed((FeeSeed))
         end
     end
-    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- proved_stamp["ProofStamp"]
+    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- proved_stamp["Stamp"]
     leaf -.- pairs["descriptor-keyed pair map"]
     zero_actions["0 actions"] -.- fee_seed -.- proved_stamp
-    max_fee_note -.- fee_fuse & fee_seed -.- proved_change["change commitment"]
+    max_fee_note -.- fee_fuse & fee_seed
     chosen_fee["caller-chosen fee"] -.- fee_fuse
     selected_anchor["selected anchor"] -.- fee_seed
 
@@ -270,7 +270,7 @@ flowchart LR
     signatures["action and binding signatures"] --> join{"assemble bundle"}
     pczt --> join
     pairs --> join
-    proved_stamp & chosen_fee & proved_change --> join
+    proved_stamp & chosen_fee --> join
     join --> action & binding_sig & stamp & fee & cm_change
 
     other1 --> other2
@@ -364,7 +364,7 @@ par Authorizing
             note over User: every planned descriptor (cv, rk) has exactly one signature
             note over User: bsk = Sum rcv_i + r
             note over User: binding_sig = Sign(bsk, sighash)
-            note over User: signatures (descriptor to signature map, binding_sig)
+            note over User: Signatures { actions: descriptor to signature map, binding }
         end
     end
 
@@ -444,14 +444,15 @@ and Proving
         note over Stamper: adjuncts = empty
         destroy Stamper
         note over Stamper: each pair smaller tachygram first, pairs in descriptor order
-        Stamper ->> User: (ProofStamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map, cm_change, fee)
+        Stamper ->> User: (Stamp { anchor, tachygram_set, adjuncts, proof }, descriptor to pair map)
     end
 end
 
 critical stamp
-    note over User: bundle::Plan::assemble(signatures, proof)
+    note over User: bundle::Plan::assemble(signatures, stamp, pairs, fee)
     note over User: panic if the plan, signature, and pair descriptor keys differ
     note over User: join maps in descriptor order into actions[] (descriptor, signature, tachygrams)
+    note over User: cm_change = Poseidon_CmDerive(rcm, pk, feemax - fee, psi)
     note over User: attach fee, cm_change, and stamp; key matching alone does not verify the proof
 end
 break

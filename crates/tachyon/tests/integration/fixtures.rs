@@ -7,7 +7,7 @@ use std::{sync::Mutex, thread};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     bundle::Bundle,
-    stamp::{self, StampState, proof::App},
+    stamp::{self, proof::App},
 };
 
 pub mod pool;
@@ -105,7 +105,7 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-pub fn mock_txid<S: StampState + 'static>(bundle: &Bundle<S>) -> [u8; 32] {
+pub fn mock_txid<S: ?Sized>(bundle: &Bundle<S>) -> [u8; 32] {
     let hash = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend txid")

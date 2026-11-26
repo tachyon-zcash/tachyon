@@ -14,7 +14,7 @@ use ragu::{WalletRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetPoly,
+    ActionDigest, ActionSetPoly, BlockHeight, CompactSize, Stamp, Tachygram, TachygramSetPoly,
     action, bundle,
     entropy::ActionEntropy,
     fee,
@@ -41,10 +41,7 @@ use crate::fixtures::{
 fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
     app: &App<'_>,
-    (stamp_a, stamp_b): (
-        &ProofStamp<stamp::Uncompressed>,
-        &ProofStamp<stamp::Uncompressed>,
-    ),
+    (stamp_a, stamp_b): (&Stamp<stamp::Uncompressed>, &Stamp<stamp::Uncompressed>),
     (digests, tachygrams): (&[ActionDigest], &[Tachygram]),
 ) -> ragu::Pcd<Pasta, WalletRank, Transaction> {
     let left_pcd = stamp_a.proof.clone().carry::<Transaction>((
@@ -220,6 +217,13 @@ fn plan_prove_lifts_a_spend_along_spans() {
         max_fee_note,
         value::Positive::ZERO,
     );
+    let fee_digest = fee::Descriptor {
+        cv_feemax: max_fee_note.cv_feemax(),
+        v_fee: value::Positive::ZERO,
+    }
+    .digest(Tachygram::from(
+        max_fee_note.fee_change(value::Positive::ZERO).commitment(),
+    ));
 
     for spans in [
         vec![pool.anchor_span(app, cm_height..=plan_height)],
@@ -232,7 +236,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
             pool.anchor_span(app, middle..=plan_height),
         ],
     ] {
-        let (stamp, pairs, cm_change, v_fee) = plan
+        let (stamp, pairs) = plan
             .clone()
             .prove(
                 rng,
@@ -245,11 +249,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         let digests: Vec<ActionDigest> = pairs
             .iter()
             .map(|(desc, &pair)| desc.digest(pair))
-            .chain([fee::Descriptor {
-                cv_feemax: max_fee_note.cv_feemax(),
-                v_fee,
-            }
-            .digest(cm_change)])
+            .chain([fee_digest])
             .collect();
         assert_eq!(stamp.anchor, plan_anchor);
         assert!(stamp.verify_proof(rng, app, digests).unwrap());
@@ -272,17 +272,13 @@ fn plan_prove_lifts_a_spend_along_spans() {
         pool.anchor_span(app, cm_height..=cm_height),
         pool.anchor_span(app, plan_height..=plan_height),
     ];
-    let (forged, pairs, cm_change, v_fee) = plan
+    let (forged, pairs) = plan
         .prove(rng, app, &user.pak, vec![(secret, spendable, gapped)])
         .unwrap();
     let digests: Vec<ActionDigest> = pairs
         .iter()
         .map(|(desc, &pair)| desc.digest(pair))
-        .chain([fee::Descriptor {
-            cv_feemax: max_fee_note.cv_feemax(),
-            v_fee,
-        }
-        .digest(cm_change)])
+        .chain([fee_digest])
         .collect();
     assert!(!forged.verify_proof(rng, app, digests).unwrap());
 }
@@ -305,16 +301,16 @@ fn overlapping_stamps_cannot_aggregate() {
     let output_a = alice_bundle.stamp;
     let plan_b = output_plan(rng, alice_note);
     let max_fee_note = wallet.random_note(0);
-    let (output_b, desc_b, change_b, v_fee) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
+    let (output_b, desc_b) = bundle::Plan::new(vec![], vec![plan_b], max_fee_note)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![])
         .unwrap();
     let fees_b = BTreeMap::from([(
         fee::Descriptor {
             cv_feemax: max_fee_note.cv_feemax(),
-            v_fee,
+            v_fee: value::Positive::ZERO,
         },
-        change_b,
+        Tachygram::from(max_fee_note.fee_change(value::Positive::ZERO).commitment()),
     )]);
     let (_, spend_a) = spend(app);
     let note = PoolSim::shared_note(1000);
@@ -333,7 +329,7 @@ fn overlapping_stamps_cannot_aggregate() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let proof = plan
+    let (stamp_b, pairs_b) = plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(
             rng,
@@ -342,7 +338,7 @@ fn overlapping_stamps_cannot_aggregate() {
             vec![(wallet.note_secret(app, note), spendable, vec![])],
         )
         .unwrap();
-    let spend_b = plan.assemble(signatures, proof);
+    let spend_b = plan.assemble(signatures, stamp_b, pairs_b, value::Positive::ZERO);
     let fixture_pairs = spend_a
         .actions
         .iter()
@@ -400,7 +396,7 @@ fn overlapping_stamps_cannot_aggregate() {
 
         let forged =
             forge_overlapping_merge(rng, app, (&left, &right), (&digests, &merged_tachygrams));
-        let stamp = ProofStamp {
+        let stamp = Stamp {
             anchor: forged.data().1,
             tachygram_set: merged_tachygrams
                 .iter()
@@ -479,7 +475,7 @@ fn read_rejects_wrong_proof_size() {
             .unwrap();
         bytes.extend_from_slice(&proof);
         let mut reader = bytes.as_slice();
-        let err = ProofStamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
+        let err = Stamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(reader.len(), proof.len() - compressed_size);
     }
@@ -499,7 +495,7 @@ fn read_rejects_wrong_proof_size() {
             .unwrap()
             .write(&mut bytes)
             .unwrap();
-        let err = ProofStamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
+        let err = Stamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(err.to_string(), "proof size exceeds transport bound");
     }
@@ -515,7 +511,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
-    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*buf).unwrap();
+    let decoded = Stamp::<stamp::Uncompressed>::read(&*buf).unwrap();
     assert_eq!(decoded.adjuncts, stamp.adjuncts);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
@@ -525,7 +521,7 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
             .unwrap()
     );
 
-    let forged = ProofStamp {
+    let forged = Stamp {
         tachygram_set: TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
         ..stamp
     };
@@ -562,7 +558,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
 
     let mut bytes = Vec::new();
     stamp.write(&mut bytes).unwrap();
-    let decoded = ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
+    let decoded = Stamp::<stamp::Uncompressed>::read(&*bytes).unwrap();
     let lifted_decoded = decoded
         .lift(rng, app, &descriptors, &fees, vec![span.clone()])
         .unwrap();
@@ -604,7 +600,7 @@ fn empty_lift_does_not_digest_invalid_coverage() {
         .clone()
         .lift(rng, app, &descriptors, &fees, vec![])
         .unwrap();
-    bundle.lift(rng, app, &[invalid.as_dyn()], vec![]).unwrap();
+    bundle.lift(rng, app, &[&invalid], vec![]).unwrap();
 }
 
 #[test]

@@ -33,7 +33,7 @@ classDiagram
         sig: action::Signature
         tachygrams: Tachygram[2]
     }
-    class ProofStamp {
+    class Stamp {
         anchor: Anchor
         tachygram_set: TachygramSetCommit
         proof: stamp::Proof
@@ -42,8 +42,8 @@ classDiagram
         compress()
     }
     Bundle "1" *-- "0..*" Action : actions
-    Bundle "1" *-- "0..1" ProofStamp : stamp
-    ProofStamp --> "0..*" Bundle : adjuncts
+    Bundle "1" *-- "0..1" Stamp : stamp
+    Stamp --> "0..*" Bundle : adjuncts
 ```
 
 A stamp's adjuncts are the other bundles it covers, listed by transaction id.

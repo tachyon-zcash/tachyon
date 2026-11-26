@@ -181,7 +181,7 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
     })
 }
 
-/// `hStampTachyon` for a proof stamp.
+/// `hStampTachyon` for a stamp.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
