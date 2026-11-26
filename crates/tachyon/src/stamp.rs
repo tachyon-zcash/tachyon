@@ -26,6 +26,7 @@ use core::error;
 pub use aggregator::{AggregatorProof, MergeError, UnmergeError};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Error};
+use polynomials::AggregatorRank;
 use proof::{
     App, HEADER_SIZE, output,
     transaction::{
@@ -35,6 +36,7 @@ use proof::{
 };
 use ragu::{
     Rank as _, WalletRank,
+    circuits::polynomials,
     pasta::Pasta,
     pcd::{
         profile::{Aggregator, Profiled},
@@ -53,7 +55,7 @@ use crate::{
     entropy::ActionEntropy,
     fee,
     keys::{ProofAuthorizingKey, private},
-    pasta::{EpAffine, EqAffine, Fp},
+    pasta::{EpAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
     serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
@@ -62,7 +64,12 @@ use crate::{
 
 mod stamp_sealed {
     pub trait Sealed {}
+    use ragu::CompressedProof;
+
+    use super::{Aggregator, HEADER_SIZE, Pasta, Profiled};
+
     impl Sealed for super::Stamp<super::Compressed> {}
+    impl Sealed for super::Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {}
     impl Sealed for () {}
 }
 
@@ -132,9 +139,11 @@ mod sealed {
     impl Sealed for CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>> {}
 }
 
-/// A wallet-profile Ragu proof a [`Stamp`] carries: [`Uncompressed`] or
-/// [`Compressed`]. An aggregator's published stamp instead carries Ragu's
-/// compressed proof under the aggregator profile.
+/// The Ragu proof a [`Stamp`] carries.
+///
+/// A wallet's proof is [`Uncompressed`] or [`Compressed`], and an aggregator's
+/// is Ragu's compressed proof under the aggregator profile. Each verifies under
+/// its own application through its `Stamp::verify_proof`.
 pub trait Proof: sealed::Sealed {
     /// The proof-encoding transport bound for this application.
     fn encoded_len() -> usize;
@@ -155,19 +164,6 @@ pub trait Proof: sealed::Sealed {
     fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>
     where
         Self: Sized;
-
-    /// Verify both output sets and the stamp's anchor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ragu::Error`] if the proof system fails. A disproved
-    /// proof is reported as `Ok(false)`, not an error.
-    fn verify<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu::Error>;
 }
 
 impl Proof for Uncompressed {
@@ -181,26 +177,6 @@ impl Proof for Uncompressed {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
         Self::from_bytes(bytes)
-    }
-
-    fn verify<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu::Error> {
-        let bridge = bridge_hash(header.1.into()).into();
-        let pcd = self.clone().carry::<Transaction>((bridge, header.2));
-        let [action_slot, tachygram_slot] = pcd.commitments();
-        if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
-            return Ok(false);
-        }
-        let compressed = match app.compress(&pcd, rng) {
-            Ok(compressed) => compressed,
-            Err(ragu::Error::InvalidWitness(_)) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        app.verify_compressed(&compressed)
     }
 }
 
@@ -216,19 +192,61 @@ impl Proof for Compressed {
     fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
         Self::from_bytes(bytes)
     }
+}
 
-    fn verify<RNG: CryptoRng>(
-        &self,
-        _rng: &mut RNG,
-        app: &App<'_>,
-        header: (ActionSetCommit, TachygramSetCommit, Anchor),
-    ) -> Result<bool, ragu::Error> {
-        publication::verified_transaction(app, self, header)
+impl Proof for ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>> {
+    fn encoded_len() -> usize {
+        Self::encoded_len::<AggregatorRank>()
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
+        Self::from_bytes(bytes)
     }
 }
 
 impl StampState for Stamp<Compressed> {
     fn stamp_digest(&self) -> [u8; 32] {
+        self.digest()
+    }
+
+    fn state_byte() -> StateByte {
+        StateByte::Stamped
+    }
+
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        Self::read(reader)
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.write(writer)
+    }
+}
+
+impl StampState for Stamp<ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {
+    fn stamp_digest(&self) -> [u8; 32] {
+        self.digest()
+    }
+
+    fn state_byte() -> StateByte {
+        StateByte::Aggregated
+    }
+
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        Self::read(reader)
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.write(writer)
+    }
+}
+
+impl<P: Proof> Stamp<P> {
+    /// The stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
+    fn digest(&self) -> [u8; 32] {
         #[expect(
             clippy::expect_used,
             reason = "a proved or decoded stamp proof is encodable"
@@ -245,24 +263,9 @@ impl StampState for Stamp<Compressed> {
         )
     }
 
-    fn state_byte() -> StateByte {
-        StateByte::Stamped
-    }
-
-    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        Self::read(reader)
-    }
-
-    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.write(writer)
-    }
-}
-
-impl<P: Proof> Stamp<P> {
     /// Read the stamp trailer from the consensus wire format.
     /// The adjunct list and the proof blob each have a
-    /// compactSize prefix. The proof is bounded by the proof type's encoded
-    /// length.
+    /// compactSize prefix. The proof must have the proof type's encoded length.
     ///
     /// # Errors
     ///
@@ -303,10 +306,10 @@ impl<P: Proof> Stamp<P> {
         let proof = {
             let proof_len = usize::try_from(read_compactsize(&mut reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            if proof_len > P::encoded_len() {
+            if proof_len != P::encoded_len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "proof size exceeds transport bound",
+                    "unexpected proof length",
                 ));
             }
             let mut bytes = vec![0u8; proof_len];
@@ -345,6 +348,12 @@ impl<P: Proof> Stamp<P> {
             .proof
             .to_bytes()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        if proof.len() != P::encoded_len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected proof length",
+            ));
+        }
         write_compactsize(
             &mut writer,
             u64::try_from(proof.len()).map_err(|_err| {
@@ -658,9 +667,8 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// rerandomizes one and publishes it as a [`Compressed`] proof. An aggregator
 /// decompresses a compressed wallet bundle into an [`AggregatorProof`], merges
 /// and unmerges there, and compresses the result into Ragu's compressed proof
-/// under the aggregator profile.
-/// The resulting aggregator stamp can be verified but is not yet a wire bundle
-/// and cannot be decompressed.
+/// under the aggregator profile. Both profiles publish compressed proofs on the
+/// wire; only wallet publications can be decompressed.
 ///
 /// Verify every received stamp before extending it. Draw randomness for every
 /// proving call from an unpredictable source. A full proof holds in the clear
@@ -1256,8 +1264,8 @@ impl Stamp<Uncompressed> {
     }
 }
 
-impl<P: Proof> Stamp<P> {
-    /// Reconstruct the PCD header and verify the proof.
+impl Stamp<Uncompressed> {
+    /// Reconstruct the PCD header and verify the full proof by compressing it.
     ///
     /// # Soundness
     ///
@@ -1282,12 +1290,60 @@ impl<P: Proof> Stamp<P> {
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
     ) -> Result<bool, ragu::Error> {
-        let action_set = ActionSetPoly::from_iter(action_digests);
+        let Some(actions) = action_commit(action_digests) else {
+            return Ok(false);
+        };
+        let bridge = bridge_hash(self.tachygram_set.into()).into();
+        let pcd = self
+            .proof
+            .as_ref()
+            .clone()
+            .carry::<Transaction>((bridge, self.anchor));
+        if pcd.commitments() != [actions.into(), self.tachygram_set.into()] {
+            return Ok(false);
+        }
+        let compressed = match app.compress(&pcd, rng) {
+            Ok(compressed) => compressed,
+            Err(ragu::Error::InvalidWitness(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        app.verify_compressed(&compressed)
+    }
+}
 
-        self.proof.verify(
-            rng,
+impl Stamp<Compressed> {
+    /// Reconstruct the PCD header and verify the compressed wallet proof.
+    ///
+    /// # Soundness
+    ///
+    /// As for the [`Uncompressed`] proof's `verify_proof`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
+    pub fn verify_proof(
+        &self,
+        app: &App<'_>,
+        action_digests: impl IntoIterator<Item = ActionDigest>,
+    ) -> Result<bool, ragu::Error> {
+        let Some(actions) = action_commit(action_digests) else {
+            return Ok(false);
+        };
+        publication::verified_transaction(
             app,
-            (action_set.commit(), self.tachygram_set, self.anchor),
+            &self.proof,
+            (actions, self.tachygram_set, self.anchor),
         )
     }
+}
+
+/// The accumulator of `action_digests`, or `None` for more digests than one
+/// set polynomial holds: those match no commitment, so every `verify_proof`
+/// disproves them without building their polynomial.
+fn action_commit(
+    action_digests: impl IntoIterator<Item = ActionDigest>,
+) -> Option<ActionSetCommit> {
+    let digests: Vec<ActionDigest> = action_digests.into_iter().collect();
+    (digests.len() < WalletRank::num_coeffs()).then(|| ActionSetPoly::from_iter(digests).commit())
 }

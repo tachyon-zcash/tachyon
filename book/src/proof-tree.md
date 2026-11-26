@@ -165,7 +165,7 @@ Under **recursion**, joint provers of a verified PCD know its step tree and sati
 5. **Block coverage.** Under the [aggregation block rules](./aggregation.md#block-rules), every named bundle is stripped and in the same block, and exactly one stamp names each stripped bundle. Each transaction appears in at most one block on the accepted chain.
 6. **Signatures and balance.** Every bundle, stripped or not, carries an action signature under each action's randomized key and a [binding signature](./authorization.md#binding-signature) over its value commitments and value balance. Consensus applies each bundle's [value balance and fee](./fee.md#balance) once.
 
-For rule 2, the caller resolves the adjunct list by `txid`. `Bundle::verify` checks coverage against the supplied bodies, verifies the stamp proof against the resulting claims, and checks the carrying bundle's own signatures under rule 6. It reads neither the adjunct list nor chain history.
+For rule 2, the caller resolves the adjunct list by `txid`. `Bundle::verify` checks coverage against the supplied bodies, verifies the stamp proof against the resulting claims, and checks the carrying bundle's own signatures under rule 6. The wire state byte selects the proof profile: `0x01` for a wallet publication or `0x03` for an aggregator publication. Verification reads neither the adjunct list nor chain history.
 Nodes enforce rules 1, 3, 4 and 5 against chain history.
 
 ### A canonical anchor fixes its history

@@ -12,10 +12,10 @@ use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, bundle,
     constants::MAX_MONEY,
-    note,
+    fee, note,
     pasta::Fp,
     stamp::{
-        self, Proof as _, Stamp,
+        self, Stamp,
         proof::{
             App, output,
             transaction::{Actions, FeeFuse, FeeSeed, OutputAction, Transaction},
@@ -586,7 +586,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     bundle.write(&mut bytes).unwrap();
     let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    decoded.verify(rng, app, &sighash, &[]).unwrap();
+    decoded.verify(app, &sighash, &[]).unwrap();
 }
 
 #[test]
@@ -723,14 +723,41 @@ fn fee_seed_binds_its_singletons_and_header() {
         let bytes = seed_pcd.proof().to_bytes().unwrap();
         stamp::Uncompressed::from_bytes(&bytes).unwrap()
     };
-    for (header, expected) in [
-        ((valid.2.commit(), valid.3.commit(), anchor), true),
-        ((other.2.commit(), valid.3.commit(), anchor), false),
-        ((valid.2.commit(), other.3.commit(), anchor), false),
-        ((valid.2.commit(), valid.3.commit(), other_anchor), false),
+    // The fee seed's one action digest, as `witness::fee_seed` derives it.
+    let fee_digest = |note: Note| {
+        let change = Tachygram::from(
+            Note {
+                value: value::Positive::ZERO,
+                ..note
+            }
+            .commitment(),
+        );
+        fee::Descriptor {
+            cv_feemax: note.cv_feemax(),
+            v_fee: value::Positive::ZERO,
+        }
+        .digest(change)
+    };
+    for (digest, tachygram_set, stamp_anchor, expected) in [
+        (fee_digest(valid.0), valid.3.commit(), anchor, true),
+        (fee_digest(other.0), valid.3.commit(), anchor, false),
+        (fee_digest(valid.0), other.3.commit(), anchor, false),
+        (fee_digest(valid.0), valid.3.commit(), other_anchor, false),
     ] {
-        assert_eq!(proof.verify(rng, app, header).unwrap(), expected);
-        assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
+        let full = Stamp {
+            anchor: stamp_anchor,
+            tachygram_set,
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(proof.clone()),
+        };
+        assert_eq!(full.verify_proof(rng, app, [digest]).unwrap(), expected);
+        let published = Stamp {
+            anchor: stamp_anchor,
+            tachygram_set,
+            adjuncts: BTreeSet::new(),
+            proof: Box::new(compressed.clone()),
+        };
+        assert_eq!(published.verify_proof(app, [digest]).unwrap(), expected);
     }
     let pcd = seed_pcd.proof().clone().carry::<Transaction>((
         app.bridge_hash(valid.3.commit().into()).unwrap().into(),

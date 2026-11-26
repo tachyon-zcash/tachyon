@@ -1,6 +1,6 @@
 use polynomials::AggregatorRank;
 use ragu::{
-    AcceleratedProver, Application, CompressedProof, Rank, WalletRank,
+    AcceleratedProver, Application, CompressedProof, Rank,
     circuits::polynomials,
     pasta::Pasta,
     pcd::{
@@ -14,7 +14,7 @@ use super::{
     proof::{HEADER_SIZE, transaction::Transaction},
 };
 use crate::{
-    ActionDigest, ActionSetCommit, ActionSetPoly, Anchor, TachygramSetCommit,
+    ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit,
     pasta::{EpAffine, EqAffine, Fp},
 };
 
@@ -53,14 +53,9 @@ impl Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {
         >,
         digests: &[ActionDigest],
     ) -> ragu::Result<bool> {
-        if digests.len() >= WalletRank::num_coeffs() {
+        let Some(actions) = super::action_commit(digests.iter().copied()) else {
             return Ok(false);
-        }
-        let header = (
-            ActionSetPoly::from_iter(digests.iter().copied()).commit(),
-            self.tachygram_set,
-            self.anchor,
-        );
-        verified_transaction(app, &self.proof, header)
+        };
+        verified_transaction(app, &self.proof, (actions, self.tachygram_set, self.anchor))
     }
 }

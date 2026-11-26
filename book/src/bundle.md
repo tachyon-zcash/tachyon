@@ -174,17 +174,20 @@ See [Aggregation](./aggregation.md) for transaction categories, block layout, an
 
 ## Wire Format
 
-The first byte `tachyonBundleState` selects one of three bundle states:
+The first byte `tachyonBundleState` selects the bundle state and, for a proof stamp, the proof profile:
 
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped (`Stamp<Compressed>`) | bundle with tachygrams, fee, fee change, anchor, tachygram set commitment, adjunct txids, proof |
+| `0b0000_0001` | stamped (`Stamp<Compressed>`) | bundle body and stamp trailer with a compressed wallet proof |
 | `0b0000_0010` | stripped (`()`) | bundle with tachygrams, fee and fee change |
+| `0b0000_0011` | aggregated | bundle body and stamp trailer with a compressed aggregator proof |
+
+All other values are invalid. Either proof profile can cover its host alone or include adjuncts.
 
 ### Bundle body {#bundle-body}
 
-When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundle body, which is the same in both remaining states:
+For every nonzero state above, the state byte is followed by the same bundle body:
 
 | Section | Name | Format | Description |
 | --- | --- | --- | --- |
@@ -212,7 +215,7 @@ The memo is effecting data, so the transaction sighash covers it and `auth_diges
 
 ### Stamp trailer {#stamp-trailer}
 
-When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp trailer:
+For `tachyonBundleState` values `0x01` and `0x03`, the bundle body is followed by a stamp trailer:
 
 | Name | Format | Description |
 | --- | --- | --- |
@@ -235,9 +238,9 @@ Every listed transaction's bundle holds at least its fee change in the tachygram
 
 Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hStampTachyon}$](./transaction-identifiers.md) directly, followed by the proof digest. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
-The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
+The readers require `sizeProofTachyon` to match the selected profile: the wallet profile's compressed proof length for `0x01` or the aggregator profile's for `0x03`. They check the length before allocating or reading the frame.
 
-A stamped bundle carries a compressed proof in `proofTachyon`. [Lifting](./proof-tree.md#stamp-anchor), [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take stamps with uncompressed proofs. A bundle holding one has no state byte and no consensus encoding. The stamp alone uses this trailer, with the uncompressed proof, when it is stored or handed on.
+A stamped bundle carries a compressed proof in `proofTachyon`. [Lifting](./proof-tree.md#stamp-anchor) and wallet [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take stamps with uncompressed proofs. A bundle holding one has no state byte and no consensus encoding. The stamp alone uses this trailer, with the uncompressed proof's length, when it is stored or handed on.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 
