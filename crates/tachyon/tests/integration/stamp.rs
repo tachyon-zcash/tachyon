@@ -18,8 +18,8 @@ use ragu::{
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, BlockHeight, Bundle, CompactSize, Stamp, Tachygram,
-    TachygramSetPoly, VerificationError, action, bundle,
+    ActionDigest, ActionSetPoly, BlockHeight, Bundle, Stamp, Tachygram, TachygramSetPoly,
+    VerificationError, action, bundle,
     entropy::ActionEntropy,
     fee,
     stamp::{
@@ -32,14 +32,14 @@ use zcash_tachyon::{
     value, witness,
 };
 
-use super::fixtures::application;
+use super::fixtures::{application, trailer_prefix};
 use crate::fixtures::{
     aggregator::{aggregated, aggregator, imported, proves, raw_import, verify_on},
     mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
-        WalletSim, alice, alice_output_note, later_output, lifted, output_plan, random_action,
-        shared_sk, spend,
+        WalletSim, alice, alice_output_note, compressed, later_output, lifted, output_plan,
+        random_action, shared_sk, spend,
     },
 };
 
@@ -64,7 +64,7 @@ fn forge_overlapping_merge(
     let mut digests = BTreeSet::new();
     let mut tachygrams = BTreeSet::new();
     for bundle in [left, right] {
-        digests.extend(bundle.verify_covered(&[]).unwrap().0);
+        digests.extend(bundle.verify_covered().unwrap().0);
         tachygrams.extend(
             bundle
                 .actions
@@ -358,7 +358,7 @@ fn overlapping_stamps_cannot_aggregate() {
         let merged = imported(app, left)
             .merge(rng, app, imported(app, right), mock_txid(right))
             .unwrap();
-        let stripped = right.clone().strip();
+        let stripped = compressed(wallet_app, right).strip();
         assert!(
             matches!(
                 verify_on(app, rng, left, merged, &[&stripped]),
@@ -382,7 +382,7 @@ fn verify_proof_action_multiset_invariants() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, stamped) = spend(app);
 
-    let (digests, _) = stamped.verify_covered(&[]).unwrap();
+    let (digests, _) = stamped.verify_covered().unwrap();
 
     assert!(
         stamped
@@ -415,54 +415,23 @@ fn verify_proof_action_multiset_invariants() {
 }
 
 #[test]
-fn read_rejects_wrong_proof_size() {
+fn full_wallet_stamp_has_a_fixed_trailer() {
     let app = &application();
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_, alice) = alice(app);
-    let stamp = alice.stamp;
-    let compressed_size = <stamp::Compressed as stamp::Proof>::encoded_len();
-    let uncompressed_size = <stamp::Uncompressed as stamp::Proof>::encoded_len();
-
-    {
-        let proof = stamp.proof.to_bytes().unwrap();
-        let mut bytes = Vec::new();
-        stamp.write(&mut bytes).unwrap();
-        let mut prefix = Vec::new();
-        CompactSize::try_from(proof.len())
-            .unwrap()
-            .write(&mut prefix)
-            .unwrap();
-        bytes.truncate(bytes.len() - proof.len() - prefix.len());
-        CompactSize::try_from(compressed_size)
-            .unwrap()
-            .write(&mut bytes)
-            .unwrap();
-        bytes.extend_from_slice(&proof);
-        let mut reader = bytes.as_slice();
-        let err = Stamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(reader.len(), proof.len());
-    }
-
-    let compressed = stamp.compress(rng, app).unwrap();
-    {
-        let proof = compressed.proof.to_bytes().unwrap();
-        let mut bytes = Vec::new();
-        compressed.write(&mut bytes).unwrap();
-        let mut prefix = Vec::new();
-        CompactSize::try_from(proof.len())
-            .unwrap()
-            .write(&mut prefix)
-            .unwrap();
-        bytes.truncate(bytes.len() - proof.len() - prefix.len());
-        CompactSize::try_from(uncompressed_size)
-            .unwrap()
-            .write(&mut bytes)
-            .unwrap();
-        let err = Stamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(err.to_string(), "unexpected proof length");
-    }
+    let (_, body) = alice(app);
+    let mut bytes = Vec::new();
+    body.stamp.write(&mut bytes).unwrap();
+    let frame = body.stamp.proof.to_bytes().unwrap();
+    assert_eq!(
+        bytes,
+        [trailer_prefix(&body.stamp).as_slice(), &frame].concat()
+    );
+    bytes.pop();
+    assert_eq!(
+        Stamp::<stamp::Uncompressed>::read(bytes.as_slice())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::UnexpectedEof
+    );
 }
 
 #[test]
@@ -470,13 +439,12 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, alice) = alice(app);
-    let (digests, _) = alice.verify_covered(&[]).unwrap();
+    let (digests, _) = alice.verify_covered().unwrap();
     let stamp = alice.stamp;
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).unwrap();
     let decoded = Stamp::<stamp::Uncompressed>::read(&*buf).unwrap();
-    assert_eq!(decoded.adjuncts, stamp.adjuncts);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
     assert!(
@@ -500,7 +468,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
     let pool = PoolSim::shared();
     let (_, alice) = alice(app);
-    let (digests, _) = alice.verify_covered(&[]).unwrap();
+    let (digests, _) = alice.verify_covered().unwrap();
     let descriptors: BTreeMap<_, _> = alice
         .actions
         .iter()
@@ -514,7 +482,6 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let span = pool.anchor_span(app, BlockHeight(1)..=lifted_to);
     let lifted = lifted(app, &alice, pool, BlockHeight(1)..=lifted_to).stamp;
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
-    assert_eq!(lifted.adjuncts, stamp.adjuncts);
     assert_eq!(lifted.tachygram_set, stamp.tachygram_set);
     assert!(
         lifted
@@ -529,7 +496,6 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         .lift(rng, app, &descriptors, &fees, vec![span.clone()])
         .unwrap();
     assert_eq!(lifted_decoded.anchor, pool.block(lifted_to).anchor());
-    assert_eq!(lifted_decoded.adjuncts, stamp.adjuncts);
     assert!(lifted_decoded.verify_proof(rng, app, digests).unwrap());
 
     let foreign = random_action(rng).0;
@@ -550,7 +516,7 @@ fn empty_lift_does_not_digest_invalid_coverage() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = alice(app);
-    let mut invalid = bundle.clone().strip();
+    let mut invalid = bundle;
     invalid.actions[0].descriptor.cv = value::Trapdoor::ZERO.commit(value::Positive::ZERO);
     invalid.fee.cv_feemax = invalid.actions[0].descriptor.cv;
     let descriptors = invalid
@@ -561,12 +527,12 @@ fn empty_lift_does_not_digest_invalid_coverage() {
     let fees = BTreeMap::from([(invalid.fee, invalid.fee_auth)]);
 
     // Even unusable coverage maps must not be inspected for an empty lift.
-    bundle
+    invalid
         .stamp
         .clone()
         .lift(rng, app, &descriptors, &fees, vec![])
         .unwrap();
-    bundle.lift(rng, app, &[&invalid], vec![]).unwrap();
+    invalid.lift(rng, app, vec![]).unwrap();
 }
 
 #[test]
@@ -578,11 +544,11 @@ fn merge_after_lift() {
     let (_, bundle_a) = alice(wallet);
     let (_, bundle_b) = later_output(wallet);
     let digests: Vec<ActionDigest> = bundle_a
-        .verify_covered(&[])
+        .verify_covered()
         .unwrap()
         .0
         .into_iter()
-        .chain(bundle_b.verify_covered(&[]).unwrap().0)
+        .chain(bundle_b.verify_covered().unwrap().0)
         .collect();
 
     let unlifted = imported(app, &bundle_a)

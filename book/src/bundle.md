@@ -44,7 +44,7 @@ It contains:
 
 - `anchor` - a chain [anchor](./anchor.md)
 - `tachygram_set` - a commitment to the union of the covered actions' pairs and covered bundles' fee change note commitments
-- `adjuncts` - the txids of the other transactions whose bundles the proof covers, empty for an autonome
+- `adjuncts` - the txids of the other transactions whose bundles the proof covers, present only on an aggregate
 - `proof` - the recursive proof (which may be aggregated)
 
 The proof establishes:
@@ -221,10 +221,9 @@ For `tachyonBundleState` values `0x01` and `0x03`, the bundle body is followed b
 | --- | --- | --- |
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygram union derived from covered bundles |
-| `nAdjunctsTachyon` | compactSize | number of other covered transactions, `0` for an autonome |
-| `vAdjunctsTachyon` | 32 * nAdjunctsTachyon | txids of the other covered transactions, strictly ascending |
-| `sizeProofTachyon` | compactSize | length of `proofTachyon` in bytes |
-| `proofTachyon` | `byte[sizeProofTachyon]` | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
+| `nAdjunctsTachyon` | compactSize | aggregate only: number of other covered transactions, possibly zero |
+| `vAdjunctsTachyon` | 32 * nAdjunctsTachyon | aggregate only: txids of the other covered transactions, strictly ascending |
+| `proofTachyon` | fixed by the proof profile | the [Ragu stamp proof](./proof-tree.md#stamp-construction) |
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from every covered bundle's `vActionTachygramsTachyon` and `cmChangeTachyon` and rejects a mismatch. Parsing rejects the identity point. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
@@ -238,9 +237,9 @@ Every listed transaction's bundle holds at least its fee change in the tachygram
 
 Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hStampTachyon}$](./transaction-identifiers.md) directly, followed by the proof digest. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
-The readers require `sizeProofTachyon` to match the selected profile: the wallet profile's compressed proof length for `0x01` or the aggregator profile's for `0x03`. They check the length before allocating or reading the frame.
+The state byte fixes the frame length. An autonome carries its wallet frame directly after `cTachygrams`; only an aggregate carries the adjunct count and list before its frame. Neither trailer carries a proof-length prefix.
 
-A stamped bundle carries a compressed proof in `proofTachyon`. [Lifting](./proof-tree.md#stamp-anchor) and wallet [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take stamps with uncompressed proofs. A bundle holding one has no state byte and no consensus encoding. The stamp alone uses this trailer, with the uncompressed proof's length, when it is stored or handed on.
+A full wallet bundle has no consensus encoding. For private storage or handoff, its stamp alone encodes the anchor, `cTachygrams` and the fixed-length full wallet frame, without a state byte. Transaction merge and unmerge take place on the aggregator's working proof.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 

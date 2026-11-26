@@ -3,8 +3,9 @@
 //! A bundle is parameterized by its stamp `S`.
 //! Its body is constant through stamp transformations; only the stamp changes.
 //!
-//! - `Bundle<Stamp<Compressed>>`: bundle with a stamp, listing the txids of the
-//!   other transactions whose bundles it covers
+//! - `Bundle<Autonome>`: a wallet publication covering only its own body
+//! - `Bundle<Aggregate>`: an aggregator publication listing the other txids it
+//!   covers
 //! - `Bundle<()>`: stamp removed, covered by an aggregate that lists this
 //!   bundle's txid
 //! - `Bundle<Stamp<Uncompressed>>`: a wallet's bundle before compression, which
@@ -81,10 +82,9 @@
 //! | ----------------------- | ------------------------ | ------------------------------------------ |
 //! | `anchorTachyon`         | 32 bytes                 | pool state reference                       |
 //! | `cTachygrams`           | 32 bytes                 | commitment to the covered tachygram union  |
-//! | `nAdjunctsTachyon`      | compactSize              | number of adjuncts, `0` for an autonome    |
-//! | `vAdjunctsTachyon`      | 32 * nAdjunctsTachyon    | txids of the other covered transactions    |
-//! | `sizeProofTachyon`      | compactSize              | length of `proofTachyon` in bytes          |
-//! | `proofTachyon`          | `byte[sizeProofTachyon]` | the Ragu stamp proof                       |
+//! | `nAdjunctsTachyon`      | compactSize              | aggregate only: number of adjuncts    |
+//! | `vAdjunctsTachyon`      | 32 * nAdjunctsTachyon    | aggregate only: strictly ascending txids   |
+//! | `proofTachyon`          | fixed by the profile     | the Ragu stamp proof                       |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against every covered bundle's pairs and fee change. Anchor
@@ -98,18 +98,16 @@
 //!
 //! A stamped bundle carries a wallet's [`Compressed`](stamp::Compressed) proof
 //! under `0x01`, or an aggregator's compressed proof under the aggregator
-//! profile under `0x03`. `sizeProofTachyon` must equal the selected proof's
-//! encoded length. A [`Stamp`] with an [`Uncompressed`](stamp::Uncompressed)
-//! proof writes this trailer on its own, for storage and handoff.
+//! profile under `0x03`. The profile fixes the frame length. A full wallet
+//! stamp writes only its anchor, commitment and full proof for private handoff.
 //!
 //! ## Stripped stamp
 //!
 //! When `tachyonBundleState == 2`, the stamp trailer is empty.
 //!
-//! The transaction `auth_digest` contribution commits either stamp as
-//! `hStampTachyon`, over the adjunct list and `hStampProofTachyon`. A stripped
-//! stamp has neither and takes the empty-input stamp hash. See
-//! [`blake2b::stamp_digest`].
+//! For an autonome, `hStampTachyon` is the inner proof digest. An aggregate
+//! hashes its adjunct txids followed by that digest. A stripped stamp takes
+//! the empty-input stamp hash. See [`blake2b::stamp_digest`].
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -121,7 +119,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use polynomials::AggregatorRank;
 use ragu::{
-    AcceleratedProver, Application, CompressedProof, Rank as _, WalletRank,
+    AcceleratedProver, Application, Rank as _, WalletRank,
     circuits::polynomials,
     pasta::Pasta,
     pcd::profile::{Aggregator, Profiled},
@@ -631,13 +629,16 @@ impl Plan {
     /// exceeds the max fee note's value, or the plan's balance is out of
     /// range.
     #[must_use]
-    pub fn assemble<P: stamp::Proof>(
+    pub fn assemble<P>(
         &self,
         signatures: Signatures,
         stamp: Stamp<P>,
         pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
         fee: value::Positive,
-    ) -> Bundle<Stamp<P>> {
+    ) -> Bundle<Stamp<P>>
+    where
+        Stamp<P>: stamp::stamp_sealed::Sealed,
+    {
         assert!(
             self.descriptors().iter().eq(signatures.actions.keys())
                 && signatures.actions.keys().eq(pairs.keys()),
@@ -669,11 +670,31 @@ impl Plan {
 }
 
 impl Bundle<Stamp<stamp::Uncompressed>> {
+    /// Compress the wallet stamp for publication, preserving the signed bundle
+    /// body.
+    ///
+    /// # Errors
+    /// Returns a Ragu error if rerandomization or compression fails.
+    pub fn compress<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        app: &App<'_>,
+    ) -> ragu::Result<Bundle<stamp::Autonome>> {
+        Ok(Bundle {
+            stamp: self.stamp.compress(rng, app)?,
+            actions: self.actions,
+            fee: self.fee,
+            fee_auth: self.fee_auth,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            value_balance: self.value_balance,
+        })
+    }
+
     /// Advance the stamp's anchor along `spans`. The first span must contain
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
-    /// `anchor_start` or one of its members. `adjuncts` are the stripped
-    /// bundles the stamp lists.
+    /// `anchor_start` or one of its members.
     /// Successful construction does not guarantee that the lifted stamp
     /// verifies.
     ///
@@ -690,27 +711,17 @@ impl Bundle<Stamp<stamp::Uncompressed>> {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        adjuncts: &[&Bundle<()>],
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
-        let covered = iter::once((&self.actions, self.fee, self.fee_auth)).chain(
-            adjuncts
-                .iter()
-                .map(|adj| (&adj.actions, adj.fee, adj.fee_auth)),
-        );
-        let mut descriptors = BTreeMap::new();
-        let mut fee_descriptors = BTreeMap::new();
-        for (actions, fee_descriptor, cm_change) in covered {
-            descriptors.extend(
-                actions
-                    .iter()
-                    .map(|action| (action.descriptor, action.tachygrams)),
-            );
-            fee_descriptors.insert(fee_descriptor, cm_change);
-        }
+        let descriptors = self
+            .actions
+            .iter()
+            .map(|action| (action.descriptor, action.tachygrams))
+            .collect();
+        let fee_descriptors = BTreeMap::from([(self.fee, self.fee_auth)]);
         let stamp = self
             .stamp
             .lift(rng, app, &descriptors, &fee_descriptors, spans)?;
@@ -740,16 +751,8 @@ impl Bundle<Stamp<stamp::Uncompressed>> {
     }
 
     /// Verify everything about this bundle, returning the tachygram set
-    /// commitment that anchor advancement absorbs. Does not verify any
-    /// details about the provided adjuncts.
-    ///
-    /// - Signatures are valid
-    /// - The stamp covers this bundle and the adjuncts
-    /// - Proof is correct
-    ///
-    /// The adjuncts are the stripped bundles the stamp's
-    /// [`adjuncts`](Stamp::adjuncts) lists, looked up by txid. This method
-    /// does not read the list.
+    /// commitment that anchor advancement absorbs. Checks the signatures,
+    /// the coverage of this body, and the proof.
     ///
     /// If you need more control, call each verify method directly.
     ///
@@ -767,101 +770,18 @@ impl Bundle<Stamp<stamp::Uncompressed>> {
         rng: &mut RNG,
         app: &App<'_>,
         sighash: &[u8; 32],
-        adjuncts: &[&Bundle<()>],
     ) -> Result<TachygramSetCommit, VerificationError> {
-        self.verify_with(sighash, adjuncts, |digests| {
-            self.verify_proof(rng, app, digests)
-        })
+        self.verify_with(sighash, &[], |digests| self.verify_proof(rng, app, digests))
     }
 }
 
-impl<P: stamp::Proof> Bundle<Stamp<P>> {
-    /// Read a stamped bundle, including the combined coverage bound.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for invalid encodings, a wrong state byte, or too many
-    /// actions and adjuncts for one tachygram set polynomial.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self>
-    where
-        Stamp<P>: StampState,
-    {
-        if StateByte::read(&mut reader)? != Stamp::<P>::state_byte() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected tachyonBundleState",
-            ));
-        }
-        Self::read_proof_body(reader)
-    }
-
-    fn read_proof_body<R: Read>(reader: R) -> io::Result<Self>
-    where
-        Stamp<P>: StampState,
-    {
-        let bundle = Self::read_body(reader)?;
-        if 2 * bundle.actions.len() + bundle.stamp.adjuncts.len() + 1 > WalletRank::num_coeffs() - 1
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "too many adjuncts",
-            ));
-        }
-        Ok(bundle)
-    }
-
-    /// Remove the stamp, keeping the fee, fee change and tachygram pairs.
-    ///
-    /// The miner strips the bundle of each transaction an aggregate in its
-    /// block lists. Stripping writes nothing, and the stripped bundle's bytes
-    /// depend on nothing outside it.
-    #[must_use]
-    pub fn strip(self) -> Bundle<()> {
-        Bundle {
-            actions: self.actions,
-            value_balance: self.value_balance,
-            fee: self.fee,
-            fee_auth: self.fee_auth,
-            binding_sig: self.binding_sig,
-            memo: self.memo,
-            stamp: (),
-        }
-    }
-
-    /// Whether the stamp lists no adjuncts.
-    #[must_use]
-    pub fn is_autonome(&self) -> bool {
-        self.stamp.adjuncts.is_empty()
-    }
-
-    /// Whether the stamp lists at least one adjunct.
-    #[must_use]
-    pub fn is_aggregate(&self) -> bool {
-        !self.stamp.adjuncts.is_empty()
-    }
-
-    /// Verify that the stamp covers this bundle and the given adjuncts,
-    /// returning the covered action and fee digests and the tachygram set
-    /// commitment.
-    ///
-    /// Walks the covered actions and fee descriptors once. The covered
-    /// tachygrams are each action's pair and each bundle's fee change, so
-    /// $N$ actions and $B$ bundles hold $2N + B$ of them.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
-    /// or the covered tachygrams number more than one set polynomial has roots
-    /// or do not reproduce the tachygram set commitment the stamp carries.
-    ///
-    /// # Panics
-    ///
-    /// Panics when digesting a hand-built bundle holding an identity `cv` or
-    /// `rk`.
-    pub fn verify_covered(
+impl<P, A> Bundle<Stamp<P, A>> {
+    /// The covered action and fee digests, checked
+    /// against the trailer commitment.
+    fn covered_digests(
         &self,
         adjuncts: &[&Bundle<()>],
-    ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
+    ) -> Result<Vec<ActionDigest>, VerifyCoverageError> {
         let n_actions =
             self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
         let n_fees = 1 + adjuncts.len();
@@ -912,7 +832,7 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
-        Ok((digests, self.stamp.tachygram_set))
+        Ok(digests)
     }
 
     /// Check the signatures and coverage, then the proof with `verify_proof`
@@ -926,19 +846,49 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
         self.verify_signatures(sighash)
             .map_err(VerificationError::Signatures)?;
 
-        let (covered_digests, tachygram_set) = self
-            .verify_covered(adjuncts)
+        let covered_digests = self
+            .covered_digests(adjuncts)
             .map_err(VerificationError::Coverage)?;
 
         if verify_proof(&covered_digests).map_err(VerificationError::Proof)? {
-            Ok(tachygram_set)
+            Ok(self.stamp.tachygram_set)
         } else {
             Err(VerificationError::Disproved)
         }
     }
 }
 
-impl Bundle<Stamp<stamp::Compressed>> {
+impl<P> Bundle<Stamp<P>>
+where
+    Stamp<P>: stamp::stamp_sealed::Sealed,
+{
+    /// Verify that the stamp covers this bundle,
+    /// returning the covered action and fee digests and the tachygram set
+    /// commitment.
+    ///
+    /// Walks the covered actions and fee descriptors once. The covered
+    /// tachygrams are each action's pair and each bundle's fee change, so
+    /// $N$ actions and $B$ bundles hold $2N + B$ of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
+    /// or the covered tachygrams number more than one set polynomial has roots
+    /// or do not reproduce the tachygram set commitment the stamp carries.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
+    pub fn verify_covered(
+        &self,
+    ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
+        let digests = self.covered_digests(&[])?;
+        Ok((digests, self.stamp.tachygram_set))
+    }
+}
+
+impl Bundle<stamp::Autonome> {
     /// Verify the published wallet proof against the given action digests,
     /// which include the digests of covered fee descriptors.
     ///
@@ -959,8 +909,7 @@ impl Bundle<Stamp<stamp::Compressed>> {
     }
 
     /// Verify the signatures, coverage and published wallet proof, returning
-    /// the tachygram set commitment. The adjuncts are the stripped bundles the
-    /// stamp's [`adjuncts`](Stamp::adjuncts) lists, looked up by txid.
+    /// the tachygram set commitment of this body.
     ///
     /// # Errors
     ///
@@ -975,9 +924,8 @@ impl Bundle<Stamp<stamp::Compressed>> {
         &self,
         app: &App<'_>,
         sighash: &[u8; 32],
-        adjuncts: &[&Bundle<()>],
     ) -> Result<TachygramSetCommit, VerificationError> {
-        self.verify_with(sighash, adjuncts, |digests| self.verify_proof(app, digests))
+        self.verify_with(sighash, &[], |digests| self.verify_proof(app, digests))
     }
 
     /// Replace the wallet stamp with an aggregator's, keeping this bundle's
@@ -986,10 +934,7 @@ impl Bundle<Stamp<stamp::Compressed>> {
     /// Restamping checks nothing: [`Bundle::verify`] checks that `stamp`
     /// covers this bundle and the adjuncts it lists.
     #[must_use]
-    pub fn restamp(
-        self,
-        stamp: Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>,
-    ) -> Bundle<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>> {
+    pub fn restamp(self, stamp: stamp::Aggregate) -> Bundle<stamp::Aggregate> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -1002,7 +947,7 @@ impl Bundle<Stamp<stamp::Compressed>> {
     }
 
     /// Import the wallet publication at aggregator rank, with
-    /// both set polynomials rebuilt from this bundle and its adjuncts.
+    /// both set polynomials rebuilt from this bundle.
     ///
     /// # Errors
     ///
@@ -1023,25 +968,19 @@ impl Bundle<Stamp<stamp::Compressed>> {
             HEADER_SIZE,
             AcceleratedProver,
         >,
-        adjuncts: &[&Bundle<()>],
     ) -> ragu::Result<AggregatorProof> {
-        let bodies = iter::once((&self.actions, self.fee, self.fee_auth)).chain(
-            adjuncts
-                .iter()
-                .map(|body| (&body.actions, body.fee, body.fee_auth)),
-        );
-        let mut actions = Vec::new();
-        let mut tachygrams = Vec::new();
-        for (records, fee, change) in bodies {
-            actions.extend(records.iter().map(action::Action::digest));
-            actions.push(fee.digest(change));
-            tachygrams.extend(
-                records
-                    .iter()
-                    .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams)),
-            );
-            tachygrams.push(change);
-        }
+        let actions: Vec<_> = self
+            .actions
+            .iter()
+            .map(action::Action::digest)
+            .chain([self.fee.digest(self.fee_auth)])
+            .collect();
+        let tachygrams: Vec<_> = self
+            .actions
+            .iter()
+            .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
+            .chain([self.fee_auth])
+            .collect();
         let bridge = app
             .context()
             .wallet()
@@ -1063,14 +1002,59 @@ impl Bundle<Stamp<stamp::Compressed>> {
         )?;
         Ok(AggregatorProof {
             pcd,
-            adjuncts: self.stamp.adjuncts.clone(),
+            adjuncts: BTreeSet::new(),
             actions,
             tachygrams,
         })
     }
 }
 
-impl Bundle<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>> {
+impl Bundle<stamp::Aggregate> {
+    /// Verify the aggregator proof against the covered action and fee digests.
+    ///
+    /// # Errors
+    /// Returns a Ragu error if verification fails internally, or `Ok(false)`
+    /// if the proof is disproved.
+    pub fn verify_proof(
+        &self,
+        app: &Application<
+            '_,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+        digests: &[ActionDigest],
+    ) -> ragu::Result<bool> {
+        self.stamp.verify_proof(app, digests)
+    }
+
+    /// Verify that the stamp covers this bundle and the given adjuncts,
+    /// returning the covered action and fee digests and the tachygram set
+    /// commitment.
+    ///
+    /// Walks the covered actions and fee descriptors once. The covered
+    /// tachygrams are each action's pair and each bundle's fee change, so
+    /// $N$ actions and $B$ bundles hold $2N + B$ of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyCoverageError`] if an action, fee or tachygram repeats,
+    /// or the covered tachygrams number more than one set polynomial has roots
+    /// or do not reproduce the tachygram set commitment the stamp carries.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
+    pub fn verify_covered(
+        &self,
+        adjuncts: &[&Bundle<()>],
+    ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
+        let digests = self.covered_digests(adjuncts)?;
+        Ok((digests, self.stamp.tachygram_set))
+    }
+
     /// Verify the host signatures, the coverage of this bundle and the given
     /// adjuncts, and the aggregator's proof, returning the tachygram set
     /// commitment. The caller resolves adjuncts, checks their signatures and
@@ -1097,13 +1081,55 @@ impl Bundle<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>> {
         sighash: &[u8; 32],
         adjuncts: &[&Bundle<()>],
     ) -> Result<TachygramSetCommit, VerificationError> {
-        self.verify_with(sighash, adjuncts, |digests| {
-            self.stamp.verify_proof(app, digests)
-        })
+        self.verify_with(sighash, adjuncts, |digests| self.verify_proof(app, digests))
     }
 }
 
 impl<S: StampState> Bundle<S> {
+    /// Read a consensus bundle, checking its state byte and trailer.
+    ///
+    /// # Errors
+    /// Returns an error for a different state byte, invalid fields, or
+    /// oversized coverage.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        if StateByte::read(&mut reader)? != S::state_byte() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected tachyonBundleState",
+            ));
+        }
+        Self::read_after_state(reader)
+    }
+
+    fn read_after_state<R: Read>(reader: R) -> io::Result<Self> {
+        let bundle = Self::read_body(reader)?;
+        if bundle.stamp.n_adjuncts() > WalletRank::num_coeffs() - 2 - 2 * bundle.actions.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many adjuncts",
+            ));
+        }
+        Ok(bundle)
+    }
+
+    /// Remove the stamp, keeping the fee, fee change and tachygram pairs.
+    ///
+    /// The miner strips the bundle of each transaction an aggregate in its
+    /// block lists. Stripping writes nothing, and the stripped bundle's bytes
+    /// depend on nothing outside it.
+    #[must_use]
+    pub fn strip(self) -> Bundle<()> {
+        Bundle {
+            actions: self.actions,
+            value_balance: self.value_balance,
+            fee: self.fee,
+            fee_auth: self.fee_auth,
+            binding_sig: self.binding_sig,
+            memo: self.memo,
+            stamp: (),
+        }
+    }
+
     /// Borrow this bundle as a trait object.
     #[must_use]
     pub fn as_dyn(&self) -> &Bundle<dyn StampState>
@@ -1317,23 +1343,6 @@ impl<S: StampState> Bundle<S> {
     }
 }
 
-impl Bundle<()> {
-    /// Read a stripped bundle whose stamp trailer is empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for invalid encodings or a wrong state byte.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        if StateByte::read(&mut reader)? != StateByte::Stripped {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected tachyonBundleState",
-            ));
-        }
-        Self::read_body(reader)
-    }
-}
-
 /// A Tachyon bundle in one of its valid wire states.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug, From, IsVariant, TryInto)]
@@ -1341,10 +1350,10 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own wallet-published proof.
-    Proven(Bundle<Stamp<stamp::Compressed>>),
+    Autonome(Bundle<stamp::Autonome>),
     /// A bundle with its own aggregator-published proof (an aggregate, or a
     /// transaction the aggregator lifted or reduced).
-    Aggregated(Bundle<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>>),
+    Aggregate(Bundle<stamp::Aggregate>),
     /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<()>),
 }
@@ -1354,13 +1363,13 @@ impl PartialEq for TachyonBundle {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => other.is_no_bundle(),
-            Self::Proven(ref bundle) => {
-                other.is_proven()
+            Self::Autonome(ref bundle) => {
+                other.is_autonome()
                     && bundle.commitment() == other.commitment()
                     && bundle.auth_digest() == other.auth_digest()
             },
-            Self::Aggregated(ref bundle) => {
-                other.is_aggregated()
+            Self::Aggregate(ref bundle) => {
+                other.is_aggregate()
                     && bundle.commitment() == other.commitment()
                     && bundle.auth_digest() == other.auth_digest()
             },
@@ -1390,8 +1399,8 @@ impl TachyonBundle {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => None,
-            Self::Proven(ref bundle) => Some(bundle),
-            Self::Aggregated(ref bundle) => Some(bundle),
+            Self::Autonome(ref bundle) => Some(bundle),
+            Self::Aggregate(ref bundle) => Some(bundle),
             Self::Adjunct(ref bundle) => Some(bundle),
         }
     }
@@ -1412,9 +1421,9 @@ impl TachyonBundle {
 
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
-            StateByte::Stamped => Self::Proven(Bundle::read_proof_body(&mut reader)?),
-            StateByte::Stripped => Self::Adjunct(Bundle::read_body(&mut reader)?),
-            StateByte::Aggregated => Self::Aggregated(Bundle::read_proof_body(&mut reader)?),
+            StateByte::Stamped => Self::Autonome(Bundle::read_after_state(&mut reader)?),
+            StateByte::Stripped => Self::Adjunct(Bundle::read_after_state(&mut reader)?),
+            StateByte::Aggregated => Self::Aggregate(Bundle::read_after_state(&mut reader)?),
         })
     }
 
@@ -1428,8 +1437,8 @@ impl TachyonBundle {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => StateByte::NoBundle.write(writer),
-            Self::Proven(ref stamped) => stamped.write(writer),
-            Self::Aggregated(ref stamped) => stamped.write(writer),
+            Self::Autonome(ref stamped) => stamped.write(writer),
+            Self::Aggregate(ref stamped) => stamped.write(writer),
             Self::Adjunct(ref stamped) => stamped.write(writer),
         }
     }
@@ -1441,8 +1450,8 @@ impl TachyonBundle {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::AUTH_DIGEST_NO_BUNDLE,
-            Self::Proven(ref stamped) => stamped.auth_digest(),
-            Self::Aggregated(ref stamped) => stamped.auth_digest(),
+            Self::Autonome(ref stamped) => stamped.auth_digest(),
+            Self::Aggregate(ref stamped) => stamped.auth_digest(),
             Self::Adjunct(ref stamped) => stamped.auth_digest(),
         }
     }
@@ -1454,33 +1463,9 @@ impl TachyonBundle {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::COMMIT_NO_BUNDLE,
-            Self::Proven(ref stamped) => stamped.commitment(),
-            Self::Aggregated(ref stamped) => stamped.commitment(),
+            Self::Autonome(ref stamped) => stamped.commitment(),
+            Self::Aggregate(ref stamped) => stamped.commitment(),
             Self::Adjunct(ref stamped) => stamped.commitment(),
-        }
-    }
-
-    /// Whether this bundle has a stamp listing at least one adjunct.
-    #[must_use]
-    pub fn is_aggregate(&self) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-        match *self {
-            Self::NoBundle => false,
-            Self::Proven(ref stamped) => stamped.is_aggregate(),
-            Self::Aggregated(ref stamped) => stamped.is_aggregate(),
-            Self::Adjunct(ref _stamped) => false,
-        }
-    }
-
-    /// Whether this bundle has a stamp listing no adjuncts.
-    #[must_use]
-    pub fn is_autonome(&self) -> bool {
-        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-        match *self {
-            Self::NoBundle => false,
-            Self::Proven(ref stamped) => stamped.is_autonome(),
-            Self::Aggregated(ref stamped) => stamped.is_autonome(),
-            Self::Adjunct(ref _stamped) => false,
         }
     }
 }

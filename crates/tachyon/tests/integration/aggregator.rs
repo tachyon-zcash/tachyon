@@ -4,11 +4,7 @@ use alloc::collections::BTreeSet;
 use core::assert_matches;
 
 use rand::{SeedableRng as _, rngs::StdRng};
-use zcash_tachyon::{
-    Anchor, Bundle, Tachygram, TachygramSetPoly,
-    stamp::{Compressed, Stamp, UnmergeError},
-    value,
-};
+use zcash_tachyon::{Anchor, Bundle, Tachygram, TachygramSetPoly, stamp::UnmergeError, value};
 
 use super::fixtures::{
     aggregator::{aggregated, aggregator},
@@ -38,18 +34,15 @@ fn decompress_imports_the_frame_independently_of_host_signatures() {
     let mut unsigned = host.clone();
     unsigned.binding_sig = other.binding_sig;
     unsigned.verify_signatures(&sighash).unwrap_err();
-    assert_eq!(
-        unsigned.decompress(rng, &app, &[]).unwrap().anchor(),
-        anchor
-    );
+    assert_eq!(unsigned.decompress(rng, &app).unwrap().anchor(), anchor);
     let mut wrong = host.clone();
     wrong.fee_auth = other.fee_auth;
-    wrong.decompress(rng, &app, &[]).unwrap_err();
+    wrong.decompress(rng, &app).unwrap_err();
     let mut moved = host.clone();
     moved.stamp.anchor = Anchor::random(rng);
-    moved.decompress(rng, &app, &[]).unwrap_err();
+    moved.decompress(rng, &app).unwrap_err();
 
-    let imported = host.decompress(rng, &app, &[]).unwrap();
+    let imported = host.decompress(rng, &app).unwrap();
     assert_eq!(imported.anchor(), anchor);
     assert!(imported.adjuncts().is_empty());
 }
@@ -71,9 +64,9 @@ fn wallet_publications_merge_and_unmerge() {
     );
     let left = compressed(wallet, &signed);
     let right = compressed(wallet, &zero_action(wallet, anchor).1);
-    let left_work = left.decompress(rng, &app, &[]).unwrap();
-    let right_work = right.decompress(rng, &app, &[]).unwrap();
-    let (digests, commitment) = left.verify_covered(&[]).unwrap();
+    let left_work = left.decompress(rng, &app).unwrap();
+    let right_work = right.decompress(rng, &app).unwrap();
+    let (digests, commitment) = left.verify_covered().unwrap();
     let mut union = digests.clone();
     union.push(right.fee.digest(right.fee_auth));
     let id = mock_txid(&right);
@@ -82,7 +75,7 @@ fn wallet_publications_merge_and_unmerge() {
     // anchors merge into a proof that does not verify.
     let other_anchor = Anchor::random(rng);
     let elsewhere = compressed(wallet, &zero_action(wallet, other_anchor).1);
-    let elsewhere_work = elsewhere.decompress(rng, &app, &[]).unwrap();
+    let elsewhere_work = elsewhere.decompress(rng, &app).unwrap();
     let mut across = digests.clone();
     across.push(elsewhere.fee.digest(elsewhere.fee_auth));
     let mismatched = left_work
@@ -131,8 +124,8 @@ fn merge_and_unmerge_keep_a_repeated_root_with_multiplicity() {
         compressed(wallet, &signed)
     });
     let [first_work, second_work] =
-        [&first, &second].map(|bundle| bundle.decompress(rng, &app, &[]).unwrap());
-    let roots = |bundle: &Bundle<Stamp<Compressed>>| {
+        [&first, &second].map(|bundle| bundle.decompress(rng, &app).unwrap());
+    let roots = |bundle: &Bundle<zcash_tachyon::Autonome>| {
         let [first_member, second_member] = <[Tachygram; 2]>::from(bundle.actions[0].tachygrams);
         [first_member, second_member, bundle.fee_auth]
     };
@@ -157,7 +150,7 @@ fn merge_and_unmerge_keep_a_repeated_root_with_multiplicity() {
         .unwrap()
         .compress(rng, &app)
         .unwrap();
-    let (digests, commitment) = first.verify_covered(&[]).unwrap();
+    let (digests, commitment) = first.verify_covered().unwrap();
     assert_eq!(published.tachygram_set, commitment);
     assert!(published.verify_proof(&app, &digests).unwrap());
 }
@@ -179,7 +172,7 @@ fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
             value::Positive::ZERO,
         );
         let bundle = compressed(wallet, &signed);
-        let work = bundle.decompress(rng, &app, &[]).unwrap();
+        let work = bundle.decompress(rng, &app).unwrap();
         (bundle, work)
     });
     assert_matches!(
@@ -198,13 +191,13 @@ fn untouched_wallet_import_verifies_after_aggregator_compression() {
     let anchor = Anchor::random(rng);
     let body = compressed(wallet, &zero_action(wallet, anchor).1);
     let stamp = body
-        .decompress(rng, &app, &[])
+        .decompress(rng, &app)
         .unwrap()
         .compress(rng, &app)
         .unwrap();
     assert!(
         stamp
-            .verify_proof(&app, &body.verify_covered(&[]).unwrap().0)
+            .verify_proof(&app, &body.verify_covered().unwrap().0)
             .unwrap()
     );
 }

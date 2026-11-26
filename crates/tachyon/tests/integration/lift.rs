@@ -60,15 +60,15 @@ fn check_lift(
         binding_sig: signed.binding_sig,
         memo: signed.memo,
     };
-    let imported = body.decompress(rng, app, &[]).unwrap();
-    let (digests, tachygrams) = body.verify_covered(&[]).unwrap();
+    let imported = body.decompress(rng, app).unwrap();
+    let (digests, tachygrams) = body.verify_covered().unwrap();
 
     let unchanged = imported.lift(rng, app, vec![]).unwrap();
     assert_eq!(unchanged.anchor(), start);
 
     let lifted = unchanged.lift(rng, app, spans).unwrap();
     assert_eq!(lifted.anchor(), end);
-    assert_eq!(lifted.adjuncts(), &body.stamp.adjuncts);
+    assert!(lifted.adjuncts().is_empty());
     let publication = lifted.compress(rng, app).unwrap();
     assert_eq!(publication.anchor, end);
     assert_eq!(publication.tachygram_set, tachygrams);
