@@ -138,7 +138,11 @@ pub mod transaction;
 
 use alloc::boxed::Box;
 
-use ragu::{AcceleratedProver, Application, ApplicationBuilder, WalletRank, pasta::Pasta};
+use ragu::{
+    AcceleratedProver, Application, ApplicationBuilder, Rank, WalletRank,
+    pasta::{Fp, Pasta},
+    pcd::profile,
+};
 
 use crate::pasta;
 
@@ -160,7 +164,15 @@ pub type App<'app> = Application<'app, Pasta, WalletRank, HEADER_SIZE, Accelerat
 ///
 /// Returns an error if step registration or application finalization fails.
 pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
-    ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE, AcceleratedProver>::new()
+    register_steps::<Pasta, WalletRank>()?
+        .finalize(pasta::baked())
+        .map(Box::new)
+}
+
+/// Registers the Tachyon steps in index order for the selected cycle and rank.
+fn register_steps<C: profile::ProfiledCycle<Base = Pasta, CircuitField = Fp>, R: Rank>()
+-> ragu::Result<ApplicationBuilder<'static, C, R, HEADER_SIZE, AcceleratedProver>> {
+    ApplicationBuilder::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
         .register(pool::UnspentFuse)?
@@ -199,7 +211,8 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .register(transaction::ActionLift)?
         .register(transaction::FeeSeed)?
         .register(transaction::TransactionUnmerge)?
-        .register(qr::QrSideSelect)?
-        .finalize(pasta::baked())
-        .map(Box::new)
+        .register(qr::QrSideSelect)
 }
+
+#[cfg(test)]
+mod tests;

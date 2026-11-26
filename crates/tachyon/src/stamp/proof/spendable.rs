@@ -6,11 +6,11 @@
 //! subsequent segments, keeping the same note commitment and value.
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
@@ -119,7 +119,7 @@ impl Header<Fp> for NoteSpendable {
 #[derive(Debug)]
 pub struct SpendableInit;
 
-impl Step<Pasta> for SpendableInit {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for SpendableInit {
     type Aux<'source> = ();
     type Left = NoteNullifiers;
     type Output = NoteSpendable;
@@ -142,7 +142,7 @@ impl Step<Pasta> for SpendableInit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -225,7 +225,7 @@ impl Step<Pasta> for SpendableInit {
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
-impl Step<Pasta> for QrSpendableInit {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrSpendableInit {
     type Aux<'source> = ();
     type Left = NoteUnspent;
     type Output = NoteSpendable;
@@ -237,7 +237,7 @@ impl Step<Pasta> for QrSpendableInit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -306,7 +306,7 @@ impl Step<Pasta> for QrSpendableInit {
 #[derive(Debug)]
 pub struct SpendableLift;
 
-impl Step<Pasta> for SpendableLift {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for SpendableLift {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = NoteSpendable;
@@ -318,7 +318,7 @@ impl Step<Pasta> for SpendableLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

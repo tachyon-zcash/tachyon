@@ -12,11 +12,11 @@ mod tests;
 use core::convert::Infallible;
 
 use ragu::{
+    Cycle,
     drivers::{Coeff, Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Boolean, Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::{curve::Affine as _, field::Field as _},
@@ -283,7 +283,7 @@ impl Header<Fp> for QrSideSelection {
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
-impl Step<Pasta> for QrSummaryIntake {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrSummaryIntake {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = QrIntake;
@@ -305,7 +305,7 @@ impl Step<Pasta> for QrSummaryIntake {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -377,7 +377,7 @@ impl Step<Pasta> for QrSummaryIntake {
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
-impl Step<Pasta> for QrStampIntakeSeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrStampIntakeSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = QrIntake;
@@ -400,7 +400,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -496,7 +496,7 @@ impl Step<Pasta> for QrStampIntakeSeed {
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
 
-impl Step<Pasta> for QrEmptyIntakeSeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrEmptyIntakeSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = QrIntake;
@@ -509,7 +509,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -583,7 +583,7 @@ impl Step<Pasta> for QrEmptyIntakeSeed {
 #[derive(Debug)]
 pub struct QrIntakeMerge;
 
-impl Step<Pasta> for QrIntakeMerge {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrIntakeMerge {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrIntake;
@@ -606,7 +606,7 @@ impl Step<Pasta> for QrIntakeMerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -682,7 +682,7 @@ impl Step<Pasta> for QrIntakeMerge {
 #[derive(Debug)]
 pub struct QrIntakeSplit;
 
-impl Step<Pasta> for QrIntakeSplit {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrIntakeSplit {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrIntakeSides;
@@ -706,7 +706,7 @@ impl Step<Pasta> for QrIntakeSplit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -781,7 +781,7 @@ impl Step<Pasta> for QrIntakeSplit {
 #[derive(Debug)]
 pub struct QrSideSelect;
 
-impl Step<Pasta> for QrSideSelect {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrSideSelect {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrSideSelection;
@@ -805,7 +805,7 @@ impl Step<Pasta> for QrSideSelect {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -887,7 +887,7 @@ impl Step<Pasta> for QrSideSelect {
 #[derive(Debug)]
 pub struct QrSideDescend;
 
-impl Step<Pasta> for QrSideDescend {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrSideDescend {
     type Aux<'source> = ();
     type Left = QrIntakeSides;
     type Output = QrIntake;
@@ -919,7 +919,7 @@ impl Step<Pasta> for QrSideDescend {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1168,7 +1168,7 @@ impl Header<Fp> for QrBucket {
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
-impl Step<Pasta> for QrBucketSeal {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrBucketSeal {
     type Aux<'source> = ();
     type Left = QrIntake;
     type Output = QrBucket;
@@ -1190,7 +1190,7 @@ impl Step<Pasta> for QrBucketSeal {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1289,7 +1289,7 @@ impl Step<Pasta> for QrBucketSeal {
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
-impl Step<Pasta> for QrUnspentInit {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for QrUnspentInit {
     type Aux<'source> = ();
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
@@ -1325,7 +1325,7 @@ impl Step<Pasta> for QrUnspentInit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,

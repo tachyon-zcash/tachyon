@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
 
-use ragu::WalletRank;
+use ragu::{WalletRank, pasta::Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;

@@ -10,11 +10,11 @@
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Padding, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::field::Field as _,
@@ -305,7 +305,7 @@ impl Header<Fp> for AnchorSpan {
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
-impl Step<Pasta> for AnchorSpanSeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = AnchorSpan;
@@ -336,7 +336,7 @@ impl Step<Pasta> for AnchorSpanSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -414,7 +414,7 @@ impl Step<Pasta> for AnchorSpanSeed {
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
-impl Step<Pasta> for AnchorSpanFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for AnchorSpanFuse {
     type Aux<'source> = ();
     type Left = AnchorSpan;
     type Output = AnchorSpan;
@@ -437,7 +437,7 @@ impl Step<Pasta> for AnchorSpanFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -496,7 +496,7 @@ impl Step<Pasta> for AnchorSpanFuse {
 #[derive(Debug)]
 pub struct UnspentFuse;
 
-impl Step<Pasta> for UnspentFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for UnspentFuse {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
@@ -519,7 +519,7 @@ impl Step<Pasta> for UnspentFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -597,7 +597,7 @@ impl Step<Pasta> for UnspentFuse {
 #[derive(Debug)]
 pub struct UnspentLift;
 
-impl Step<Pasta> for UnspentLift {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for UnspentLift {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
@@ -633,7 +633,7 @@ impl Step<Pasta> for UnspentLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -756,7 +756,7 @@ impl Step<Pasta> for UnspentLift {
 #[derive(Debug)]
 pub struct UnspentBind;
 
-impl Step<Pasta> for UnspentBind {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for UnspentBind {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
     type Output = NoteUnspent;
@@ -779,7 +779,7 @@ impl Step<Pasta> for UnspentBind {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
