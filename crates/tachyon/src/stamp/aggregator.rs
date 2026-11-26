@@ -18,13 +18,16 @@ use ragu::{
 use rand_core::CryptoRng;
 
 use super::{
-    Stamp,
+    Compressed, Stamp,
     proof::{
-        HEADER_SIZE,
-        transaction::{Transaction, TransactionMerge, TransactionUnmerge},
+        HEADER_SIZE, pool,
+        transaction::{Transaction, TransactionLift, TransactionMerge, TransactionUnmerge},
     },
 };
-use crate::{ActionDigest, Anchor, Tachygram, TachygramSetCommit, witness};
+use crate::{
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
+    TachygramSetPoly, witness,
+};
 
 /// A full aggregator-rank transaction proof, its adjunct list and the roots
 /// of its action and tachygram set polynomials.
@@ -64,6 +67,69 @@ pub enum UnmergeError {
     Proof(ragu::Error),
 }
 
+/// Errors from [`pool::AnchorSpan::decompress`].
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum SpanImportError {
+    /// A root list has more members than one set polynomial has roots.
+    #[display("too many roots for one set polynomial")]
+    TooManyRoots,
+    /// Ragu refused the frame or the rebuilt polynomials, or proving failed.
+    #[display("proof error: {_0}")]
+    Proof(ragu::Error),
+}
+
+// The span import lives here rather than in the step module, which holds only
+// `Header` and `Step` impls, beside its only consumer, `AggregatorProof::lift`.
+impl pool::AnchorSpan {
+    /// Import a wallet-compressed span at aggregator rank, rebuilding its
+    /// members polynomial from `members` and its absorbed-stamp polynomial from
+    /// `absorbed`. A seed absorbs one nonempty stamp; a fused span absorbs
+    /// none, so its `absorbed` is empty.
+    ///
+    /// # Errors
+    /// - [`SpanImportError::TooManyRoots`] if `members` or `absorbed` has more
+    ///   entries than one set polynomial has roots.
+    /// - [`SpanImportError::Proof`] if Ragu refuses the frame or the rebuilt
+    ///   polynomials, or proving fails.
+    pub fn decompress<RNG: CryptoRng>(
+        rng: &mut RNG,
+        app: &Application<
+            '_,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+        frame: &Compressed,
+        endpoints: (Anchor, Anchor),
+        members: &[Anchor],
+        absorbed: &[Tachygram],
+    ) -> Result<Pcd<Profiled<Pasta, Aggregator<HEADER_SIZE>>, AggregatorRank, Self>, SpanImportError>
+    {
+        if members.len().max(absorbed.len()) >= WalletRank::num_coeffs() {
+            return Err(SpanImportError::TooManyRoots);
+        }
+        app.decompress_with_polynomials(
+            rng,
+            &frame.clone().carry::<Self>(endpoints),
+            [
+                members
+                    .iter()
+                    .copied()
+                    .collect::<AnchorSetPoly>()
+                    .coefficients(),
+                absorbed
+                    .iter()
+                    .copied()
+                    .collect::<TachygramSetPoly>()
+                    .coefficients(),
+            ],
+        )
+        .map_err(SpanImportError::Proof)
+    }
+}
+
 /// Remove one occurrence per divisor root, returning whether every divisor
 /// root was found.
 fn divide<T: Ord + Copy>(dividend: &mut Vec<T>, divisor: &[T]) -> bool {
@@ -91,6 +157,38 @@ impl AggregatorProof {
     #[must_use]
     pub const fn adjuncts(&self) -> &BTreeSet<[u8; 32]> {
         &self.adjuncts
+    }
+
+    /// Advance the transaction's anchor along `spans`. The first span must
+    /// contain this proof's anchor, and each later span the previous span's
+    /// `anchor_end`. A lift from outside a span proves a transaction that does
+    /// not verify. Empty `spans` return the proof unchanged.
+    ///
+    /// # Errors
+    /// Returns a Ragu error if proving fails.
+    pub fn lift<RNG: CryptoRng>(
+        mut self,
+        rng: &mut RNG,
+        app: &Application<
+            '_,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+        spans: Vec<Pcd<Profiled<Pasta, Aggregator<HEADER_SIZE>>, AggregatorRank, pool::AnchorSpan>>,
+    ) -> ragu::Result<Self> {
+        if spans.is_empty() {
+            return Ok(self);
+        }
+        let action_set: ActionSetPoly = self.actions.iter().copied().collect();
+        for span in spans {
+            let witness =
+                witness::transaction_lift((*self.pcd.data(), *span.data()), action_set.clone());
+            let (pcd, ()) = app.fuse(rng, TransactionLift, witness, self.pcd, span)?;
+            self.pcd = pcd;
+        }
+        Ok(self)
     }
 
     /// Merge `right` into this transaction at the same anchor. The result

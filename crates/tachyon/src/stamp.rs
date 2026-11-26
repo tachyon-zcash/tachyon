@@ -23,7 +23,7 @@ use alloc::{
 };
 use core::error;
 
-pub use aggregator::{AggregatorProof, MergeError, UnmergeError};
+pub use aggregator::{AggregatorProof, MergeError, SpanImportError, UnmergeError};
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Error};
 use polynomials::AggregatorRank;
@@ -665,10 +665,10 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 ///
 /// Wallets prove and lift [`Uncompressed`] proofs, and [`Self::compress`]
 /// rerandomizes one and publishes it as a [`Compressed`] proof. An aggregator
-/// decompresses a compressed wallet bundle into an [`AggregatorProof`], merges
-/// and unmerges there, and compresses the result into Ragu's compressed proof
-/// under the aggregator profile. Both profiles publish compressed proofs on the
-/// wire; only wallet publications can be decompressed.
+/// decompresses a compressed wallet bundle into an [`AggregatorProof`], lifts,
+/// merges and unmerges there, and compresses the result into Ragu's compressed
+/// proof under the aggregator profile. Both profiles publish compressed proofs
+/// on the wire; only wallet publications can be decompressed.
 ///
 /// Verify every received stamp before extending it. Draw randomness for every
 /// proving call from an unpredictable source. A full proof holds in the clear
