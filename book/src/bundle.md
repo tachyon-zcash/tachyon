@@ -38,7 +38,7 @@ The action digest binds `cv`, `rk`, and the pair through its sum and product. Th
 
 ### Stamp
 
-The **stamp** carries a recursive stamp proof that all covered actions and fees follow the protocol rules. Whoever builds a stamp [rerandomizes](./proof-tree.md#rerandomization-at-trust-boundaries) it before it leaves them.
+The **stamp** carries a recursive stamp proof that all covered actions and fees follow the protocol rules. A stamp is [rerandomized](./proof-tree.md#rerandomization-at-trust-boundaries) when it is compressed for publication.
 
 It contains:
 
