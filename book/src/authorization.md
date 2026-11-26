@@ -90,11 +90,11 @@ $$
 
 $$
 \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}\bigl(
-    \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{cvFeeMaxTachyon} \| \mathsf{hMemoTachyon}
+    \mathsf{valueBalanceTachyon} \| \mathsf{hActionsTachyon} \| \mathsf{cvFeeMaxTachyon} \| \mathsf{hMemoTachyon}
 \bigr)
 $$
 
-The action descriptor digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the descriptors and their order. The tachygram pairs are authorization data and are excluded. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
+The 104-byte outer preimage follows wire order. The action descriptor digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the descriptors and their order. The tachygram pairs are authorization data and are excluded. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
 
 $\mathsf{cvFeeMaxTachyon}$ is the [max fee note](./fee.md)'s value commitment. The fee is authorization data and stays out of the bundle commitment.
 
@@ -322,7 +322,7 @@ rect rgb(100, 149, 237, 0.1)
     note over User: value_balance = Sum v_spend - Sum v_output - feemax
     note over User: bundle_plan { spends[], outputs[], max_fee_note, memo }
     note over User: hActionsTachyon = Blake2b(cv_i || rk_i) over the sorted descriptor set, which is this sender's wire order
-    note over User: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
+    note over User: bundle_commitment = Blake2b(value_balance || hActionsTachyon || cv_feemax || hMemoTachyon)
     note over User: compute sighash
 end
 
@@ -346,7 +346,7 @@ par Authorizing
         end
         note over Custody: cv_feemax = Pedersen(-feemax, Poseidon_FeeBlind(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
+        note over Custody: bundle_commitment = Blake2b(value_balance || hActionsTachyon || cv_feemax || hMemoTachyon)
         note over Custody: confirm sighash (custody requirement, not performed by Plan::sign)
 
         loop per spend action
@@ -466,7 +466,7 @@ destroy User
 User ->> Consensus: transaction
 break verify_signatures
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_feemax || hMemoTachyon)
+    note over Consensus: bundle_commitment = Blake2b(value_balance || hActionsTachyon || cv_feemax || hMemoTachyon)
     note over Consensus: compute sighash
     note over Consensus: bvk = Sum cv_i + cv_feemax - [value_balance]V
     note over Consensus: check binding_sig against sighash under bvk

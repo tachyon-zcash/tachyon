@@ -985,8 +985,13 @@ fn auth_digest_invariants() {
     let mut tachygram_set = stamped.clone();
     tachygram_set.stamp.tachygram_set =
         TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
+    let other = alice(app).1;
     let mut proof = stamped.clone();
-    proof.stamp.proof = alice(app).1.stamp.proof;
+    proof.stamp.proof = other.stamp.proof;
+    let mut action_sig = stamped.clone();
+    action_sig.actions[0].signature = other.actions[0].signature;
+    let mut binding_sig = stamped.clone();
+    binding_sig.binding_sig = other.binding_sig;
     let mut fee_change = stamped;
     fee_change.fee_auth = Tachygram::random(rng);
     for edited in [
@@ -998,6 +1003,8 @@ fn auth_digest_invariants() {
         anchor,
         tachygram_set,
         proof,
+        action_sig,
+        binding_sig,
         fee_change,
     ] {
         assert_eq!(edited.commitment(), commitment);

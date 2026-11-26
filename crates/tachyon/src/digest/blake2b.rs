@@ -105,6 +105,47 @@ pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     })
 }
 
+const ACTION_SIGS_PERSONALIZATION: &[u8; 15] = b"Tachyon-ActSigs";
+const ACTION_TACHYGRAMS_PERSONALIZATION: &[u8; 14] = b"Tachyon-ActTgs";
+
+/// `hActionSigsTachyon`, the actions' signatures in action order.
+///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{Tachyon-ActSigs}(
+///     \mathsf{sig}_0 \Vert \cdots \Vert \mathsf{sig}_{n-1}
+///   )
+/// $$
+///
+/// Each item is a 64-byte RedPallas authorization signature. No count is
+/// hashed.
+fn action_sigs_digest(sigs: impl IntoIterator<Item = [u8; 64]>) -> [u8; 32] {
+    hasher_256(ACTION_SIGS_PERSONALIZATION, |state| {
+        for sig in sigs {
+            state.update(&sig);
+        }
+    })
+}
+
+/// `hActionTachygramsTachyon`, the actions' tachygram pairs in action order.
+///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{Tachyon-ActTgs}(
+///     \mathsf{tg}_{0,0} \Vert \mathsf{tg}_{0,1} \Vert \cdots \Vert
+///     \mathsf{tg}_{n-1,0} \Vert \mathsf{tg}_{n-1,1}
+///   )
+/// $$
+///
+/// Each pair is hashed as written, both canonical 32-byte little-endian
+/// Pallas base-field elements. No count is hashed.
+fn action_tachygrams_digest(pairs: impl IntoIterator<Item = ([u8; 32], [u8; 32])>) -> [u8; 32] {
+    hasher_256(ACTION_TACHYGRAMS_PERSONALIZATION, |state| {
+        for (first, second) in pairs {
+            state.update(&first);
+            state.update(&second);
+        }
+    })
+}
+
 const MEMO_PERSONALIZATION: &[u8; 12] = b"Tachyon-Memo";
 
 /// Digest of a bundle's memo payload.
@@ -134,8 +175,10 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
-///     \mathsf{hActionsTachyon} \Vert \mathsf{valueBalanceTachyon} \Vert
-///     \mathsf{cvFeeMaxTachyon} \Vert \mathsf{hMemoTachyon}
+///     \mathsf{LE64}(\mathsf{valueBalanceTachyon}) \Vert
+///     \mathsf{hActionsTachyon} \Vert
+///     \mathsf{cvFeeMaxTachyon} \Vert
+///     \mathsf{hMemoTachyon}
 ///   )
 /// $$
 ///
@@ -143,6 +186,8 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 /// memo is included because it is effecting: relayers rewrite `auth_digest`
 /// during aggregation, so only the sighash can hold a payload a miner must not
 /// strip.
+///
+/// The 104-byte outer preimage follows wire order.
 #[must_use]
 pub fn bundle_commitment(
     action_commit: &[u8; 32],
@@ -151,8 +196,8 @@ pub fn bundle_commitment(
     memo_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
-        state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
+        state.update(action_commit);
         state.update(cv_feemax);
         state.update(memo_digest);
     })
@@ -211,33 +256,34 @@ pub fn stamp_digest<'txid>(
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \Vert
-///     (\mathsf{sig}_i \Vert \mathsf{tg}_{i,0} \Vert \mathsf{tg}_{i,1})_i \Vert
-///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{cmChangeTachyon} \Vert
-///     \mathsf{bindingSigTachyon} \Vert \mathsf{hStampTachyon}
+///     \mathsf{hActionSigsTachyon} \Vert
+///     \mathsf{bindingSigTachyon} \Vert
+///     \mathsf{hActionTachygramsTachyon} \Vert
+///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert
+///     \mathsf{cmChangeTachyon} \Vert
+///     \mathsf{hStampTachyon}
 ///   )
 /// $$
 ///
-/// Each 128-byte record projects one action's signature and tachygram pair,
-/// preserving the pair's wire order. Records are hashed in the order given,
-/// without a count; they are the only variable-length input.
+/// The 201-byte outer preimage follows wire order. The signature and tachygram
+/// vectors each contribute a digest over their wire encodings in action order.
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
-    action_auth: &[[u8; 128]],
+    action_sigs: impl IntoIterator<Item = [u8; 64]>,
+    binding_sig: &[u8; 64],
+    action_tachygrams: impl IntoIterator<Item = ([u8; 32], [u8; 32])>,
     fee: u64,
     cm_change: &[u8; 32],
-    binding_sig: &[u8; 64],
     stamp_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
         state.update(&[state_header]);
-        // only variable-length component
-        for record in action_auth {
-            state.update(record);
-        }
+        state.update(&action_sigs_digest(action_sigs));
+        state.update(binding_sig);
+        state.update(&action_tachygrams_digest(action_tachygrams));
         state.update(&fee.to_le_bytes());
         state.update(cm_change);
-        state.update(binding_sig);
         state.update(stamp_digest);
     })
 }

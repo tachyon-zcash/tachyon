@@ -1079,33 +1079,25 @@ impl<S: StampState> Bundle<S> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Commits each action's signature and pair, the fee, fee change,
-    /// binding signature and `hStampTachyon`. See
-    /// [`blake2b::bundle_auth_digest`] and
+    /// Commits, in wire order, the state byte, the action signatures, the
+    /// binding signature, the tachygram pairs, the fee, the fee change and
+    /// `hStampTachyon`. See [`blake2b::bundle_auth_digest`] and
     /// [`blake2b::stamp_digest`]. The memo is absent here because it is
     /// effecting data, committed by [`Self::commitment`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        let action_auth: Vec<[u8; 128]> = self
-            .actions
-            .iter()
-            .map(|action| {
-                let (sig, pair) = (action.signature, action.tachygrams);
-                let mut record = [0u8; 128];
-                record[..64].copy_from_slice(&<[u8; 64]>::from(sig.0));
-                record[64..96].copy_from_slice(&Fp::from(pair.0).to_bytes());
-                record[96..].copy_from_slice(&Fp::from(pair.1).to_bytes());
-                record
-            })
-            .collect();
         let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
         blake2b::bundle_auth_digest(
             S::state_byte().into(),
-            &action_auth,
+            self.actions.iter().map(|action| action.signature.0.into()),
+            &binding_sig,
+            self.actions.iter().map(|action| {
+                let (first, second) = action.tachygrams;
+                (Fp::from(first).to_bytes(), Fp::from(second).to_bytes())
+            }),
             self.fee.v_fee.into(),
             &Fp::from(self.fee_auth).to_bytes(),
-            &binding_sig,
             &self.stamp.stamp_digest(),
         )
     }
