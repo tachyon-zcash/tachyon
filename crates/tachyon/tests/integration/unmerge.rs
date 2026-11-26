@@ -12,7 +12,7 @@ use zcash_tachyon::{
     VerifyCoverageError, bundle,
     stamp::{
         self, ProofStamp,
-        proof::stamp::{Stamp, StampUnmerge},
+        proof::transaction::{Transaction, TransactionUnmerge},
     },
     value, witness,
 };
@@ -554,7 +554,7 @@ fn unmerge_binds_its_sets() {
             .into(),
         bob.stamp.anchor,
     );
-    let valid = witness::stamp_unmerge(
+    let valid = witness::transaction_unmerge(
         (dividend_header, divisor_header),
         alice_actions,
         alice_tachygrams,
@@ -585,10 +585,13 @@ fn unmerge_binds_its_sets() {
         let (forged, ()) = app
             .fuse(
                 rng,
-                StampUnmerge,
+                TransactionUnmerge,
                 corrupt,
-                alice_bob.proof.clone().carry::<Stamp>(dividend_header),
-                bob.stamp.proof.clone().carry::<Stamp>(divisor_header),
+                alice_bob
+                    .proof
+                    .clone()
+                    .carry::<Transaction>(dividend_header),
+                bob.stamp.proof.clone().carry::<Transaction>(divisor_header),
             )
             .unwrap();
         assert!(

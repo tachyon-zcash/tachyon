@@ -27,8 +27,8 @@ use crate::{
 /// A spend's note, epoch nullifier pair, pool anchor, payment key and value
 /// commitment (wallet-only).
 ///
-/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
-/// ties its `ak` to `pk`, and produces `rk`.
+/// [`SpendAction`](super::transaction::SpendAction) publishes the pair
+/// unordered, ties its `ak` to `pk`, and produces `rk`.
 ///
 /// # Injectivity
 ///
@@ -44,7 +44,7 @@ use crate::{
 ///   Each fixes its key and epoch, so the pair fixes the omitted $e$, but not
 ///   `cm`: notes sharing $\psi$ and $\mathsf{nk}$ share the key. Neither
 ///   nullifier can mark a zero commitment as published because both are
-///   [nonzero](super::stamp::Stamp#injectivity).
+///   [nonzero](super::transaction::Transaction#injectivity).
 /// - `anchor` is the position where [`NoteSpendable`] establishes spendability,
 ///   referring to the published pool history when canonical.
 /// - `pk` stands for the note's owner, determined by `cm` and determining

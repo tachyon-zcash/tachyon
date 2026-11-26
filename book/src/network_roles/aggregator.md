@@ -3,7 +3,7 @@
 Several aggregators can work on the same [autonomes](../aggregation.md#bundle-states) at once, and a miner can include parts of several aggregates in one block.
 Blocks keep landing while aggregates are being built.
 This page describes how an aggregator works in that environment so that its proving work survives, other aggregators can reuse it, and nobody depends on a builder who keeps proofs to itself.
-It relies on `StampUnmerge`, described in [Stamp construction](../proof-tree.md#stamp-construction), to remove mined bundles from an aggregate.
+It relies on `TransactionUnmerge`, described in [Stamp construction](../proof-tree.md#stamp-construction), to remove mined bundles from an aggregate.
 
 ## The life of an aggregate
 

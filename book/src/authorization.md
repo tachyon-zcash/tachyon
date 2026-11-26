@@ -277,7 +277,7 @@ flowchart LR
     pczt ~~~ sighash
 ```
 
-Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via its action-set output commitment). The Stamp header contains the bridge hash of `cTachygrams` and the anchor; the action- and tachygram-set commitments are checked separately against the proof's output commitments.
+Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via its action-set output commitment). The Transaction header contains the bridge hash of `cTachygrams` and the anchor; the action- and tachygram-set commitments are checked separately against the proof's output commitments.
 
 A modified descriptor breaks both checks. Changing a pair's members breaks stamp verification and changes the [authorization digest](./transaction-identifiers.md). Swapping the two members changes the authorization digest but leaves the order-independent action digest unchanged.
 
@@ -428,7 +428,7 @@ and Proving
                 note over Stamper: cm_chg = Poseidon_CmDerive(rcm, pk, 0, psi)
                 note over Stamper: d_fee = Poseidon_FeeDg(x(cv_feemax), y(cv_feemax), 0, cm_chg)
                 note over Stamper: output commitments: Commit(X - d_fee), cTachygrams = Commit(X - cm_chg)
-                note over Stamper: Stamp header (bridge(cTachygrams), anchor)
+                note over Stamper: Transaction header (bridge(cTachygrams), anchor)
             end
         else
             critical FeeFuse(Actions), witness max_fee_note, fee
@@ -437,7 +437,7 @@ and Proving
                 note over Stamper: fee_action = action_poly * (X - d_fee)
                 note over Stamper: fee_tg = tg_poly * (X - cm_chg)
                 note over Stamper: output commitments: Commit(fee_action), cTachygrams = Commit(fee_tg)
-                note over Stamper: Stamp header (bridge(cTachygrams), anchor)
+                note over Stamper: Transaction header (bridge(cTachygrams), anchor)
             end
         end
         note over Stamper: rerandomize proof
@@ -483,6 +483,6 @@ end
 break verify_proof
     note over Consensus: action_acc = Commit(product of (X - d_i) and (X - d_fee_j))
     note over Consensus: compare action_acc and cTachygrams against the proof's two output commitments
-    note over Consensus: verify proof against Stamp header (bridge(cTachygrams), anchor)
+    note over Consensus: verify proof against Transaction header (bridge(cTachygrams), anchor)
 end
 ```
