@@ -18,7 +18,7 @@ use zcash_tachyon::{
         self, Proof as _, ProofStamp,
         proof::{
             App, output,
-            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
+            transaction::{Actions, FeeFuse, FeeSeed, OutputAction, Transaction},
         },
     },
     value, witness,
@@ -757,7 +757,7 @@ fn fee_seed_binds_its_singletons_and_header() {
         assert_eq!(proof.verify(rng, app, header).unwrap(), expected);
         assert_eq!(compressed.verify(rng, app, header).unwrap(), expected);
     }
-    let pcd = seed_pcd.proof().clone().carry::<Stamp>((
+    let pcd = seed_pcd.proof().clone().carry::<Transaction>((
         app.bridge_hash(valid.3.commit().into()).unwrap().into(),
         anchor,
     ));

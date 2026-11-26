@@ -15,7 +15,7 @@ use zcash_tachyon::{
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::{EqAffine, Fp},
-    stamp::proof::{App, delegation, output, pool, spend, spendable, stamp},
+    stamp::proof::{App, delegation, output, pool, spend, spendable, transaction},
     value, witness,
 };
 
@@ -175,7 +175,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
 }
 
 #[test]
-fn stamp_lift_accepts_only_anchors_the_span_holds() {
+fn transaction_lift_accepts_only_anchors_the_span_holds() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -208,27 +208,31 @@ fn stamp_lift_accepts_only_anchors_the_span_holds() {
     );
     let (_, inner_bundle) = alice(app);
     let (_, end_bundle) = later_output(app);
-    for (stamp_anchor, bundle, expected) in [
+    for (transaction_anchor, bundle, expected) in [
         (anchor_start, start_bundle, None),
         (members[0], inner_bundle, None),
         (anchor_end, end_bundle, None),
-        (fork, fork_bundle, Some("a stamp anchor outside the span")),
+        (
+            fork,
+            fork_bundle,
+            Some("a transaction anchor outside the span"),
+        ),
     ] {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
         let stamp = bundle.stamp;
-        let stamp_pcd = stamp.proof.carry::<stamp::Stamp>((
+        let transaction_pcd = stamp.proof.carry::<transaction::Transaction>((
             app.bridge_hash(stamp.tachygram_set.into()).unwrap().into(),
-            stamp_anchor,
+            transaction_anchor,
         ));
         let (lifted, ()) = app
             .fuse(
                 rng,
-                stamp::StampLift,
-                witness::stamp_lift(
-                    (*stamp_pcd.data(), *span.data()),
+                transaction::TransactionLift,
+                witness::transaction_lift(
+                    (*transaction_pcd.data(), *span.data()),
                     ActionSetPoly::from_iter(digests),
                 ),
-                stamp_pcd,
+                transaction_pcd,
                 span.clone(),
             )
             .unwrap();
@@ -334,7 +338,7 @@ fn spend_rejects_invalid_note() {
     let (forged_action, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -398,7 +402,7 @@ fn step_accepts_zero_value_note() {
     let (output_action, ()) = app
         .fuse(
             rng,
-            stamp::OutputAction,
+            transaction::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -414,7 +418,7 @@ fn step_accepts_zero_value_note() {
     let (spend_action, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*spend_bind.data(), ()), theta, user.pak),
             spend_bind,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -475,7 +479,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         let (forged, ()) = app
             .fuse(
                 rng,
-                stamp::SpendAction,
+                transaction::SpendAction,
                 action_witness,
                 bind_pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
@@ -490,7 +494,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     let (pcd, ()) = app
         .fuse(
             rng,
-            stamp::SpendAction,
+            transaction::SpendAction,
             witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),
@@ -976,7 +980,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         let (forged, ()) = app
             .fuse(
                 rng,
-                stamp::OutputAction,
+                transaction::OutputAction,
                 action_witness,
                 bind_pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
@@ -991,7 +995,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     let (pcd, ()) = app
         .fuse(
             rng,
-            stamp::OutputAction,
+            transaction::OutputAction,
             witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             app.bootstrap_proof().clone().carry::<()>(()),

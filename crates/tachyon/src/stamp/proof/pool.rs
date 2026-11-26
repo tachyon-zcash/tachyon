@@ -1,8 +1,8 @@
 //! Anchor-bound primitives over consensus state.
 //!
-//! [`super::stamp::StampLift`] uses a nullifier-free [`AnchorSpan`] covering
-//! `[anchor_start, anchor_end]` with members in `(anchor_start, anchor_end]`.
-//! [`ArbitraryUnspent`] supplies exclusion evidence for
+//! [`super::transaction::TransactionLift`] uses a nullifier-free [`AnchorSpan`]
+//! covering `[anchor_start, anchor_end]` with members in `(anchor_start,
+//! anchor_end]`. [`ArbitraryUnspent`] supplies exclusion evidence for
 //! [`super::spendable::SpendableLift`]. An [`Anchor`] advances by stamp
 //! absorption or epoch boundary, not by block: validators check endpoints
 //! against the published per-block sequence.
@@ -209,9 +209,10 @@ impl Header<Fp> for NoteUnspent {
 
 /// An anchor path with a commitment to the anchors inside it.
 ///
-/// [`StampLift`](super::stamp::StampLift) and
-/// [`ActionLift`](super::stamp::ActionLift) advance across spans. Spendables
-/// instead require [`NoteUnspent`] exclusions bound to their nullifiers.
+/// [`TransactionLift`](super::transaction::TransactionLift) and
+/// [`ActionLift`](super::transaction::ActionLift) advance across spans.
+/// Spendables instead require [`NoteUnspent`] exclusions bound to their
+/// nullifiers.
 ///
 /// # Injectivity
 ///

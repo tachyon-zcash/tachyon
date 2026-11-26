@@ -11,7 +11,7 @@ use crate::{
     stamp::proof::{
         new_application,
         output::OutputBind,
-        stamp::{FeeFuse, OutputAction},
+        transaction::{FeeFuse, OutputAction},
     },
     witness,
 };

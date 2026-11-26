@@ -97,15 +97,15 @@ note has the same opening as the max fee note.
 ## Fee Steps
 
 In the [proof tree](./proof-tree.md), `Actions` carries only an
-[anchor](./anchor.md) in its header. `Stamp` carries the tachygram
+[anchor](./anchor.md) in its header. `Transaction` carries the tachygram
 accumulator's [bridge hash](./anchor.md#stamp-absorption) and the anchor in
 its header. Both hold the action set as an `ActionSetPoly` and the
 [tachygram set](./tachygrams.md#tachygram-sets) as a `TachygramSetPoly`. `FeeFuse` and
-`FeeSeed` are the only steps that emit a `Stamp` without taking one as
+`FeeSeed` are the only steps that emit a `Transaction` without taking one as
 input. Every stamp descends from one of them.
 
 `FeeFuse` takes `Actions` as its left input, has no right input, and
-emits a `Stamp`. It witnesses the max fee note opening and the fee along
+emits a `Transaction`. It witnesses the max fee note opening and the fee along
 with $(A', T')$ for the resulting set polynomials.
 
 The step derives $r$ and $\cv_\feemax$ from the opening and rejects the
@@ -129,7 +129,7 @@ T' = T \cdot (X - \cm_\chg).
 $$
 
 The digest absorbs the same $\cm_\chg$ wire used to form the linear factor in
-the resulting tachygram set polynomial. The emitted `Stamp` carries the bridge
+the resulting tachygram set polynomial. The emitted `Transaction` carries the bridge
 hash of the commitment to $T'$ and the left input's anchor.
 
 `FeeSeed` proves a zero-action bundle's zero fee. It has no
@@ -146,7 +146,7 @@ S_A = X - d_\fee,
 S_T = X - \cm_\chg.
 $$
 
-The emitted `Stamp` carries the bridge hash of the commitment to $S_T$ and
+The emitted `Transaction` carries the bridge hash of the commitment to $S_T$ and
 the witnessed anchor.
 
 The fee steps prove that the fee digest and fee change commitment come from
