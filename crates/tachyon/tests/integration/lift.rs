@@ -129,7 +129,6 @@ fn aggregator_lifts_over_imported_wallet_spans() {
 }
 
 #[test]
-#[ignore = "Ragu #1024: wallet and aggregator bridge hashes differ at this pin"]
 fn aggregator_seed_reaches_wallet_endpoint_and_lifts() {
     let rng = &mut StdRng::seed_from_u64(642);
     let app = aggregator();

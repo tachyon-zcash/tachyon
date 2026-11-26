@@ -66,7 +66,7 @@ Each hash is domain-separated as described in [Domain Separators](./domain-separ
 
 | Parameter | Value | Defined in |
 | --------- | ----- | ---------- |
-| `WalletRank` | rank 13, $2^{13}$ coefficients, $2^{11}$ gates | Ragu `WalletRank` |
+| Wallet and aggregator rank | rank 14, $2^{14}$ coefficients, $2^{12}$ gates | Ragu `WalletRank`, `AggregatorRank` |
 | `MAX_STAMP_TACHYGRAMS` | at most $2^{13} - 1$ tachygrams per stamp | `constants.rs` |
 | Header size | 9 field elements, 8 of payload and 1 suffix | `stamp/proof.rs` |
 

@@ -78,13 +78,13 @@
 //! header fields, need not be fixed before $\zeta$.
 //!
 //! Two distinct polynomials fixed before $\zeta$ agree there only at a root
-//! of their difference. If the proving rank allows $N$ coefficients per slot
-//! ($N = 2^{13}$ at wallet rank), a product of two slots has degree below $2N$.
-//! One attempt at a false identity of this degree passes with probability below
-//! $2N/p$ ($2^{14}/p$ at wallet rank). These bounds add
-//! across tree steps and prover attempts. They cover any polynomial a prover
-//! commits at its rank, although honest set polynomials stay below $2^{13}$
-//! coefficients at either rank.
+//! of their difference. For a proving rank $r$, a slot holds $N = 2^r$
+//! coefficients and a product of two slots has degree below $2N$. One attempt
+//! at a false identity of this degree passes with probability below $2N/p$.
+//! These bounds add across tree steps and prover attempts. They cover any
+//! polynomial the rank admits. The separate consensus limit on a stamp's
+//! tachygrams is
+//! [`MAX_STAMP_TACHYGRAMS`](crate::constants::MAX_STAMP_TACHYGRAMS).
 //!
 //! Opening at any other point evaluates the committed polynomial there, so a
 //! zero opening proves a root.
@@ -151,7 +151,6 @@ use ragu::{
     pasta::{Fp, Pasta},
     pcd::profile::{self, Aggregator, Decompression, Profiled},
 };
-use ragu_pcd::pasta::baked_aggregator;
 
 use crate::pasta;
 
@@ -178,7 +177,8 @@ pub fn new_application() -> Result<Box<App<'static>>, ragu::Error> {
         .map(Box::new)
 }
 
-/// Builds the aggregator application with the baked aggregator setup.
+/// Builds the aggregator application with the same baked parameters as the
+/// wallet.
 ///
 /// It registers the same steps at aggregator rank and holds a wallet-rank
 /// application under the same setup to verify and decompress wallet proofs.
@@ -203,7 +203,7 @@ pub fn new_aggregator_application<RNG: rand_core::CryptoRng>(
         >,
     >,
 > {
-    let params = baked_aggregator();
+    let params = pasta::baked();
     let wallet = register_steps::<Pasta, WalletRank>()?.finalize(params)?;
     let context = Decompression::new(wallet, rng)?;
     register_steps()?

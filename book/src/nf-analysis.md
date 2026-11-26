@@ -46,7 +46,7 @@ support. A depth-$14$ tree implies the largest epoch value being $2^{14}-1$.
 Assuming 1 day/epoch, this translates to 45 years in the future which is
 reasonable. A full root-to-leaf walk of such tree requires $14$ Poseidon hashes.
     
-Step circuit size (`max_mul_gates`) is $n=2^{11}=2048$. Since our constraint
+Step circuit size (`max_mul_gates`) is $n=2^{12}=4096$. Since our constraint
 system allows $4n$ linear constraints, this budget is overly abundant and we only
 focus on multiplication constraints. Step capacity for Poseidon is $7$ ([see
 here](https://github.com/tachyon-zcash/ragu/pull/720)) as per-permutation gate
@@ -948,7 +948,7 @@ In total, computing $Z_H(\gamma)$ takes $(\log(N)+1)$ `mul` gates. Lastly,
 $g(\gamma)$ takes $5$ `mul` only.
 
 Now a first-order estimation of largest permissible $\ell$ for a single PCD step.
-Assuming $512$-`mul`-cost per polynomial oracle and a $2^{11}$ circuit size.
+The following estimates and table use the earlier rank-13 budget of $2^{11}$ gates per step and assume a $512$-`mul` cost per polynomial oracle; they are not rank-14 measurements.
 
 $$
 \ell \leq \frac{2^{11} - 288 - 3 \cdot 512}{\log 64 + \log \ell + 6}

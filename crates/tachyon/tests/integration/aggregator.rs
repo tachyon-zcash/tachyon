@@ -206,7 +206,6 @@ fn unmerge_refuses_a_divisor_holding_a_root_the_dividend_lacks() {
 }
 
 #[test]
-#[ignore = "Ragu #1024: wallet and aggregator bridge hashes differ at this pin"]
 fn untouched_wallet_import_verifies_after_aggregator_compression() {
     let rng = &mut StdRng::seed_from_u64(59);
     let app = aggregator();

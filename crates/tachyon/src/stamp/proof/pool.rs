@@ -281,8 +281,8 @@ impl Header<Fp> for AnchorSpan {
 /// This step requires a stronger premise than collision resistance: it models
 /// the stamp absorption digest as a random function.
 ///
-/// Let $N$ be the proving rank's slot capacity in coefficients ($2^{13}$ at
-/// wallet rank). Except with probability at most $N \cdot T \cdot Q/p$ across
+/// Let $N = 2^r$ be the slot capacity in coefficients at proving rank $r$.
+/// Except with probability at most $N \cdot T \cdot Q/p$ across
 /// $T$ challenges and $Q$ stamp absorption digests, the member polynomial $M$
 /// equals $X - a$ as [`AnchorSpan`] asserts for a single-absorption chain.
 ///

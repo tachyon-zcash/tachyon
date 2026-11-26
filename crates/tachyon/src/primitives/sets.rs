@@ -4,9 +4,11 @@
 //!
 //! An accumulator $\sum_j c_j G_j$ weights host generators by polynomial
 //! coefficients without a blinding term. No discrete-log relation is known
-//! among the host generators, so at these wrappers' limit of $2^{13}$
-//! coefficients, each accumulator determines its polynomial and hence, for a
-//! [multiset], its fewer than $2^{13}$ members.
+//! among the host generators. At wallet rank $r$, these wrappers hold at most
+//! $2^r$ coefficients. Each accumulator determines its polynomial and hence,
+//! for a [multiset], its fewer than $2^r$ members. The number of tachygrams
+//! one stamp covers is separately capped by
+//! [`MAX_STAMP_TACHYGRAMS`](crate::constants::MAX_STAMP_TACHYGRAMS).
 //! The wrappers accept arbitrary polynomials and points.
 
 extern crate alloc;
