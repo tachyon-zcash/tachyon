@@ -1,11 +1,11 @@
 //! Transaction header and stamp-producing/transforming steps.
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Element, GadgetExt as _, Point, allocator::Allocator, decompose_n, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::{curve::Affine as _, field::Field as _},
@@ -235,7 +235,7 @@ impl Header<Fp> for Transaction {
 #[derive(Debug)]
 pub struct OutputAction;
 
-impl Step<Pasta> for OutputAction {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for OutputAction {
     type Aux<'source> = ();
     type Left = OutputHeader;
     type Output = Actions;
@@ -269,7 +269,7 @@ impl Step<Pasta> for OutputAction {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -359,7 +359,7 @@ impl Step<Pasta> for OutputAction {
 #[derive(Debug)]
 pub struct SpendAction;
 
-impl Step<Pasta> for SpendAction {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for SpendAction {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = Actions;
@@ -400,7 +400,7 @@ impl Step<Pasta> for SpendAction {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -491,7 +491,7 @@ impl Step<Pasta> for SpendAction {
 #[derive(Debug)]
 pub struct TransactionMerge;
 
-impl Step<Pasta> for TransactionMerge {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionMerge {
     type Aux<'source> = ();
     type Left = Transaction;
     type Output = Transaction;
@@ -515,7 +515,7 @@ impl Step<Pasta> for TransactionMerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -589,7 +589,7 @@ impl Step<Pasta> for TransactionMerge {
 #[derive(Debug)]
 pub struct ActionMerge;
 
-impl Step<Pasta> for ActionMerge {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for ActionMerge {
     type Aux<'source> = ();
     type Left = Actions;
     type Output = Actions;
@@ -613,7 +613,7 @@ impl Step<Pasta> for ActionMerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -678,7 +678,7 @@ impl Step<Pasta> for ActionMerge {
 #[derive(Debug)]
 pub struct TransactionLift;
 
-impl Step<Pasta> for TransactionLift {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionLift {
     type Aux<'source> = ();
     type Left = Transaction;
     type Output = Transaction;
@@ -706,7 +706,7 @@ impl Step<Pasta> for TransactionLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -780,7 +780,7 @@ impl Step<Pasta> for TransactionLift {
 #[derive(Debug)]
 pub struct ActionLift;
 
-impl Step<Pasta> for ActionLift {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for ActionLift {
     type Aux<'source> = ();
     type Left = Actions;
     type Output = Actions;
@@ -804,7 +804,7 @@ impl Step<Pasta> for ActionLift {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -876,7 +876,7 @@ impl Step<Pasta> for ActionLift {
 #[derive(Debug)]
 pub struct FeeFuse;
 
-impl Step<Pasta> for FeeFuse {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for FeeFuse {
     type Aux<'source> = ();
     type Left = Actions;
     type Output = Transaction;
@@ -909,7 +909,7 @@ impl Step<Pasta> for FeeFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1045,7 +1045,7 @@ impl Step<Pasta> for FeeFuse {
 #[derive(Debug)]
 pub struct FeeSeed;
 
-impl Step<Pasta> for FeeSeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for FeeSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = Transaction;
@@ -1076,7 +1076,7 @@ impl Step<Pasta> for FeeSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -1200,7 +1200,7 @@ impl Step<Pasta> for FeeSeed {
 #[derive(Debug)]
 pub struct TransactionUnmerge;
 
-impl Step<Pasta> for TransactionUnmerge {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for TransactionUnmerge {
     type Aux<'source> = ();
     type Left = Transaction;
     type Output = Transaction;
@@ -1226,7 +1226,7 @@ impl Step<Pasta> for TransactionUnmerge {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
