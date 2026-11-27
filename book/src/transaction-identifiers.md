@@ -29,7 +29,7 @@ Record $i$ combines `vActionSigsTachyon[i]` with `vActionTachygramsTachyon[i]`, 
 
 The authorization digest uses the same state byte as the wire encoding: `0x01` for a wallet publication or `0x03` for an aggregator publication. The state byte is outside the stamp digests and the signed bundle commitment.
 
-For a stamp, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
+For an aggregate, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
 
 $$
 \mathsf{hStampTachyon} =
@@ -38,7 +38,7 @@ $$
 \bigr)
 $$
 
-$\mathsf{vAdjunctsTachyon}$ is its only variable-length input; no count is hashed. The preimage is $32k + 32$ bytes for $k$ adjuncts. An autonome has an empty adjunct list but still includes the proof digest.
+$\mathsf{vAdjunctsTachyon}$ is its only variable-length input; no count is hashed. The preimage is $32k + 32$ bytes for $k$ adjuncts. For an autonome, $\mathsf{hStampTachyon} = \mathsf{hStampProofTachyon}$ directly; there is no outer hash.
 
 $$
 \mathsf{hStampProofTachyon} =
@@ -47,9 +47,9 @@ $$
     \bigr)
 $$
 
-covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. $\mathsf{proofTachyon}$ is its only variable-length input: the Ragu-encoded proof bytes including their envelope. These bytes determine [`sizeProofTachyon`](./bundle.md#stamp-trailer).
+covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. $\mathsf{proofTachyon}$ is its only variable-length input: the Ragu-encoded proof bytes including their envelope. The selected profile fixes their length.
 
-A stripped bundle has an empty trailer and no proof digest. Its $\mathsf{hStampTachyon}$ is `STAMP_DIGEST_EMPTY`, the `Tachyon-Stamp` personalized hash of the empty input, written $\text{BLAKE2b-256}_\text{Tachyon-Stamp}(\texttt{""})$. A stamp always hashes at least its 32-byte proof digest, so even an autonome has a different stamp-digest preimage. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+A stripped bundle has an empty trailer and no proof digest. Its $\mathsf{hStampTachyon}$ is `STAMP_DIGEST_EMPTY`, the `Tachyon-Stamp` personalized hash of the empty input, written $\text{BLAKE2b-256}_\text{Tachyon-Stamp}(\texttt{""})$. An aggregate with no adjuncts hashes its 32-byte proof digest under `Tachyon-Stamp`, so it differs from a stripped bundle. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 
 ## Adjunct references
 

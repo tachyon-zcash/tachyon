@@ -38,10 +38,7 @@ use ragu::{
     Rank as _, WalletRank,
     circuits::polynomials,
     pasta::Pasta,
-    pcd::{
-        profile::{Aggregator, Profiled},
-        serialization,
-    },
+    pcd::profile::{Aggregator, Profiled},
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
@@ -57,29 +54,32 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{EpAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
-    serialization::{compactsize::CompactSize, read_compactsize, write_compactsize},
+    serialization::{read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
 };
 
-mod stamp_sealed {
+pub(crate) mod stamp_sealed {
     pub trait Sealed {}
-    use ragu::CompressedProof;
 
-    use super::{Aggregator, HEADER_SIZE, Pasta, Profiled};
-
-    impl Sealed for super::Stamp<super::Compressed> {}
-    impl Sealed for super::Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {}
+    impl Sealed for super::Autonome {}
+    impl Sealed for super::Stamp<super::Uncompressed> {}
+    impl Sealed for super::Aggregate {}
     impl Sealed for () {}
 }
 
 /// Consensus wire states of a bundle's stamp.
 ///
-/// These are a [`Stamp`] with a [`Compressed`] proof, and `()` once stripped.
+/// These are [`Autonome`], [`Aggregate`], and `()` once stripped.
 /// A stripped bundle's proof is carried by an aggregate whose
 /// [`Stamp::adjuncts`] lists its transaction's txid. A [`Stamp`] with an
 /// [`Uncompressed`] proof is not a wire state.
 pub trait StampState: stamp_sealed::Sealed {
+    /// Number of other bundles this stamp lists. Only aggregates have a list.
+    fn n_adjuncts(&self) -> usize {
+        0
+    }
+
     /// A stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
     ///
     /// A stripped stamp hashes an empty input.
@@ -128,158 +128,146 @@ impl StampState for () {
     }
 }
 
-mod sealed {
-    use ragu::CompressedProof;
+/// The wallet publication, which covers only its carrying bundle.
+pub type Autonome = Stamp<Compressed>;
 
-    use super::{Aggregator, HEADER_SIZE, Pasta, Profiled};
+/// An aggregator publication, carrying the txids of the other bundles it
+/// covers.
+pub type Aggregate =
+    Stamp<ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>, BTreeSet<[u8; 32]>>;
 
-    pub trait Sealed {}
-    impl Sealed for super::Uncompressed {}
-    impl Sealed for super::Compressed {}
-    impl Sealed for CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>> {}
+fn read_frame<R: Read>(mut reader: R, length: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes)?;
+    Ok(bytes)
 }
 
-/// The Ragu proof a [`Stamp`] carries.
-///
-/// A wallet's proof is [`Uncompressed`] or [`Compressed`], and an aggregator's
-/// is Ragu's compressed proof under the aggregator profile. Each verifies under
-/// its own application through its `Stamp::verify_proof`.
-pub trait Proof: sealed::Sealed {
-    /// The proof-encoding transport bound for this application.
-    fn encoded_len() -> usize;
+fn write_frame<W: Write>(mut writer: W, bytes: &[u8], length: usize) -> io::Result<()> {
+    if bytes.len() != length {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected proof length",
+        ));
+    }
+    writer.write_all(bytes)
+}
 
-    /// The proof's Ragu encoding.
+impl<P, A> Stamp<P, A> {
+    fn write_header<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        self.anchor.write(&mut writer)?;
+        self.tachygram_set.write(writer)
+    }
+}
+
+impl Stamp<Uncompressed> {
+    /// Read a full wallet stamp for private handoff.
     ///
     /// # Errors
-    ///
-    /// Returns [`serialization::Error`] if the proof has no encoding.
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>>;
+    /// Returns an error for truncated or invalid fields or proof bytes.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let anchor = Anchor::read(&mut reader)?;
+        let tachygram_set = TachygramSetCommit::read(&mut reader)?;
+        let bytes = read_frame(reader, Uncompressed::encoded_len())?;
+        let proof = Uncompressed::from_bytes(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        Ok(Self {
+            anchor,
+            tachygram_set,
+            adjuncts: (),
+            proof: Box::new(proof),
+        })
+    }
 
-    /// Decode a proof from its Ragu encoding.
+    /// Write the full wallet stamp without a consensus state byte.
     ///
     /// # Errors
-    ///
-    /// Returns [`serialization::Error`] if the bytes do not encode this
-    /// proof type.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>>
-    where
-        Self: Sized;
-}
-
-impl Proof for Uncompressed {
-    fn encoded_len() -> usize {
-        Self::encoded_len()
-    }
-
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
-        self.to_bytes()
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
-        Self::from_bytes(bytes)
+    /// Returns an error if encoding or writing fails.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        self.write_header(&mut writer)?;
+        write_frame(
+            writer,
+            &self
+                .proof
+                .to_bytes()
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?,
+            Uncompressed::encoded_len(),
+        )
     }
 }
 
-impl Proof for Compressed {
-    fn encoded_len() -> usize {
-        Self::encoded_len::<WalletRank>()
-    }
-
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
-        self.to_bytes()
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
-        Self::from_bytes(bytes)
-    }
-}
-
-impl Proof for ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>> {
-    fn encoded_len() -> usize {
-        Self::encoded_len::<AggregatorRank>()
-    }
-
-    fn to_bytes(&self) -> Result<Vec<u8>, serialization::Error<'static>> {
-        self.to_bytes()
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Result<Self, serialization::Error<'_>> {
-        Self::from_bytes(bytes)
-    }
-}
-
-impl StampState for Stamp<Compressed> {
-    fn stamp_digest(&self) -> [u8; 32] {
-        self.digest()
-    }
-
+impl StampState for Autonome {
     fn state_byte() -> StateByte {
         StateByte::Stamped
     }
 
+    fn stamp_digest(&self) -> [u8; 32] {
+        #[expect(
+            clippy::expect_used,
+            reason = "a proved or decoded stamp proof is encodable"
+        )]
+        let bytes = self.proof.to_bytes().expect("stamp proof is encodable");
+        blake2b::stamp_proof_digest(
+            self.anchor.0.to_bytes(),
+            self.tachygram_set.as_ref().to_bytes(),
+            &bytes,
+        )
+    }
+
     fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        Self::read(reader)
+        let anchor = Anchor::read(&mut *reader)?;
+        let tachygram_set = TachygramSetCommit::read(&mut *reader)?;
+        let bytes = read_frame(reader, <Compressed>::encoded_len::<WalletRank>())?;
+        let proof = Compressed::from_bytes(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        Ok(Self {
+            anchor,
+            tachygram_set,
+            adjuncts: (),
+            proof: Box::new(proof),
+        })
     }
 
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.write(writer)
+        self.write_header(&mut *writer)?;
+        write_frame(
+            writer,
+            &self
+                .proof
+                .to_bytes()
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?,
+            Compressed::encoded_len::<WalletRank>(),
+        )
     }
 }
 
-impl StampState for Stamp<ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {
-    fn stamp_digest(&self) -> [u8; 32] {
-        self.digest()
+impl StampState for Aggregate {
+    fn n_adjuncts(&self) -> usize {
+        self.adjuncts.len()
     }
 
     fn state_byte() -> StateByte {
         StateByte::Aggregated
     }
 
-    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        Self::read(reader)
-    }
-
-    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.write(writer)
-    }
-}
-
-impl<P: Proof> Stamp<P> {
-    /// The stamp's `hStampTachyon`. See [`blake2b::stamp_digest`].
-    fn digest(&self) -> [u8; 32] {
+    fn stamp_digest(&self) -> [u8; 32] {
         #[expect(
             clippy::expect_used,
             reason = "a proved or decoded stamp proof is encodable"
         )]
-        let proof = self.proof.to_bytes().expect("stamp proof is encodable");
-
-        blake2b::stamp_digest(
-            &self.adjuncts,
-            &blake2b::stamp_proof_digest(
-                self.anchor.0.to_bytes(),
-                self.tachygram_set.as_ref().to_bytes(),
-                proof.as_ref(),
-            ),
-        )
+        let bytes = self.proof.to_bytes().expect("stamp proof is encodable");
+        let digest = blake2b::stamp_proof_digest(
+            self.anchor.0.to_bytes(),
+            self.tachygram_set.as_ref().to_bytes(),
+            &bytes,
+        );
+        blake2b::stamp_digest(&self.adjuncts, &digest)
     }
 
-    /// Read the stamp trailer from the consensus wire format.
-    /// The adjunct list and the proof blob each have a
-    /// compactSize prefix. The proof must have the proof type's encoded length.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if reading fails, any component is
-    /// not a canonical encoding, the adjunct txids are not strictly ascending,
-    /// or the adjunct count exceeds the standalone bound. The bundle reader
-    /// separately checks the combined action and adjunct bound.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let anchor = Anchor::read(&mut reader)?;
-
-        let tachygram_set = TachygramSetCommit::read(&mut reader)?;
-
+    fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let anchor = Anchor::read(&mut *reader)?;
+        let tachygram_set = TachygramSetCommit::read(&mut *reader)?;
         let adjuncts = {
-            let n_adjuncts = usize::try_from(read_compactsize(&mut reader)?)
+            let n_adjuncts = usize::try_from(read_compactsize(&mut *reader)?)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             // Each adjunct and the carrying bundle hold at least a fee change.
             if n_adjuncts + 1 > WalletRank::num_coeffs() - 1 {
@@ -303,26 +291,14 @@ impl<P: Proof> Stamp<P> {
             adjuncts
         };
 
-        let proof = {
-            // A full wallet frame can exceed the consensus count limit. Its
-            // length still needs a canonical prefix and the proof-type bound.
-            let prefix = CompactSize::read(&mut reader)?
-                .enforce_canon()
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            let proof_len = usize::try_from(prefix)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            if proof_len != P::encoded_len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected proof length",
-                ));
-            }
-            let mut bytes = vec![0u8; proof_len];
-            reader.read_exact(&mut bytes)?;
-            P::from_bytes(&bytes)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?
-        };
-
+        let bytes = read_frame(
+            reader,
+            <ragu::CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>::encoded_len::<
+                AggregatorRank,
+            >(),
+        )?;
+        let proof = ragu::CompressedProof::from_bytes(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
         Ok(Self {
             anchor,
             tachygram_set,
@@ -331,17 +307,10 @@ impl<P: Proof> Stamp<P> {
         })
     }
 
-    /// Write the stamp trailer to the consensus wire format. The adjunct list
-    /// and the proof blob each have a compactSize prefix.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing fails or the proof has no encoding.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        self.anchor.write(&mut writer)?;
-        self.tachygram_set.write(&mut writer)?;
+    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        self.write_header(&mut *writer)?;
         write_compactsize(
-            &mut writer,
+            &mut *writer,
             u64::try_from(self.adjuncts.len()).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "adjunct count exceeds u64")
             })?,
@@ -349,26 +318,16 @@ impl<P: Proof> Stamp<P> {
         for txid in &self.adjuncts {
             writer.write_all(txid)?;
         }
-        let proof = self
-            .proof
-            .to_bytes()
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        if proof.len() != P::encoded_len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected proof length",
-            ));
-        }
-        write_compactsize(
-            &mut writer,
-            u64::try_from(proof.len()).map_err(|_err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "proof encoding length exceeds u64",
-                )
-            })?,
-        )?;
-        writer.write_all(&proof)
+        write_frame(
+            writer,
+            &self
+                .proof
+                .to_bytes()
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?,
+            ragu::CompressedProof::<Profiled<Pasta, Aggregator<HEADER_SIZE>>>::encoded_len::<
+                AggregatorRank,
+            >(),
+        )
     }
 }
 
@@ -637,7 +596,7 @@ impl Plan {
             Stamp {
                 anchor,
                 tachygram_set,
-                adjuncts: BTreeSet::new(),
+                adjuncts: (),
                 proof: Box::new(proof),
             },
             descriptors,
@@ -683,20 +642,21 @@ pub type Compressed = ragu::CompressedProof<Pasta>;
 /// but the owner of its notes rerandomizes it first with
 /// [`Stamp::rerandomize`].
 #[derive(Clone, Debug)]
-pub struct Stamp<P: sealed::Sealed> {
+pub struct Stamp<P, A = ()> {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
     /// The commitment to the covered bundles' tachygram union.
     pub tachygram_set: TachygramSetCommit,
 
-    /// The txids of the other transactions whose bundles this stamp covers,
-    /// empty for an autonome. The bundle carrying this stamp is never listed.
+    /// Only aggregates list other covered transactions by txid,
+    /// with `()` instead of a list on a wallet stamp. The bundle carrying this
+    /// stamp is never listed.
     ///
     /// [`AggregatorProof::merge`] and [`AggregatorProof::unmerge`] write the
-    /// list. Neither the stamp
-    /// proof nor a signature binds it; it enters only `hStampTachyon`.
-    pub adjuncts: BTreeSet<[u8; 32]>,
+    /// list. Neither the stamp proof nor a signature binds it; it enters only
+    /// `hStampTachyon`.
+    pub adjuncts: A,
 
     /// The stamp's Ragu proof.
     #[debug(skip)]
@@ -876,7 +836,7 @@ impl Stamp<Uncompressed> {
         Ok(Self {
             anchor,
             tachygram_set: self.tachygram_set,
-            adjuncts: self.adjuncts,
+            adjuncts: (),
             proof: Box::new(proof),
         })
     }
@@ -965,7 +925,7 @@ impl Stamp<Uncompressed> {
         Ok(Stamp {
             anchor: self.anchor,
             tachygram_set: self.tachygram_set,
-            adjuncts: self.adjuncts,
+            adjuncts: (),
             proof: Box::new(compressed),
         })
     }

@@ -36,7 +36,7 @@ classDiagram
     class Stamp {
         anchor: Anchor
         tachygram_set: TachygramSetCommit
-        proof: stamp::Proof
+        proof: P
         lift()
         compress()
     }
@@ -48,11 +48,11 @@ classDiagram
     }
     Bundle "1" *-- "0..*" Action : actions
     Bundle "1" *-- "0..1" Stamp : stamp
-    Stamp --> "0..*" Bundle : adjuncts
+    Aggregate --> "0..*" Bundle : adjuncts
     Bundle ..> AggregatorProof : decompress
 ```
 
-A stamp's adjuncts are the other bundles it covers, listed by transaction id.
+An `Autonome` covers only its own signed bundle. An `Aggregate` lists the other bundles it covers by transaction id; the list can be empty.
 `strip` removes the stamp from a bundle that another stamp covers.
 
 A wallet proves and lifts its own stamp, then `compress` rerandomizes the

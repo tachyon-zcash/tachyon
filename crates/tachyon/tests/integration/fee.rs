@@ -72,7 +72,7 @@ fn fee_less_output_bundle(app: &App<'_>, max_fee_note: Note) -> Bundle<Stamp<sta
             tachygram_set: TachygramSetPoly::try_from_roots([cm, pad])
                 .unwrap()
                 .commit(),
-            adjuncts: BTreeSet::new(),
+            adjuncts: (),
             proof: Box::new(pcd.proof().clone()),
         };
 
@@ -307,7 +307,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
         assert_eq!(bundle.commitment(), commitment);
-        bundle.verify(rng, app, &sighash, &[]).unwrap();
+        bundle.verify(rng, app, &sighash).unwrap();
     }
     assert_eq!(bundles[0].fee.v_fee, value::Positive::ZERO);
     assert_eq!(
@@ -316,12 +316,12 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     );
     assert_ne!(bundles[0].fee_auth, bundles[2].fee_auth);
     assert_ne!(
-        bundles[0].clone().strip().auth_digest(),
-        bundles[2].clone().strip().auth_digest()
+        compressed(app, &bundles[0]).strip().auth_digest(),
+        compressed(app, &bundles[2]).strip().auth_digest()
     );
 
     let [_, once, _] = bundles;
-    let digests: BTreeSet<_> = once.verify_covered(&[]).unwrap().0.into_iter().collect();
+    let digests: BTreeSet<_> = once.verify_covered().unwrap().0.into_iter().collect();
     let repeated_witness = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
@@ -353,7 +353,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     };
 
     assert_matches!(
-        twice.verify(rng, app, &sighash, &[]),
+        twice.verify(rng, app, &sighash),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
@@ -372,7 +372,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     let (_, fee_bearing) = alice(wallet);
     let aggregate = aggregated(app, &host, &fee_bearing);
 
-    let mut adjunct = fee_bearing.strip();
+    let mut adjunct = compressed(wallet, &fee_bearing).strip();
     adjunct.fee = host.fee;
     assert_matches!(
         verify_on(app, rng, &host, aggregate, &[&adjunct]),
@@ -392,7 +392,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
     let sighash = mock_sighash(fee_less.commitment());
 
     assert_matches!(
-        fee_less.verify(rng, app, &sighash, &[]),
+        fee_less.verify(rng, app, &sighash),
         Err(VerificationError::Coverage(
             VerifyCoverageError::WrongTachygramSet
         ))
@@ -408,7 +408,7 @@ fn verify_rejects_a_stamp_without_its_fee() {
     .unwrap()
     .commit();
     assert_matches!(
-        fee_less.verify(rng, app, &sighash, &[]),
+        fee_less.verify(rng, app, &sighash),
         Err(VerificationError::Disproved)
     );
 }
@@ -421,7 +421,14 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     let (_, signed) = spend_with_fee(wallet);
     let [(_, adjunct), _, _] = outputs_with_fees(wallet);
     let aggregate = aggregated(app, &signed, &adjunct);
-    verify_on(app, rng, &signed, aggregate, &[&adjunct.strip()]).unwrap();
+    verify_on(
+        app,
+        rng,
+        &signed,
+        aggregate,
+        &[&compressed(wallet, &adjunct).strip()],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -468,7 +475,11 @@ fn fee_bearing_aggregates_merge_and_lift() {
         rng,
         &left,
         lifted,
-        &[&left_auto.strip(), &right.strip(), &right_auto.strip()],
+        &[
+            &compressed(wallet_app, &left_auto).strip(),
+            &compressed(wallet_app, &right).strip(),
+            &compressed(wallet_app, &right_auto).strip(),
+        ],
     )
     .unwrap();
 }
@@ -479,13 +490,13 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, uncompressed) = zero_action(app, PoolSim::shared().mint_anchor());
     let sighash = mock_sighash(uncompressed.commitment());
-    uncompressed.verify(rng, app, &sighash, &[]).unwrap();
+    uncompressed.verify(rng, app, &sighash).unwrap();
     let bundle = compressed(app, &uncompressed);
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
+    let decoded = Bundle::<zcash_tachyon::Autonome>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
-    decoded.verify(app, &sighash, &[]).unwrap();
+    decoded.verify(app, &sighash).unwrap();
 }
 
 #[test]
@@ -512,7 +523,10 @@ fn innocent_seed_merges_and_strips() {
         rng,
         &parent,
         aggregate,
-        &[&adjunct.strip(), &innocent.strip()],
+        &[
+            &compressed(wallet, &adjunct).strip(),
+            &compressed(wallet, &innocent).strip(),
+        ],
     )
     .unwrap();
 }
@@ -594,14 +608,14 @@ fn fee_seed_binds_its_singletons_and_header() {
         let full = Stamp {
             anchor: stamp_anchor,
             tachygram_set,
-            adjuncts: BTreeSet::new(),
+            adjuncts: (),
             proof: Box::new(proof.clone()),
         };
         assert_eq!(full.verify_proof(rng, app, [digest]).unwrap(), expected);
         let published = Stamp {
             anchor: stamp_anchor,
             tachygram_set,
-            adjuncts: BTreeSet::new(),
+            adjuncts: (),
             proof: Box::new(compressed.clone()),
         };
         assert_eq!(published.verify_proof(app, [digest]).unwrap(), expected);

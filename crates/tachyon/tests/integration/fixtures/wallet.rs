@@ -60,10 +60,6 @@ pub(crate) fn other_sk() -> private::SpendingKey {
 pub(crate) fn stamp_key(bundle: &Bundle<Stamp<stamp::Uncompressed>>) -> Vec<u8> {
     let stamp = &bundle.stamp;
     let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
-    key.extend_from_slice(&u32::try_from(stamp.adjuncts.len()).unwrap().to_le_bytes());
-    for txid in &stamp.adjuncts {
-        key.extend_from_slice(txid);
-    }
     stamp.tachygram_set.write(&mut key).unwrap();
     // The action digest binds each action's pair; the union does not.
     // Keep the collection passed to merge/lift in the key.
@@ -121,10 +117,10 @@ pub(crate) fn lifted(
 pub(crate) fn compressed(
     app: &App<'_>,
     bundle: &Bundle<Stamp<stamp::Uncompressed>>,
-) -> Bundle<Stamp<stamp::Compressed>> {
-    static COMPRESSIONS: Proved<Stamp<stamp::Compressed>> = Proved::new("compressed_bundle");
+) -> Bundle<zcash_tachyon::Autonome> {
+    static COMPRESSIONS: Proved<zcash_tachyon::Autonome> = Proved::new("compressed_bundle");
     let stamp = COMPRESSIONS.get(&stamp_key(bundle), |rng| {
-        bundle.stamp.clone().compress(rng, app).unwrap()
+        bundle.clone().compress(rng, app).unwrap().stamp
     });
     Bundle {
         stamp,

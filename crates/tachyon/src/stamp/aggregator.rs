@@ -10,7 +10,7 @@ use alloc::{boxed::Box, collections::BTreeSet, vec::Vec};
 use derive_more::{Debug, Display, Error};
 use polynomials::AggregatorRank;
 use ragu::{
-    AcceleratedProver, Application, CompressedProof, Pcd,
+    AcceleratedProver, Application, Pcd,
     circuits::polynomials,
     pasta::Pasta,
     pcd::profile::{Aggregator, Profiled},
@@ -251,7 +251,7 @@ impl AggregatorProof {
             HEADER_SIZE,
             AcceleratedProver,
         >,
-    ) -> ragu::Result<Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>>> {
+    ) -> ragu::Result<super::Aggregate> {
         let anchor = self.anchor();
         let [_, tachygrams] = self.pcd.commitments();
         let refreshed = app.rerandomize(self.pcd, &mut *rng)?;
