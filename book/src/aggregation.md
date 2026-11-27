@@ -40,9 +40,9 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 ### Merge to produce Aggregate
 
-The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block. The crate does not implement this yet because the pinned Ragu version lacks the support Tachyon stamps need.
+The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block.
 
-In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form, and the crate has no inverse operation.
+In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form. Ragu provides `decompress_with_polynomials`, but the crate does not integrate it to import a published stamp for aggregation.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -60,7 +60,7 @@ An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-n
 
 Tachygrams covered by a stamp must be distinct.
 [Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
-[`StampMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
+[`TransactionMerge`](./proof-tree.md#stamp-construction) proves the merged set polynomial is the product of its inputs, so a tachygram shared by two inputs is a repeated root.
 Validation recomputes `cTachygrams` from the derived union, so such a stamp fails verification.
 An honest aggregator never merges stamps whose tachygram sets overlap.
 

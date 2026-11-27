@@ -22,7 +22,7 @@ use zcash_tachyon::{
         self, ProveError,
         proof::{
             App,
-            stamp::{Stamp, StampMerge},
+            transaction::{Transaction, TransactionMerge},
         },
     },
     value, witness,
@@ -46,14 +46,14 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
         &ProofStamp<stamp::Uncompressed>,
     ),
     (digests, tachygrams): (&[ActionDigest], &[Tachygram]),
-) -> ragu::Pcd<Pasta, WalletRank, Stamp> {
-    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
+) -> ragu::Pcd<Pasta, WalletRank, Transaction> {
+    let left_pcd = stamp_a.proof.clone().carry::<Transaction>((
         app.bridge_hash(stamp_a.tachygram_set.into())
             .unwrap()
             .into(),
         stamp_a.anchor,
     ));
-    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
+    let right_pcd = stamp_b.proof.clone().carry::<Transaction>((
         app.bridge_hash(stamp_b.tachygram_set.into())
             .unwrap()
             .into(),
@@ -66,8 +66,8 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
     let (pcd, ()) = app
         .fuse(
             rng,
-            StampMerge,
-            witness::stamp_merge(
+            TransactionMerge,
+            witness::transaction_merge(
                 (*left_pcd.data(), *right_pcd.data()),
                 merged_acts,
                 merged_tg,
