@@ -3,7 +3,6 @@
 use core::cmp;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use ragu::udon::curve::Affine as _;
 
 use crate::{
     digest::poseidon,
@@ -46,18 +45,9 @@ impl PartialOrd for Descriptor {
 }
 
 impl Ord for Descriptor {
-    /// Orders fee descriptors by their coverage entries.
+    /// Orders by compressed commitment, then by fee amount.
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        <[u8; 40]>::from(*self).cmp(&<[u8; 40]>::from(*other))
-    }
-}
-
-impl From<Descriptor> for [u8; 40] {
-    /// The fee descriptor's coverage entry, `cv_feemax || LE64(fee)`.
-    fn from(descriptor: Descriptor) -> Self {
-        let mut entry = [0u8; 40];
-        entry[..32].copy_from_slice(&EpAffine::from(descriptor.cv_feemax).to_bytes());
-        entry[32..].copy_from_slice(&u64::from(descriptor.v_fee).to_le_bytes());
-        entry
+        { <[u8; 32]>::from(self.cv_feemax).cmp(&<[u8; 32]>::from(other.cv_feemax)) }
+            .then(self.v_fee.cmp(&other.v_fee))
     }
 }

@@ -780,7 +780,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             );
 
         let mut covered_descriptors = BTreeSet::new();
-        let mut fee_entries = BTreeSet::new();
+        let mut fee_descriptors = BTreeSet::new();
         let mut covered_tachygrams = BTreeSet::new();
         let mut digests = Vec::new();
 
@@ -796,7 +796,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
                 }
                 digests.push(descriptor.digest(pair));
             }
-            if !fee_entries.insert(<[u8; 40]>::from(fee_descriptor)) {
+            if !fee_descriptors.insert(fee_descriptor) {
                 return Err(VerifyCoverageError::DuplicateFees);
             }
             if !covered_tachygrams.insert(cm_change) {

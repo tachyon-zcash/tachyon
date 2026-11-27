@@ -71,7 +71,8 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     for descriptor in &bundle.actions {
         descriptor.write(&mut key).unwrap();
     }
-    key.extend_from_slice(&<[u8; 40]>::from(bundle.fee));
+    key.extend_from_slice(&<[u8; 32]>::from(bundle.fee.cv_feemax));
+    key.extend_from_slice(&u64::from(bundle.fee.v_fee).to_le_bytes());
     for tachygram in bundle
         .action_auth
         .iter()

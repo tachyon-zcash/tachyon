@@ -193,7 +193,10 @@ pub fn stamp_proof_digest(anchor: [u8; 32], tachygram_set: [u8; 32], proof: &[u8
 /// Adjunct txids are hashed in the order given, without a count. The list is
 /// empty for an autonome. A stripped stamp instead uses [`STAMP_DIGEST_EMPTY`].
 #[must_use]
-pub fn stamp_digest(adjuncts: &[[u8; 32]], stamp_proof_digest: &[u8; 32]) -> [u8; 32] {
+pub fn stamp_digest<'txid>(
+    adjuncts: impl IntoIterator<Item = &'txid [u8; 32]>,
+    stamp_proof_digest: &[u8; 32],
+) -> [u8; 32] {
     hasher_256(STAMP_PERSONALIZATION, |state| {
         // only variable-length component
         for txid in adjuncts {
