@@ -100,6 +100,22 @@ impl Note {
         self.derive_feemax_blind().commit(-self.value)
     }
 
+    /// The fee change note of this max fee note after paying `fee`: the same
+    /// note holding the unpaid value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `fee` exceeds this note's value.
+    #[must_use]
+    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    pub fn fee_change(self, fee: value::Positive) -> Self {
+        Self {
+            value: value::Positive::try_from(i128::from(self.value) - i128::from(fee))
+                .expect("fee should not exceed max fee"),
+            ..self
+        }
+    }
+
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$

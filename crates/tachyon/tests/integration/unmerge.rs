@@ -11,7 +11,7 @@ use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, Tachygram, TachygramSetPoly, VerificationError,
     VerifyCoverageError, bundle,
     stamp::{
-        self, ProofStamp,
+        self, Stamp,
         proof::transaction::{Transaction, TransactionUnmerge},
     },
     value, witness,
@@ -91,7 +91,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
     let decoded_aggregate = {
         let mut bytes = Vec::new();
         all_three.write(&mut bytes).unwrap();
-        ProofStamp::<stamp::Uncompressed>::read(&*bytes).unwrap()
+        Stamp::<stamp::Uncompressed>::read(&*bytes).unwrap()
     };
     assert_eq!(decoded_aggregate.adjuncts, all_three.adjuncts);
     for (divisor, divisor_covered, adjuncts) in [
@@ -360,7 +360,7 @@ fn unmerge_splitting_a_bundle() {
 
     let max_fee_note = alice_max_fee_note();
     let plan = bundle::Plan::new(vec![], vec![kept_plan, removed_plan], max_fee_note);
-    let proof = plan
+    let (stamp, pairs) = plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, app, &wallet.pak, vec![])
         .unwrap();
@@ -371,7 +371,7 @@ fn unmerge_splitting_a_bundle() {
             &wallet.sk.derive_auth_private(),
         )
         .unwrap();
-    let mut whole = plan.assemble(signatures, proof);
+    let mut whole = plan.assemble(signatures, stamp, pairs, value::Positive::ZERO);
     let kept_index = whole
         .actions
         .iter()
@@ -435,11 +435,11 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                 &wallet.sk.derive_auth_private(),
             )
             .unwrap();
-        let proof = plan
+        let (stamp, pairs) = plan
             .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, vec![])
             .unwrap();
-        plan.assemble(signatures, proof)
+        plan.assemble(signatures, stamp, pairs, fee)
     });
     let (_, other) = wallet.bundle(
         app,

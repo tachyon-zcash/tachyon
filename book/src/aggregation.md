@@ -42,7 +42,7 @@ It retains its fee descriptor and binding signature, and the aggregate that cove
 
 The intended rule requires a compressed stamp proof in the mempool or a block: wallets publish compressed proofs, aggregators uncompress them for aggregation, and miners recompress them for a block.
 
-In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `ProofStamp::compress` produces the compressed form. Ragu provides `decompress_with_polynomials`, but the crate does not integrate it to import a published stamp for aggregation.
+In the crate today, `Plan::prove` returns an uncompressed stamp. Lifting, merging and unmerging take that form. `Stamp::compress` produces the compressed form. Ragu provides `decompress_with_polynomials`, but the crate does not integrate it to import a published stamp for aggregation.
 
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
@@ -56,7 +56,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
 6. Publish aggregate transaction with its [adjunct list](#adjunct-list)
 
-An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
+An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `Stamp::merge`.
 
 Tachygrams covered by a stamp must be distinct.
 [Bundle validation](./bundle.md#stamp-trailer) derives their union from the covered actions' pairs and covered bundles' fee changes, rejects repeated members, and checks its commitment.
@@ -175,13 +175,13 @@ A block validator checks every adjunct list against the block with three rules:
 
 Skipping rule B mints value.
 An unlisted stripped bundle is a set of actions with no stamp proof, and no other rule catches it.
-A stripped bundle carries no field that prompts the check, so a validator that walks only proof stamps and their lists never visits an unlisted one.
+A stripped bundle carries no field that prompts the check, so a validator that walks only stamps and their lists never visits an unlisted one.
 
 Rule C has a backstop.
 A bundle covered by two stamps puts its tachygrams, including at least its fee change, into two unions, and the block's rule against repeated tachygrams rejects them.
 
 A validator indexes the block's stripped bundles by `txid`.
-For each proof stamp it takes the listed bundles out of the index and verifies the stamp with them.
+For each stamp it takes the listed bundles out of the index and verifies the stamp with them.
 It fails if a listed `txid` is absent (rule A) or already taken (rule C), or if any stripped bundle is left in the index at the end (rule B).
 The rules rely on a `txid` naming one transaction within a block.
 

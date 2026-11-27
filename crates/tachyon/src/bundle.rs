@@ -1,13 +1,17 @@
 //! Tachyon transaction bundles.
 //!
-//! A bundle is parameterized by stamp state `S: StampState`.
+//! A bundle is parameterized by its stamp `S`.
 //! Its body is constant through stamp transformations; only the stamp changes.
 //!
-//! - `Bundle<ProofStamp<P>>`: bundle with a proof stamp, listing the txids of
-//!   the other transactions whose bundles it covers
-//! - `Bundle<StrippedStamp>`: proof stamp removed, covered by an aggregate that
-//!   lists this bundle's txid
+//! - `Bundle<Stamp<Compressed>>`: bundle with a stamp, listing the txids of the
+//!   other transactions whose bundles it covers
+//! - `Bundle<()>`: stamp removed, covered by an aggregate that lists this
+//!   bundle's txid
+//! - `Bundle<Stamp<Uncompressed>>`: a wallet's bundle before compression, which
+//!   has no consensus encoding
 //! - [`TachyonBundle`]: enum of the on-wire forms for block items
+//!
+//! The wire states are the [`StampState`] implementors.
 //!
 //! # Consensus wire format
 //!
@@ -16,7 +20,7 @@
 //! | value         | state         | bundle contents                       |
 //! | ------------- | ------------- | ------------------------------------- |
 //! | `0b0000_0000` | non-tachyon   | no bundle                             |
-//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
+//! | `0b0000_0001` | stamped       | bundle with anchor, tachygrams, proof |
 //! | `0b0000_0010` | stripped      | bundle with tachygrams and no proof   |
 //! | `...`         | *reserved*    | *n/a*                                 |
 //!
@@ -67,9 +71,9 @@
 //! it carries key-exchange ciphertexts on first contact and ordinary memo text
 //! otherwise, sizes that differ by more than an order of magnitude.
 //!
-//! ### Proof stamp
+//! ### Stamp
 //!
-//! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
+//! When `tachyonBundleState == 1`, the bundle carries a stamp.
 //!
 //! | Name                    | Format                   | Description                                |
 //! | ----------------------- | ------------------------ | ------------------------------------------ |
@@ -90,9 +94,9 @@
 //! whole trailer is read. The standalone stamp reader checks
 //! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
 //!
-//! In this crate, a stamped block item, [`TachyonBundle`], carries a
-//! [`Compressed`](stamp::Compressed) proof in `proofTachyon`.
-//! `Bundle<ProofStamp<Uncompressed>>` uses the same `0x01` layout.
+//! A stamped bundle carries a [`Compressed`](stamp::Compressed) proof in
+//! `proofTachyon`. A [`Stamp`] with an [`Uncompressed`](stamp::Uncompressed)
+//! proof writes this trailer on its own, for storage and handoff.
 //!
 //! ## Stripped stamp
 //!
@@ -127,7 +131,7 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, ProofStamp, StampState, StrippedStamp,
+        self, Stamp, StampState,
         proof::{App, pool},
     },
     value,
@@ -140,10 +144,10 @@ use crate::{
 pub enum StateByte {
     /// No bundle.
     NoBundle = 0b0000_0000u8,
-    /// Bundle with a [`ProofStamp`].
-    ProofStamp = 0b0000_0001u8,
-    /// Bundle with a [`StrippedStamp`].
-    StrippedStamp = 0b0000_0010u8,
+    /// Bundle with a [`Stamp`].
+    Stamped = 0b0000_0001u8,
+    /// Bundle whose stamp was stripped.
+    Stripped = 0b0000_0010u8,
 }
 
 impl From<StateByte> for u8 {
@@ -159,8 +163,8 @@ impl StateByte {
         reader.read_exact(&mut byte)?;
         match u8::from_le_bytes(byte) {
             0b0000_0000u8 => Ok(Self::NoBundle),
-            0b0000_0001u8 => Ok(Self::ProofStamp),
-            0b0000_0010u8 => Ok(Self::StrippedStamp),
+            0b0000_0001u8 => Ok(Self::Stamped),
+            0b0000_0010u8 => Ok(Self::Stripped),
             _other => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid bundle state",
@@ -174,9 +178,9 @@ impl StateByte {
     }
 }
 
-/// A Tachyon transaction bundle parameterized by bundle state `S`.
+/// A Tachyon transaction bundle parameterized by its stamp `S`.
 #[derive(Clone, Debug)]
-pub struct Bundle<S: StampState + ?Sized> {
+pub struct Bundle<S: ?Sized> {
     /// Net value of spends minus outputs and max fee.
     pub value_balance: value::Balance,
 
@@ -205,7 +209,7 @@ impl<S: StampState + 'static> PartialEq for Bundle<S> {
     }
 }
 
-impl<S: StampState + ?Sized> Bundle<S> {
+impl<S: ?Sized> Bundle<S> {
     /// Digest the bundle's effecting data.
     ///
     /// This contributes to the transaction sighash. The stamp and the fee are
@@ -325,6 +329,17 @@ pub enum PlanError {
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
+}
+
+/// A bundle plan's signatures: one per action, keyed by descriptor, and the
+/// binding signature.
+#[derive(Clone, Debug)]
+pub struct Signatures {
+    /// Each planned action's signature.
+    pub actions: BTreeMap<action::Descriptor, action::Signature>,
+
+    /// The binding signature.
+    pub binding: Signature,
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -486,9 +501,6 @@ impl Plan {
     /// Derives each `alpha` from the action's `theta` and the commitment of
     /// its note.
     ///
-    /// Returns the descriptor-keyed action signatures and the binding
-    /// signature.
-    ///
     /// # Errors
     ///
     /// Returns [`value::OutOfRange`] if the planned balance is out of range.
@@ -497,8 +509,7 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), value::OutOfRange>
-    {
+    ) -> Result<Signatures, value::OutOfRange> {
         self.value_balance()?;
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
@@ -516,14 +527,14 @@ impl Plan {
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
-        Ok((authorized, self.derive_bsk_private().sign(rng, sighash)))
+        Ok(Signatures {
+            actions: authorized,
+            binding: self.derive_bsk_private().sign(rng, sighash),
+        })
     }
 
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
-    ///
-    /// Returns the descriptor-keyed action signatures and the binding
-    /// signature.
     ///
     /// # Errors
     ///
@@ -534,16 +545,18 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         authorized: BTreeMap<action::Descriptor, action::Signature>,
-    ) -> Result<(BTreeMap<action::Descriptor, action::Signature>, Signature), PlanError> {
+    ) -> Result<Signatures, PlanError> {
         self.value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
 
         if self.descriptors() != authorized.keys().copied().collect() {
             return Err(PlanError::ActionSigMismatch);
         }
-        let binding_sig = self.derive_bsk_private().sign(rng, sighash);
 
-        Ok((authorized, binding_sig))
+        Ok(Signatures {
+            actions: authorized,
+            binding: self.derive_bsk_private().sign(rng, sighash),
+        })
     }
 
     /// Verify the binding signature and each keyed action signature.
@@ -559,10 +572,10 @@ impl Plan {
     pub fn verify_signatures(
         &self,
         sighash: &[u8; 32],
-        signatures: &(BTreeMap<action::Descriptor, action::Signature>, Signature),
+        signatures: &Signatures,
     ) -> Result<(), SignatureError> {
-        let action_sigs = &signatures.0;
-        let binding_sig = &signatures.1;
+        let action_sigs = &signatures.actions;
+        let binding_sig = &signatures.binding;
         self.assert_signing_descriptors(action_sigs);
         let bvk = public::BindingVerificationKey::derive(
             action_sigs
@@ -597,32 +610,30 @@ impl Plan {
     }
 
     /// Join the action signatures and tachygram pairs by descriptor, then
-    /// attach the binding signature, stamp, fee change commitment, and fee.
+    /// attach the binding signature, stamp, fee, and the fee change commitment
+    /// derived from the max fee note and the fee. The fee must be the one the
+    /// stamp was proved with, or the bundle does not verify.
     ///
     /// # Panics
     ///
-    /// Panics if the plan, signature and tachygram pair keys differ or the
-    /// plan's balance is out of range.
+    /// Panics if the plan, signature and tachygram pair keys differ, the fee
+    /// exceeds the max fee note's value, or the plan's balance is out of
+    /// range.
     #[must_use]
-    #[expect(
-        clippy::type_complexity,
-        reason = "takes the prover's outputs as returned"
-    )]
-    pub fn assemble(
+    pub fn assemble<P: stamp::Proof>(
         &self,
-        (action_sigs, binding_sig): (BTreeMap<action::Descriptor, action::Signature>, Signature),
-        (stamp, pairs, cm_change, fee): (
-            ProofStamp<stamp::Uncompressed>,
-            BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
-            Tachygram,
-            value::Positive,
-        ),
-    ) -> Bundle<ProofStamp<stamp::Uncompressed>> {
+        signatures: Signatures,
+        stamp: Stamp<P>,
+        pairs: BTreeMap<action::Descriptor, (Tachygram, Tachygram)>,
+        fee: value::Positive,
+    ) -> Bundle<Stamp<P>> {
         assert!(
-            self.descriptors().iter().eq(action_sigs.keys()) && action_sigs.keys().eq(pairs.keys()),
+            self.descriptors().iter().eq(signatures.actions.keys())
+                && signatures.actions.keys().eq(pairs.keys()),
             "action descriptors do not match"
         );
-        let actions = action_sigs
+        let actions = signatures
+            .actions
             .into_iter()
             .zip(pairs.into_values())
             .map(|((descriptor, signature), tachygrams)| action::Action {
@@ -638,19 +649,20 @@ impl Plan {
                 cv_feemax: self.max_fee_note.cv_feemax(),
                 v_fee: fee,
             },
-            fee_auth: cm_change,
-            binding_sig,
+            fee_auth: Tachygram::from(self.max_fee_note.fee_change(fee).commitment()),
+            binding_sig: signatures.binding,
             memo: self.memo.clone(),
             stamp,
         }
     }
 }
 
-impl Bundle<ProofStamp<stamp::Uncompressed>> {
+impl Bundle<Stamp<stamp::Uncompressed>> {
     /// Advance the stamp's anchor along `spans`. The first span must contain
     /// the stamp's anchor, and each later span must contain the previous span's
     /// `anchor_end`. A span contains an anchor if the anchor is its
-    /// `anchor_start` or one of its members.
+    /// `anchor_start` or one of its members. `adjuncts` are the stripped
+    /// bundles the stamp lists.
     /// Successful construction does not guarantee that the lifted stamp
     /// verifies.
     ///
@@ -667,23 +679,26 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
         self,
         rng: &mut RNG,
         app: &App<'_>,
-        adjuncts: &[&Bundle<dyn StampState>],
+        adjuncts: &[&Bundle<()>],
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
         if spans.is_empty() {
             return Ok(self);
         }
-        let covered = iter::once(self.as_dyn()).chain(adjuncts.iter().copied());
+        let covered = iter::once((&self.actions, self.fee, self.fee_auth)).chain(
+            adjuncts
+                .iter()
+                .map(|adj| (&adj.actions, adj.fee, adj.fee_auth)),
+        );
         let mut descriptors = BTreeMap::new();
         let mut fee_descriptors = BTreeMap::new();
-        for bundle in covered {
+        for (actions, fee_descriptor, cm_change) in covered {
             descriptors.extend(
-                bundle
-                    .actions
+                actions
                     .iter()
                     .map(|action| (action.descriptor, action.tachygrams)),
             );
-            fee_descriptors.insert(bundle.fee, bundle.fee_auth);
+            fee_descriptors.insert(fee_descriptor, cm_change);
         }
         let stamp = self
             .stamp
@@ -693,15 +708,15 @@ impl Bundle<ProofStamp<stamp::Uncompressed>> {
     }
 }
 
-impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
-    /// Read a proof-stamped bundle, including the combined coverage bound.
+impl Bundle<Stamp<stamp::Compressed>> {
+    /// Read a stamped bundle, including the combined coverage bound.
     ///
     /// # Errors
     ///
     /// Returns an error for invalid encodings, a wrong state byte, or too many
     /// actions and adjuncts for one tachygram set polynomial.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        if StateByte::read(&mut reader)? != StateByte::ProofStamp {
+        if StateByte::read(&mut reader)? != StateByte::Stamped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unexpected tachyonBundleState",
@@ -721,14 +736,16 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         }
         Ok(bundle)
     }
+}
 
-    /// Remove the stamp proof, keeping the fee, fee change and tachygram pairs.
+impl<P: stamp::Proof> Bundle<Stamp<P>> {
+    /// Remove the stamp, keeping the fee, fee change and tachygram pairs.
     ///
     /// The miner strips the bundle of each transaction an aggregate in its
     /// block lists. Stripping writes nothing, and the stripped bundle's bytes
     /// depend on nothing outside it.
     #[must_use]
-    pub fn strip(self) -> Bundle<StrippedStamp> {
+    pub fn strip(self) -> Bundle<()> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -736,7 +753,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
             fee_auth: self.fee_auth,
             binding_sig: self.binding_sig,
             memo: self.memo,
-            stamp: StrippedStamp,
+            stamp: (),
         }
     }
 
@@ -772,7 +789,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// `rk`.
     pub fn verify_covered(
         &self,
-        adjuncts: &[&Bundle<StrippedStamp>],
+        adjuncts: &[&Bundle<()>],
     ) -> Result<(Vec<ActionDigest>, TachygramSetCommit), VerifyCoverageError> {
         let n_actions =
             self.actions.len() + adjuncts.iter().map(|&adj| adj.actions.len()).sum::<usize>();
@@ -858,7 +875,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
     /// - Proof is correct
     ///
     /// The adjuncts are the stripped bundles the stamp's
-    /// [`adjuncts`](ProofStamp::adjuncts) lists, looked up by txid. This method
+    /// [`adjuncts`](Stamp::adjuncts) lists, looked up by txid. This method
     /// does not read the list.
     ///
     /// If you need more control, call each verify method directly.
@@ -877,7 +894,7 @@ impl<P: stamp::Proof> Bundle<ProofStamp<P>> {
         rng: &mut RNG,
         app: &App<'_>,
         sighash: &[u8; 32],
-        adjuncts: &[&Bundle<StrippedStamp>],
+        adjuncts: &[&Bundle<()>],
     ) -> Result<TachygramSetCommit, VerificationError> {
         self.verify_signatures(sighash)
             .map_err(VerificationError::Signatures)?;
@@ -1111,14 +1128,14 @@ impl<S: StampState> Bundle<S> {
     }
 }
 
-impl Bundle<StrippedStamp> {
+impl Bundle<()> {
     /// Read a stripped bundle whose stamp trailer is empty.
     ///
     /// # Errors
     ///
     /// Returns an error for invalid encodings or a wrong state byte.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        if StateByte::read(&mut reader)? != StateByte::StrippedStamp {
+        if StateByte::read(&mut reader)? != StateByte::Stripped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unexpected tachyonBundleState",
@@ -1135,9 +1152,9 @@ pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
     /// A bundle with its own proof (autonome or aggregate).
-    Proven(Bundle<ProofStamp<stamp::Compressed>>),
+    Proven(Bundle<Stamp<stamp::Compressed>>),
     /// A bundle with no internal proof (adjunct).
-    Adjunct(Bundle<StrippedStamp>),
+    Adjunct(Bundle<()>),
 }
 
 impl PartialEq for TachyonBundle {
@@ -1185,7 +1202,7 @@ impl TachyonBundle {
     /// on the `tachyonBundleState` byte.
     ///
     /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
-    /// proof-stamped bundle, and `0x02` as a stripped bundle;
+    /// stamped bundle, and `0x02` as a stripped bundle;
     /// rejects any other byte.
     ///
     /// # Errors
@@ -1197,8 +1214,8 @@ impl TachyonBundle {
 
         Ok(match state {
             StateByte::NoBundle => Self::NoBundle,
-            StateByte::ProofStamp => Self::Proven(Bundle::read_proof_body(&mut reader)?),
-            StateByte::StrippedStamp => Self::Adjunct(Bundle::read_body(&mut reader)?),
+            StateByte::Stamped => Self::Proven(Bundle::read_proof_body(&mut reader)?),
+            StateByte::Stripped => Self::Adjunct(Bundle::read_body(&mut reader)?),
         })
     }
 
@@ -1241,7 +1258,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Whether this bundle has a proof stamp listing at least one adjunct.
+    /// Whether this bundle has a stamp listing at least one adjunct.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
@@ -1252,7 +1269,7 @@ impl TachyonBundle {
         }
     }
 
-    /// Whether this bundle has a proof stamp listing no adjuncts.
+    /// Whether this bundle has a stamp listing no adjuncts.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]

@@ -40,4 +40,4 @@ pub use bundle::{
 pub use note::Note;
 pub use primitives::*;
 pub use serialization::compactsize::{CompactSize, CompactSizeError};
-pub use stamp::{Plan as StampPlan, ProofStamp, StrippedStamp};
+pub use stamp::{Plan as StampPlan, Stamp};

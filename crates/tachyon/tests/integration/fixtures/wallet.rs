@@ -20,7 +20,7 @@ use zcash_tachyon::{
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     pasta::Fp,
     stamp::{
-        self, ProofStamp,
+        self, Stamp,
         proof::{App, delegation, pool, spendable},
     },
     value, witness,
@@ -39,8 +39,8 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> (action::Descriptor, acti
         WalletSim::new(shared_sk()).random_note(0),
     );
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let (action_sigs, _) = bundle_plan.sign(rng, &sighash, &ask).unwrap();
-    action_sigs.into_iter().next().unwrap()
+    let signatures = bundle_plan.sign(rng, &sighash, &ask).unwrap();
+    signatures.actions.into_iter().next().unwrap()
 }
 
 pub fn output_plan<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> action::Plan<effect::Output> {
@@ -57,7 +57,7 @@ pub(crate) fn other_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x0B0B_05EE_D000_0001))
 }
 
-fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
+fn stamp_key(bundle: &Bundle<Stamp<stamp::Uncompressed>>) -> Vec<u8> {
     let stamp = &bundle.stamp;
     let mut key = Fp::from(stamp.anchor).to_bytes().to_vec();
     key.extend_from_slice(&u32::try_from(stamp.adjuncts.len()).unwrap().to_le_bytes());
@@ -86,10 +86,10 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
 
 pub(crate) fn merged(
     app: &App<'_>,
-    left: &Bundle<ProofStamp<stamp::Uncompressed>>,
-    right: &Bundle<ProofStamp<stamp::Uncompressed>>,
-) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    static MERGES: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
+    left: &Bundle<Stamp<stamp::Uncompressed>>,
+    right: &Bundle<Stamp<stamp::Uncompressed>>,
+) -> Bundle<Stamp<stamp::Uncompressed>> {
+    static MERGES: Proved<Stamp<stamp::Uncompressed>> = Proved::new("merged_bundle");
     let right_txid = mock_txid(right);
     let mut key = stamp_key(left);
     key.extend_from_slice(&stamp_key(right));
@@ -129,11 +129,11 @@ pub(crate) fn merged(
 
 pub(crate) fn lifted(
     app: &App<'_>,
-    bundle: &Bundle<ProofStamp<stamp::Uncompressed>>,
+    bundle: &Bundle<Stamp<stamp::Uncompressed>>,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    static LIFTS: Proved<ProofStamp<stamp::Uncompressed>> = Proved::new("lifted_bundle");
+) -> Bundle<Stamp<stamp::Uncompressed>> {
+    static LIFTS: Proved<Stamp<stamp::Uncompressed>> = Proved::new("lifted_bundle");
     let span = pool.anchor_span(app, range);
     let mut key = stamp_key(bundle);
     key.extend_from_slice(&Fp::from(span.data().0).to_bytes());
@@ -161,11 +161,30 @@ pub(crate) fn lifted(
     }
 }
 
+pub(crate) fn compressed(
+    app: &App<'_>,
+    bundle: &Bundle<Stamp<stamp::Uncompressed>>,
+) -> Bundle<Stamp<stamp::Compressed>> {
+    static COMPRESSIONS: Proved<Stamp<stamp::Compressed>> = Proved::new("compressed_bundle");
+    let stamp = COMPRESSIONS.get(&stamp_key(bundle), |rng| {
+        bundle.stamp.clone().compress(rng, app).unwrap()
+    });
+    Bundle {
+        stamp,
+        actions: bundle.actions.clone(),
+        value_balance: bundle.value_balance,
+        fee: bundle.fee,
+        fee_auth: bundle.fee_auth,
+        binding_sig: bundle.binding_sig,
+        memo: bundle.memo.clone(),
+    }
+}
+
 pub(crate) fn spend_max_fee_note() -> Note {
     WalletSim::new(shared_sk()).labelled_note("spend fee", 0)
 }
 
-pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+pub(crate) fn spend(app: &App<'_>) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     let pool = PoolSim::shared();
     let wallet = WalletSim::new(shared_sk());
     wallet.bundle(
@@ -182,9 +201,7 @@ pub(crate) fn spend_with_fee_max_fee_note() -> Note {
     WalletSim::new(shared_sk()).labelled_note("spend with fee maximum", 300)
 }
 
-pub(crate) fn spend_with_fee(
-    app: &App<'_>,
-) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+pub(crate) fn spend_with_fee(app: &App<'_>) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     let pool = PoolSim::shared();
     let wallet = WalletSim::new(shared_sk());
     wallet.bundle(
@@ -205,7 +222,7 @@ pub(crate) fn alice_output_note() -> Note {
     WalletSim::new(shared_sk()).labelled_note("alice output", 300)
 }
 
-pub(crate) fn alice(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+pub(crate) fn alice(app: &App<'_>) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     WalletSim::new(shared_sk()).bundle(
         app,
         PoolSim::shared().mint_anchor(),
@@ -216,7 +233,7 @@ pub(crate) fn alice(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Un
     )
 }
 
-pub(crate) fn bob(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+pub(crate) fn bob(app: &App<'_>) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     let wallet = WalletSim::new(other_sk());
     wallet.bundle(
         app,
@@ -232,7 +249,7 @@ pub(crate) fn bob(app: &App<'_>) -> (bundle::Plan, Bundle<ProofStamp<stamp::Unco
 /// that.
 pub(crate) fn outputs_with_fees(
     app: &App<'_>,
-) -> [(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>); 3] {
+) -> [(bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>); 3] {
     [
         ("fee output first", "fee maximum first", 40u64),
         ("fee output second", "fee maximum second", 70),
@@ -254,7 +271,7 @@ pub(crate) fn outputs_with_fees(
 pub(crate) fn zero_action(
     app: &App<'_>,
     anchor: Anchor,
-) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     let wallet = WalletSim::new(shared_sk());
     wallet.bundle(
         app,
@@ -268,7 +285,7 @@ pub(crate) fn zero_action(
 
 pub(crate) fn entry_spends(
     app: &App<'_>,
-) -> [(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>); 3] {
+) -> [(bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>); 3] {
     let pool = PoolSim::shared();
     [
         (1000, 700, "entry first output", "entry first fee"),
@@ -288,9 +305,7 @@ pub(crate) fn entry_spends(
     })
 }
 
-pub(crate) fn later_output(
-    app: &App<'_>,
-) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
+pub(crate) fn later_output(app: &App<'_>) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
     let wallet = WalletSim::new(shared_sk());
     wallet.bundle(
         app,
@@ -317,8 +332,8 @@ impl WalletSim {
         outputs: &[Note],
         max_fee_note: Note,
         fee: value::Positive,
-    ) -> (bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>) {
-        static BUNDLES: Proved<(bundle::Plan, Bundle<ProofStamp<stamp::Uncompressed>>)> =
+    ) -> (bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>) {
+        static BUNDLES: Proved<(bundle::Plan, Bundle<Stamp<stamp::Uncompressed>>)> =
             Proved::new("bundle");
         let mut key = [
             Fp::from(self.pak.derive_payment_key()).to_bytes(),
@@ -382,11 +397,11 @@ impl WalletSim {
             let signatures = plan
                 .sign(rng, &sighash, &self.sk.derive_auth_private())
                 .unwrap();
-            let proof = plan
+            let (stamp, pairs) = plan
                 .stamp_plan(anchor, fee)
                 .prove(rng, app, &self.pak, spend_pcds)
                 .unwrap();
-            let bundle = plan.assemble(signatures, proof);
+            let bundle = plan.assemble(signatures, stamp, pairs, fee);
             (plan, bundle)
         })
     }

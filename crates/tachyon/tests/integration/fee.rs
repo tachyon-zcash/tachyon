@@ -15,7 +15,7 @@ use zcash_tachyon::{
     note,
     pasta::Fp,
     stamp::{
-        self, Proof as _, ProofStamp,
+        self, Proof as _, Stamp,
         proof::{
             App, output,
             transaction::{Actions, FeeFuse, FeeSeed, OutputAction, Transaction},
@@ -29,16 +29,13 @@ use crate::fixtures::{
     Proved, mock_sighash, mock_txid,
     pool::PoolSim,
     wallet::{
-        WalletSim, alice, bob, output_plan, outputs_with_fees, shared_sk, spend_with_fee,
-        spend_with_fee_max_fee_note, zero_action,
+        WalletSim, alice, bob, compressed, output_plan, outputs_with_fees, shared_sk,
+        spend_with_fee, spend_with_fee_max_fee_note, zero_action,
     },
 };
 
-fn fee_less_output_bundle(
-    app: &App<'_>,
-    max_fee_note: Note,
-) -> Bundle<ProofStamp<stamp::Uncompressed>> {
-    static FEE_LESS: Proved<Bundle<ProofStamp<stamp::Uncompressed>>> =
+fn fee_less_output_bundle(app: &App<'_>, max_fee_note: Note) -> Bundle<Stamp<stamp::Uncompressed>> {
+    static FEE_LESS: Proved<Bundle<Stamp<stamp::Uncompressed>>> =
         Proved::new("fee less output bundle");
     let anchor = PoolSim::shared().mint_anchor();
     let wallet = WalletSim::new(shared_sk());
@@ -68,7 +65,7 @@ fn fee_less_output_bundle(
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
             .unwrap();
-        let stamp = ProofStamp {
+        let stamp = Stamp {
             anchor,
             tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
             adjuncts: BTreeSet::new(),
@@ -83,13 +80,12 @@ fn fee_less_output_bundle(
                 &wallet.sk.derive_auth_private(),
             )
             .unwrap();
-        let proof = (
+        plan.assemble(
+            signatures,
             stamp,
             BTreeMap::from([(output_plan.descriptor(), (cm.min(pad), cm.max(pad)))]),
-            max_fee_note.commitment().into(),
             value::Positive::ZERO,
-        );
-        plan.assemble(signatures, proof)
+        )
     })
 }
 
@@ -283,22 +279,22 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     )];
     let commitment = at_fixture_fee.commitment();
     let sighash = mock_sighash(commitment);
-    let signatures = (
-        at_fixture_fee
+    let signatures = bundle::Signatures {
+        actions: at_fixture_fee
             .actions
             .iter()
             .map(|action| (action.descriptor, action.signature))
-            .collect::<BTreeMap<_, _>>(),
-        at_fixture_fee.binding_sig,
-    );
+            .collect(),
+        binding: at_fixture_fee.binding_sig,
+    };
 
     let [without_fee, maximum_fee] = [0u64, 300].map(|amount| {
         let fee = value::Positive::try_from(amount).unwrap();
-        let proof = bundle_plan
+        let (stamp, pairs) = bundle_plan
             .stamp_plan(anchor, fee)
             .prove(rng, app, &wallet.pak, spend_pcds.clone())
             .unwrap();
-        bundle_plan.assemble(signatures.clone(), proof)
+        bundle_plan.assemble(signatures.clone(), stamp, pairs, fee)
     });
     let bundles = [without_fee, at_fixture_fee, maximum_fee];
     for bundle in &bundles {
@@ -311,7 +307,10 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         value::Positive::try_from(300u64).unwrap()
     );
     assert_ne!(bundles[0].fee_auth, bundles[2].fee_auth);
-    assert_ne!(bundles[0].auth_digest(), bundles[2].auth_digest());
+    assert_ne!(
+        bundles[0].clone().strip().auth_digest(),
+        bundles[2].clone().strip().auth_digest()
+    );
 
     let [_, once, _] = bundles;
     let digests: BTreeSet<_> = once.verify_covered(&[]).unwrap().0.into_iter().collect();
@@ -567,36 +566,25 @@ fn fee_bearing_aggregates_merge_and_lift() {
     assert_eq!(left.stamp.adjuncts, adjunct_txids);
 
     let span = pool.anchor_span(app, BlockHeight(1)..=BlockHeight(2));
-    let lifted = left
-        .lift(
-            rng,
-            app,
-            &[left_auto.as_dyn(), right.as_dyn(), right_auto.as_dyn()],
-            vec![span],
-        )
-        .unwrap();
+    let (adjunct_a, adjunct_b, adjunct_c) = (left_auto.strip(), right.strip(), right_auto.strip());
+    let adjuncts = [&adjunct_a, &adjunct_b, &adjunct_c];
+    let lifted = left.lift(rng, app, &adjuncts, vec![span]).unwrap();
     assert_eq!(lifted.stamp.adjuncts, adjunct_txids);
 
-    lifted
-        .verify(
-            rng,
-            app,
-            &sighash,
-            &[&left_auto.strip(), &right.strip(), &right_auto.strip()],
-        )
-        .unwrap();
+    lifted.verify(rng, app, &sighash, &adjuncts).unwrap();
 }
 
 #[test]
 fn zero_action_fee_seed_round_trips_and_verifies() {
     let app = &application();
     let rng = &mut StdRng::seed_from_u64(0);
-    let (_, bundle) = zero_action(app, PoolSim::shared().mint_anchor());
-    let sighash = mock_sighash(bundle.commitment());
-    bundle.verify(rng, app, &sighash, &[]).unwrap();
+    let (_, uncompressed) = zero_action(app, PoolSim::shared().mint_anchor());
+    let sighash = mock_sighash(uncompressed.commitment());
+    uncompressed.verify(rng, app, &sighash, &[]).unwrap();
+    let bundle = compressed(app, &uncompressed);
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).unwrap();
-    let decoded = Bundle::<ProofStamp<stamp::Uncompressed>>::read(&*bytes).unwrap();
+    let decoded = Bundle::<Stamp<stamp::Compressed>>::read(&*bytes).unwrap();
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     decoded.verify(rng, app, &sighash, &[]).unwrap();
 }

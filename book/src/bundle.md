@@ -79,7 +79,7 @@ A Tachyon bundle collects actions with authorization data:
 - `cm_change` - the fee change note commitment
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
 - `memo` - opaque recipient-directed payload, empty when absent
-- `stamp` - anchor, tachygram set commitment, adjunct txids, and stamp proof; stripping replaces these with the fieldless `StrippedStamp`
+- `stamp` - anchor, tachygram set commitment, adjunct txids, and stamp proof; stripping replaces these with `()`
 
 ```mermaid
 ---
@@ -164,9 +164,9 @@ end
 
 `bundle::Plan::new` panics if a descriptor repeats among the planned spends and outputs.
 
-Signing a `bundle::Plan` returns a descriptor-keyed action signature map and the binding signature. Independently, `stamp::Plan::prove` returns the proof stamp, a descriptor-keyed map of tachygram pairs, the change commitment, and the chosen fee.
+Signing a `bundle::Plan` returns `Signatures`: a descriptor-keyed action signature map and the binding signature. Independently, `stamp::Plan::prove` returns the stamp and a descriptor-keyed map of tachygram pairs.
 
-`bundle::Plan::assemble(signatures, proof)` combines their outputs with the plan. It requires the plan, pair map, and signature map to have identical descriptor keys and panics if they differ. It joins both maps in descriptor order into `actions` and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity. Signing and proving may run in either order or concurrently.
+`bundle::Plan::assemble(signatures, stamp, pairs, fee)` combines their outputs with the plan. It requires the plan, pair map, and signature map to have identical descriptor keys and panics if they differ. It joins both maps in descriptor order into `actions`, derives the change commitment from the max fee note and the fee, and attaches the fee, change, and stamp. This checks keys, not pair values or proof validity. Signing and proving may run in either order or concurrently.
 
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
@@ -179,8 +179,8 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped (`ProofStamp`) | bundle with tachygrams, fee, fee change, anchor, tachygram set commitment, adjunct txids, proof |
-| `0b0000_0010` | stripped (`StrippedStamp`) | bundle with tachygrams, fee and fee change |
+| `0b0000_0001` | stamped (`Stamp<Compressed>`) | bundle with tachygrams, fee, fee change, anchor, tachygram set commitment, adjunct txids, proof |
+| `0b0000_0010` | stripped (`()`) | bundle with tachygrams, fee and fee change |
 
 ### Bundle body {#bundle-body}
 
@@ -231,13 +231,13 @@ A spend publishes its present and next nullifier; an output publishes its note c
 
 `vAdjunctsTachyon` lists the txid of every other transaction whose bundle the stamp proof covers. Those transactions are still stamped in the mempool and stripped in a block. The carrying bundle is never listed. Parsing rejects a list that is not strictly ascending by bytewise comparison, which also rejects a repeated txid. The list is a set, and one wire order lets a stamp read from the wire digest the same as the bytes received.
 
-Every listed transaction's bundle holds at least its fee change in the tachygram union. A standalone stamp reader rejects $\mathsf{nAdjunctsTachyon} + 1 > 8191$ before reading the list. After reading the whole trailer, a proof-stamped bundle reader also rejects $2 \cdot \mathsf{nActionsTachyon} + \mathsf{nAdjunctsTachyon} + 1 > 8191$, because such a bundle can never verify.
+Every listed transaction's bundle holds at least its fee change in the tachygram union. A standalone stamp reader rejects $\mathsf{nAdjunctsTachyon} + 1 > 8191$ before reading the list. After reading the whole trailer, a stamped bundle reader also rejects $2 \cdot \mathsf{nActionsTachyon} + \mathsf{nAdjunctsTachyon} + 1 > 8191$, because such a bundle can never verify.
 
 Neither the stamp proof nor a signature binds the list. It enters [$\mathsf{hStampTachyon}$](./transaction-identifiers.md) directly, followed by the proof digest. Merging lists the txid of the one transaction the absorbed stamp covers without listing, and unmerging removes the divisor's. See [Aggregation → Adjunct list](./aggregation.md#adjunct-list).
 
 The reader rejects a size above Ragu's transport bound before buffering `sizeProofTachyon` bytes for `proofTachyon`. Ragu's decoder validates the envelope and exact length of that frame.
 
-In the crate today, a stamped block item carries a compressed proof in `proofTachyon`. The crate uses the same trailer for an uncompressed proof when [lifting](./proof-tree.md#stamp-anchor), [merging or unmerging](./aggregation.md#merge-to-produce-aggregate) a stamp.
+A stamped bundle carries a compressed proof in `proofTachyon`. [Lifting](./proof-tree.md#stamp-anchor), [merging and unmerging](./aggregation.md#merge-to-produce-aggregate) take stamps with uncompressed proofs. A bundle holding one has no state byte and no consensus encoding. The stamp alone uses this trailer, with the uncompressed proof, when it is stored or handed on.
 
 [`hStampProofTachyon`](./transaction-identifiers.md) covers the stamp proof, the anchor and the tachygram set commitment. A verifier rebuilds the stamp proof's header from the last two. The stamp proof enters as its Ragu-encoded bytes, including the envelope. The definition is the same whichever stamp proof `proofTachyon` holds.
 
