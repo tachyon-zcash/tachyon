@@ -212,18 +212,18 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
     let (_, inner_bundle) = alice(app);
     let (_, end_bundle) = later_output(app);
     for (transaction_anchor, bundle, expected) in [
-        (anchor_start, start_bundle, None),
-        (members[0], inner_bundle, None),
-        (anchor_end, end_bundle, None),
+        (anchor_start, &start_bundle, None),
+        (members[0], &inner_bundle, None),
+        (anchor_end, &end_bundle, None),
         (
             fork,
-            fork_bundle,
+            &fork_bundle,
             Some("a transaction anchor outside the span"),
         ),
     ] {
         let (digests, _) = bundle.verify_covered(&[]).unwrap();
-        let stamp = bundle.stamp;
-        let transaction_pcd = stamp.proof.carry::<transaction::Transaction>((
+        let stamp = &bundle.stamp;
+        let transaction_pcd = stamp.proof.clone().carry::<transaction::Transaction>((
             app.bridge_hash(stamp.tachygram_set.into()).unwrap().into(),
             transaction_anchor,
         ));
@@ -244,9 +244,37 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
             assert!(!verified, "{message}");
         } else {
             assert!(verified);
-            assert_eq!(lifted.data().1, anchor_end);
+            let (_, lifted_anchor) = *lifted.data();
+            assert_eq!(lifted_anchor, anchor_end);
         }
     }
+
+    // The lifted header's bridge hash comes from the lift's own tachygram slot,
+    // not from the input header, even when the input header carries another.
+    let (digests, _) = start_bundle.verify_covered(&[]).unwrap();
+    let foreign = app
+        .bridge_hash(fork_bundle.stamp.tachygram_set.into())
+        .unwrap()
+        .into();
+    let substituted = start_bundle
+        .stamp
+        .proof
+        .carry::<transaction::Transaction>((foreign, anchor_start));
+    let (lifted, ()) = app
+        .fuse(
+            rng,
+            transaction::TransactionLift,
+            witness::transaction_lift(
+                (*substituted.data(), *span.data()),
+                ActionSetPoly::try_from_roots(digests).unwrap(),
+            ),
+            substituted,
+            span,
+        )
+        .unwrap();
+    let (bridge, _) = *lifted.data();
+    let [_, tachygrams] = lifted.commitments();
+    assert_eq!(bridge, app.bridge_hash(tachygrams).unwrap().into());
 }
 
 #[test]
