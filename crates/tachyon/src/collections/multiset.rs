@@ -22,21 +22,43 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use ragu::{
-    Polynomial, WalletRank,
+    Polynomial, Rank as _, WalletRank,
     udon::{field::Field as _, polynomial::vanishing_polynomial},
 };
 
 use crate::pasta::Fp;
 
-/// Encode the provided members as roots.
-#[expect(
-    clippy::expect_used,
-    reason = "the buffer fits the roots and leading one"
-)]
-pub(crate) fn encode(members: impl IntoIterator<Item = Fp>) -> Polynomial<Fp, WalletRank> {
-    let roots: Vec<Fp> = members.into_iter().collect();
+/// Encode a monic polynomial, reserving one coefficient for its leading one.
+pub(crate) fn try_encode(
+    members: impl IntoIterator<Item = Fp>,
+) -> ragu::Result<Polynomial<Fp, WalletRank>> {
+    let capacity = WalletRank::num_coeffs();
+    let roots: Vec<Fp> = members.into_iter().take(capacity).collect();
+    if roots.len() == capacity {
+        return Err(ragu::Error::InvalidWitness(
+            "set polynomial exceeds wallet-rank coefficient capacity".into(),
+        ));
+    }
     let mut coeffs = vec![Fp::ZERO; roots.len() + 1];
     vanishing_polynomial(Fp::as_slice(&roots), Fp::as_slice_mut(&mut coeffs))
-        .expect("the buffer fits the roots and leading one");
-    Polynomial::from_coeffs(coeffs)
+        .map_err(|err| ragu::Error::InvalidWitness(err.into()))?;
+    Ok(Polynomial::from_coeffs(coeffs))
+}
+
+#[cfg(test)]
+mod tests {
+    use core::iter;
+
+    use super::*;
+
+    #[test]
+    fn monic_polynomial_needs_one_more_coefficient_than_roots() {
+        let capacity = WalletRank::num_coeffs();
+        let max_set = try_encode(iter::repeat_n(Fp::ZERO, capacity - 1)).unwrap();
+        assert_eq!(max_set.iter_coeffs().next_back(), Some(Fp::ONE));
+        assert!(matches!(
+            try_encode(iter::repeat_n(Fp::ZERO, capacity)),
+            Err(ragu::Error::InvalidWitness(_))
+        ));
+    }
 }

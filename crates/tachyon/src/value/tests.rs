@@ -69,8 +69,8 @@ fn fee_fuse_rejects_maximum_above_max_money() {
         },
         Positive::ZERO,
         (
-            ActionSetPoly::from_iter([]),
-            TachygramSetPoly::from_iter([]),
+            ActionSetPoly::try_from_roots([]).unwrap(),
+            TachygramSetPoly::try_from_roots([]).unwrap(),
         ),
     );
     let (forged, ()) = app

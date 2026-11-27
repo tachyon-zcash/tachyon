@@ -281,8 +281,9 @@ impl Header<Fp> for AnchorSpan {
 /// This step requires a stronger premise than collision resistance: it models
 /// the stamp absorption digest as a random function.
 ///
-/// Except with probability at most $2^{13} \cdot T \cdot Q/p$ across $T$
-/// challenges and $Q$ stamp absorption digests, the member polynomial $M$
+/// Let $N = 2^r$ be the slot capacity in coefficients at proving rank $r$.
+/// Except with probability at most $N \cdot T \cdot Q/p$ across
+/// $T$ challenges and $Q$ stamp absorption digests, the member polynomial $M$
 /// equals $X - a$ as [`AnchorSpan`] asserts for a single-absorption chain.
 ///
 /// The step [adds an absorption](super#chains-in-a-step) $a$ of prover-chosen
@@ -296,12 +297,11 @@ impl Header<Fp> for AnchorSpan {
 ///
 /// - When $M = X - c$ for a constant $c$, the constraint enforces $a = c$,
 ///   giving $M = X - a$.
-/// - Otherwise $X - M(X)$ is nonconstant of degree below $2^{13}$, and the
+/// - Otherwise $X - M(X)$ is nonconstant of degree below $N$, and the
 ///   constraint requires $a = \zeta - M(\zeta)$. Under the random-function
 ///   premise, any single challenge and digest output satisfy the equation with
-///   probability below $2^{13}/p$ in either draw order, summing to $2^{13}
-///   \cdot T \cdot Q/p$ whereas checks on pre-challenge values avoid the factor
-///   $Q$.
+///   probability below $N/p$ in either draw order, summing to $N \cdot T \cdot
+///   Q/p$ whereas checks on pre-challenge values avoid the factor $Q$.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -328,8 +328,10 @@ impl Step<Pasta> for AnchorSpanSeed {
             bridge_hash(witness.2.commit().into()),
         ));
         let stamp = &witness.2;
-        let prepared =
-            AnchorSetPoly::SLOT.poly(Prepared::new(), &AnchorSetPoly::from_iter([anchor_end]));
+        let prepared = AnchorSetPoly::SLOT.poly(
+            Prepared::new(),
+            &AnchorSetPoly::try_from_roots([anchor_end])?,
+        );
         Ok(TachygramSetPoly::SLOT.poly(prepared, stamp))
     }
 

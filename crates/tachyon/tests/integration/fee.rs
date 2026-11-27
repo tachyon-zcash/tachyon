@@ -67,7 +67,9 @@ fn fee_less_output_bundle(app: &App<'_>, max_fee_note: Note) -> Bundle<Stamp<sta
             .unwrap();
         let stamp = Stamp {
             anchor,
-            tachygram_set: TachygramSetPoly::from_iter([cm, pad]).commit(),
+            tachygram_set: TachygramSetPoly::try_from_roots([cm, pad])
+                .unwrap()
+                .commit(),
             adjuncts: BTreeSet::new(),
             proof: Box::new(pcd.proof().clone()),
         };
@@ -110,14 +112,16 @@ fn fee_fuse_binds_its_sets() {
         value::Positive::try_from(120).unwrap(),
         &action_digests,
         &action_tachygrams,
-    );
+    )
+    .unwrap();
     let other = witness::fee_fuse(
         (anchor, ()),
         max_fee_note,
         value::Positive::try_from(50).unwrap(),
         &action_digests,
         &action_tachygrams,
-    );
+    )
+    .unwrap();
 
     for (corrupt, expected) in [
         (
@@ -183,7 +187,8 @@ fn fee_fuse_and_fee_seed_reject_zero_rcm() {
         value::Positive::try_from(120).unwrap(),
         &action_digests,
         &action_tachygrams,
-    );
+    )
+    .unwrap();
     fuse_witness.0.rcm = zero_rcm;
     let fuse = app.fuse(
         rng,
@@ -235,7 +240,8 @@ fn fee_fuse_slack_boundaries() {
             value::Positive::try_from(fee).unwrap(),
             &digests,
             &action_tachygrams,
-        );
+        )
+        .unwrap();
         let (pcd, ()) = app
             .fuse(
                 rng,
@@ -325,7 +331,8 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
             .chain([once.fee_auth])
             .collect(),
-    );
+    )
+    .unwrap();
     let (repeated, ()) = app
         .fuse(
             rng,
@@ -414,13 +421,15 @@ fn verify_rejects_a_stamp_without_its_fee() {
         ))
     );
 
-    fee_less.stamp.tachygram_set = fee_less
-        .actions
-        .iter()
-        .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
-        .chain([fee_less.fee_auth])
-        .collect::<TachygramSetPoly>()
-        .commit();
+    fee_less.stamp.tachygram_set = TachygramSetPoly::try_from_roots(
+        fee_less
+            .actions
+            .iter()
+            .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
+            .chain([fee_less.fee_auth]),
+    )
+    .unwrap()
+    .commit();
     assert_matches!(
         fee_less.verify(rng, app, &sighash, &[]),
         Err(VerificationError::Disproved)

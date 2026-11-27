@@ -68,8 +68,9 @@ lazy_static = { version = "1.5.0", default-features = false, features = [
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
-# Pinned to ragu main (7914b3b8).
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "7914b3b86037e1fb0795a3ffd0cbf9198c2ade92", default-features = false, features = [
+# Pinned to ragu main (a812865f), where the wallet and the aggregator are both
+# at rank 14.
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a812865ff7aa8c2d546c7019f0a822ea8c1aa5a9", default-features = false, features = [
     "baked",
 ] }
 rand_core = { version = "0.10", default-features = false }
@@ -79,7 +80,7 @@ reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = fals
 rand = { version = "0.10", default-features = false, features = [
     "std_rng",
 ] }
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "7914b3b86037e1fb0795a3ffd0cbf9198c2ade92", default-features = false, features = [
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "a812865ff7aa8c2d546c7019f0a822ea8c1aa5a9", default-features = false, features = [
     "test-utils",
 ] }
 zcash_tachyon = { path = ".", features = [

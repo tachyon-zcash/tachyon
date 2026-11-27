@@ -57,8 +57,8 @@ fn forge_overlapping_merge<RNG: CryptoRng>(
         stamp_b.anchor,
     ));
 
-    let merged_acts = digests.iter().copied().collect::<ActionSetPoly>();
-    let merged_tg = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+    let merged_acts = ActionSetPoly::try_from_roots(digests.iter().copied()).unwrap();
+    let merged_tg = TachygramSetPoly::try_from_roots(tachygrams.iter().copied()).unwrap();
 
     let (pcd, ()) = app
         .fuse(
@@ -398,13 +398,14 @@ fn overlapping_stamps_cannot_aggregate() {
             forge_overlapping_merge(rng, app, (&left, &right), (&digests, &merged_tachygrams));
         let stamp = Stamp {
             anchor: forged.data().1,
-            tachygram_set: merged_tachygrams
-                .iter()
-                .copied()
-                .collect::<BTreeSet<Tachygram>>()
-                .into_iter()
-                .collect::<TachygramSetPoly>()
-                .commit(),
+            tachygram_set: TachygramSetPoly::try_from_roots(
+                merged_tachygrams
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<Tachygram>>(),
+            )
+            .unwrap()
+            .commit(),
             adjuncts: BTreeSet::new(),
             proof: Box::new(forged.proof().clone()),
         };
@@ -522,7 +523,9 @@ fn output_stamp_round_trips_and_binds_its_tachygram_set() {
     );
 
     let forged = Stamp {
-        tachygram_set: TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
+        tachygram_set: TachygramSetPoly::try_from_roots([Tachygram::random(rng)])
+            .unwrap()
+            .commit(),
         ..stamp
     };
     assert!(!forged.verify_proof(rng, app, digests).unwrap());

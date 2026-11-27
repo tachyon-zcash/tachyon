@@ -19,8 +19,9 @@ use crate::{
     nullifier::Nullifier,
     pasta::Fp,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClass,
-        QrDiscriminant, QrProfile, QrSplit, Tachygram, TachygramSetPoly, effect,
+        ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, EpochIndex, EvidenceTreeRoot,
+        NfSeqPoly, QrClass, QrDiscriminant, QrProfile, QrSplit, Tachygram, TachygramSetPoly,
+        effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -140,81 +141,90 @@ pub fn unspent_bind(
 
 /// Prepare the witness for [`SpendableInit`]:
 /// `(anchor_prev, creation_set, creation_epoch)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn spendable_init(
     (_left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
     anchor_prev: Anchor,
     creation_tgs: &[Tachygram],
     creation_epoch: EpochIndex,
-) -> StepWitness<'static, SpendableInit> {
-    (
+) -> ragu::Result<StepWitness<'static, SpendableInit>> {
+    Ok((
         anchor_prev,
-        creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        TachygramSetPoly::try_from_roots(creation_tgs.iter().copied())?,
         creation_epoch,
-    )
+    ))
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
 /// stamp_set)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
     anchor_start: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
-) -> StepWitness<'static, AnchorSpanSeed> {
-    (
+) -> ragu::Result<StepWitness<'static, AnchorSpanSeed>> {
+    Ok((
         anchor_start,
         epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
+        TachygramSetPoly::try_from_roots(tgs.iter().copied())?,
+    ))
 }
 
 /// Prepare the witness for [`AnchorSpanFuse`]: `(combined,)`.
 ///
 /// `left_members` and `right_members` are the members polynomials of the two
 /// halves.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn anchor_span_fuse(
     (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
     left_members: &[Anchor],
     right_members: &[Anchor],
-) -> StepWitness<'static, AnchorSpanFuse> {
-    (left_members.iter().chain(right_members).copied().collect(),)
+) -> ragu::Result<StepWitness<'static, AnchorSpanFuse>> {
+    Ok((AnchorSetPoly::try_from_roots(
+        left_members.iter().chain(right_members).copied(),
+    )?,))
 }
 
 /// Prepare the witness for [`SummarySeed`]:
 /// `(anchor_prev, epoch, stamp_set)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn summary_seed(
     (_left, _right): (StepLeft<SummarySeed>, StepRight<SummarySeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
-) -> StepWitness<'static, SummarySeed> {
-    (
+) -> ragu::Result<StepWitness<'static, SummarySeed>> {
+    Ok((
         anchor_prev,
         epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
+        TachygramSetPoly::try_from_roots(tgs.iter().copied())?,
+    ))
 }
 
 /// Prepare the witness for [`SummaryAdvance`]: `(extended, stamp)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn summary_advance(
     (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),
     acc_tgs: &[Tachygram],
     stamp_tgs: &[Tachygram],
-) -> StepWitness<'static, SummaryAdvance> {
-    let extended = acc_tgs
-        .iter()
-        .chain(stamp_tgs.iter())
-        .copied()
-        .collect::<TachygramSetPoly>();
-    (
+) -> ragu::Result<StepWitness<'static, SummaryAdvance>> {
+    let extended =
+        TachygramSetPoly::try_from_roots(acc_tgs.iter().chain(stamp_tgs.iter()).copied())?;
+    Ok((
         extended,
-        stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
+        TachygramSetPoly::try_from_roots(stamp_tgs.iter().copied())?,
+    ))
 }
 
 /// Prepare the witness for [`QrSummaryIntake`]: `(discriminant,)`.
@@ -228,20 +238,22 @@ pub const fn qr_summary_intake(
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
 /// discriminant, stamp_set)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
     discriminant: QrDiscriminant,
     tgs: &[Tachygram],
-) -> StepWitness<'static, QrStampIntakeSeed> {
-    (
+) -> ragu::Result<StepWitness<'static, QrStampIntakeSeed>> {
+    Ok((
         anchor_prev,
         epoch,
         discriminant,
-        tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
+        TachygramSetPoly::try_from_roots(tgs.iter().copied())?,
+    ))
 }
 
 /// Prepare the witness for [`QrEmptyIntakeSeed`]: `(anchor, epoch,
@@ -257,17 +269,17 @@ pub const fn qr_empty_intake_seed(
 }
 
 /// Prepare the witness for [`QrIntakeMerge`]: `(merged,)`.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn qr_intake_merge(
     (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
     left_tgs: &[Tachygram],
     right_tgs: &[Tachygram],
-) -> StepWitness<'static, QrIntakeMerge> {
-    (left_tgs
-        .iter()
-        .chain(right_tgs)
-        .copied()
-        .collect::<TachygramSetPoly>(),)
+) -> ragu::Result<StepWitness<'static, QrIntakeMerge>> {
+    Ok((TachygramSetPoly::try_from_roots(
+        left_tgs.iter().chain(right_tgs).copied(),
+    )?,))
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(non_residue, residue)`.
@@ -277,15 +289,12 @@ pub fn qr_intake_merge(
 /// discriminant. The step checks the factors' product against the intake and
 /// requires a non-unit intake opening.
 ///
-/// # Panics
-///
-/// Panics if either side's set polynomial exceeds the coefficient capacity
-/// of `WalletRank`.
-#[must_use]
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn qr_intake_split(
     (_left, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     split: &QrSplit,
-) -> StepWitness<'static, QrIntakeSplit> {
+) -> ragu::Result<StepWitness<'static, QrIntakeSplit>> {
     split.factors()
 }
 
@@ -463,8 +472,8 @@ pub fn output_action(
     (
         theta,
         anchor,
-        ActionSetPoly::from_iter([digest]),
-        TachygramSetPoly::from_iter([cm, pad]),
+        ActionSetPoly::from([digest]),
+        TachygramSetPoly::from([cm, pad]),
     )
 }
 
@@ -496,8 +505,8 @@ pub fn spend_action(
     (
         theta,
         pak,
-        ActionSetPoly::from_iter([digest]),
-        TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
+        ActionSetPoly::from([digest]),
+        TachygramSetPoly::from([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
     )
 }
 
@@ -551,14 +560,16 @@ pub const fn transaction_unmerge(
 /// # Panics
 ///
 /// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
-#[must_use]
+///
+/// # Errors
+/// Returns a witness error if a set polynomial does not fit the wallet rank.
 pub fn fee_fuse(
     (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
     max_fee_note: Note,
     fee: value::Positive,
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
-) -> StepWitness<'static, FeeFuse> {
+) -> ragu::Result<StepWitness<'static, FeeFuse>> {
     let fee_change_commitment = Tachygram::from(max_fee_note.fee_change(fee).commitment());
     let fee_digest = fee::Descriptor {
         cv_feemax: max_fee_note.cv_feemax(),
@@ -571,14 +582,14 @@ pub fn fee_fuse(
     let mut output_tachygrams = tachygrams.clone();
     output_tachygrams.insert(fee_change_commitment);
 
-    (
+    Ok((
         max_fee_note,
         fee,
         (
-            output_action_digests.into_iter().collect(),
-            output_tachygrams.into_iter().collect(),
+            ActionSetPoly::try_from_roots(output_action_digests)?,
+            TachygramSetPoly::try_from_roots(output_tachygrams)?,
         ),
-    )
+    ))
 }
 
 /// Prepare the witness for [`FeeSeed`]: `(max_fee_note, anchor,
@@ -611,7 +622,7 @@ pub fn fee_seed(
     (
         max_fee_note,
         anchor,
-        ActionSetPoly::from_iter([fee_digest]),
-        TachygramSetPoly::from_iter([fee_change_commitment]),
+        ActionSetPoly::from([fee_digest]),
+        TachygramSetPoly::from([fee_change_commitment]),
     )
 }

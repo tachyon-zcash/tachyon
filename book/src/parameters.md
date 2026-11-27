@@ -66,9 +66,9 @@ Each hash is domain-separated as described in [Domain Separators](./domain-separ
 
 | Parameter | Value | Defined in |
 | --------- | ----- | ---------- |
-| `WalletRank` | rank 13, $2^{13}$ coefficients, $2^{11}$ gates | Ragu `WalletRank` |
-| Tachygrams per stamp | at most $2^{13} - 1$ | `bundle.rs` |
+| Wallet and aggregator rank | rank 14, $2^{14}$ coefficients, $2^{12}$ gates | Ragu `WalletRank`, `AggregatorRank` |
+| Tachygrams per stamp | at most $2^{14} - 1$ | `WalletRank::num_coeffs() - 1` |
 | Header size | 9 field elements, 8 of payload and 1 suffix | `stamp/proof.rs` |
 
 The tachygram cap follows from the rank, as the [stamp trailer](./bundle.md#stamp-trailer) explains: a set polynomial with $n$ roots has $n + 1$ coefficients.
-A stamp covering $N$ actions across $B \geq 1$ bundles publishes two tachygrams per action and one per bundle fee, so $2N + B \leq 2^{13} - 1$ and it covers at most 4,095 actions.
+A stamp covering $N$ actions across $B \geq 1$ bundles publishes two tachygrams per action and one per bundle fee, so $2N + B \leq 2^{14} - 1$ and it covers at most 8,191 actions.

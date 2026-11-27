@@ -536,12 +536,13 @@ fn unmerge_binds_its_sets() {
         .iter()
         .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([bob.fee_auth]);
-    let alice_bob_tachygrams: TachygramSetPoly =
-        alice_members.clone().chain(bob_members.clone()).collect();
-    let alice_actions: ActionSetPoly = alice.verify_covered(&[]).unwrap().0.into_iter().collect();
-    let alice_tachygrams: TachygramSetPoly = alice_members.clone().collect();
-    let bob_actions: ActionSetPoly = bob.verify_covered(&[]).unwrap().0.into_iter().collect();
-    let bob_tachygrams: TachygramSetPoly = bob_members.clone().collect();
+    let alice_bob_tachygrams =
+        TachygramSetPoly::try_from_roots(alice_members.clone().chain(bob_members.clone())).unwrap();
+    let alice_actions =
+        ActionSetPoly::try_from_roots(alice.verify_covered(&[]).unwrap().0).unwrap();
+    let alice_tachygrams = TachygramSetPoly::try_from_roots(alice_members.clone()).unwrap();
+    let bob_actions = ActionSetPoly::try_from_roots(bob.verify_covered(&[]).unwrap().0).unwrap();
+    let bob_tachygrams = TachygramSetPoly::try_from_roots(bob_members.clone()).unwrap();
     let dividend_header = (
         app.bridge_hash(alice_bob_tachygrams.commit().into())
             .unwrap()
@@ -573,10 +574,12 @@ fn unmerge_binds_its_sets() {
             {
                 let mut corrupt = valid;
                 let dropped = alice_members.clone().next().unwrap();
-                corrupt.1 = alice_members
-                    .filter(|&tachygram| tachygram != dropped)
-                    .chain(bob_members.take(1))
-                    .collect();
+                corrupt.1 = TachygramSetPoly::try_from_roots(
+                    alice_members
+                        .filter(|&tachygram| tachygram != dropped)
+                        .chain(bob_members.take(1)),
+                )
+                .unwrap();
                 corrupt
             },
             "a quotient tachygram set with a swapped member",

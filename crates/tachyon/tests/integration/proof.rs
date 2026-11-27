@@ -89,7 +89,8 @@ fn spendable_init_rejects_tg_absent() {
                 Anchor::default(),
                 &[absent_tg],
                 EpochIndex::new(0),
-            ),
+            )
+            .unwrap(),
             nf_header,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -169,7 +170,7 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
     assert_eq!(
         span.commitments()[0],
-        EqAffine::from(AnchorSetPoly::from_iter(members).commit())
+        EqAffine::from(AnchorSetPoly::try_from_roots(members).unwrap().commit())
     );
     assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
 }
@@ -186,7 +187,9 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
     let fork = anchor_start
         .next_stamp(
             BlockHeight(1).epoch(),
-            &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
+            &TachygramSetPoly::try_from_roots([Tachygram::random(rng)])
+                .unwrap()
+                .commit(),
         )
         .unwrap();
 
@@ -230,7 +233,7 @@ fn transaction_lift_accepts_only_anchors_the_span_holds() {
                 transaction::TransactionLift,
                 witness::transaction_lift(
                     (*transaction_pcd.data(), *span.data()),
-                    ActionSetPoly::from_iter(digests),
+                    ActionSetPoly::try_from_roots(digests).unwrap(),
                 ),
                 transaction_pcd,
                 span.clone(),
@@ -263,12 +266,14 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         .1
         .next_stamp(
             BlockHeight(2).epoch(),
-            &TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit(),
+            &TachygramSetPoly::try_from_roots([Tachygram::random(rng)])
+                .unwrap()
+                .commit(),
         )
         .unwrap();
     for (fuse_witness, (first, second), expected) in vec![
         (
-            witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]),
+            witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &[]).unwrap(),
             (left.clone(), right.clone()),
             "a combined set missing the right half",
         ),
@@ -281,12 +286,14 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                     .copied()
                     .chain([fork])
                     .collect::<Vec<_>>(),
-            ),
+            )
+            .unwrap(),
             (left.clone(), right.clone()),
             "a combined set with an extra member",
         ),
         (
-            witness::anchor_span_fuse((*right.data(), *left.data()), &right_members, &left_members),
+            witness::anchor_span_fuse((*right.data(), *left.data()), &right_members, &left_members)
+                .unwrap(),
             (right, left),
             "spans fused in the wrong order",
         ),
@@ -462,7 +469,7 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
         (
             {
                 let mut witness = valid.clone();
-                witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
+                witness.3 = TachygramSetPoly::try_from_roots([Tachygram::random(rng)]).unwrap();
                 witness
             },
             "a substituted tachygram set",
@@ -505,20 +512,22 @@ fn spend_action_commits_to_the_plan_and_the_nullifier_pair() {
     assert_eq!(
         action_commit,
         EqAffine::from(
-            ActionSetPoly::from_iter([plan.digest((
+            ActionSetPoly::try_from_roots([plan.digest((
                 Tachygram::from(mk.derive_nullifier(spend_epoch)),
                 Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap()))
             ))])
+            .unwrap()
             .commit()
         )
     );
     assert_eq!(
         tachygram_commit,
         EqAffine::from(
-            TachygramSetPoly::from_iter([
+            TachygramSetPoly::try_from_roots([
                 Tachygram::from(mk.derive_nullifier(spend_epoch)),
                 Tachygram::from(mk.derive_nullifier(spend_epoch.next().unwrap())),
             ])
+            .unwrap()
             .commit()
         )
     );
@@ -963,7 +972,7 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
         (
             {
                 let mut witness = valid.clone();
-                witness.3 = TachygramSetPoly::from_iter([Tachygram::random(rng)]);
+                witness.3 = TachygramSetPoly::try_from_roots([Tachygram::random(rng)]).unwrap();
                 witness
             },
             "a substituted tachygram set",
@@ -1007,9 +1016,15 @@ fn output_action_commits_to_the_plan_and_the_note_pair() {
     assert_eq!(
         pcd.commitments()[..2],
         [
-            EqAffine::from(ActionSetPoly::from_iter([plan.digest(pair)]).commit()),
             EqAffine::from(
-                TachygramSetPoly::from_iter([Tachygram::from(note.commitment()), pad]).commit()
+                ActionSetPoly::try_from_roots([plan.digest(pair)])
+                    .unwrap()
+                    .commit()
+            ),
+            EqAffine::from(
+                TachygramSetPoly::try_from_roots([Tachygram::from(note.commitment()), pad])
+                    .unwrap()
+                    .commit()
             ),
         ]
     );

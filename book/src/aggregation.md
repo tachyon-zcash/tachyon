@@ -64,7 +64,7 @@ Tachygrams covered by a stamp must be distinct.
 Validation recomputes `cTachygrams` from the derived union, so such a stamp fails verification.
 An honest aggregator never merges stamps whose tachygram sets overlap.
 
-The derived union holds at most $2^{13} - 1$ tachygrams, so one aggregate covers at most 4,095 actions, with each covered bundle's fee change also taking space.
+The derived union holds at most $2^{14} - 1$ tachygrams, so one aggregate covers at most 8,191 actions, with each covered bundle's fee change also taking space.
 This follows from Ragu's production rank and is not a policy limit.
 
 ### Strip to produce Adjuncts {#strip-to-produce-adjuncts}

@@ -176,20 +176,13 @@ impl QrSplit {
 
     /// The two sides' set polynomials, `(non_residue, residue)`.
     ///
-    /// # Panics
-    ///
-    /// Panics if either side has at least `WalletRank::num_coeffs()` members:
-    /// its monic set polynomial needs one more coefficient than members.
-    #[must_use]
-    pub fn factors(&self) -> (TachygramSetPoly, TachygramSetPoly) {
-        let non_residue = self.members(QrClass::NonResidue);
-        let residue = self.members(QrClass::Residue);
-        assert!(
-            non_residue.len() < WalletRank::num_coeffs()
-                && residue.len() < WalletRank::num_coeffs(),
-            "side's set polynomial exceeds WalletRank"
-        );
-        (non_residue.collect(), residue.collect())
+    /// # Errors
+    /// Returns a witness error if either side does not fit the wallet rank.
+    pub fn factors(&self) -> ragu::Result<(TachygramSetPoly, TachygramSetPoly)> {
+        Ok((
+            TachygramSetPoly::try_from_roots(self.members(QrClass::NonResidue))?,
+            TachygramSetPoly::try_from_roots(self.members(QrClass::Residue))?,
+        ))
     }
 
     /// The class decomposition $(u, h)$ of the side of `class`, with $u$

@@ -70,7 +70,9 @@ impl PoolSimBlock {
             .into_iter()
             .map(|tgs| {
                 let stamp_prev = anchor;
-                let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
+                let commit = TachygramSetPoly::try_from_roots(tgs.iter().copied())
+                    .unwrap()
+                    .commit();
                 let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
                 anchor = stamp_after;
                 (stamp_prev, tgs, commit, stamp_after)
@@ -253,7 +255,7 @@ impl PoolSim {
     ) {
         let (_epoch, _anchor_prev, _anchor_end, discriminant, profile) = *parent.pcd.data();
         let split = discriminant.at(profile.depth).split(&parent.members);
-        let witness = witness::qr_intake_split((*parent.pcd.data(), ()), &split);
+        let witness = witness::qr_intake_split((*parent.pcd.data(), ()), &split).unwrap();
         let (pcd, ()) = app
             .fuse(
                 rng,
@@ -625,7 +627,8 @@ impl PoolSim {
             if prefix.is_empty() {
                 let key = [Fp::from(last.0).to_bytes(), Fp::from(last.3).to_bytes()].concat();
                 return SEEDS.get(&key, |rng| {
-                    let witness = witness::anchor_span_seed(((), ()), last.0, epoch, &last.1);
+                    let witness =
+                        witness::anchor_span_seed(((), ()), last.0, epoch, &last.1).unwrap();
                     let (seed, ()) = app.seed(rng, pool::AnchorSpanSeed, witness).unwrap();
                     seed
                 });
@@ -640,7 +643,8 @@ impl PoolSim {
                 let right = prove(app, epoch, &stamps[stamps.len() - 1..]);
                 let members = prefix.iter().map(|stamp| stamp.3).collect::<Vec<_>>();
                 let witness =
-                    witness::anchor_span_fuse((*left.data(), *right.data()), &members, &[last.3]);
+                    witness::anchor_span_fuse((*left.data(), *right.data()), &members, &[last.3])
+                        .unwrap();
                 let (fused, ()) = app
                     .fuse(rng, pool::AnchorSpanFuse, witness, left, right)
                     .unwrap();
@@ -670,12 +674,12 @@ impl PoolSim {
             .seed(
                 rng,
                 summary::SummarySeed,
-                witness::summary_seed(((), ()), start, epoch, &first.1),
+                witness::summary_seed(((), ()), start, epoch, &first.1).unwrap(),
             )
             .unwrap();
         let mut held = first.1.clone();
         for stamp in rest {
-            let witness = witness::summary_advance((*pcd.data(), ()), &held, &stamp.1);
+            let witness = witness::summary_advance((*pcd.data(), ()), &held, &stamp.1).unwrap();
             let (advanced, ()) = app
                 .fuse(
                     rng,

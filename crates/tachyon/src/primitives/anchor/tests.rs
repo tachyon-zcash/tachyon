@@ -8,8 +8,12 @@ use crate::{Tachygram, TachygramSetCommit, TachygramSetPoly, pasta::EqAffine};
 #[test]
 fn next_stamp_binds_the_order_and_the_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let first = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
-    let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
+    let first = TachygramSetPoly::try_from_roots([Tachygram::random(&mut *rng)])
+        .unwrap()
+        .commit();
+    let second = TachygramSetPoly::try_from_roots([Tachygram::random(&mut *rng)])
+        .unwrap()
+        .commit();
 
     let forward = Anchor::default()
         .next_stamp(EpochIndex::new(7), &first)

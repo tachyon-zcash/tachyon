@@ -841,8 +841,8 @@ fn bundles_round_trip_at_action_count_limits() {
         .unwrap()
         .binding;
     let (descriptor, signature) = random_action(rng);
-    assert_eq!((WalletRank::num_coeffs() - 2) / 2, 4095);
-    for n in [0, 4095] {
+    let max_actions = (WalletRank::num_coeffs() - 2) / 2;
+    for n in [0, max_actions] {
         // Read enforces wire shape and uniqueness, not signature validity or
         // descriptor multiplicity; those belong to later verification.
         let bundle = Bundle {
@@ -977,8 +977,9 @@ fn auth_digest_invariants() {
     let mut anchor = stamped.clone();
     anchor.stamp.anchor = Anchor::random(rng);
     let mut tachygram_set = stamped.clone();
-    tachygram_set.stamp.tachygram_set =
-        TachygramSetPoly::from_iter([Tachygram::random(rng)]).commit();
+    tachygram_set.stamp.tachygram_set = TachygramSetPoly::try_from_roots([Tachygram::random(rng)])
+        .unwrap()
+        .commit();
     let mut proof = stamped.clone();
     proof.stamp.proof = compressed(app, &alice(app).1).stamp.proof;
     let mut fee_change = stamped;

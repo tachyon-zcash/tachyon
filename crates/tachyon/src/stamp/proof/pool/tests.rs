@@ -9,7 +9,8 @@ fn anchor_span_seed_proves_a_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let anchor = Anchor::random(rng);
     let epoch = EpochIndex::new(3);
-    let stamp = witness::anchor_span_seed(((), ()), anchor, epoch, &[Tachygram::random(rng)]);
+    let stamp =
+        witness::anchor_span_seed(((), ()), anchor, epoch, &[Tachygram::random(rng)]).unwrap();
 
     let (span, ()) = app.seed(rng, AnchorSpanSeed, stamp).unwrap();
     assert!(app.verify_uncompressed(&span, &mut *rng).unwrap());
@@ -19,7 +20,8 @@ fn anchor_span_seed_proves_a_stamp() {
 fn anchor_span_seed_refuses_an_empty_stamp() {
     let app = new_application().unwrap();
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamp = witness::anchor_span_seed(((), ()), Anchor::random(rng), EpochIndex::new(3), &[]);
+    let stamp =
+        witness::anchor_span_seed(((), ()), Anchor::random(rng), EpochIndex::new(3), &[]).unwrap();
 
     assert!(app.seed(rng, AnchorSpanSeed, stamp).is_err());
 }

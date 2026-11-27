@@ -62,7 +62,7 @@
 //!
 //! `cvFeeMaxTachyon` is a canonical non-identity point. The bundle
 //! contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
-//! `nActionsTachyon` is at most 4095, the most actions whose tachygrams fit
+//! `nActionsTachyon` is at most 8191, the most actions whose tachygrams fit
 //! one set polynomial beside the bundle's fee change.
 //!
 //! The memo is effecting data, so it is covered by the transaction sighash
@@ -90,9 +90,9 @@
 //!
 //! `vAdjunctsTachyon` is strictly ascending by bytewise comparison, so it holds
 //! no repeat. Every adjunct holds at least its fee change, so a stamp with
-//! `2 * nActionsTachyon + nAdjunctsTachyon + 1 > 8191` is rejected after the
+//! `2 * nActionsTachyon + nAdjunctsTachyon + 1 > 16383` is rejected after the
 //! whole trailer is read. The standalone stamp reader checks
-//! `nAdjunctsTachyon + 1 <= 8191` before reading the adjunct list.
+//! `nAdjunctsTachyon + 1 <= 16383` before reading the adjunct list.
 //!
 //! A stamped bundle carries a [`Compressed`](stamp::Compressed) proof in
 //! `proofTachyon`. A [`Stamp`] with an [`Uncompressed`](stamp::Uncompressed)
@@ -833,9 +833,8 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
             digests.push(fee_descriptor.digest(cm_change));
         }
 
-        let tachygram_set = covered_tachygrams
-            .into_iter()
-            .collect::<TachygramSetPoly>()
+        let tachygram_set = TachygramSetPoly::try_from_roots(covered_tachygrams)
+            .map_err(|_capacity| VerifyCoverageError::WrongTachygramSet)?
             .commit();
 
         if self.stamp.tachygram_set != tachygram_set {
