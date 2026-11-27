@@ -23,6 +23,8 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | Purpose | Value |
 | ------- | ----- |
 | Action descriptors | `Tachyon-Actions` |
+| Per-action signatures | `Tachyon-ActSigs` |
+| Per-action tachygram pairs | `Tachyon-ActTgs` |
 | Memo payload | `Tachyon-Memo` |
 | `hStampProofTachyon`, the stamp proof, the anchor and the tachygram set commitment | `Tachyon-Proof` |
 | `hStampTachyon`, the stamp | `Tachyon-Stamp` |

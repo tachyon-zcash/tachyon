@@ -13,19 +13,29 @@ Zcash's transaction-level `auth_digest` commits to authorization data — the ha
 
 Tachyon's bundle contributes on both sides:
 
-- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{cvFeeMaxTachyon} \,\|\, \mathsf{hMemoTachyon}$.
-- **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, one signature-and-pair record per action, the fee, the fee change, the binding signature, and the stamp digest:
+- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{valueBalanceTachyon} \,\|\, \mathsf{hActionsTachyon} \,\|\, \mathsf{cvFeeMaxTachyon} \,\|\, \mathsf{hMemoTachyon}$.
+- **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, then the signing, proving and stamp sections in wire order, with each per-action vector replaced by its digest:
 
 $$
 \mathsf{tachyon\_auth\_digest} =
 \text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(
-    \mathsf{tachyonBundleState} \,\|\, \mathop{\|}_{i=0}^{n-1}(\mathsf{sig}_i \,\|\, \mathsf{tg}_{i,0} \,\|\, \mathsf{tg}_{i,1})
-    \,\|\, \mathsf{LE64}(\mathsf{vFeeTachyon}) \,\|\, \mathsf{cmChangeTachyon}
-    \,\|\, \mathsf{bindingSigTachyon} \,\|\, \mathsf{hStampTachyon}
+    \mathsf{tachyonBundleState} \,\|\, \mathsf{hActionSigsTachyon} \,\|\, \mathsf{bindingSigTachyon}
+    \,\|\, \mathsf{hActionTachygramsTachyon} \,\|\, \mathsf{LE64}(\mathsf{vFeeTachyon}) \,\|\, \mathsf{cmChangeTachyon}
+    \,\|\, \mathsf{hStampTachyon}
 \bigr)
 $$
 
-Record $i$ combines `vActionSigsTachyon[i]` with `vActionTachygramsTachyon[i]`, hashing the pair as written. Each record is 128 bytes. The preimage is $137 + 128n$ bytes, with the record sequence its only variable-length input; no count is hashed. This is a digest projection, not the phase-ordered [wire layout](./bundle.md#bundle-body).
+$$
+\mathsf{hActionSigsTachyon} =
+\text{BLAKE2b-256}_{\text{``Tachyon-ActSigs''}}\bigl(\mathsf{sig}_0 \,\|\, \cdots \,\|\, \mathsf{sig}_{n-1}\bigr)
+$$
+
+$$
+\mathsf{hActionTachygramsTachyon} =
+\text{BLAKE2b-256}_{\text{``Tachyon-ActTgs''}}\bigl(\mathsf{tg}_{0,0} \,\|\, \mathsf{tg}_{0,1} \,\|\, \cdots \,\|\, \mathsf{tg}_{n-1,0} \,\|\, \mathsf{tg}_{n-1,1}\bigr)
+$$
+
+Each per-action vector enters as its own digest, at its [wire position](./bundle.md#bundle-body), over that vector's items in action order, with no count. Each pair is hashed as written. The preimage is a fixed 201 bytes.
 
 For a proof stamp, $\mathsf{hStampTachyon}$ hashes the adjunct txids in list order, followed by the proof digest:
 
