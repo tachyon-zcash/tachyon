@@ -1,3 +1,4 @@
+use ragu::pasta::Pasta;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -18,7 +19,7 @@ impl Step<Pasta> for ShiftedBucketSeal {
     /// `(anchor_final_prev, shift)`
     type Witness<'source> = (Anchor, Fp);
 
-    const INDEX: Index = QrBucketSeal::INDEX;
+    const INDEX: Index = <QrBucketSeal as Step<Pasta>>::INDEX;
 
     fn prepare(
         &self,
@@ -157,7 +158,7 @@ impl Step<Pasta> for NonemptyIntakeSeed {
     /// `(anchor, epoch, discriminant, linear)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, Fp);
 
-    const INDEX: Index = QrEmptyIntakeSeed::INDEX;
+    const INDEX: Index = <QrEmptyIntakeSeed as Step<Pasta>>::INDEX;
 
     fn prepare(
         &self,

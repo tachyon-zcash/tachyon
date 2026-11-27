@@ -13,11 +13,11 @@
 use core::convert::Infallible;
 
 use ragu::{
+    Cycle,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     header::{Header, Suffix},
     maybe::Maybe as _,
-    pasta::Pasta,
     primitives::{Element, GadgetExt as _, allocator::Allocator, io::Write},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
     udon::field::Field as _,
@@ -135,7 +135,7 @@ impl Header<Fp> for Summary {
 #[derive(Debug)]
 pub struct SummarySeed;
 
-impl Step<Pasta> for SummarySeed {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for SummarySeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = Summary;
@@ -159,7 +159,7 @@ impl Step<Pasta> for SummarySeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -240,7 +240,7 @@ impl Step<Pasta> for SummarySeed {
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
-impl Step<Pasta> for SummaryAdvance {
+impl<C: Cycle<CircuitField = Fp>> Step<C> for SummaryAdvance {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = Summary;
@@ -264,7 +264,7 @@ impl Step<Pasta> for SummaryAdvance {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
